@@ -53,7 +53,7 @@ class InteractivePush(simulation.PyBulletSim):
 
         super(InteractivePush, self).__init__(save_dir=save_dir, num_frames=num_frames, **kwargs)
         self.observation_period = observation_period
-        self.initRestFrames = 5
+        self.initRestFrames = 20
 
         self.ctrl = controller
 
@@ -75,7 +75,7 @@ class InteractivePush(simulation.PyBulletSim):
         if init_pusher is not None:
             self.initPusherPos = tuple(init_pusher) + (0.05,)
         if init_block is not None:
-            self.initBlockPos = tuple(init_block) + (0.0,)
+            self.initBlockPos = tuple(init_block) + (0.0325,)
         if init_yaw is not None:
             self.initBlockYaw = init_yaw
 
@@ -151,16 +151,9 @@ class InteractivePush(simulation.PyBulletSim):
         for _ in range(self.initRestFrames):
             p.stepSimulation()
 
-        contact_before_experiment = len(p.getContactPoints(self.pusherId, self.blockId)) != 0
-        if contact_before_experiment:
-            logger.info("Starting with contact, rejecting experiment")
-            return simulation.ReturnMeaning.REJECTED
-
         x, y, z = self._observe_pusher()
 
         for simTime in range(self.num_frames):
-            p.stepSimulation()
-
             # d = pushDir * self.push_step
             d = self.ctrl.command((x, y) + self._observe_block())
             x, y, z = np.add([x, y, z], d)
@@ -168,6 +161,8 @@ class InteractivePush(simulation.PyBulletSim):
             # set end effector pose
             eePos = [x, y, z]
             self._move_pusher(eePos)
+
+            p.stepSimulation()
 
             # get pusher info
             x, y, z = self._observe_pusher()
@@ -185,10 +180,9 @@ class InteractivePush(simulation.PyBulletSim):
 
             xb, yb, yaw = self._observe_block()
             self.traj[simTime, :] = np.array([x, y, xb, yb, yaw])
-            p.addUserDebugLine([self.traj[simTime - 1, 0], self.traj[simTime - 1, 1], z], [x, y, z], [1, 0, 0], 2)
-            p.addUserDebugLine([self.traj[simTime - 1, 2], self.traj[simTime - 1, 3], z], [xb, yb, z], [0, 0, 1], 2)
-
-            time.sleep(0.5)
+            i = max(simTime - 1, 0)
+            p.addUserDebugLine([self.traj[i, 0], self.traj[i, 1], z], [x, y, z], [1, 0, 0], 2)
+            p.addUserDebugLine([self.traj[i, 2], self.traj[i, 3], z], [xb, yb, z], [0, 0, 1], 2)
 
         # contact force mask - get rid of trash in the beginning
         # self.contactForce[:300] = 0
@@ -243,15 +237,15 @@ class InteractivePush(simulation.PyBulletSim):
 
 def get_level_0_data(trials=5, trial_length=10):
     # TODO use random controller (with systematically varying push direction)
-    ctrl = ArtificialController(0.05)
+    ctrl = ArtificialController(0.03)
     sim = InteractivePush(ctrl, num_frames=trial_length, mode=p.GUI, plot=True, save=False, config=cfg)
     for _ in range(trials):
-        seed = rand.seed(115412)
+        seed = rand.seed()
         init_block_pos = (np.random.random((2,)) - 0.5)
         init_block_yaw = (np.random.random() - 0.5) * 2 * math.pi
         # TODO randomly initialize pusher adjacent to block
         # choose which face we will be next to
-        w = 0.1
+        w = 0.087
         non_fixed_val = (np.random.random() - 0.5) * 2 * w  # each face has 1 fixed value and 1 free value
         face = np.random.randint(0, 4)
         if face == 0:  # right
