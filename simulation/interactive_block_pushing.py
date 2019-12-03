@@ -9,6 +9,7 @@ import abc
 
 from meta_contact import cfg
 from hybrid_sysid import simulation
+from arm_pytorch_utilities import rand
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
@@ -47,27 +48,36 @@ class ArtificialController(Controller):
 
 class InteractivePush(simulation.PyBulletSim):
     def __init__(self, controller, num_frames=1000, save_dir='pushing', observation_period=10,
-                 push_angle=0.1, random_push_angle=0.05,
                  goal=(-0.6, 1.1), init_pusher=(0.3, 0.2), init_block=(0.1, 0.1), init_yaw=0.,
                  **kwargs):
 
         super(InteractivePush, self).__init__(save_dir=save_dir, num_frames=num_frames, **kwargs)
-        self.theta = push_angle
-        self.bd = random_push_angle
         self.observation_period = observation_period
+        self.initRestFrames = 5
 
-        # TODO more options
         self.ctrl = controller
 
         # initial config
-        self.goal = goal + (0.1,)
-        self.initPusherPos = init_pusher + (0.05,)
-        self.initBlockPos = init_block + (0.0,)
-        self.initBlockYaw = init_yaw
+        self.goal = None
+        self.initPusherPos = None
+        self.initBlockPos = None
+        self.initBlockYaw = None
+        self.set_task_config(goal, init_pusher, init_block, init_yaw)
 
         # plotting
         self.fig = None
         self.axes = None
+
+    def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
+        """Change task configuration"""
+        if goal is not None:
+            self.goal = tuple(goal) + (0.1,)
+        if init_pusher is not None:
+            self.initPusherPos = tuple(init_pusher) + (0.05,)
+        if init_block is not None:
+            self.initBlockPos = tuple(init_block) + (0.0,)
+        if init_yaw is not None:
+            self.initBlockYaw = init_yaw
 
     def _setup_experiment(self):
         # add plane to push on (slightly below the base of the robot)
@@ -75,6 +85,7 @@ class InteractivePush(simulation.PyBulletSim):
         self.pusherId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "pusher.urdf"), self.initPusherPos)
         self.blockId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "block_big.urdf"), self.initBlockPos)
 
+        # TODO make these environment elements dependent on the "level" of the simulation
         self.walls = []
         # self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-1, 0.5, .0],
         #                              p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
@@ -98,7 +109,7 @@ class InteractivePush(simulation.PyBulletSim):
         # set joint damping
         # set robot init config
         self.pusherConstraint = p.createConstraint(self.pusherId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
-                                                   [0, 0, 0])
+                                                   self.initPusherPos)
 
         return simulation.ReturnMeaning.SUCCESS
 
@@ -129,11 +140,23 @@ class InteractivePush(simulation.PyBulletSim):
         roll, pitch, yaw = p.getEulerFromQuaternion(blockPose[1])
         return xb, yb, yaw
 
+    def _observe_pusher(self):
+        pusherPose = p.getBasePositionAndOrientation(self.pusherId)
+        return pusherPose[0]
+
     def _run_experiment(self):
 
         self._reset_sim()
 
-        x, y, z = self.initPusherPos
+        for _ in range(self.initRestFrames):
+            p.stepSimulation()
+
+        contact_before_experiment = len(p.getContactPoints(self.pusherId, self.blockId)) != 0
+        if contact_before_experiment:
+            logger.info("Starting with contact, rejecting experiment")
+            return simulation.ReturnMeaning.REJECTED
+
+        x, y, z = self._observe_pusher()
 
         for simTime in range(self.num_frames):
             p.stepSimulation()
@@ -147,8 +170,7 @@ class InteractivePush(simulation.PyBulletSim):
             self._move_pusher(eePos)
 
             # get pusher info
-            pusherPose = p.getBasePositionAndOrientation(self.pusherId)
-            x, y, z = pusherPose[0]
+            x, y, z = self._observe_pusher()
 
             # get contact information
             contactInfo = p.getContactPoints(self.pusherId, self.blockId)
@@ -166,10 +188,10 @@ class InteractivePush(simulation.PyBulletSim):
             p.addUserDebugLine([self.traj[simTime - 1, 0], self.traj[simTime - 1, 1], z], [x, y, z], [1, 0, 0], 2)
             p.addUserDebugLine([self.traj[simTime - 1, 2], self.traj[simTime - 1, 3], z], [xb, yb, z], [0, 0, 1], 2)
 
-            # time.sleep(0.0005)
+            time.sleep(0.5)
 
         # contact force mask - get rid of trash in the beginning
-        self.contactForce[:300] = 0
+        # self.contactForce[:300] = 0
 
         # compress observations
         self.traj = self._compress_observation(self.traj)
@@ -203,11 +225,14 @@ class InteractivePush(simulation.PyBulletSim):
     def _plot_data(self):
         if self.fig is None:
             self.start_plot_runs()
+            time.sleep(0.01)
 
         for i in range(self.traj.shape[1]):
             self.axes[i].plot(self.traj[:, i])
         self.axes[self.traj.shape[1]].plot(self.contactForce)
         self.axes[self.traj.shape[1] + 1].plot(self.contactCount)
+        self.fig.canvas.draw()
+        time.sleep(0.01)
 
     def _reset_sim(self):
         # reset robot to nominal pose
@@ -216,8 +241,35 @@ class InteractivePush(simulation.PyBulletSim):
                                           p.getQuaternionFromEuler([0, 0, self.initBlockYaw]))
 
 
-if __name__ == "__main__":
+def get_level_0_data(trials=5, trial_length=10):
+    # TODO use random controller (with systematically varying push direction)
     ctrl = ArtificialController(0.05)
-    # TODO randomly initialize block and pusher position
-    sim = InteractivePush(ctrl, mode=p.GUI, plot=True, save=False, config=cfg)
-    sim.run()
+    sim = InteractivePush(ctrl, num_frames=trial_length, mode=p.GUI, plot=True, save=False, config=cfg)
+    for _ in range(trials):
+        seed = rand.seed(115412)
+        init_block_pos = (np.random.random((2,)) - 0.5)
+        init_block_yaw = (np.random.random() - 0.5) * 2 * math.pi
+        # TODO randomly initialize pusher adjacent to block
+        # choose which face we will be next to
+        w = 0.1
+        non_fixed_val = (np.random.random() - 0.5) * 2 * w  # each face has 1 fixed value and 1 free value
+        face = np.random.randint(0, 4)
+        if face == 0:  # right
+            dxy = (w, non_fixed_val)
+        elif face == 1:  # top
+            dxy = (non_fixed_val, w)
+        elif face == 2:  # left
+            dxy = (-w, non_fixed_val)
+        else:
+            dxy = (non_fixed_val, -w)
+        # rotate by yaw to match (around origin since these are differences)
+        dxy = (dxy[0] * math.cos(init_block_yaw) + dxy[1] * math.sin(init_block_yaw),
+               -dxy[0] * math.sin(init_block_yaw) + dxy[1] * math.cos(init_block_yaw))
+        init_pusher = np.add(init_block_pos, dxy)
+        sim.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
+        sim.run(seed)
+    input('enter to finish')
+
+
+if __name__ == "__main__":
+    get_level_0_data(trial_length=50)
