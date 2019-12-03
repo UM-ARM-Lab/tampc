@@ -5,8 +5,10 @@ import matplotlib.pyplot as plt
 import logging
 import os
 import time
+import abc
 
-from hybrid_sysid import cfg, simulation
+from meta_contact import cfg
+from hybrid_sysid import simulation
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
@@ -14,14 +16,23 @@ logging.basicConfig(level=logging.DEBUG,
                     datefmt='%m-%d %H:%M:%S')
 
 
-class Controller:
-    def __init__(self, push_magnitude):
+class Controller(abc.ABC):
+    def __init__(self):
         self.goal = None
-        self.block_width = 0.085
-        self.push_magnitude = push_magnitude
 
     def set_goal(self, goal):
         self.goal = goal[0:2]
+
+    @abc.abstractmethod
+    def command(self, obs):
+        """Given current observation, command an action"""
+
+
+class ArtificialController(Controller):
+    def __init__(self, push_magnitude):
+        super().__init__()
+        self.block_width = 0.075
+        self.push_magnitude = push_magnitude
 
     def command(self, obs):
         x, y, xb, yb, yaw = obs
@@ -29,26 +40,29 @@ class Controller:
         logger.info(to_goal)
         desired_pusher_pos = np.subtract((xb, yb), to_goal / np.linalg.norm(to_goal) * self.block_width)
         dpusher = np.subtract(desired_pusher_pos, (x, y))
-        ranMag = 0.4
+        ranMag = 0.2
         return np.append((dpusher / np.linalg.norm(dpusher) + (
-        np.random.uniform(-ranMag, ranMag), np.random.uniform(-ranMag, ranMag))) * self.push_magnitude, 0)
+            np.random.uniform(-ranMag, ranMag), np.random.uniform(-ranMag, ranMag))) * self.push_magnitude, 0)
 
 
 class InteractivePush(simulation.PyBulletSim):
-
-    def __init__(self, num_frames=4000, save_dir='kuka_push', observation_period=10,
-                 push_angle=0.1, push_step=0.03, random_push_angle=0.05,
-                 use_rng=False,
+    def __init__(self, controller, num_frames=1000, save_dir='pushing', observation_period=10,
+                 push_angle=0.1, random_push_angle=0.05,
+                 goal=(-0.6, 1.1), init_pusher=(0.3, 0.2), init_block=(0.1, 0.1),
                  **kwargs):
 
         super(InteractivePush, self).__init__(save_dir=save_dir, num_frames=num_frames, **kwargs)
         self.theta = push_angle
-        self.use_rng = use_rng
         self.bd = random_push_angle
         self.observation_period = observation_period
 
         # TODO more options
-        self.ctrl = Controller(push_step)
+        self.ctrl = controller
+
+        # initial config
+        self.goal = goal + (0.1,)
+        self.initPusherPos = init_pusher + (0.05,)
+        self.initBlockPos = init_block + (0.0,)
 
         # plotting
         self.fig = None
@@ -57,13 +71,7 @@ class InteractivePush(simulation.PyBulletSim):
     def _setup_experiment(self):
         # add plane to push on (slightly below the base of the robot)
         self.planeId = p.loadURDF("plane.urdf", [0, 0, -0.05], useFixedBase=True)
-        self.initPusherPos = [0.3, 0.2, 0.05]
         self.pusherId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "pusher.urdf"), self.initPusherPos)
-
-        p.resetDebugVisualizerCamera(cameraDistance=0.5, cameraYaw=0, cameraPitch=-85, cameraTargetPosition=[0, 0, 1])
-
-        # add the block - we'll reset its position later
-        self.initBlockPos = [0.1, 0.1, 0]
         self.blockId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "block_big.urdf"), self.initBlockPos)
 
         self.walls = []
@@ -78,13 +86,9 @@ class InteractivePush(simulation.PyBulletSim):
         # self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [1.5, 0.5, .0],
         #                              p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
 
-        self.goal = [-0.6, 1.1, 0.1]
-        goalVisualWidth = 0.15 / 2
-        p.addUserDebugLine(np.add(self.goal, [0, -goalVisualWidth, 0]), np.add(self.goal, [0, goalVisualWidth, 0]),
-                           [0, 1, 0], 2)
-        p.addUserDebugLine(np.add(self.goal, [-goalVisualWidth, 0, 0]), np.add(self.goal, [goalVisualWidth, 0, 0]),
-                           [0, 1, 0], 2)
-
+        p.resetDebugVisualizerCamera(cameraDistance=0.5, cameraYaw=0, cameraPitch=-85,
+                                     cameraTargetPosition=[0, 0, 1])
+        self._draw_goal()
         self.ctrl.set_goal(self.goal)
 
         # set gravity
@@ -92,13 +96,18 @@ class InteractivePush(simulation.PyBulletSim):
 
         # set joint damping
         # set robot init config
-        self.robotInitPoseCart = [-0.2, -0.2, 0.01]  # (x,y,z)
         self.orn = p.getQuaternionFromEuler([0, -math.pi, 0])
-
         self.pusherConstraint = p.createConstraint(self.pusherId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
                                                    [0, 0, 0])
 
         return simulation.ReturnMeaning.SUCCESS
+
+    def _draw_goal(self):
+        goalVisualWidth = 0.15 / 2
+        p.addUserDebugLine(np.add(self.goal, [0, -goalVisualWidth, 0]), np.add(self.goal, [0, goalVisualWidth, 0]),
+                           [0, 1, 0], 2)
+        p.addUserDebugLine(np.add(self.goal, [-goalVisualWidth, 0, 0]), np.add(self.goal, [goalVisualWidth, 0, 0]),
+                           [0, 1, 0], 2)
 
     def _init_data(self):
         # pre-define the trajectory/force vectors
@@ -124,7 +133,7 @@ class InteractivePush(simulation.PyBulletSim):
 
         self._reset_sim()
 
-        x, y, z = self.robotInitPoseCart
+        x, y, z = self.initPusherPos
 
         for simTime in range(self.num_frames):
             p.stepSimulation()
@@ -167,9 +176,6 @@ class InteractivePush(simulation.PyBulletSim):
         self.contactForce = self._compress_observation(self.contactForce)
         self.contactCount = self._compress_observation(self.contactCount)
 
-        while True:
-            p.stepSimulation()
-
         return simulation.ReturnMeaning.SUCCESS
 
     def _compress_observation(self, obs):
@@ -207,38 +213,10 @@ class InteractivePush(simulation.PyBulletSim):
         # reset robot to nominal pose
         p.resetBasePositionAndOrientation(self.pusherId, self.initPusherPos, [0, 0, 0, 1])
 
-        # reset block pose
-        if self.use_rng:
-            # define nominal block pose
-            nom_pose = np.array(self.initBlockPos)  # (x,y,theta)
-
-            # define uncertainty bounds
-            pos_bd = np.array([0.01, 0.01, 0.1])
-
-            # initialize array
-            blockInitPose = np.empty_like(pos_bd)
-
-            for i in range(nom_pose.shape[0]):
-                pert = np.random.uniform(-pos_bd[i], pos_bd[i])
-                blockInitPose[i] = nom_pose[i] + pert
-
-            blockInitOri = p.getQuaternionFromEuler([0, 0, blockInitPose[-1]])
-            p.resetBasePositionAndOrientation(self.blockId, [blockInitPose[0], blockInitPose[1], 0.1], blockInitOri)
-        else:
-            p.resetBasePositionAndOrientation(self.blockId, self.initBlockPos, [0, 0, 0, 1])
-
-    def _get_push_direction(self, theta, use_random):
-        # get unit direction of the push
-        if use_random:
-            theta = np.random.uniform(low=-self.bd, high=self.bd)
-
-        return np.array([math.sin(theta), math.cos(theta), 0.])
-
 
 if __name__ == "__main__":
-    sim = InteractivePush(mode=p.GUI, plot=True, use_rng=True, save=False)
+    ctrl = ArtificialController(0.05)
+    # TODO randomly initialize block and pusher position
+    sim = InteractivePush(ctrl, mode=p.GUI, plot=True, save=True, config=cfg)
     sim.run()
 
-    # runs = 0
-    # while runs < 30:
-    #     runs += sim.run() == simulation.ReturnMeaning.SUCCESS
