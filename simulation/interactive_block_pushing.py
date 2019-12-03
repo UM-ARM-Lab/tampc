@@ -17,6 +17,11 @@ logging.basicConfig(level=logging.DEBUG,
                     datefmt='%m-%d %H:%M:%S')
 
 
+def rotate_wrt_origin(xy, theta):
+    return (xy[0] * math.cos(theta) + xy[1] * math.sin(theta),
+            -xy[0] * math.sin(theta) + xy[1] * math.cos(theta))
+
+
 class Controller(abc.ABC):
     def __init__(self):
         self.goal = None
@@ -42,8 +47,25 @@ class ArtificialController(Controller):
         desired_pusher_pos = np.subtract((xb, yb), to_goal / np.linalg.norm(to_goal) * self.block_width)
         dpusher = np.subtract(desired_pusher_pos, (x, y))
         ranMag = 0.2
-        return np.append((dpusher / np.linalg.norm(dpusher) + (
-            np.random.uniform(-ranMag, ranMag), np.random.uniform(-ranMag, ranMag))) * self.push_magnitude, 0)
+        return (dpusher / np.linalg.norm(dpusher) + (
+            np.random.uniform(-ranMag, ranMag), np.random.uniform(-ranMag, ranMag))) * self.push_magnitude
+
+
+class RandomController(Controller):
+    """Randomly push towards center of block with some angle offset and randomness"""
+
+    def __init__(self, push_magnitude, random_angular_std, random_bias_magnitude=0.5):
+        super().__init__()
+        self.push_magnitude = push_magnitude
+        self.random_angular_std = random_angular_std
+        self.fixed_angular_bias = (np.random.random() - 0.5) * random_bias_magnitude
+
+    def command(self, obs):
+        x, y, xb, yb, yaw = obs
+        to_block = np.subtract((xb, yb), (x, y))
+        u = rotate_wrt_origin(to_block / np.linalg.norm(to_block) * self.push_magnitude,
+                              np.random.randn() * self.random_angular_std + self.fixed_angular_bias)
+        return u
 
 
 class InteractivePush(simulation.PyBulletSim):
@@ -157,7 +179,7 @@ class InteractivePush(simulation.PyBulletSim):
         for simTime in range(self.num_frames):
             # d = pushDir * self.push_step
             d = self.ctrl.command((x, y) + self._observe_block())
-            x, y, z = np.add([x, y, z], d)
+            x, y = np.add([x, y], d)
 
             # set end effector pose
             eePos = [x, y, z]
@@ -236,10 +258,12 @@ class InteractivePush(simulation.PyBulletSim):
                                           p.getQuaternionFromEuler([0, 0, self.initBlockYaw]))
 
 
-def get_level_0_data(trials=5, trial_length=10):
-    # TODO use random controller (with systematically varying push direction)
-    ctrl = ArtificialController(0.03)
-    sim = InteractivePush(ctrl, num_frames=trial_length, mode=p.GUI, plot=True, save=False, config=cfg)
+def collect_touching_freespace_data(trials=20, trial_length=40):
+    # use random controller (with varying push direction)
+    ctrl = RandomController(0.03, .3, 1)
+    # use mode p.GUI to see what the trials look like
+    sim = InteractivePush(ctrl, num_frames=trial_length, mode=p.DIRECT, plot=True, save=True, config=cfg,
+                          save_dir='pushing/touching_freespace')
     for _ in range(trials):
         seed = rand.seed()
         init_block_pos = (np.random.random((2,)) - 0.5)
@@ -258,8 +282,7 @@ def get_level_0_data(trials=5, trial_length=10):
         else:
             dxy = (non_fixed_val, -w)
         # rotate by yaw to match (around origin since these are differences)
-        dxy = (dxy[0] * math.cos(init_block_yaw) + dxy[1] * math.sin(init_block_yaw),
-               -dxy[0] * math.sin(init_block_yaw) + dxy[1] * math.cos(init_block_yaw))
+        dxy = rotate_wrt_origin(dxy, init_block_yaw)
         init_pusher = np.add(init_block_pos, dxy)
         sim.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
         sim.run(seed)
@@ -267,4 +290,4 @@ def get_level_0_data(trials=5, trial_length=10):
 
 
 if __name__ == "__main__":
-    get_level_0_data(trial_length=50)
+    collect_touching_freespace_data(trial_length=50)
