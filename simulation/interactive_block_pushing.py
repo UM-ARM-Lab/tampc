@@ -47,7 +47,7 @@ class ArtificialController(Controller):
 
 
 class InteractivePush(simulation.PyBulletSim):
-    def __init__(self, controller, num_frames=1000, save_dir='pushing', observation_period=10,
+    def __init__(self, controller, num_frames=1000, save_dir='pushing', observation_period=1,
                  goal=(-0.6, 1.1), init_pusher=(0.3, 0.2), init_block=(0.1, 0.1), init_yaw=0.,
                  **kwargs):
 
@@ -123,6 +123,7 @@ class InteractivePush(simulation.PyBulletSim):
     def _init_data(self):
         # pre-define the trajectory/force vectors
         self.traj = np.zeros((self.num_frames, 5))
+        self.time = np.arange(0, self.num_frames * self.sim_step_s, self.sim_step_s)
         self.contactForce = np.zeros((self.num_frames,))
         self.contactCount = np.zeros_like(self.contactForce)
 
@@ -224,7 +225,7 @@ class InteractivePush(simulation.PyBulletSim):
         for i in range(self.traj.shape[1]):
             self.axes[i].plot(self.traj[:, i])
         self.axes[self.traj.shape[1]].plot(self.contactForce)
-        self.axes[self.traj.shape[1] + 1].plot(self.contactCount)
+        self.axes[self.traj.shape[1] + 1].step(self._compress_observation(self.time), self.contactCount)
         self.fig.canvas.draw()
         time.sleep(0.01)
 
@@ -243,7 +244,7 @@ def get_level_0_data(trials=5, trial_length=10):
         seed = rand.seed()
         init_block_pos = (np.random.random((2,)) - 0.5)
         init_block_yaw = (np.random.random() - 0.5) * 2 * math.pi
-        # TODO randomly initialize pusher adjacent to block
+        # randomly initialize pusher adjacent to block
         # choose which face we will be next to
         w = 0.087
         non_fixed_val = (np.random.random() - 0.5) * 2 * w  # each face has 1 fixed value and 1 free value
