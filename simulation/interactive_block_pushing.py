@@ -48,7 +48,7 @@ class ArtificialController(Controller):
 class InteractivePush(simulation.PyBulletSim):
     def __init__(self, controller, num_frames=1000, save_dir='pushing', observation_period=10,
                  push_angle=0.1, random_push_angle=0.05,
-                 goal=(-0.6, 1.1), init_pusher=(0.3, 0.2), init_block=(0.1, 0.1),
+                 goal=(-0.6, 1.1), init_pusher=(0.3, 0.2), init_block=(0.1, 0.1), init_yaw=0.,
                  **kwargs):
 
         super(InteractivePush, self).__init__(save_dir=save_dir, num_frames=num_frames, **kwargs)
@@ -63,6 +63,7 @@ class InteractivePush(simulation.PyBulletSim):
         self.goal = goal + (0.1,)
         self.initPusherPos = init_pusher + (0.05,)
         self.initBlockPos = init_block + (0.0,)
+        self.initBlockYaw = init_yaw
 
         # plotting
         self.fig = None
@@ -96,7 +97,6 @@ class InteractivePush(simulation.PyBulletSim):
 
         # set joint damping
         # set robot init config
-        self.orn = p.getQuaternionFromEuler([0, -math.pi, 0])
         self.pusherConstraint = p.createConstraint(self.pusherId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
                                                    [0, 0, 0])
 
@@ -212,11 +212,12 @@ class InteractivePush(simulation.PyBulletSim):
     def _reset_sim(self):
         # reset robot to nominal pose
         p.resetBasePositionAndOrientation(self.pusherId, self.initPusherPos, [0, 0, 0, 1])
+        p.resetBasePositionAndOrientation(self.blockId, self.initBlockPos,
+                                          p.getQuaternionFromEuler([0, 0, self.initBlockYaw]))
 
 
 if __name__ == "__main__":
     ctrl = ArtificialController(0.05)
     # TODO randomly initialize block and pusher position
-    sim = InteractivePush(ctrl, mode=p.GUI, plot=True, save=True, config=cfg)
+    sim = InteractivePush(ctrl, mode=p.GUI, plot=True, save=False, config=cfg)
     sim.run()
-
