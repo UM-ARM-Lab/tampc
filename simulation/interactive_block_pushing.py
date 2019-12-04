@@ -7,7 +7,7 @@ from meta_contact import cfg
 from arm_pytorch_utilities import rand, load_data
 
 from meta_contact.controller.controller import RandomController
-from meta_contact.experiment.interactive_block_pushing import InteractivePush
+from meta_contact.experiment import interactive_block_pushing
 from meta_contact.util import rotate_wrt_origin
 
 logger = logging.getLogger(__name__)
@@ -21,8 +21,9 @@ def collect_touching_freespace_data(trials=20, trial_length=40):
     ctrl = RandomController(0.03, .3, 1)
     # use mode p.GUI to see what the trials look like
     save_dir = 'pushing/touching_freespace'
-    sim = InteractivePush(ctrl, num_frames=trial_length, mode=p.DIRECT, plot=True, save=True, config=cfg,
-                          save_dir=save_dir)
+    sim = interactive_block_pushing.InteractivePush(ctrl, num_frames=trial_length, mode=p.DIRECT, plot=True, save=True,
+                                                    config=cfg,
+                                                    save_dir=save_dir)
     for _ in range(trials):
         seed = rand.seed()
         init_block_pos = (np.random.random((2,)) - 0.5)
@@ -51,3 +52,7 @@ def collect_touching_freespace_data(trials=20, trial_length=40):
 
 if __name__ == "__main__":
     collect_touching_freespace_data(trial_length=50)
+    ds = interactive_block_pushing.RawPushDataset(make_affine=False)
+    import matplotlib.pyplot as plt
+    plt.plot(ds.Y[:, 2])
+    print('something')
