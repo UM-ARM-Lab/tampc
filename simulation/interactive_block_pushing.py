@@ -2,6 +2,7 @@ import pybullet as p
 import math
 import numpy as np
 import logging
+import matplotlib.pyplot as plt
 
 from meta_contact import cfg
 from arm_pytorch_utilities import rand, load_data
@@ -53,7 +54,8 @@ def collect_touching_freespace_data(trials=20, trial_length=40):
         sim.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
         sim.run(seed)
     load_data.merge_data_in_dir(cfg, save_dir, save_dir)
-    input('enter to finish')
+    plt.ioff()
+    plt.show()
 
 
 def collect_notouch_freespace_data(trials=100, trial_length=10):
@@ -70,7 +72,8 @@ def collect_notouch_freespace_data(trials=100, trial_length=10):
         sim.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
         sim.run(seed)
     load_data.merge_data_in_dir(cfg, save_dir, save_dir)
-    input('enter to finish')
+    plt.ioff()
+    plt.show()
 
 
 def test_global_linear_dynamics():
@@ -81,10 +84,25 @@ def test_global_linear_dynamics():
     init_block_pos, init_block_yaw, init_pusher = random_touching_start()
     sim.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
     sim.run(seed)
-    input('enter to finish')
+    plt.ioff()
+    plt.show()
+
+
+def test_global_prior_dynamics():
+    ctrl = baseline_prior.GlobalNetworkCrossEntropyController(
+        '/home/zhsh/catkin_ws/src/meta_contact/checkpoints/first.13300.tar')
+    sim = interactive_block_pushing.InteractivePush(ctrl, num_frames=100, mode=p.GUI, plot=True, save=False)
+
+    seed = rand.seed(3)
+    init_block_pos, init_block_yaw, init_pusher = random_touching_start()
+    sim.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
+    sim.run(seed)
+    plt.ioff()
+    plt.show()
 
 
 if __name__ == "__main__":
     # collect_touching_freespace_data(trial_length=50)
     # collect_notouch_freespace_data()
-    test_global_linear_dynamics()
+    # test_global_linear_dynamics()
+    test_global_prior_dynamics()

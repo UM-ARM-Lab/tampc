@@ -11,8 +11,6 @@ data/
 constraint.py
 *~
 temp.*
-results
-tests/runs
-tests/old_runs
-tests/**runs**
-tests/checkpoints
+runs
+checkpoints
+*.mat
