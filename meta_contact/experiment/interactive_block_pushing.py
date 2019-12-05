@@ -12,16 +12,32 @@ from meta_contact import cfg, util
 
 class PushLoader(load_data.DataLoader):
     def _process_file_raw_data(self, d):
-        xu = d['X']
+        x = d['X']
+        u = d['U']
+        xu = np.column_stack((x, u))
         y = d['Y']
         cc = d['contact']
         return xu, y, cc
 
 
 class RawPushDataset(torch.utils.data.Dataset):
-    def __init__(self, dir='pushing', mode='all', max_num=None, make_affine=True):
-        dl = PushLoader(dir, config=cfg)
-        self.XU, self.Y, self.contact = dl.load()
+    def __init__(self, dirs=('pushing',), mode='all', max_num=None, make_affine=False):
+        if type(dirs) is str:
+            dirs = [dirs]
+        self.XU = None
+        self.Y = None
+        self.contact = None
+        for dir in dirs:
+            dl = PushLoader(dir, config=cfg)
+            XU, Y, contact = dl.load()
+            if self.XU is None:
+                self.XU = XU
+                self.Y = Y
+                self.contact = contact
+            else:
+                self.XU = np.row_stack((self.XU, XU))
+                self.Y = np.row_stack((self.Y, Y))
+                self.contact = np.row_stack((self.contact, contact))
         self.XU = torch.from_numpy(self.XU).double()
         self.Y = torch.from_numpy(self.Y).double()
         self.contact = torch.from_numpy(self.contact).byte()
@@ -162,6 +178,7 @@ class InteractivePush(simulation.PyBulletSim):
         for simTime in range(self.num_frames):
             # d = pushDir * self.push_step
             d = self.ctrl.command((x, y) + self._observe_block())
+            d = np.array(d).flatten()
             self.u[simTime, :] = d
             x, y = np.add([x, y], d)
 
@@ -207,18 +224,18 @@ class InteractivePush(simulation.PyBulletSim):
 
     def _export_data_dict(self):
         # output (1 step prediction; only need block state)
-        XU = self.traj
+        X = self.traj
         state_col_offset = 2
-        Y = XU[1:, state_col_offset:]
+        Y = X[1:, state_col_offset:]
         # need to throw out the last state to have 1-to-1 with output
-        XU = XU[:-1]
+        X = X[:-1]
         # just output state difference to handle yaw more linearly
-        Y[:, :-1] = Y[:, :-1] - XU[:, state_col_offset:state_col_offset + 2]
-        Y[:, -1] = util.angular_diff_batch(Y[:, -1], XU[:, state_col_offset + 2])
+        Y[:, :-1] = Y[:, :-1] - X[:, state_col_offset:state_col_offset + 2]
+        Y[:, -1] = util.angular_diff_batch(Y[:, -1], X[:, state_col_offset + 2])
 
         contact_flag = self.contactCount > 0
         contact_flag = contact_flag.reshape(len(contact_flag), 1)
-        return {'X': XU, 'U': self.u[:-1], 'Y': Y, 'contact': contact_flag[:-1]}
+        return {'X': X, 'U': self.u[:-1], 'Y': Y, 'contact': contact_flag[:-1]}
 
     def start_plot_runs(self):
         axis_name = ['x robot (m)', 'y robot (m)', 'x block (m)', 'y block (m)', 'block rotation (rads)',
