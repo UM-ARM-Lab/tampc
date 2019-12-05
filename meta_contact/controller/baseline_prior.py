@@ -3,6 +3,8 @@ import scipy.linalg
 from meta_contact.controller.controller import Controller
 from meta_contact.experiment import interactive_block_pushing as exp
 from meta_contact import prior
+from learn_hybrid_mpc import mpc, evaluation
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -72,9 +74,9 @@ class GlobalLQRController(Controller):
 
 
 class GlobalNetworkCrossEntropyController(Controller):
-    def __init__(self, checkpoint=None):
+    def __init__(self, R=1, checkpoint=None):
         super().__init__()
-        ds = exp.PushDataset()
+        ds = exp.PushDataset(data_dir='pushing/touching_freespace.mat')
         self.prior = prior.Prior('first', ds, 1e-3, 1e-5)
         # learn prior model on data
         # load data if we already have some, otherwise train from scratch
@@ -83,7 +85,24 @@ class GlobalNetworkCrossEntropyController(Controller):
         else:
             self.prior.learn_model(100)
 
+        # freeze network
+        for param in self.prior.model.parameters():
+            param.requires_grad = False
+
+        nu = 2
+        self.Q = np.diag([0, 0, 1, 1, 0])
+        self.R = np.diag([R for _ in range(nu)])
+        self.cost = evaluation.QREvaluation(self.Q, self.R, self.Q, self.get_goal)
+        self.ce = mpc.CrossEntropy(self.prior, self.cost, 10, 175, nu, 7, 3, 0.03)
+
+    def get_goal(self):
+        return self.goal
+
+    def set_goal(self, goal):
+        # assume goal is xb yb
+        self.goal = np.array([0, 0, goal[0], goal[1], 0])
+
     def command(self, obs):
-        # TODO use learn_mpc's Cross Entropy class here
-        u = (np.random.random((2,)) - 0.5)
+        # use learn_mpc's Cross Entropy
+        u = self.ce.action(np.array(obs))
         return u
