@@ -1,7 +1,11 @@
 import numpy as np
 import scipy.linalg
 from meta_contact.controller.controller import Controller
-from meta_contact.experiment.interactive_block_pushing import RawPushDataset
+from meta_contact.experiment import interactive_block_pushing as exp
+from meta_contact import prior
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def dlqr(A, B, Q, R):
@@ -29,7 +33,7 @@ class GlobalLQRController(Controller):
     def __init__(self, R=1):
         super().__init__()
         # load data and create LQR controller
-        ds = RawPushDataset()
+        ds = exp.RawPushDataset()
         n = ds.XU.shape[1]
         self.nu = 2
         self.nx = n - self.nu
@@ -38,13 +42,13 @@ class GlobalLQRController(Controller):
         # convert dyanmics to x' = Ax + Bu (note that our y is dx, so have to add diag(1))
         self.A = np.diag([1., 1., 1., 1., 1.])
         self.B = np.zeros((self.nx, self.nu))
-        self.A[2:, :] += params[:self.nx, :].T
+        # self.A[2:, :] += params[:self.nx, :].T
         self.B[0, 0] = 1
         self.B[1, 1] = 1
-        self.B[2:, :] += params[self.nx:, :].T
+        # self.B[2:, :] += params[self.nx:, :].T
         # TODO increase Q for yaw later (and when that becomes part of goal)
         # self.Q = np.diag([0, 0, 0.1, 0.1, 0])
-        self.Q = np.diag([1, 1, 0.1, 0.1, 0.1])
+        self.Q = np.diag([1, 1, 0, 0, 0])
         self.R = np.diag([R for _ in range(self.nu)])
 
         # confirm in MATLAB
@@ -64,4 +68,22 @@ class GlobalLQRController(Controller):
         # x[2:4] -= self.goal
         u = -self.K @ x.reshape((self.nx, 1))
         print(x)
+        return u
+
+
+class GlobalNetworkCrossEntropyController(Controller):
+    def __init__(self, checkpoint=None):
+        super().__init__()
+        ds = exp.PushDataset()
+        self.prior = prior.Prior('first', ds, 1e-3, 1e-5)
+        # learn prior model on data
+        # load data if we already have some, otherwise train from scratch
+        if checkpoint and self.prior.load(checkpoint):
+            logger.info("loaded checkpoint %s", checkpoint)
+        else:
+            self.prior.learn_model(500)
+
+    def command(self, obs):
+        # TODO use learn_mpc's Cross Entropy class here
+        u = (np.random.random((2,)) - 0.5)
         return u
