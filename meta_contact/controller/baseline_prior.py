@@ -81,7 +81,7 @@ class GlobalNetworkCrossEntropyController(Controller):
         if checkpoint and self.prior.load(checkpoint):
             logger.info("loaded checkpoint %s", checkpoint)
         else:
-            self.prior.learn_model(500)
+            self.prior.learn_model(100)
 
     def command(self, obs):
         # TODO use learn_mpc's Cross Entropy class here
