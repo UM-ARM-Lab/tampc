@@ -88,7 +88,10 @@ class Prior:
         self.optimizer.load_state_dict(checkpoint['optimizer'])
         return True
 
-    def next_state(self, x, u):
+    def __call__(self, x, u):
         xu = torch.tensor(np.concatenate((x, u)))
-        dx = self.model(xu)
-        return (x + dx).detach().numpy()
+        dxb = self.model(xu)
+        # directly move the pusher
+        x[:2] += u
+        x[2:] += dxb.numpy()
+        return x
