@@ -48,3 +48,15 @@ class RandomController(Controller):
         u = rotate_wrt_origin(to_block / np.linalg.norm(to_block) * self.push_magnitude,
                               np.random.randn() * self.random_angular_std + self.fixed_angular_bias)
         return u
+
+
+class FullRandomController(Controller):
+    """Randomly push in any direction"""
+
+    def __init__(self, push_magnitude_max):
+        super().__init__()
+        self.push_magnitude_max = push_magnitude_max
+
+    def command(self, obs):
+        u = (np.random.random((2,)) - 0.5) * self.push_magnitude_max
+        return u
