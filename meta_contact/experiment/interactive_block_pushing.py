@@ -115,7 +115,7 @@ class InteractivePush(simulation.PyBulletSim):
                  goal=(-0.6, 1.1), init_pusher=(0.3, 0.2), init_block=(0.1, 0.1), init_yaw=0.,
                  **kwargs):
 
-        super(InteractivePush, self).__init__(save_dir=save_dir, num_frames=num_frames, **kwargs)
+        super(InteractivePush, self).__init__(save_dir=save_dir, num_frames=num_frames, config=cfg, **kwargs)
         self.observation_period = observation_period
         self.initRestFrames = 20
 
