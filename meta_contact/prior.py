@@ -4,6 +4,7 @@ import logging
 from tensorboardX import SummaryWriter
 from arm_pytorch_utilities import load_data
 from hybrid_sysid.model import feature
+from hybrid_system_with_mixtures.mdn.model import MixtureDensityNetwork
 import numpy as np
 from meta_contact import cfg
 
@@ -11,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class Prior:
-    def __init__(self, name, dataset, lr, regularization):
+    def __init__(self, model, name, dataset, lr, regularization):
         self.dataset = dataset
         self.optimizer = None
         self.step = 0
@@ -20,17 +21,23 @@ class Prior:
         self.dataset.make_data()
         self.XU, self.Y, self.labels = self.dataset.training_set()
         self.XUv, self.Yv, self.labelsv = self.dataset.validation_set()
-        self.model = feature.SequentialFC(input_dim=self.dataset.p, feature_dim=3, hidden_units=10,
-                                          hidden_layers=3).double()
+        self.model = model
 
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=regularization)
 
         self.writer = SummaryWriter(flush_secs=20, comment=os.path.basename(name))
 
+    # def _compute_loss(self, XU, Y):
+    #     Yhat = self.model(XU)
+    #     E = (Y - Yhat).norm(2, dim=1) ** 2
+    #     return E
+
     def _compute_loss(self, XU, Y):
-        Yhat = self.model(XU)
-        E = (Y - Yhat).norm(2, dim=1) ** 2
-        return E
+        pi, normal = self.model(XU)
+        # compute losses
+        # negative log likelihood
+        nll = MixtureDensityNetwork.loss(pi, normal, Y)
+        return nll
 
     def _accumulate_stats(self, loss, vloss):
         self.writer.add_scalar('accuracy_loss/training', loss, self.step)
@@ -65,6 +72,8 @@ class Prior:
                 self.optimizer.step()
 
                 logger.info("Epoch %d acc loss %f", epoch, accuracy_loss.mean().item())
+        # save after training
+        self.save()
 
     def save(self):
         state = {
@@ -90,8 +99,23 @@ class Prior:
 
     def __call__(self, x, u):
         xu = torch.tensor(np.concatenate((x, u)))
-        dxb = self.model(xu)
+
+        if self.dataset.preprocessor:
+            xu = self.dataset.preprocessor.transform_single(xu.reshape(1, -1))
+
+        # TODO figure out why this requires > 1 rows
+        xu = torch.cat((xu.reshape(1, -1), xu.reshape(1, -1)), 0)
+        pi, normal = self.model(xu)
+        dxb = MixtureDensityNetwork.sample(pi, normal)
+        dxb = dxb[0]
+
+        if self.dataset.preprocessor:
+            dxb = self.dataset.preprocessor.invert_transform(dxb.reshape(1, -1)).reshape(-1)
+
+        if torch.is_tensor(dxb):
+            dxb = dxb.numpy()
+        # dxb = self.model(xu)
         # directly move the pusher
         x[:2] += u
-        x[2:] += dxb.numpy()
+        x[2:] += dxb
         return x

@@ -1,5 +1,4 @@
 import numpy as np
-import scipy.linalg
 from meta_contact.controller.controller import Controller
 from meta_contact.experiment import interactive_block_pushing as exp
 from meta_contact import prior
@@ -7,28 +6,9 @@ from learn_hybrid_mpc import mpc, evaluation
 
 import logging
 
+from meta_contact.util import dlqr
+
 logger = logging.getLogger(__name__)
-
-
-def dlqr(A, B, Q, R):
-    """Solve the discrete time lqr controller.
-
-    x[k+1] = A x[k] + B u[k]
-
-    cost = sum x[k].T*Q*x[k] + u[k].T*R*u[k]
-    """
-
-    # ref Bertsekas, p.151
-
-    # first, try to solve the ricatti equation
-    X = np.matrix(scipy.linalg.solve_discrete_are(A, B, Q, R))
-
-    # compute the LQR gain
-    K = np.matrix(scipy.linalg.inv(B.T * X * B + R) * (B.T * X * A))
-
-    eigVals, eigVecs = scipy.linalg.eig(A - B * K)
-
-    return K, X, eigVals
 
 
 class GlobalLQRController(Controller):
@@ -74,10 +54,10 @@ class GlobalLQRController(Controller):
 
 
 class GlobalNetworkCrossEntropyController(Controller):
-    def __init__(self, R=1, checkpoint=None):
+    def __init__(self, model, name='', R=1, checkpoint=None, **kwargs):
         super().__init__()
-        ds = exp.PushDataset(data_dir='pushing/touching_freespace.mat')
-        self.prior = prior.Prior('first', ds, 1e-3, 1e-5)
+        ds = exp.PushDataset(data_dir='pushing', **kwargs)
+        self.prior = prior.Prior(model, name, ds, 1e-3, 1e-5)
         # learn prior model on data
         # load data if we already have some, otherwise train from scratch
         if checkpoint and self.prior.load(checkpoint):
@@ -105,4 +85,5 @@ class GlobalNetworkCrossEntropyController(Controller):
     def command(self, obs):
         # use learn_mpc's Cross Entropy
         u = self.ce.action(np.array(obs))
+        u = u / np.linalg.norm(u) * 0.04
         return u
