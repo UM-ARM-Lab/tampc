@@ -1,4 +1,4 @@
-from hybrid_sysid.experiment import kuka_push, preprocess, example
+from hybrid_sysid.experiment import kuka_push, preprocess
 import sklearn.preprocessing as skpre
 import numpy as np
 from hybrid_system_with_mixtures.mdn.model import MixtureDensityNetwork
@@ -9,6 +9,8 @@ from meta_contact.experiment import interactive_block_pushing as exp
 from meta_contact import prior
 
 import logging
+
+from meta_contact.model import make_mdn_model
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO,
@@ -90,22 +92,6 @@ def make_hand_tsf(xu_fit):
         return feat
 
     return processed_tsf
-
-
-def make_mdn_model(input_dim=7, output_dim=3, num_components=4, H_units=32):
-    layers = []
-    for i in range(3):
-        in_dim = input_dim if i == 0 else H_units
-        out_dim = H_units
-        layers.append(torch.nn.Linear(in_dim, out_dim, bias=True))
-        layers.append(torch.nn.LeakyReLU())
-
-    layers.append(MixtureDensityNetwork(H_units, output_dim, num_components))
-
-    mdn = torch.nn.Sequential(
-        *layers
-    ).double()
-    return mdn
 
 
 if __name__ == "__main__":
