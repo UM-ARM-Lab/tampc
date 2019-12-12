@@ -45,7 +45,7 @@ class RandomController(Controller):
     def command(self, obs):
         x, y, xb, yb, yaw = obs
         to_block = np.subtract((xb, yb), (x, y))
-        u = rotate_wrt_origin(to_block / np.linalg.norm(to_block) * self.push_magnitude,
+        u = rotate_wrt_origin(to_block / np.linalg.norm(to_block) * np.random.rand() * self.push_magnitude,
                               np.random.randn() * self.random_angular_std + self.fixed_angular_bias)
         return u
 
