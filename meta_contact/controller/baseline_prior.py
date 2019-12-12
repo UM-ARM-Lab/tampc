@@ -73,7 +73,9 @@ class GlobalNetworkCrossEntropyController(Controller):
         self.Q = np.diag([0, 0, 1, 1, 0])
         self.R = np.diag([R for _ in range(nu)])
         self.cost = evaluation.QREvaluation(self.Q, self.R, self.Q, self.get_goal)
-        self.ce = mpc.CrossEntropy(self.prior, self.cost, 10, 175, nu, 7, 3, 0.03)
+        max_push_mag = 0.03
+        self.ce = mpc.CrossEntropy(self.prior, self.cost, 10, 175, nu, 7, 3, init_cov_diag=max_push_mag,
+                                   ctrl_max_mag=max_push_mag)
 
     def get_goal(self):
         return self.goal
