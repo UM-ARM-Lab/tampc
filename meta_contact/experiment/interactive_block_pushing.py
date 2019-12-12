@@ -10,6 +10,9 @@ from meta_contact import cfg, util
 from arm_pytorch_utilities.make_data import datasets
 from arm_pytorch_utilities import load_data as load_utils, string
 from hybrid_sysid import simulation, load_data
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class PushLoader(load_data.DataLoader):
@@ -197,7 +200,7 @@ class InteractivePush(simulation.PyBulletSim):
         return simulation.ReturnMeaning.SUCCESS
 
     def _move_pusher(self, endEffectorPos):
-        p.changeConstraint(self.pusherConstraint, endEffectorPos)
+        p.changeConstraint(self.pusherConstraint, endEffectorPos, maxForce=100)
 
     def _observe_block(self):
         blockPose = p.getBasePositionAndOrientation(self.blockId)
@@ -209,6 +212,24 @@ class InteractivePush(simulation.PyBulletSim):
     def _observe_pusher(self):
         pusherPose = p.getBasePositionAndOrientation(self.pusherId)
         return pusherPose[0]
+
+    STATIC_VELOCITY_THRESHOLD = 1e-3
+    REACH_COMMAND_THRESHOLD = 1e-5
+
+    def _static_environment(self):
+        v, va = p.getBaseVelocity(self.blockId)
+        if (np.linalg.norm(v) > self.STATIC_VELOCITY_THRESHOLD) or (
+                np.linalg.norm(va) > self.STATIC_VELOCITY_THRESHOLD):
+            return False
+        v, va = p.getBaseVelocity(self.pusherId)
+        if (np.linalg.norm(v) > self.STATIC_VELOCITY_THRESHOLD) or (
+                np.linalg.norm(va) > self.STATIC_VELOCITY_THRESHOLD):
+            return False
+        return True
+
+    def _reached_command(self, eePos):
+        pos = self._observe_pusher()
+        return (np.linalg.norm(np.subtract(pos, eePos)[:2])) < self.REACH_COMMAND_THRESHOLD
 
     def _run_experiment(self):
 
@@ -224,13 +245,21 @@ class InteractivePush(simulation.PyBulletSim):
             d = self.ctrl.command((x, y) + self._observe_block())
             d = np.array(d).flatten()
             self.u[simTime, :] = d
+
             x, y = np.add([x, y], d)
 
             # set end effector pose
             eePos = [x, y, z]
             self._move_pusher(eePos)
+            p.addUserDebugLine(eePos, np.add(eePos, [0, 0, 0.01]), [1, 1, 0], 4)
+            while not self._reached_command(eePos):
+                p.stepSimulation()
 
-            p.stepSimulation()
+            # wait until simulation becomes static
+            rest = 1
+            while not self._static_environment() and rest < self.initRestFrames:
+                p.stepSimulation()
+                rest += 1
 
             # get pusher info
             x, y, z = self._observe_pusher()
