@@ -100,17 +100,19 @@ if __name__ == "__main__":
 
     # ds = exp.PushDataset(data_dir='pushing', preprocessor=preprocessor)
     # compare on trajectory
-    ds = exp.PushDataset(data_dir='pushing/4.mat', preprocessor=preprocessor, validation_ratio=0.02)
+    ds = exp.PushDataset(data_dir='pushing', preprocessor=preprocessor, validation_ratio=0.2)
 
-    model = make_mdn_model()
-    name = 'mdn_compare_traj'
+    model = make_mdn_model(num_components=3)
+    name = 'mdn_quasistatic'
     prior = prior.Prior(model, name, ds, 1e-3, 1e-5)
     # learn prior model on data
 
     checkpoint = None
     # checkpoint = '/home/zhsh/catkin_ws/src/meta_contact/checkpoints/mdn_compare_standardized_not_affine.3315.tar'
     # checkpoint = '/home/zhsh/catkin_ws/src/meta_contact/checkpoints/mdn_compare_standardized.4845.tar'
-    checkpoint = '/home/zhsh/catkin_ws/src/meta_contact/checkpoints/mdn.5100.tar'
+    # checkpoint = '/home/zhsh/catkin_ws/src/meta_contact/checkpoints/mdn.5100.tar'
+    # checkpoint = '/home/zhsh/catkin_ws/src/meta_contact/checkpoints/mdn_quasistatic.2000.tar'
+    # checkpoint = '/home/zhsh/catkin_ws/src/meta_contact/checkpoints/mdn_quasistatic_vanilla.2000.tar'
     # load data if we already have some, otherwise train from scratch
     if checkpoint and prior.load(checkpoint):
         logger.info("loaded checkpoint %s", checkpoint)
@@ -119,7 +121,7 @@ if __name__ == "__main__":
 
     # TODO use the model for roll outs instead of just 1 step prediction
     start_index = 0
-    N = 2000
+    N = 300
     sample = True
     X = prior.XUv[start_index:N + start_index]
     Y = prior.Yv[start_index:N + start_index]
