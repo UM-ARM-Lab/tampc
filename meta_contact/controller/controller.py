@@ -50,6 +50,21 @@ class RandomController(Controller):
         return u
 
 
+class RandomStraightController(Controller):
+    """Randomly push towards block with some angle offset, moving in a straight line"""
+
+    def __init__(self, push_magnitude, random_angular_std, start_pos, block_pos):
+        super().__init__()
+        self.push_magnitude = push_magnitude
+        x, y = start_pos
+        xb, yb = block_pos
+        to_block = np.subtract((xb, yb), (x, y))
+        self.u = rotate_wrt_origin(to_block / np.linalg.norm(to_block), np.random.randn() * random_angular_std)
+
+    def command(self, obs):
+        return np.multiply(self.u, np.random.rand() * self.push_magnitude)
+
+
 class FullRandomController(Controller):
     """Randomly push in any direction"""
 
