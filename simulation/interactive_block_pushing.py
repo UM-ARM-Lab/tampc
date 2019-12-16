@@ -48,20 +48,24 @@ def random_touching_start(w=0.087):
 def collect_touching_freespace_data(trials=20, trial_length=40):
     # use random controller (with varying push direction)
     push_mag = 0.03
-    ctrl = controller.RandomController(push_mag, .3, 1)
+    ctrl = controller.RandomController(push_mag, .2, 1)
     # use mode p.GUI to see what the trials look like
-    save_dir = 'pushing/touching_freespace'
+    save_dir = 'pushing/straight_pusher'
     sim = interactive_block_pushing.InteractivePush(ctrl, num_frames=trial_length, mode=p.DIRECT, plot=False, save=True,
                                                     save_dir=save_dir)
     for _ in range(trials):
         seed = rand.seed()
         # init_block_pos, init_block_yaw, init_pusher = random_touching_start()
-        init_block_pos = [0,0]
+        init_block_pos = [0, 0]
         init_block_yaw = 0
-        init_pusher = [-0.5, 0]
+        init_pusher = [-0.25, 0]
         sim.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
+        ctrl = controller.RandomStraightController(push_mag, .3, init_pusher, init_block_pos)
+        sim.ctrl = ctrl
         sim.run(seed)
-    load_data.merge_data_in_dir(cfg, save_dir, save_dir)
+
+    if sim.save:
+        load_data.merge_data_in_dir(cfg, save_dir, save_dir)
     plt.ioff()
     plt.show()
 
@@ -75,6 +79,9 @@ def collect_notouch_freespace_data(trials=100, trial_length=10):
     for _ in range(trials):
         seed = rand.seed()
         init_block_pos, init_block_yaw, init_pusher = random_touching_start(0.4)
+        init_block_pos = [0, 0]
+        init_block_yaw = 0
+        init_pusher = [-0.25, 0]
         sim.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
         sim.run(seed)
     load_data.merge_data_in_dir(cfg, save_dir, save_dir)
@@ -95,20 +102,24 @@ def test_global_linear_dynamics():
 
 
 def test_global_prior_dynamics():
-    mdn = make_mdn_model()
+    mdn = make_mdn_model(num_components=3)
 
     preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
-    preprocessor = None
+    # preprocessor = None
     ctrl = baseline_prior.GlobalNetworkCrossEntropyController(mdn, 'mdn_cem', R=1, preprocessor=preprocessor,
-                                                              checkpoint='/home/zhsh/catkin_ws/src/meta_contact/checkpoints/mdn_quasistatic_unnormalized.800.tar')
+                                                              checkpoint='/home/zhsh/catkin_ws/src/meta_contact/checkpoints/combined.2700.tar')
     # ctrl = baseline_prior.GlobalNetworkCrossEntropyController(
     #     feature.SequentialFC(input_dim=2, feature_dim=3, hidden_units=10,
     #                          hidden_layers=3).double(), R=1)
-    sim = interactive_block_pushing.InteractivePush(ctrl, num_frames=100, mode=p.GUI, plot=True, save=True)
+    sim = interactive_block_pushing.InteractivePush(ctrl, num_frames=100, mode=p.GUI, plot=False, save=True)
 
-    seed = rand.seed(4)
-    init_block_pos, init_block_yaw, init_pusher = random_touching_start()
-    sim.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
+    seed = rand.seed(2)
+    # init_block_pos, init_block_yaw, init_pusher = random_touching_start()
+    init_block_pos = [0, 0]
+    init_block_yaw = 0
+    init_pusher = [-0.25, 0]
+    goal_pos = [1.0, 0]
+    sim.set_task_config(goal=goal_pos, init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
     sim.run(seed)
     plt.ioff()
     plt.show()
@@ -132,9 +143,9 @@ def sandbox():
 
 
 if __name__ == "__main__":
-    collect_touching_freespace_data(trials=50, trial_length=100)
+    # collect_touching_freespace_data(trials=100, trial_length=70)
     # collect_notouch_freespace_data()
-    # test_global_prior_dynamics()
+    test_global_prior_dynamics()
     # test_global_linear_dynamics()
     # test_local_dynamics()
     # sandbox()
