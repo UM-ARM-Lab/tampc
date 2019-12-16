@@ -75,3 +75,17 @@ class FullRandomController(Controller):
     def command(self, obs):
         u = (np.random.random((2,)) - 0.5) * self.push_magnitude_max
         return u
+
+
+class PreDeterminedController(Controller):
+    def __init__(self, controls, p):
+        super().__init__()
+        self.p = p
+        self.u = controls
+        self.j = 0
+
+    def command(self, obs):
+        j = self.j
+        u = self.u[j * self.p:(j + 1) * self.p]
+        self.j += 1
+        return u
