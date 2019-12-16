@@ -2,6 +2,7 @@ import os
 import pybullet as p
 import time
 import torch
+import math
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -165,6 +166,9 @@ class InteractivePush(simulation.PyBulletSim):
         # self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [1.5, 0.5, .0],
         #                              p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
 
+        self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0, -0.32, .0],
+                                     p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True))
+
         p.resetDebugVisualizerCamera(cameraDistance=0.5, cameraYaw=0, cameraPitch=-85,
                                      cameraTargetPosition=[0, 0, 1])
         self._draw_goal()
@@ -241,6 +245,7 @@ class InteractivePush(simulation.PyBulletSim):
         x, y, z = self._observe_pusher()
 
         for simTime in range(self.num_frames):
+            x, y, z = self._observe_pusher()
             # d = pushDir * self.push_step
             d = self.ctrl.command((x, y) + self._observe_block())
             d = np.array(d).flatten()
@@ -250,18 +255,8 @@ class InteractivePush(simulation.PyBulletSim):
 
             # set end effector pose
             eePos = [x, y, z]
-            self._move_pusher(eePos)
-            p.addUserDebugLine(eePos, np.add(eePos, [0, 0, 0.01]), [1, 1, 0], 4)
-            while not self._reached_command(eePos):
-                p.stepSimulation()
 
-            # wait until simulation becomes static
-            rest = 1
-            while not self._static_environment() and rest < self.initRestFrames:
-                p.stepSimulation()
-                rest += 1
-
-            # get pusher info
+            # get pusher info (observe before carrying out the action)
             x, y, z = self._observe_pusher()
 
             # get contact information
@@ -277,6 +272,19 @@ class InteractivePush(simulation.PyBulletSim):
 
             xb, yb, yaw = self._observe_block()
             self.traj[simTime, :] = np.array([x, y, xb, yb, yaw])
+
+            # execute the action
+            self._move_pusher(eePos)
+            p.addUserDebugLine(eePos, np.add(eePos, [0, 0, 0.01]), [1, 1, 0], 4)
+            while not self._reached_command(eePos):
+                p.stepSimulation()
+
+            # wait until simulation becomes static
+            rest = 1
+            while not self._static_environment() and rest < self.initRestFrames:
+                p.stepSimulation()
+                rest += 1
+
             i = max(simTime - 1, 0)
             p.addUserDebugLine([self.traj[i, 0], self.traj[i, 1], z], [x, y, z], [1, 0, 0], 2)
             p.addUserDebugLine([self.traj[i, 2], self.traj[i, 3], z], [xb, yb, z], [0, 0, 1], 2)
