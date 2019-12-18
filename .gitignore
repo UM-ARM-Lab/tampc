@@ -7,7 +7,6 @@ data/
 *.png
 *.pyc
 0_VRDemoSettings.txt
-*.urdf
 constraint.py
 *~
 temp.*
