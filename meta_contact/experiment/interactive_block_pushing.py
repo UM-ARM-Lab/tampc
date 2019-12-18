@@ -116,12 +116,13 @@ class PushDataset(datasets.DataSet):
 
 class InteractivePush(simulation.PyBulletSim):
     def __init__(self, controller, num_frames=1000, save_dir='pushing', observation_period=1,
-                 goal=(-0.6, 1.1), init_pusher=(0.3, 0.2), init_block=(0.1, 0.1), init_yaw=0.,
+                 goal=(-0.6, 1.1), init_pusher=(0.3, 0.2), init_block=(0.1, 0.1), init_yaw=0., environment_level=0,
                  **kwargs):
 
         super(InteractivePush, self).__init__(save_dir=save_dir, num_frames=num_frames, config=cfg, **kwargs)
         self.observation_period = observation_period
         self.initRestFrames = 20
+        self.level = environment_level
 
         self.ctrl = controller
 
@@ -153,21 +154,23 @@ class InteractivePush(simulation.PyBulletSim):
         self.pusherId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "pusher.urdf"), self.initPusherPos)
         self.blockId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "block_big.urdf"), self.initBlockPos)
 
-        # TODO make these environment elements dependent on the "level" of the simulation
         self.walls = []
-        # self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-1, 0.5, .0],
-        #                              p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
-        # self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0, -0.5, .0],
-        #                              p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True))
-        # self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.3, 2, .0],
-        #                              p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
-        # self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0, 2, .0],
-        #                              p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True))
-        # self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [1.5, 0.5, .0],
-        #                              p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
-
-        self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0, -0.32, .0],
-                                     p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True))
+        if self.level == 0:
+            pass
+        elif self.level == 1:
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0, -0.32, .0],
+                                         p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True))
+        elif self.level == 2:
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-1, 0.5, .0],
+                                         p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0, -0.5, .0],
+                                         p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True))
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.3, 2, .0],
+                                         p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0, 2, .0],
+                                         p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True))
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [1.5, 0.5, .0],
+                                         p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
 
         p.resetDebugVisualizerCamera(cameraDistance=0.5, cameraYaw=0, cameraPitch=-85,
                                      cameraTargetPosition=[0, 0, 1])
@@ -218,7 +221,7 @@ class InteractivePush(simulation.PyBulletSim):
         return pusherPose[0]
 
     STATIC_VELOCITY_THRESHOLD = 1e-3
-    REACH_COMMAND_THRESHOLD = 1e-5
+    REACH_COMMAND_THRESHOLD = 1e-3
 
     def _static_environment(self):
         v, va = p.getBaseVelocity(self.blockId)
