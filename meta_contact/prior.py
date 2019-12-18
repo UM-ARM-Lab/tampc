@@ -3,8 +3,7 @@ import torch
 import logging
 from tensorboardX import SummaryWriter
 from arm_pytorch_utilities import load_data
-from hybrid_sysid.model import feature
-from hybrid_system_with_mixtures.mdn.model import MixtureDensityNetwork
+from arm_pytorch_utilities.model.mdn import MixtureDensityNetwork
 import numpy as np
 from meta_contact import cfg
 

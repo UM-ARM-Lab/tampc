@@ -1,4 +1,4 @@
-from hybrid_system_with_mixtures.mdn.model import MixtureDensityNetwork
+from arm_pytorch_utilities.model.mdn import MixtureDensityNetwork
 import torch
 
 

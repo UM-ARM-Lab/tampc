@@ -6,10 +6,8 @@ import matplotlib.pyplot as plt
 from hybrid_sysid.experiment import preprocess
 import sklearn.preprocessing as skpre
 
-from hybrid_sysid.model import feature
 from meta_contact import cfg
 from arm_pytorch_utilities import rand, load_data
-from hybrid_system_with_mixtures.mdn.model import MixtureDensityNetwork
 
 from meta_contact.controller import controller
 from meta_contact.controller import baseline_prior, locally_linear
@@ -58,7 +56,7 @@ def collect_touching_freespace_data(trials=20, trial_length=40):
         # init_block_pos, init_block_yaw, init_pusher = random_touching_start()
         init_block_pos = [0, 0]
         init_block_yaw = 0
-        init_pusher = [-0.25, 0]
+        init_pusher = [-0.5, 0]
         sim.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
         # ctrl = controller.RandomStraightController(push_mag, .3, init_pusher, init_block_pos)
         # sim.ctrl = ctrl
