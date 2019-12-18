@@ -47,8 +47,8 @@ if __name__ == "__main__":
     ctrl = controller.PreDeterminedController(actions, 2)
     init_block_pos = [0 + 0.2, 0]
     init_block_yaw = 0
-    init_pusher = [-0.1 + 0.2, 0]
-    sim = exp.InteractivePush(ctrl, num_frames=N, mode=p.GUI, plot=False, save=False)
+    init_pusher = [-0.3 + 0.2, 0]
+    sim = exp.InteractivePush(ctrl, num_frames=N, mode=p.DIRECT, plot=False, save=False)
     sim.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
     sim.run(1)
 

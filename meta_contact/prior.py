@@ -97,19 +97,16 @@ class Prior:
         return True
 
     def __call__(self, x, u):
-        xu = torch.tensor(np.concatenate((x, u)))
+        xu = torch.tensor(np.concatenate((x, u))).reshape(1,-1)
 
         if self.dataset.preprocessor:
-            xu = self.dataset.preprocessor.transform_single(xu.reshape(1, -1))
+            xu = self.dataset.preprocessor.transform_single(xu)
 
-        # TODO figure out why this requires > 1 rows
-        xu = torch.cat((xu.reshape(1, -1), xu.reshape(1, -1)), 0)
         pi, normal = self.model(xu)
         dxb = MixtureDensityNetwork.sample(pi, normal)
-        dxb = dxb[0]
 
         if self.dataset.preprocessor:
-            dxb = self.dataset.preprocessor.invert_transform(dxb.reshape(1, -1)).reshape(-1)
+            dxb = self.dataset.preprocessor.invert_transform(dxb).reshape(-1)
 
         if torch.is_tensor(dxb):
             dxb = dxb.numpy()
