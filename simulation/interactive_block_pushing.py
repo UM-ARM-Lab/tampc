@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.DEBUG,
 
 
 def random_touching_start(w=0.087):
-    # w = 0.087 will be touching, anything greater will not be
+    # w = 0.087 will be touching_wall, anything greater will not be
     init_block_pos = (np.random.random((2,)) - 0.5)
     init_block_yaw = (np.random.random() - 0.5) * 2 * math.pi
     # randomly initialize pusher adjacent to block
@@ -50,7 +50,7 @@ def collect_touching_freespace_data(trials=20, trial_length=40):
     push_mag = 0.03
     ctrl = controller.RandomController(push_mag, .2, 1)
     # use mode p.GUI to see what the trials look like
-    save_dir = 'pushing/straight_pusher'
+    save_dir = 'pushing/touching'
     sim = interactive_block_pushing.InteractivePush(ctrl, num_frames=trial_length, mode=p.DIRECT, plot=False, save=True,
                                                     save_dir=save_dir)
     for _ in range(trials):
@@ -60,8 +60,8 @@ def collect_touching_freespace_data(trials=20, trial_length=40):
         init_block_yaw = 0
         init_pusher = [-0.25, 0]
         sim.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
-        ctrl = controller.RandomStraightController(push_mag, .3, init_pusher, init_block_pos)
-        sim.ctrl = ctrl
+        # ctrl = controller.RandomStraightController(push_mag, .3, init_pusher, init_block_pos)
+        # sim.ctrl = ctrl
         sim.run(seed)
 
     if sim.save:
@@ -143,9 +143,9 @@ def sandbox():
 
 
 if __name__ == "__main__":
-    # collect_touching_freespace_data(trials=100, trial_length=70)
+    collect_touching_freespace_data(trials=100, trial_length=70)
     # collect_notouch_freespace_data()
-    test_global_prior_dynamics()
+    # test_global_prior_dynamics()
     # test_global_linear_dynamics()
     # test_local_dynamics()
     # sandbox()
