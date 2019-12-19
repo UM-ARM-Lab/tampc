@@ -100,7 +100,7 @@ class Prior:
         xu = torch.tensor(np.concatenate((x, u))).reshape(1,-1)
 
         if self.dataset.preprocessor:
-            xu = self.dataset.preprocessor.transform_single(xu)
+            xu = self.dataset.preprocessor.transform_x(xu)
 
         pi, normal = self.model(xu)
         dxb = MixtureDensityNetwork.sample(pi, normal)

@@ -56,7 +56,7 @@ class GlobalLQRController(Controller):
 class GlobalNetworkCrossEntropyController(Controller):
     def __init__(self, model, name='', R=1, checkpoint=None, **kwargs):
         super().__init__()
-        ds = exp.PushDataset(data_dir='pushing', **kwargs)
+        ds = exp.PushDataset(data_dir='pushing/touching.mat', **kwargs)
         self.prior = prior.Prior(model, name, ds, 1e-3, 1e-5)
         # learn prior model on data
         # load data if we already have some, otherwise train from scratch
