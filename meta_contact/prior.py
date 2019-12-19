@@ -3,6 +3,7 @@ import torch
 import logging
 from tensorboardX import SummaryWriter
 from arm_pytorch_utilities import load_data
+from arm_pytorch_utilities.optim import Lookahead
 from arm_pytorch_utilities.model.mdn import MixtureDensityNetwork
 import numpy as np
 from meta_contact import cfg
@@ -11,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class Prior:
-    def __init__(self, model, name, dataset, lr, regularization):
+    def __init__(self, model, name, dataset, lr, regularization, lookahead=True):
         self.dataset = dataset
         self.optimizer = None
         self.step = 0
@@ -23,6 +24,8 @@ class Prior:
         self.model = model
 
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=regularization)
+        if lookahead:
+            self.optimizer = Lookahead(self.optimizer)
 
         self.writer = SummaryWriter(flush_secs=20, comment=os.path.basename(name))
 

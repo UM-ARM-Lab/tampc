@@ -22,10 +22,10 @@ if __name__ == "__main__":
 
     # ds = exp.PushDataset(data_dir='pushing', preprocessor=preprocessor)
     # compare on trajectory
-    ds = exp.PushDataset(data_dir='pushing/touching_low_noise.mat', preprocessor=preprocessor, validation_ratio=0.2)
+    ds = exp.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor, validation_ratio=0.2)
 
     model = make_mdn_model(num_components=3)
-    name = 'mdn_quasistatic'
+    name = 'mdn_quasistatic_lookahead'
     prior = prior.Prior(model, name, ds, 1e-3, 1e-5)
     # learn prior model on data
 
@@ -33,9 +33,8 @@ if __name__ == "__main__":
     # checkpoint = '/home/zhsh/catkin_ws/src/meta_contact/checkpoints/mdn_compare_standardized_not_affine.3315.tar'
     # checkpoint = '/home/zhsh/catkin_ws/src/meta_contact/checkpoints/mdn_compare_standardized.4845.tar'
     # checkpoint = '/home/zhsh/catkin_ws/src/meta_contact/checkpoints/mdn.5100.tar'
+    # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn_quasistatic_vanilla.2800.tar'
     # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn_quasistatic.2800.tar'
-    # checkpoint = '/home/zhsh/catkin_ws/src/meta_contact/checkpoints/mdn_quasistatic_vanilla.2000.tar'
-    checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn_quasistatic.2800.tar'
     # load data if we already have some, otherwise train from scratch
     if checkpoint and prior.load(checkpoint):
         logger.info("loaded checkpoint %s", checkpoint)
