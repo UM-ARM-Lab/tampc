@@ -22,7 +22,7 @@ if __name__ == "__main__":
 
     # ds = exp.PushDataset(data_dir='pushing', preprocessor=preprocessor)
     # compare on trajectory
-    ds = exp.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor, validation_ratio=0.2)
+    ds = exp.PushDataset(data_dir='pushing/touching_low_noise.mat', preprocessor=preprocessor, validation_ratio=0.2)
 
     model = make_mdn_model(num_components=3)
     name = 'mdn_quasistatic'
@@ -33,8 +33,9 @@ if __name__ == "__main__":
     # checkpoint = '/home/zhsh/catkin_ws/src/meta_contact/checkpoints/mdn_compare_standardized_not_affine.3315.tar'
     # checkpoint = '/home/zhsh/catkin_ws/src/meta_contact/checkpoints/mdn_compare_standardized.4845.tar'
     # checkpoint = '/home/zhsh/catkin_ws/src/meta_contact/checkpoints/mdn.5100.tar'
-    checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn_quasistatic.2800.tar'
+    # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn_quasistatic.2800.tar'
     # checkpoint = '/home/zhsh/catkin_ws/src/meta_contact/checkpoints/mdn_quasistatic_vanilla.2000.tar'
+    checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn_quasistatic.2800.tar'
     # load data if we already have some, otherwise train from scratch
     if checkpoint and prior.load(checkpoint):
         logger.info("loaded checkpoint %s", checkpoint)
@@ -49,8 +50,8 @@ if __name__ == "__main__":
     Y = prior.Yv[start_index:N + start_index]
     labels = prior.labelsv[start_index:N + start_index]
 
-    axis_name = ['x robot (m)', 'y robot (m)', 'x block (m)', 'y block (m)', 'block rotation (rads)']
-    plot_mdn_prediction(prior.model, X, Y, labels, axis_name, 'validation', sample=sample)
+    axis_name = ['x robot (m)', 'y robot (m)', 'x block (m)', 'y block (m)', 'block rotation (rads)', 'dx', 'dy']
+    plot_mdn_prediction(prior.model, X, Y, labels, axis_name, 'validation', sample=sample, plot_states=True)
 
     X = prior.XU[start_index:N + start_index]
     Y = prior.Y[start_index:N + start_index]
