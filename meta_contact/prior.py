@@ -45,7 +45,7 @@ class Prior:
         self.writer.add_scalar('accuracy_loss/training', loss, self.step)
         self.writer.add_scalar('accuracy_loss/validation', vloss, self.step)
 
-    def learn_model(self, max_epoch, batch_N=200):
+    def learn_model(self, max_epoch, batch_N=500):
         ds_train = load_data.SimpleDataset(self.XU, self.Y, self.labels)
         train_loader = torch.utils.data.DataLoader(ds_train, batch_size=batch_N, shuffle=True)
         self.step = 0
