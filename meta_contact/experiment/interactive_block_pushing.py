@@ -3,6 +3,7 @@ import pybullet as p
 import time
 import torch
 import math
+import random
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -11,6 +12,8 @@ from meta_contact import cfg, util
 from arm_pytorch_utilities.make_data import datasets
 from arm_pytorch_utilities import load_data as load_utils, string
 from hybrid_sysid import simulation, load_data
+import pybullet_data
+
 import logging
 
 logger = logging.getLogger(__name__)
@@ -114,17 +117,59 @@ class PushDataset(datasets.DataSet):
         return "{}_N_{}".format(self._data_dir, string.f2s(self.N))
 
 
-class InteractivePush(simulation.PyBulletSim):
-    def __init__(self, controller, num_frames=1000, save_dir='pushing', observation_period=1,
-                 goal=(-0.6, 1.1), init_pusher=(0.3, 0.2), init_block=(0.1, 0.1), init_yaw=0., environment_level=0,
-                 **kwargs):
+class Mode:
+    DIRECT = 0
+    GUI = 1
 
-        super(InteractivePush, self).__init__(save_dir=save_dir, num_frames=num_frames, config=cfg, **kwargs)
-        self.observation_period = observation_period
+
+class MyPybulletEnv:
+    def __init__(self, mode=Mode.DIRECT, log_video=False):
+        self.log_video = log_video
+        self.mode = mode
+        self.realtime = False
+        self.sim_step_s = 1. / 240.
+        self._configure_physics_engine()
+        self.randseed = None
+
+    def _configure_physics_engine(self):
+        mode_dict = {Mode.GUI: p.GUI, Mode.DIRECT: p.DIRECT}
+
+        # if the mode we gave is in the dict then use it, otherwise use the given mode value as is
+        mode = mode_dict.get(self.mode) or self.mode
+
+        self.physics_client = p.connect(mode)  # p.GUI for GUI or p.DIRECT for non-graphical version
+
+        if self.log_video:
+            p.startStateLogging(p.STATE_LOGGING_VIDEO_MP4, "{}.mp4".format(self.randseed))
+
+        # use data provided by PyBullet
+        p.setAdditionalSearchPath(pybullet_data.getDataPath())  # optionally
+
+        # TODO not sure if I have to set timestep also for real time simulation; I think not
+        if self.realtime:
+            p.setRealTimeSimulation(True)
+        else:
+            p.setTimeStep(self.sim_step_s)
+
+    def seed(self, randseed=None):
+        random.seed(time.time())
+        if randseed is None:
+            randseed = random.randint(0, 1000000)
+        logger.info('random seed: %d', randseed)
+        self.randseed = randseed
+        random.seed(randseed)
+        # potentially also randomize the starting configuration
+
+    def close(self):
+        p.disconnect(self.physics_client)
+
+
+class PushAgainstWallEnv(MyPybulletEnv):
+    def __init__(self, goal=(1.0, 0.), init_pusher=(-0.25, 0), init_block=(0., 0.), init_yaw=0.,
+                 environment_level=0, **kwargs):
+        super().__init__(**kwargs)
         self.initRestFrames = 20
         self.level = environment_level
-
-        self.ctrl = controller
 
         # initial config
         self.goal = None
@@ -133,9 +178,15 @@ class InteractivePush(simulation.PyBulletSim):
         self.initBlockYaw = None
         self.set_task_config(goal, init_pusher, init_block, init_yaw)
 
-        # plotting
-        self.fig = None
-        self.axes = None
+        # quadratic cost
+        self.Q = np.diag([0, 0, 1, 1, 0])
+        self.R = np.diag([1 for _ in range(2)])
+
+        self._setup_experiment()
+        # start at rest
+        for _ in range(self.initRestFrames):
+            p.stepSimulation()
+        self.state = self._obs()
 
     def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
         """Change task configuration"""
@@ -175,17 +226,13 @@ class InteractivePush(simulation.PyBulletSim):
         p.resetDebugVisualizerCamera(cameraDistance=0.5, cameraYaw=0, cameraPitch=-85,
                                      cameraTargetPosition=[0, 0, 1])
         self._draw_goal()
-        self.ctrl.set_goal(self.goal)
 
         # set gravity
         p.setGravity(0, 0, -10)
 
-        # set joint damping
         # set robot init config
         self.pusherConstraint = p.createConstraint(self.pusherId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
                                                    self.initPusherPos)
-
-        return simulation.ReturnMeaning.SUCCESS
 
     def _draw_goal(self):
         goalVisualWidth = 0.15 / 2
@@ -193,18 +240,6 @@ class InteractivePush(simulation.PyBulletSim):
                            [0, 1, 0], 2)
         p.addUserDebugLine(np.add(self.goal, [-goalVisualWidth, 0, 0]), np.add(self.goal, [goalVisualWidth, 0, 0]),
                            [0, 1, 0], 2)
-
-    def _init_data(self):
-        # pre-define the trajectory/force vectors
-        self.traj = np.zeros((self.num_frames, 5))
-        self.u = np.zeros((self.num_frames, 2))
-        self.time = np.arange(0, self.num_frames * self.sim_step_s, self.sim_step_s)
-        self.contactForce = np.zeros((self.num_frames,))
-        self.contactCount = np.zeros_like(self.contactForce)
-
-        # reset sim time
-        self.t = 0
-        return simulation.ReturnMeaning.SUCCESS
 
     def _move_pusher(self, endEffectorPos):
         p.changeConstraint(self.pusherConstraint, endEffectorPos, maxForce=100)
@@ -238,59 +273,102 @@ class InteractivePush(simulation.PyBulletSim):
         pos = self._observe_pusher()
         return (np.linalg.norm(np.subtract(pos, eePos)[:2])) < self.REACH_COMMAND_THRESHOLD
 
-    def _run_experiment(self):
+    def _obs(self):
+        x, y, z = self._observe_pusher()
+        return np.array((x, y) + self._observe_block())
 
-        self._reset_sim()
+    def step(self, action):
+        old_state = self._obs()
+        d = action
+        # set end effector pose
+        z = self.initPusherPos[2]
+        eePos = [old_state[0] + d[0], old_state[1] + d[1], z]
 
-        for _ in range(self.initRestFrames):
+        # get the net contact force between robot and block
+        info = {'contact_force': 0, 'contact_count': 0}
+        contactInfo = p.getContactPoints(self.pusherId, self.blockId)
+        if len(contactInfo) > 0:
+            f_c_temp = 0
+            for i in range(len(contactInfo)):
+                f_c_temp += contactInfo[i][9]
+            info['contact_force'] = f_c_temp
+            info['contact_count'] = len(contactInfo)
+
+        # execute the action
+        self._move_pusher(eePos)
+        p.addUserDebugLine(eePos, np.add(eePos, [0, 0, 0.01]), [1, 1, 0], 4)
+        while not self._reached_command(eePos):
             p.stepSimulation()
 
-        x, y, z = self._observe_pusher()
+        # wait until simulation becomes static
+        rest = 1
+        while not self._static_environment() and rest < self.initRestFrames:
+            p.stepSimulation()
+            rest += 1
 
+        self.state = self._obs()
+        # track trajectory
+        p.addUserDebugLine([old_state[0], old_state[1], z], [self.state[0], self.state[1], z], [1, 0, 0], 2)
+        p.addUserDebugLine([old_state[2], old_state[3], z], [self.state[2], self.state[3], z], [0, 0, 1], 2)
+
+        cost = old_state.T.dot(self.Q).dot(old_state)
+        done = cost < 0.01
+        cost += action.T.dot(self.R).dot(action)
+
+        return np.copy(self.state), -cost, done, info
+
+    def reset(self):
+        # reset robot to nominal pose
+        p.resetBasePositionAndOrientation(self.pusherId, self.initPusherPos, [0, 0, 0, 1])
+        p.resetBasePositionAndOrientation(self.blockId, self.initBlockPos,
+                                          p.getQuaternionFromEuler([0, 0, self.initBlockYaw]))
+        self.state = self._obs()
+        return np.copy(self.state)
+
+
+class InteractivePush(simulation.Simulation):
+    def __init__(self, env: PushAgainstWallEnv, controller, num_frames=1000, save_dir='pushing', observation_period=1,
+                 **kwargs):
+
+        super(InteractivePush, self).__init__(save_dir=save_dir, num_frames=num_frames, config=cfg, **kwargs)
+        self.mode = env.mode
+        self.observation_period = observation_period
+
+        self.env = env
+        self.ctrl = controller
+
+        # plotting
+        self.fig = None
+        self.axes = None
+
+    def _configure_physics_engine(self):
+        return simulation.ReturnMeaning.SUCCESS
+
+    def _setup_experiment(self):
+        self.ctrl.set_goal(self.env.goal)
+        return simulation.ReturnMeaning.SUCCESS
+
+    def _init_data(self):
+        # pre-define the trajectory/force vectors
+        self.traj = np.zeros((self.num_frames, 5))
+        self.u = np.zeros((self.num_frames, 2))
+        self.time = np.arange(0, self.num_frames * self.sim_step_s, self.sim_step_s)
+        self.contactForce = np.zeros((self.num_frames,))
+        self.contactCount = np.zeros_like(self.contactForce)
+        return simulation.ReturnMeaning.SUCCESS
+
+    def _run_experiment(self):
+
+        obs = self._reset_sim()
         for simTime in range(self.num_frames):
-            x, y, z = self._observe_pusher()
-            # d = pushDir * self.push_step
-            d = self.ctrl.command((x, y) + self._observe_block())
-            d = np.array(d).flatten()
-            self.u[simTime, :] = d
+            action = self.ctrl.command(obs)
+            action = np.array(action).flatten()
+            obs, rew, done, info = self.env.step(action)
 
-            x, y = np.add([x, y], d)
-
-            # set end effector pose
-            eePos = [x, y, z]
-
-            # get pusher info (observe before carrying out the action)
-            x, y, z = self._observe_pusher()
-
-            # get contact information
-            contactInfo = p.getContactPoints(self.pusherId, self.blockId)
-
-            # get the net contact force between robot and block
-            if len(contactInfo) > 0:
-                f_c_temp = 0
-                for i in range(len(contactInfo)):
-                    f_c_temp += contactInfo[i][9]
-                self.contactForce[simTime] = f_c_temp
-                self.contactCount[simTime] = len(contactInfo)
-
-            xb, yb, yaw = self._observe_block()
-            self.traj[simTime, :] = np.array([x, y, xb, yb, yaw])
-
-            # execute the action
-            self._move_pusher(eePos)
-            p.addUserDebugLine(eePos, np.add(eePos, [0, 0, 0.01]), [1, 1, 0], 4)
-            while not self._reached_command(eePos):
-                p.stepSimulation()
-
-            # wait until simulation becomes static
-            rest = 1
-            while not self._static_environment() and rest < self.initRestFrames:
-                p.stepSimulation()
-                rest += 1
-
-            i = max(simTime - 1, 0)
-            p.addUserDebugLine([self.traj[i, 0], self.traj[i, 1], z], [x, y, z], [1, 0, 0], 2)
-            p.addUserDebugLine([self.traj[i, 2], self.traj[i, 3], z], [xb, yb, z], [0, 0, 1], 2)
+            self.u[simTime, :] = action
+            self.traj[simTime, :] = obs
+            self.contactForce[simTime] = info['contact_force']
+            self.contactCount[simTime] = info['contact_count']
 
         # contact force mask - get rid of trash in the beginning
         # self.contactForce[:300] = 0
@@ -348,7 +426,4 @@ class InteractivePush(simulation.PyBulletSim):
         time.sleep(0.01)
 
     def _reset_sim(self):
-        # reset robot to nominal pose
-        p.resetBasePositionAndOrientation(self.pusherId, self.initPusherPos, [0, 0, 0, 1])
-        p.resetBasePositionAndOrientation(self.blockId, self.initBlockPos,
-                                          p.getQuaternionFromEuler([0, 0, self.initBlockYaw]))
+        return self.env.reset()
