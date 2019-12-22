@@ -191,7 +191,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
     def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
         """Change task configuration"""
         if goal is not None:
-            self.goal = tuple(goal) + (0.1,)
+            # ignore the pusher position
+            self.goal = np.array((0,0,) + tuple(goal) + (0.1,))
         if init_pusher is not None:
             self.initPusherPos = tuple(init_pusher) + (0.05,)
         if init_block is not None:
@@ -236,9 +237,10 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
     def _draw_goal(self):
         goalVisualWidth = 0.15 / 2
-        p.addUserDebugLine(np.add(self.goal, [0, -goalVisualWidth, 0]), np.add(self.goal, [0, goalVisualWidth, 0]),
+        goal = np.concatenate((self.goal[2:4], (0.1,)))
+        p.addUserDebugLine(np.add(goal, [0, -goalVisualWidth, 0]), np.add(goal, [0, goalVisualWidth, 0]),
                            [0, 1, 0], 2)
-        p.addUserDebugLine(np.add(self.goal, [-goalVisualWidth, 0, 0]), np.add(self.goal, [goalVisualWidth, 0, 0]),
+        p.addUserDebugLine(np.add(goal, [-goalVisualWidth, 0, 0]), np.add(goal, [goalVisualWidth, 0, 0]),
                            [0, 1, 0], 2)
 
     def _move_pusher(self, endEffectorPos):
@@ -311,7 +313,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
         p.addUserDebugLine([old_state[0], old_state[1], z], [self.state[0], self.state[1], z], [1, 0, 0], 2)
         p.addUserDebugLine([old_state[2], old_state[3], z], [self.state[2], self.state[3], z], [0, 0, 1], 2)
 
-        cost = old_state.T.dot(self.Q).dot(old_state)
+        x = old_state - self.goal
+        cost = x.T.dot(self.Q).dot(x)
         done = cost < 0.01
         cost += action.T.dot(self.R).dot(action)
 

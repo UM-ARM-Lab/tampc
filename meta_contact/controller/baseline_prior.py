@@ -82,7 +82,7 @@ class GlobalNetworkCrossEntropyController(Controller):
 
     def set_goal(self, goal):
         # assume goal is xb yb
-        self.goal = np.array([0, 0, goal[0], goal[1], 0])
+        self.goal = goal
 
     def command(self, obs):
         # use learn_mpc's Cross Entropy
