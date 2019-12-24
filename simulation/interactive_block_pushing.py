@@ -47,7 +47,7 @@ def collect_touching_freespace_data(trials=20, trial_length=40):
     # use random controller (with varying push direction)
     push_mag = 0.03
     ctrl = controller.RandomController(push_mag, .02, 1)
-    env = interactive_block_pushing.PushAgainstWallEnv(mode=p.DIRECT)
+    env = get_easy_env(p.DIRECT)
     # use mode p.GUI to see what the trials look like
     save_dir = 'pushing/touching'
     sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=trial_length, plot=False, save=True,
@@ -55,12 +55,10 @@ def collect_touching_freespace_data(trials=20, trial_length=40):
     for _ in range(trials):
         seed = rand.seed()
         # init_block_pos, init_block_yaw, init_pusher = random_touching_start()
-        init_block_pos = [0, 0]
-        init_block_yaw = 0
-        init_pusher = [-0.5, 0]
-        env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
+        # env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
         # ctrl = controller.RandomStraightController(push_mag, .3, init_pusher, init_block_pos)
-        # sim.ctrl = ctrl
+        ctrl = controller.RandomController(push_mag, .05, 1)
+        sim.ctrl = ctrl
         sim.run(seed)
 
     if sim.save:
@@ -89,40 +87,22 @@ def collect_notouch_freespace_data(trials=100, trial_length=10):
     plt.show()
 
 
-def test_global_linear_dynamics():
-    ctrl = baseline_prior.GlobalLQRController(1)
-    env = interactive_block_pushing.PushAgainstWallEnv(mode=p.GUI)
-    sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=100, plot=True, save=False)
-
-    seed = rand.seed(3)
-
-    init_block_pos, init_block_yaw, init_pusher = random_touching_start()
-    env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
-    sim.run(seed)
-    plt.ioff()
-    plt.show()
-
-
 def test_global_prior_dynamics():
-    mdn = make_mdn_model(num_components=3)
+    # mdn = make_mdn_model(num_components=3)
+    # preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
+    # # preprocessor = None
+    # ctrl = baseline_prior.GlobalNetworkCrossEntropyController(mdn, 'mdn_cem', R=1, preprocessor=preprocessor,
+    #                                                           checkpoint='/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn.6000.tar')
 
-    preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
-    # preprocessor = None
-    ctrl = baseline_prior.GlobalNetworkCrossEntropyController(mdn, 'mdn_cem', R=1, preprocessor=preprocessor,
-                                                              checkpoint='/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn.6000.tar')
+    ctrl = baseline_prior.GlobalLinearDynamicsCrossEntropyController()
     # ctrl = baseline_prior.GlobalNetworkCrossEntropyController(
     #     feature.SequentialFC(input_dim=2, feature_dim=3, hidden_units=10,
     #                          hidden_layers=3).double(), R=1)
-    env = interactive_block_pushing.PushAgainstWallEnv(mode=p.GUI)
+    env = get_easy_env(p.GUI)
     sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=100, plot=False, save=False)
 
     seed = rand.seed(2)
     # init_block_pos, init_block_yaw, init_pusher = random_touching_start()
-    init_block_pos = [0, 0]
-    init_block_yaw = 0
-    init_pusher = [-0.25, 0]
-    goal_pos = [1.0, 0]
-    env.set_task_config(goal=goal_pos, init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
     sim.run(seed)
     plt.ioff()
     plt.show()
@@ -131,7 +111,7 @@ def test_global_prior_dynamics():
 def get_easy_env(mode=p.GUI):
     init_block_pos = [0, 0]
     init_block_yaw = 0
-    init_pusher = [-0.25, 0]
+    init_pusher = [-0.095, 0]
     goal_pos = [1.0, 0]
     env = interactive_block_pushing.PushAgainstWallEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher,
                                                        init_block=init_block_pos, init_yaw=init_block_yaw)
@@ -140,8 +120,6 @@ def get_easy_env(mode=p.GUI):
 
 from meta_contact.prior import LSQPrior, GMMPrior
 from meta_contact.controller import online_controller
-import torch
-from arm_pytorch_utilities import linalg
 
 
 def test_local_dynamics():
@@ -151,13 +129,25 @@ def test_local_dynamics():
     ds = interactive_block_pushing.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor,
                                                validation_ratio=0.01)
     ds.make_data()
-    prior = GMMPrior.from_data(ds)
+    # prior = GMMPrior.from_data(ds)
+    prior = LSQPrior.from_data(ds)
     ctrl = online_controller.OnlineController(prior, ds=ds, max_timestep=num_frames, R=1, horizon=15, lqr_iter=1)
 
     env = get_easy_env(p.GUI)
     sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=num_frames, plot=True, save=False)
 
     seed = rand.seed(4)
+    sim.run(seed)
+    plt.ioff()
+    plt.show()
+
+
+def test_global_linear_dynamics():
+    ctrl = baseline_prior.GlobalLQRController(10)
+    env = get_easy_env(p.GUI)
+    sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=100, plot=True, save=False)
+
+    seed = rand.seed(3)
     sim.run(seed)
     plt.ioff()
     plt.show()
@@ -171,9 +161,9 @@ def sandbox():
 
 
 if __name__ == "__main__":
-    # collect_touching_freespace_data(trials=100, trial_length=70)
+    # collect_touching_freespace_data(trials=50, trial_length=50)
     # collect_notouch_freespace_data()
-    # test_global_prior_dynamics()
+    test_global_prior_dynamics()
     # test_global_linear_dynamics()
-    test_local_dynamics()
+    # test_local_dynamics()
     # sandbox()

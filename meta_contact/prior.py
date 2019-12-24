@@ -181,6 +181,45 @@ class LSQPrior(OnlineDynamicsPrior):
         return sigma, mun
 
 
+class LinearPrior:
+    def __init__(self, ds):
+        self.dataset = ds
+        XU, Y, _ = ds.training_set()
+        n = XU.shape[1]
+        self.nu = 2
+        self.nx = n - self.nu
+        # get dynamics
+        params, res, rank, _ = np.linalg.lstsq(XU.numpy(), Y.numpy())
+        # convert dyanmics to x' = Ax + Bu (note that our y is dx, so have to add diag(1))
+        # self.A = np.diag([1., 1., 1., 1., 1.])
+        self.A = np.zeros((5, 5))
+        self.B = np.zeros((self.nx, self.nu))
+        self.A[2:, :] += params[:self.nx, :].T
+        # self.B[0, 0] = 1
+        # self.B[1, 1] = 1
+        self.B[2:, :] += params[self.nx:, :].T
+
+    def __call__(self, x, u):
+        xu = np.concatenate((x, u))
+
+        if self.dataset.preprocessor:
+            xu = self.dataset.preprocessor.transform_x(xu)
+
+        dxb = self.A @ xu[:self.nx] + self.B @ xu[self.nx:]
+        dxb = dxb[self.nu:]
+
+        if self.dataset.preprocessor:
+            dxb = self.dataset.preprocessor.invert_transform(dxb).reshape(-1)
+
+        if torch.is_tensor(dxb):
+            dxb = dxb.numpy()
+        # dxb = self.model(xu)
+        # directly move the pusher
+        x[:2] += u
+        x[2:] += dxb
+        return x
+
+
 class Prior:
     def __init__(self, model, name, dataset, lr, regularization, lookahead=True):
         self.dataset = dataset
