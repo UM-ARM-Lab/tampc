@@ -10,7 +10,7 @@ class Controller(abc.ABC):
         self.goal = None
 
     def set_goal(self, goal):
-        self.goal = goal[0:2]
+        self.goal = goal[2:4]
 
     @abc.abstractmethod
     def command(self, obs):
