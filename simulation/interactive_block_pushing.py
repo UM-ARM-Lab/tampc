@@ -87,7 +87,7 @@ def collect_notouch_freespace_data(trials=100, trial_length=10):
     plt.show()
 
 
-def test_global_prior_dynamics():
+def test_global_prior_dynamics(level=0):
     # mdn = make_mdn_model(num_components=3)
     preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
     preprocessor = None
@@ -98,7 +98,7 @@ def test_global_prior_dynamics():
     # ctrl = baseline_prior.GlobalNetworkCrossEntropyController(
     #     feature.SequentialFC(input_dim=2, feature_dim=3, hidden_units=10,
     #                          hidden_layers=3).double(), R=1)
-    env = get_easy_env(p.GUI)
+    env = get_easy_env(p.GUI, level=level)
     sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=100, plot=True, save=False)
 
     seed = rand.seed()
@@ -108,13 +108,17 @@ def test_global_prior_dynamics():
     plt.show()
 
 
-def get_easy_env(mode=p.GUI):
+def get_easy_env(mode=p.GUI, level=0):
     init_block_pos = [0, 0]
     init_block_yaw = 0
     init_pusher = [-0.095, 0]
-    goal_pos = [1.0, 0]
+    if level == 2:
+        goal_pos = [1.1, 0.5]
+    else:
+        goal_pos = [1.0, 0]
     env = interactive_block_pushing.PushAgainstWallEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher,
-                                                       init_block=init_block_pos, init_yaw=init_block_yaw)
+                                                       init_block=init_block_pos, init_yaw=init_block_yaw,
+                                                       environment_level=level)
     return env
 
 
@@ -163,7 +167,7 @@ def sandbox():
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=50, trial_length=50)
     # collect_notouch_freespace_data()
-    test_global_prior_dynamics()
+    test_global_prior_dynamics(2)
     # test_global_linear_dynamics()
     # test_local_dynamics()
     # sandbox()

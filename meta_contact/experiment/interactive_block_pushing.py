@@ -217,7 +217,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
                                          p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
             self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0, -0.5, .0],
                                          p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True))
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.3, 2, .0],
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.75, 2, .0],
                                          p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
             self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0, 2, .0],
                                          p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True))
