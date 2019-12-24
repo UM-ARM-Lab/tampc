@@ -1,3 +1,4 @@
+# TODO deprecated, look at online_dynamics
 import numpy as np
 import scipy.linalg
 from meta_contact.controller.controller import Controller

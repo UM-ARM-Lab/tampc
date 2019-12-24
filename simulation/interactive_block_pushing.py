@@ -128,13 +128,36 @@ def test_global_prior_dynamics():
     plt.show()
 
 
+def get_easy_env(mode=p.GUI):
+    init_block_pos = [0, 0]
+    init_block_yaw = 0
+    init_pusher = [-0.25, 0]
+    goal_pos = [1.0, 0]
+    env = interactive_block_pushing.PushAgainstWallEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher,
+                                                       init_block=init_block_pos, init_yaw=init_block_yaw)
+    return env
+
+
+from meta_contact.prior import LSQPrior, GMMPrior
+from meta_contact.controller import online_controller
+import torch
+from arm_pytorch_utilities import linalg
+
+
 def test_local_dynamics():
-    ctrl = locally_linear.LocallyLinearLQRController()
-    env = interactive_block_pushing.PushAgainstWallEnv(mode=p.GUI)
-    sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=1000, plot=True, save=False)
+    num_frames = 100
+
+    preprocessor = None
+    ds = interactive_block_pushing.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor,
+                                               validation_ratio=0.01)
+    ds.make_data()
+    prior = GMMPrior.from_data(ds)
+    ctrl = online_controller.OnlineController(prior, ds=ds, max_timestep=num_frames, R=1, horizon=15, lqr_iter=1)
+
+    env = get_easy_env(p.GUI)
+    sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=num_frames, plot=True, save=False)
+
     seed = rand.seed(4)
-    init_block_pos, init_block_yaw, init_pusher = random_touching_start()
-    env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
     sim.run(seed)
     plt.ioff()
     plt.show()
@@ -150,7 +173,7 @@ def sandbox():
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=100, trial_length=70)
     # collect_notouch_freespace_data()
-    test_global_prior_dynamics()
+    # test_global_prior_dynamics()
     # test_global_linear_dynamics()
-    # test_local_dynamics()
+    test_local_dynamics()
     # sandbox()

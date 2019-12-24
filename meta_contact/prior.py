@@ -5,10 +5,180 @@ from tensorboardX import SummaryWriter
 from arm_pytorch_utilities import load_data
 from arm_pytorch_utilities.optim import Lookahead
 from arm_pytorch_utilities.model.mdn import MixtureDensityNetwork
+from arm_pytorch_utilities.gmm import GMM
 import numpy as np
 from meta_contact import cfg
+from arm_pytorch_utilities import linalg
 
 logger = logging.getLogger(__name__)
+
+
+def xux_from_dataset(ds):
+    XU, _, _ = ds.training_set()
+    XUX = torch.cat((XU[:-1], XU[1:, :5]), dim=1)
+    return XUX
+
+
+def gaussian_params_from_dataset(ds):
+    XUX = xux_from_dataset(ds)
+    mu = XUX.mean(0)
+    sigma = linalg.cov(XUX)
+    assert sigma.shape[0] == XUX.shape[1]
+    return sigma.numpy(), mu.numpy()
+
+
+class OnlineDynamicsPrior:
+    def mix(self, dX, dU, xu, pxu, xux, empsig, mun, N):
+        """Mix global and local dynamics returning MAP covariance and mean (local gaussian dynamics)"""
+        return empsig, mun
+
+
+# TODO NNPrior
+
+
+class GMMPrior(OnlineDynamicsPrior):
+    """
+    A dynamics prior encoded as a GMM over [x_t, u_t, x_t+1] points.
+    See:
+        S. Levine*, C. Finn*, T. Darrell, P. Abbeel, "End-to-end
+        training of Deep Visuomotor Policies", arXiv:1504.00702,
+        Appendix A.3.
+    """
+
+    @classmethod
+    def from_data(cls, ds, **kwargs):
+        XUX = xux_from_dataset(ds)
+        prior = cls(**kwargs)
+        prior.update_batch(XUX.numpy())
+        return prior
+
+    def __init__(self, min_samples_per_cluster=20, max_clusters=50, max_samples=20, strength=1.0):
+        """
+        Hyperparameters:
+            min_samples_per_cluster: Minimum samples per cluster.
+            max_clusters: Maximum number of clusters to fit.
+            max_samples: Maximum number of trajectories to use for
+                fitting the GMM at any given time.
+            strength: Adjusts the strength of the prior.
+        """
+        self.X = None
+        self.U = None
+        self.gmm = GMM()
+        self._min_samp = min_samples_per_cluster
+        self._max_samples = max_samples
+        self._max_clusters = max_clusters
+        self._strength = strength
+
+    def initial_state(self):
+        """ Return dynamics prior for initial time step. """
+        # Compute mean and covariance.
+        mu0 = np.mean(self.X[:, 0, :], axis=0)
+        Phi = np.diag(np.var(self.X[:, 0, :], axis=0))
+
+        # Factor in multiplier.
+        n0 = self.X.shape[2] * self._strength
+        m = self.X.shape[2] * self._strength
+
+        # Multiply Phi by m (since it was normalized before).
+        Phi = Phi * m
+        return mu0, Phi, m, n0
+
+    def update_batch(self, XUX):
+        self.gmm.update(XUX, self._max_clusters, max_iterations=15)
+
+    def update(self, X, U):
+        """
+        Update prior with additional data.
+        Args:
+            X: A N x T x dX matrix of sequential state data.
+            U: A N x T x dU matrix of sequential control data.
+        """
+        # Constants.
+        T = X.shape[1] - 1
+
+        # Append data to dataset.
+        if self.X is None:
+            self.X = X
+        else:
+            self.X = np.concatenate([self.X, X], axis=0)
+
+        if self.U is None:
+            self.U = U
+        else:
+            self.U = np.concatenate([self.U, U], axis=0)
+
+        # Remove excess samples from dataset.
+        start = max(0, self.X.shape[0] - self._max_samples + 1)
+        self.X = self.X[start:, :]
+        self.U = self.U[start:, :]
+
+        # Compute cluster dimensionality.
+        Do = X.shape[2] + U.shape[2] + X.shape[2]  # TODO: Use Xtgt.
+
+        # Create dataset.
+        N = self.X.shape[0]
+        xux = np.reshape(
+            np.c_[self.X[:, :T, :], self.U[:, :T, :], self.X[:, 1:(T + 1), :]],
+            [T * N, Do]
+        )
+
+        # Choose number of clusters.
+        K = int(max(2, min(self._max_clusters,
+                           np.floor(float(N * T) / self._min_samp))))
+        logger.debug('Generating %d clusters for dynamics GMM.', K)
+
+        # Update GMM.
+        self.gmm.update(xux, K)
+
+    def eval(self, Dx, Du, pts):
+        """
+        Evaluate prior.
+        Args:
+            pts: A N x Dx+Du+Dx matrix.
+        """
+        # Construct query data point by rearranging entries and adding
+        # in reference.
+        assert pts.shape[1] == Dx + Du + Dx
+
+        # Perform query and fix mean.
+        mu0, Phi, m, n0 = self.gmm.inference(pts)
+
+        # Factor in multiplier.
+        n0 = n0 * self._strength
+        m = m * self._strength
+
+        # Multiply Phi by m (since it was normalized before).
+        Phi *= m
+        return mu0, Phi, m, n0
+
+    def mix(self, dX, dU, xu, pxu, xux, empsig, mun, N):
+        mu0, Phi, m, n0 = self.eval(dX, dU, xux.reshape(1, dX + dU + dX))
+        m = m
+        mun = (N * mun + mu0 * m) / (N + m)  # Use bias
+        sigma = (N * empsig + Phi + ((N * m) / (N + m)) * np.outer(mun - mu0, mun - mu0)) / (N + n0)
+        return sigma, mun
+
+
+class LSQPrior(OnlineDynamicsPrior):
+    @classmethod
+    def from_data(cls, ds, **kwargs):
+        sigma, mu = gaussian_params_from_dataset(ds)
+        prior = cls(sigma, mu, **kwargs)
+        return prior
+
+    def __init__(self, init_sigma, init_mu, mix_strength=1.0):
+        self.dyn_init_sig = init_sigma
+        self.dyn_init_mu = init_mu
+        # m in equation 1
+        self.mix_prior_strength = mix_strength
+
+    def mix(self, dX, dU, xu, pxu, xux, empsig, mun, N):
+        # equation 1
+        mu0, Phi = (self.dyn_init_mu, self.dyn_init_sig)
+        mun = (N * mun + mu0 * self.mix_prior_strength) / (N + self.mix_prior_strength)
+        sigma = (N * empsig + self.mix_prior_strength * Phi) / (
+                N + self.mix_prior_strength)  # + ((N*m)/(N+m))*np.outer(mun-mu0,mun-mu0))/(N+n0)
+        return sigma, mun
 
 
 class Prior:
@@ -100,7 +270,7 @@ class Prior:
         return True
 
     def __call__(self, x, u):
-        xu = torch.tensor(np.concatenate((x, u))).reshape(1,-1)
+        xu = torch.tensor(np.concatenate((x, u))).reshape(1, -1)
 
         if self.dataset.preprocessor:
             xu = self.dataset.preprocessor.transform_x(xu)
