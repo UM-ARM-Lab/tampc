@@ -89,19 +89,19 @@ def collect_notouch_freespace_data(trials=100, trial_length=10):
 
 def test_global_prior_dynamics():
     # mdn = make_mdn_model(num_components=3)
-    # preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
-    # # preprocessor = None
+    preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
+    preprocessor = None
     # ctrl = baseline_prior.GlobalNetworkCrossEntropyController(mdn, 'mdn_cem', R=1, preprocessor=preprocessor,
     #                                                           checkpoint='/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn.6000.tar')
 
-    ctrl = baseline_prior.GlobalLinearDynamicsCrossEntropyController()
+    ctrl = baseline_prior.GlobalLinearDynamicsCrossEntropyController(preprocessor=preprocessor)
     # ctrl = baseline_prior.GlobalNetworkCrossEntropyController(
     #     feature.SequentialFC(input_dim=2, feature_dim=3, hidden_units=10,
     #                          hidden_layers=3).double(), R=1)
     env = get_easy_env(p.GUI)
-    sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=100, plot=False, save=False)
+    sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=100, plot=True, save=False)
 
-    seed = rand.seed(2)
+    seed = rand.seed()
     # init_block_pos, init_block_yaw, init_pusher = random_touching_start()
     sim.run(seed)
     plt.ioff()

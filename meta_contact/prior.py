@@ -203,13 +203,13 @@ class LinearPrior:
         xu = np.concatenate((x, u))
 
         if self.dataset.preprocessor:
-            xu = self.dataset.preprocessor.transform_x(xu)
+            xu = self.dataset.preprocessor.transform_x(xu.reshape(1, -1)).numpy().reshape(-1)
 
         dxb = self.A @ xu[:self.nx] + self.B @ xu[self.nx:]
         dxb = dxb[self.nu:]
 
         if self.dataset.preprocessor:
-            dxb = self.dataset.preprocessor.invert_transform(dxb).reshape(-1)
+            dxb = self.dataset.preprocessor.invert_transform(dxb.reshape(1, -1)).reshape(-1)
 
         if torch.is_tensor(dxb):
             dxb = dxb.numpy()
