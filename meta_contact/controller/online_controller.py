@@ -27,7 +27,6 @@ class OnlineController(Controller):
         # self.block_idx = slice(0, 2)
         self.block_idx = slice(2, 4)
 
-        # TODO initialize initial mu and sigma with dataset
         if ds is not None:
             sigma, mu = gaussian_params_from_dataset(ds)
             self.dyn_init_sig = sigma
@@ -70,7 +69,6 @@ class OnlineController(Controller):
         Returns:
             A dU dimensional action vector.
         """
-        LOGGER.debug("Timestep=%d", t)
         if t == 0:
             lgpolicy = self.initial_policy()
         else:
@@ -80,7 +78,6 @@ class OnlineController(Controller):
         u = self.compute_action(lgpolicy, x)
         # if self.prevu is not None:  # smooth
         #    u = 0.5*u+0.5*self.prevu
-        LOGGER.debug("U=%s", u)
         self.prev_policy = lgpolicy
         self.prevx = x
         self.prevu = u
