@@ -112,7 +112,7 @@ class RawPushDataset(torch.utils.data.Dataset):
 
 class PushDataset(datasets.DataSet):
     def __init__(self, N=None, data_dir='pushing', preprocessor=None, validation_ratio=0.2,
-                 num_modes=3, **kwargs):
+                 num_modes=3, predict_differences=True, **kwargs):
         """
         :param N: total number of data points to use, None for all available in data_dir
         :param data_dir: data directory
@@ -128,12 +128,13 @@ class PushDataset(datasets.DataSet):
         self.preprocessor = preprocessor
         self._data_dir = data_dir
         self._validation_ratio = validation_ratio
+        self._pd = predict_differences
 
     def make_parameters(self):
         pass
 
     def make_data(self):
-        full_set = RawPushDataset(dirs=self._data_dir, max_num=self.N)
+        full_set = RawPushDataset(dirs=self._data_dir, max_num=self.N, predict_difference=self._pd)
         train_set, validation_set = load_utils.splitTrainValidationSets(full_set,
                                                                         validation_ratio=self._validation_ratio)
 
