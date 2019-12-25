@@ -298,7 +298,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         return pusherPose[0]
 
     STATIC_VELOCITY_THRESHOLD = 1e-3
-    REACH_COMMAND_THRESHOLD = 1e-3
+    REACH_COMMAND_THRESHOLD = 1e-4
 
     def _static_environment(self):
         v, va = p.getBaseVelocity(self.blockId)
@@ -420,7 +420,7 @@ class InteractivePush(simulation.Simulation):
             xy = self.traj[:, :self.env.nu]
             nxy = xy + self.u
             du = np.linalg.norm(nxy[:-1] - xy[1:], axis=1)
-            if np.any(du > 1e-3):
+            if np.any(du > 2e-3):
                 logger.error(du)
                 raise RuntimeError("Dynamics not behaving as expected")
 
