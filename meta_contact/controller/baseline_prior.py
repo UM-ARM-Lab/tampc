@@ -12,10 +12,10 @@ logger = logging.getLogger(__name__)
 
 
 class GlobalLQRController(Controller):
-    def __init__(self, R=1):
+    def __init__(self, R=1, predict_difference=False):
         super().__init__()
         # load data and create LQR controller
-        ds = exp.RawPushDataset()
+        ds = exp.RawPushDataset(predict_difference=predict_difference)
         n = ds.XU.shape[1]
         self.nu = 2
         self.nx = n - self.nu
@@ -24,23 +24,23 @@ class GlobalLQRController(Controller):
         Y = ds.Y.numpy()
         # get dynamics
         params, res, rank, _ = np.linalg.lstsq(XU, Y)
-        # # convert dyanmics to x' = Ax + Bu (note that our y is dx, so have to add diag(1))
-        self.A = np.diag([1., 1., 1., 1., 1.])
-        self.B = np.zeros((self.nx, self.nu))
-        self.A[2:, :] += params[:self.nx, :].T
-        self.B[0, 0] = 1
-        self.B[1, 1] = 1
-        self.B[2:, :] += params[self.nx:, :].T
-
-        # predict dynamics rather than difference
-        # params, res, rank, _ = np.linalg.lstsq(XU, Y)
-        # self.A = params[:self.nx, :].T
-        # self.B = params[self.nx:, :].T
+        if predict_difference:
+            # convert dyanmics to x' = Ax + Bu (note that our y is dx, so have to add diag(1))
+            self.A = np.diag([1., 1., 1., 1., 1.])
+            self.B = np.zeros((self.nx, self.nu))
+            self.A[2:, :] += params[:self.nx, :].T
+            self.B[0, 0] = 1
+            self.B[1, 1] = 1
+            self.B[2:, :] += params[self.nx:, :].T
+        else:
+            # predict dynamics rather than difference
+            self.A = params[:self.nx, :].T
+            self.B = params[self.nx:, :].T
 
         # TODO increase Q for yaw later (and when that becomes part of goal)
         # self.Q = np.diag([0, 0, 0.1, 0.1, 0])
         # self.Q = np.diag([1, 1, 0, 0, 0])
-        self.Q = np.diag([0.1, 0.1, 1, 1, 0])
+        self.Q = np.diag([0., 0., 1, 1, 0])
         self.R = np.diag([R for _ in range(self.nu)])
 
         # confirm in MATLAB
