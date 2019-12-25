@@ -20,24 +20,59 @@ logger = logging.getLogger(__name__)
 
 
 class PushLoader(load_data.DataLoader):
+    def __init__(self, *args, predict_difference=True, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.pd = predict_difference
+
     def _process_file_raw_data(self, d):
         x = d['X']
-        u = d['U']
+        u = d['U'][:-1]
+        cc = d['contact'][1:]
+
+        if self.pd:
+            state_col_offset = 2
+            dpos = x[1:, state_col_offset:-1] - x[:-1, state_col_offset:-1]
+            dyaw = util.angular_diff_batch(x[1:, -1], x[:-1, -1])
+            y = np.concatenate((dpos, dyaw.reshape(-1, 1)), axis=1)
+        else:
+            y = x[1:]
+
+        x = x[:-1]
         xu = np.column_stack((x, u))
-        y = d['Y']
-        cc = d['contact']
+
+        # xy = xu[:, 2:4]
+        # nxy = xy + y[:, :-1]
+        # du = np.linalg.norm(nxy[:-1] - xy[1:], axis=1)
+
+        # potentially many trajectories, get rid of buffer state in between
+        mask = d['mask'][:-1].reshape(-1) != 0
+
+        # mm = mask[:-1]
+        # xy = xu[:, :2]
+        # nxy = xy + u
+        # du = np.linalg.norm(nxy[:-1] - xy[1:], axis=1)
+
+        xu = xu[mask]
+        cc = cc[mask]
+        y = y[mask]
+
+        # # TODO confirm correctness of output
+        # xy = xu[:, 2:4]
+        # nxy = xy + y[:, :-1]
+        # du = np.linalg.norm(nxy[:-1] - xy[1:], axis=1)
+
         return xu, y, cc
 
 
 class RawPushDataset(torch.utils.data.Dataset):
-    def __init__(self, dirs=('pushing',), mode='all', max_num=None, make_affine=False):
+    def __init__(self, dirs=('pushing',), mode='all', max_num=None, make_affine=False, predict_difference=True):
         if type(dirs) is str:
             dirs = [dirs]
         self.XU = None
         self.Y = None
         self.contact = None
         for dir in dirs:
-            dl = PushLoader(dir, config=cfg)
+            dl = PushLoader(dir, config=cfg, predict_difference=predict_difference)
             XU, Y, contact = dl.load()
             if self.XU is None:
                 self.XU = XU
@@ -87,7 +122,8 @@ class PushDataset(datasets.DataSet):
         :param kwargs:
         """
 
-        super().__init__(N=N, input_dim=7, output_dim=3, num_modes=num_modes, **kwargs)
+        super().__init__(N=N, input_dim=PushAgainstWallEnv.nx + PushAgainstWallEnv.nu, output_dim=PushAgainstWallEnv.ny,
+                         num_modes=num_modes, **kwargs)
 
         self.preprocessor = preprocessor
         self._data_dir = data_dir
@@ -165,6 +201,10 @@ class MyPybulletEnv:
 
 
 class PushAgainstWallEnv(MyPybulletEnv):
+    nu = 2
+    nx = 5
+    ny = 3
+
     def __init__(self, goal=(1.0, 0.), init_pusher=(-0.25, 0), init_block=(0., 0.), init_yaw=0.,
                  environment_level=0, **kwargs):
         super().__init__(**kwargs)
@@ -192,7 +232,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         """Change task configuration"""
         if goal is not None:
             # ignore the pusher position
-            self.goal = np.array((0,0,) + tuple(goal) + (0.1,))
+            self.goal = np.array(tuple(goal) + tuple(goal) + (0.1,))
         if init_pusher is not None:
             self.initPusherPos = tuple(init_pusher) + (0.05,)
         if init_block is not None:
@@ -299,6 +339,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         # execute the action
         self._move_pusher(eePos)
         p.addUserDebugLine(eePos, np.add(eePos, [0, 0, 0.01]), [1, 1, 0], 4)
+        # TODO handle trying to go into wall
         while not self._reached_command(eePos):
             p.stepSimulation()
 
@@ -353,8 +394,8 @@ class InteractivePush(simulation.Simulation):
 
     def _init_data(self):
         # pre-define the trajectory/force vectors
-        self.traj = np.zeros((self.num_frames, 5))
-        self.u = np.zeros((self.num_frames, 2))
+        self.traj = np.zeros((self.num_frames, self.env.nx))
+        self.u = np.zeros((self.num_frames, self.env.nu))
         self.time = np.arange(0, self.num_frames * self.sim_step_s, self.sim_step_s)
         self.contactForce = np.zeros((self.num_frames,))
         self.contactCount = np.zeros_like(self.contactForce)
@@ -363,15 +404,25 @@ class InteractivePush(simulation.Simulation):
     def _run_experiment(self):
 
         obs = self._reset_sim()
-        for simTime in range(self.num_frames):
+        for simTime in range(self.num_frames - 1):
+            self.traj[simTime, :] = obs
             action = self.ctrl.command(obs)
             action = np.array(action).flatten()
             obs, rew, done, info = self.env.step(action)
 
             self.u[simTime, :] = action
-            self.traj[simTime, :] = obs
+            self.traj[simTime + 1, :] = obs
             self.contactForce[simTime] = info['contact_force']
             self.contactCount[simTime] = info['contact_count']
+
+        # confirm dynamics is as expected
+        if self.env.level == 0:
+            xy = self.traj[:, :self.env.nu]
+            nxy = xy + self.u
+            du = np.linalg.norm(nxy[:-1] - xy[1:], axis=1)
+            if np.any(du > 1e-3):
+                logger.error(du)
+                raise RuntimeError("Dynamics not behaving as expected")
 
         # contact force mask - get rid of trash in the beginning
         # self.contactForce[:300] = 0
@@ -390,17 +441,12 @@ class InteractivePush(simulation.Simulation):
     def _export_data_dict(self):
         # output (1 step prediction; only need block state)
         X = self.traj
-        state_col_offset = 2
-        Y = X[1:, state_col_offset:]
-        # need to throw out the last state to have 1-to-1 with output
-        X = X[:-1]
-        # just output state difference to handle yaw more linearly
-        Y[:, :-1] = Y[:, :-1] - X[:, state_col_offset:state_col_offset + 2]
-        Y[:, -1] = util.angular_diff_batch(Y[:, -1], X[:, state_col_offset + 2])
-
         contact_flag = self.contactCount > 0
-        contact_flag = contact_flag.reshape(len(contact_flag), 1)
-        return {'X': X, 'U': self.u[:-1], 'Y': Y, 'contact': contact_flag[:-1]}
+        contact_flag = contact_flag.reshape(-1, 1)
+        # mark the end of the trajectory (the last time is not valid)
+        mask = np.ones(X.shape[0], dtype=int)
+        mask[-1] = 0
+        return {'X': X, 'U': self.u, 'contact': contact_flag, 'mask': mask.reshape(-1, 1)}
 
     def start_plot_runs(self):
         axis_name = ['x robot (m)', 'y robot (m)', 'x block (m)', 'y block (m)', 'block rotation (rads)',
