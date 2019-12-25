@@ -126,28 +126,29 @@ from meta_contact.prior import LSQPrior, GMMPrior
 from meta_contact.controller import online_controller
 
 
-def test_local_dynamics():
+def test_local_dynamics(level=0):
     num_frames = 100
 
     preprocessor = None
     ds = interactive_block_pushing.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor,
-                                               validation_ratio=0.01)
+                                               validation_ratio=0.01, predict_differences=False)
     ds.make_data()
     # prior = GMMPrior.from_data(ds)
     prior = LSQPrior.from_data(ds)
-    ctrl = online_controller.OnlineController(prior, ds=ds, max_timestep=num_frames, R=1, horizon=15, lqr_iter=1)
+    ctrl = online_controller.OnlineController(prior, ds=ds, max_timestep=num_frames, R=5, horizon=15, lqr_iter=2,
+                                              init_gamma=0.1)
 
-    env = get_easy_env(p.GUI)
+    env = get_easy_env(p.GUI, level=level)
     sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=num_frames, plot=True, save=False)
 
-    seed = rand.seed(4)
+    seed = rand.seed()
     sim.run(seed)
     plt.ioff()
     plt.show()
 
 
 def test_global_linear_dynamics():
-    ctrl = baseline_prior.GlobalLQRController(10)
+    ctrl = baseline_prior.GlobalLQRController(5)
     env = get_easy_env(p.GUI)
     sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=100, plot=True, save=False)
 
@@ -167,7 +168,7 @@ def sandbox():
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=50, trial_length=50)
     # collect_notouch_freespace_data()
-    test_global_prior_dynamics(2)
+    # test_global_prior_dynamics(0)
     # test_global_linear_dynamics()
-    # test_local_dynamics()
+    test_local_dynamics()
     # sandbox()

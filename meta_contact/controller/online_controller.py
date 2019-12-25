@@ -14,14 +14,14 @@ CLIP_U = 0.03
 class OnlineController(Controller):
     """Controller mixing locally linear model with prior model from https://arxiv.org/pdf/1509.06841.pdf"""
 
-    def __init__(self, prior, ds=None, max_timestep=100, R=1, horizon=15, lqr_iter=1):
+    def __init__(self, prior, ds=None, max_timestep=100, R=1, horizon=15, lqr_iter=1, init_gamma = 0.1):
         super().__init__()
         self.dX = 5
         self.dU = 2
         self.H = horizon
         self.wu = np.array([1., 1.]) * R
         self.maxT = max_timestep
-        self.init_gamma = 0.1
+        self.init_gamma = init_gamma
         self.gamma = self.init_gamma
         self.u_noise = 0.001
         # self.block_idx = slice(0, 2)
