@@ -1,15 +1,12 @@
-from hybrid_sysid.experiment import preprocess
+from arm_pytorch_utilities import preprocess
 import sklearn.preprocessing as skpre
 import numpy as np
-import torch
 import matplotlib.pyplot as plt
 from arm_pytorch_utilities.draw import plot_mdn_prediction
 from meta_contact.experiment import interactive_block_pushing as exp
-from meta_contact import prior
+from meta_contact import model
 
 import logging
-
-from meta_contact.model import make_mdn_model
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO,
@@ -22,11 +19,12 @@ if __name__ == "__main__":
 
     # ds = exp.PushDataset(data_dir='pushing', preprocessor=preprocessor)
     # compare on trajectory
-    ds = exp.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor, validation_ratio=0.2)
+    ds = exp.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor, validation_ratio=0.2,
+                         predict_differences=True)
 
-    model = make_mdn_model(num_components=3)
-    name = 'mdn_quasistatic_lookahead'
-    prior = prior.Prior(model, name, ds, 1e-3, 1e-5)
+    m = model.make_mdn_model(num_components=3)
+    name = 'mdn'
+    mw = model.NetworkModelWrapper(m, name, ds, 1e-3, 1e-5)
     # learn prior model on data
 
     checkpoint = None
@@ -35,28 +33,31 @@ if __name__ == "__main__":
     # checkpoint = '/home/zhsh/catkin_ws/src/meta_contact/checkpoints/mdn.5100.tar'
     # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn_quasistatic_vanilla.2800.tar'
     # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn_quasistatic.2800.tar'
+    # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn_quasistatic_lookahead.2800.tar'
+    checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn.1200.tar'
+    # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/dummy.2000.tar'
     # load data if we already have some, otherwise train from scratch
-    if checkpoint and prior.load(checkpoint):
+    if checkpoint and mw.load(checkpoint):
         logger.info("loaded checkpoint %s", checkpoint)
     else:
-        prior.learn_model(100)
+        mw.learn_model(300)
 
     # TODO use the model for roll outs instead of just 1 step prediction
     start_index = 0
-    N = 300
-    sample = True
-    X = prior.XUv[start_index:N + start_index]
-    Y = prior.Yv[start_index:N + start_index]
-    labels = prior.labelsv[start_index:N + start_index]
+    N = 50
+    sample = 5
+    X = mw.XUv[start_index:N + start_index]
+    Y = mw.Yv[start_index:N + start_index]
+    labels = mw.labelsv[start_index:N + start_index]
 
     axis_name = ['x robot (m)', 'y robot (m)', 'x block (m)', 'y block (m)', 'block rotation (rads)', 'dx', 'dy']
-    plot_mdn_prediction(prior.model, X, Y, labels, axis_name, 'validation', sample=sample, plot_states=True)
+    plot_mdn_prediction(mw.model, X, Y, labels, axis_name, 'validation', sample=sample, plot_states=True)
 
-    X = prior.XU[start_index:N + start_index]
-    Y = prior.Y[start_index:N + start_index]
-    labels = prior.labels[start_index:N + start_index]
+    X = mw.XU[start_index:N + start_index]
+    Y = mw.Y[start_index:N + start_index]
+    labels = mw.labels[start_index:N + start_index]
 
-    plot_mdn_prediction(prior.model, X, Y, labels, axis_name, 'training', sample=sample)
+    plot_mdn_prediction(mw.model, X, Y, labels, axis_name, 'training', sample=sample)
 
     plt.show()
     input()

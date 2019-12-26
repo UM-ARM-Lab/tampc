@@ -2,6 +2,7 @@ import numpy as np
 from meta_contact.controller.controller import Controller
 from meta_contact.experiment import interactive_block_pushing as exp
 from meta_contact import prior
+from meta_contact import model
 from learn_hybrid_mpc import mpc, evaluation
 
 import logging
@@ -73,19 +74,19 @@ class GlobalLQRController(Controller):
 
 
 class GlobalNetworkCrossEntropyController(Controller):
-    def __init__(self, model, name='', R=1, checkpoint=None, **kwargs):
+    def __init__(self, m, name='', R=1, checkpoint=None, **kwargs):
         super().__init__()
         ds = exp.PushDataset(data_dir='pushing/touching.mat', **kwargs)
-        self.prior = prior.Prior(model, name, ds, 1e-3, 1e-5)
+        self.mw = m.NetworkModelWrapper(m, name, ds, 1e-3, 1e-5)
         # learn prior model on data
         # load data if we already have some, otherwise train from scratch
-        if checkpoint and self.prior.load(checkpoint):
+        if checkpoint and self.mw.load(checkpoint):
             logger.info("loaded checkpoint %s", checkpoint)
         else:
-            self.prior.learn_model(100)
+            self.mw.learn_model(100)
 
         # freeze network
-        for param in self.prior.model.parameters():
+        for param in self.mw.model.parameters():
             param.requires_grad = False
 
         nu = 2
@@ -93,7 +94,7 @@ class GlobalNetworkCrossEntropyController(Controller):
         self.R = np.diag([R for _ in range(nu)])
         self.cost = evaluation.QREvaluation(self.Q, self.R, self.Q, self.get_goal)
         max_push_mag = 0.03
-        self.ce = mpc.CrossEntropy(self.prior, self.cost, 10, 175, nu, 7, 3, init_cov_diag=max_push_mag,
+        self.ce = mpc.CrossEntropy(self.mw, self.cost, 10, 175, nu, 7, 3, init_cov_diag=max_push_mag,
                                    ctrl_max_mag=max_push_mag)
 
     def get_goal(self):
