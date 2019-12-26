@@ -16,6 +16,7 @@ import pybullet as p
 import logging
 
 from meta_contact import model
+from arm_pytorch_utilities.model import make
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO,
@@ -29,7 +30,7 @@ if __name__ == "__main__":
     ds = exp.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor, validation_ratio=0.2,
                          predict_differences=pd)
 
-    m = model.MDNUser(model.make_mdn_model(num_components=3))
+    m = model.MDNUser(make.make_mdn_model(num_components=3))
     name = 'combined'
     mw = model.NetworkModelWrapper(m, name, ds, 1e-3, 1e-5)
     # learn prior model on data

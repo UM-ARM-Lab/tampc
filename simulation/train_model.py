@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from arm_pytorch_utilities.draw import plot_mdn_prediction
 from meta_contact.experiment import interactive_block_pushing as exp
 from meta_contact import model
+from arm_pytorch_utilities.model import make
 
 import logging
 
@@ -22,7 +23,7 @@ if __name__ == "__main__":
     ds = exp.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor, validation_ratio=0.2,
                          predict_differences=True)
 
-    m = model.MDNUser(model.make_mdn_model(num_components=3))
+    m = model.MDNUser(make.make_mdn_model(num_components=3))
     name = 'mdn'
     mw = model.NetworkModelWrapper(m, name, ds, 1e-3, 1e-5)
     # learn prior model on data

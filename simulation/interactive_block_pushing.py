@@ -13,7 +13,6 @@ from meta_contact.controller import controller
 from meta_contact.controller import global_controller, locally_linear
 from meta_contact.experiment import interactive_block_pushing
 from meta_contact.util import rotate_wrt_origin
-from meta_contact.model import make_mdn_model
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
