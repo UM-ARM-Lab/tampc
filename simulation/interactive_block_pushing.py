@@ -3,7 +3,7 @@ import math
 import numpy as np
 import logging
 import matplotlib.pyplot as plt
-from hybrid_sysid.experiment import preprocess
+from arm_pytorch_utilities import preprocess
 import sklearn.preprocessing as skpre
 
 from meta_contact import cfg
