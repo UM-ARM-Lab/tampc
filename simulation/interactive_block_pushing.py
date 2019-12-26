@@ -10,7 +10,7 @@ from meta_contact import cfg
 from arm_pytorch_utilities import rand, load_data
 
 from meta_contact.controller import controller
-from meta_contact.controller import baseline_prior, locally_linear
+from meta_contact.controller import global_controller, locally_linear
 from meta_contact.experiment import interactive_block_pushing
 from meta_contact.util import rotate_wrt_origin
 from meta_contact.model import make_mdn_model
@@ -94,7 +94,7 @@ def test_global_prior_dynamics(level=0):
     # ctrl = baseline_prior.GlobalNetworkCrossEntropyController(mdn, 'mdn_cem', R=1, preprocessor=preprocessor,
     #                                                           checkpoint='/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn.6000.tar')
 
-    ctrl = baseline_prior.GlobalLinearDynamicsCrossEntropyController(preprocessor=preprocessor)
+    ctrl = global_controller.GlobalLinearDynamicsCrossEntropyController(preprocessor=preprocessor)
     # ctrl = baseline_prior.GlobalNetworkCrossEntropyController(
     #     feature.SequentialFC(input_dim=2, feature_dim=3, hidden_units=10,
     #                          hidden_layers=3).double(), R=1)
@@ -148,7 +148,7 @@ def test_local_dynamics(level=0):
 
 
 def test_global_linear_dynamics():
-    ctrl = baseline_prior.GlobalLQRController(5)
+    ctrl = global_controller.GlobalLQRController(5)
     env = get_easy_env(p.GUI)
     sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=100, plot=True, save=False)
 

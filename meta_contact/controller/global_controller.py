@@ -77,7 +77,7 @@ class GlobalNetworkCrossEntropyController(Controller):
     def __init__(self, m, name='', R=1, checkpoint=None, **kwargs):
         super().__init__()
         ds = exp.PushDataset(data_dir='pushing/touching.mat', **kwargs)
-        self.mw = m.NetworkModelWrapper(m, name, ds, 1e-3, 1e-5)
+        self.mw = model.NetworkModelWrapper(m, name, ds, 1e-3, 1e-5)
         # learn prior model on data
         # load data if we already have some, otherwise train from scratch
         if checkpoint and self.mw.load(checkpoint):
