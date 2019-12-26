@@ -69,18 +69,6 @@ class NetworkModelWrapper:
 
         self.writer = SummaryWriter(flush_secs=20, comment=os.path.basename(name))
 
-    # def _compute_loss(self, XU, Y):
-    #     Yhat = self.model(XU)
-    #     E = (Y - Yhat).norm(2, dim=1) ** 2
-    #     return E
-
-    def _compute_loss(self, XU, Y):
-        pi, normal = self.model(XU)
-        # compute losses
-        # negative log likelihood
-        nll = MixtureDensityNetwork.loss(pi, normal, Y)
-        return nll
-
     def _accumulate_stats(self, loss, vloss):
         self.writer.add_scalar('loss/training', loss, self.step)
         self.writer.add_scalar('loss/validation', vloss, self.step)
@@ -102,11 +90,11 @@ class NetworkModelWrapper:
                 XU, Y, contacts = data
 
                 self.optimizer.zero_grad()
-                loss = self._compute_loss(XU, Y)
+                loss = self.user.compute_loss(XU, Y)
 
                 # validation and other analysis
                 with torch.no_grad():
-                    vloss = self._compute_loss(self.XUv, self.Yv)
+                    vloss = self.user.compute_loss(self.XUv, self.Yv)
                     self._accumulate_stats(loss.mean(), vloss.mean())
 
                 loss.mean().backward()
@@ -145,8 +133,7 @@ class NetworkModelWrapper:
         if self.dataset.preprocessor:
             xu = self.dataset.preprocessor.transform_x(xu)
 
-        pi, normal = self.model(xu)
-        dxb = MixtureDensityNetwork.sample(pi, normal)
+        dxb = self.user.sample(xu)
 
         if self.dataset.preprocessor:
             dxb = self.dataset.preprocessor.invert_transform(dxb).reshape(-1)
