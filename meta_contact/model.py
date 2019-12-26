@@ -1,5 +1,5 @@
 import os
-
+import abc
 import numpy as np
 from arm_pytorch_utilities import load_data
 from arm_pytorch_utilities.model.mdn import MixtureDensityNetwork
@@ -26,8 +26,48 @@ def make_mdn_model(input_dim=7, output_dim=3, num_components=4, H_units=32):
     return mdn
 
 
+class ModelUser(abc.ABC):
+    """Ways of computing loss and sampling from a model; interface to NetworkModelWrapper"""
+
+    def __init__(self, model):
+        self.model = model
+
+    @abc.abstractmethod
+    def compute_loss(self, XU, Y):
+        """Compute the training loss on this batch"""
+
+    @abc.abstractmethod
+    def sample(self, xu):
+        """Sample y from inputs xu"""
+
+
+class MDNUser(ModelUser):
+    def compute_loss(self, XU, Y):
+        pi, normal = self.model(XU)
+        # compute losses
+        # negative log likelihood
+        nll = MixtureDensityNetwork.loss(pi, normal, Y)
+        return nll
+
+    def sample(self, xu):
+        pi, normal = self.model(xu)
+        y = MixtureDensityNetwork.sample(pi, normal)
+        return y
+
+
+class DeterministicUser(ModelUser):
+    def compute_loss(self, XU, Y):
+        Yhat = self.model(XU)
+        E = (Y - Yhat).norm(2, dim=1) ** 2
+        return E
+
+    def sample(self, xu):
+        y = self.model(xu)
+        return y
+
+
 class NetworkModelWrapper:
-    def __init__(self, model, name, dataset, lr, regularization, lookahead=True):
+    def __init__(self, model_user: ModelUser, name, dataset, lr, regularization, lookahead=True):
         self.dataset = dataset
         self.optimizer = None
         self.step = 0
@@ -36,7 +76,8 @@ class NetworkModelWrapper:
         self.dataset.make_data()
         self.XU, self.Y, self.labels = self.dataset.training_set()
         self.XUv, self.Yv, self.labelsv = self.dataset.validation_set()
-        self.model = model
+        self.user = model_user
+        self.model = model_user.model
 
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=regularization)
         if lookahead:

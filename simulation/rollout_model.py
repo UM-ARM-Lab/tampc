@@ -9,7 +9,7 @@ import torch
 import matplotlib.pyplot as plt
 from arm_pytorch_utilities.draw import plot_mdn_prediction
 from meta_contact.experiment import interactive_block_pushing as exp
-from meta_contact import mw, cfg
+from meta_contact import cfg
 from meta_contact.controller import controller
 import pybullet as p
 
@@ -29,7 +29,7 @@ if __name__ == "__main__":
     ds = exp.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor, validation_ratio=0.2,
                          predict_differences=pd)
 
-    m = model.make_mdn_model(num_components=3)
+    m = model.MDNUser(model.make_mdn_model(num_components=3))
     name = 'combined'
     mw = model.NetworkModelWrapper(m, name, ds, 1e-3, 1e-5)
     # learn prior model on data
