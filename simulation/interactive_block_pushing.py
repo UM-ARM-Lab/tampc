@@ -10,9 +10,11 @@ from meta_contact import cfg
 from arm_pytorch_utilities import rand, load_data
 
 from meta_contact.controller import controller
-from meta_contact.controller import global_controller, locally_linear
+from meta_contact.controller import global_controller
+from meta_contact.controller import online_controller
 from meta_contact.experiment import interactive_block_pushing
 from meta_contact.util import rotate_wrt_origin
+from meta_contact import prior
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
@@ -121,10 +123,6 @@ def get_easy_env(mode=p.GUI, level=0):
     return env
 
 
-from meta_contact.prior import LSQPrior, GMMPrior
-from meta_contact.controller import online_controller
-
-
 def test_local_dynamics(level=0):
     num_frames = 100
 
@@ -132,9 +130,9 @@ def test_local_dynamics(level=0):
     ds = interactive_block_pushing.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor,
                                                validation_ratio=0.01, predict_differences=False)
     ds.make_data()
-    # prior = GMMPrior.from_data(ds)
-    prior = LSQPrior.from_data(ds)
-    ctrl = online_controller.OnlineController(prior, ds=ds, max_timestep=num_frames, R=5, horizon=15, lqr_iter=2,
+    # pm = GMMPrior.from_data(ds)
+    pm = prior.LSQPrior.from_data(ds)
+    ctrl = online_controller.OnlineController(pm, ds=ds, max_timestep=num_frames, R=5, horizon=15, lqr_iter=2,
                                               init_gamma=0.1)
 
     env = get_easy_env(p.GUI, level=level)
@@ -157,6 +155,29 @@ def test_global_linear_dynamics():
     plt.show()
 
 
+def test_global_mppi(level=0):
+    preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
+    preprocessor = None
+    ds = interactive_block_pushing.PushDataset(data_dir='pushing/touching.mat', validation_ratio=0.01,
+                                               predict_differences=True, preprocessor=preprocessor)
+    ds.make_data()
+    pm = prior.LinearPriorTorch(ds)
+
+    def dynamics(state, action):
+        next_state = pm(state, action)
+        return next_state
+
+    ctrl = global_controller.GlobalMPPIController(dynamics)
+
+    env = get_easy_env(p.GUI, level=level)
+    sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=100, plot=True, save=False)
+
+    seed = rand.seed()
+    sim.run(seed)
+    plt.ioff()
+    plt.show()
+
+
 def sandbox():
     ctrl = controller.FullRandomController(0.05)
     env = interactive_block_pushing.PushAgainstWallEnv(mode=p.GUI)
@@ -169,5 +190,6 @@ if __name__ == "__main__":
     # collect_notouch_freespace_data()
     # test_global_prior_dynamics(0)
     # test_global_linear_dynamics()
-    test_local_dynamics()
+    # test_local_dynamics()
+    test_global_mppi()
     # sandbox()

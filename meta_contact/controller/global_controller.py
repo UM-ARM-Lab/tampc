@@ -5,6 +5,7 @@ from meta_contact import prior
 from meta_contact import model
 from learn_hybrid_mpc import mpc, evaluation
 from pytorch_mppi import mppi
+from arm_pytorch_utilities import linalg
 import torch
 
 import logging
@@ -126,6 +127,34 @@ class GlobalLinearDynamicsCrossEntropyController(Controller):
         # use learn_mpc's Cross Entropy
         u = self.ce.action(np.array(obs))
         n = np.linalg.norm(u)
+        if n > 0.04:
+            u = u / n * 0.04
+        return u
+
+
+class GlobalMPPIController(Controller):
+    def __init__(self, dynamics, R=1, **kwargs):
+        super().__init__()
+
+        nu = 2
+        nx = 5
+        dtype = torch.double
+        self.Q = torch.diag(torch.tensor([0, 0, 1, 1, 0], dtype=dtype))
+        self.R = torch.eye(nu, dtype=dtype) * R
+        max_push_mag = 0.03
+        noise_sigma = torch.eye(nu, dtype=dtype) * max_push_mag * 0.03
+        self.mpc = mppi.MPPI(dynamics, self._running_cost, nx, noise_sigma=noise_sigma, horizon=10, num_samples=100,
+                             **kwargs)
+
+    def _running_cost(self, state, action):
+        state = state - torch.tensor(self.goal, dtype=state.dtype, device=state.device)
+        cost = linalg.batch_quadratic_product(state, self.Q) + linalg.batch_quadratic_product(action, self.R)
+        return cost
+
+    def command(self, obs):
+        # use learn_mpc's Cross Entropy
+        u = self.mpc.command(torch.tensor(obs))
+        n = torch.norm(u)
         if n > 0.04:
             u = u / n * 0.04
         return u

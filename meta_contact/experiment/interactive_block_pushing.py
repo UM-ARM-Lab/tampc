@@ -29,6 +29,7 @@ class PushLoader(load_data.DataLoader):
         u = d['U'][:-1]
         cc = d['contact'][1:]
 
+        # TODO have separate option deciding whether to predict output of pusher positions or not (i.e. what state_col_offset is)
         if self.pd:
             state_col_offset = 2
             dpos = x[1:, state_col_offset:-1] - x[:-1, state_col_offset:-1]
@@ -56,7 +57,6 @@ class PushLoader(load_data.DataLoader):
         cc = cc[mask]
         y = y[mask]
 
-        # # TODO confirm correctness of output
         # xy = xu[:, 2:4]
         # nxy = xy + y[:, :-1]
         # du = np.linalg.norm(nxy[:-1] - xy[1:], axis=1)
@@ -111,6 +111,7 @@ class RawPushDataset(torch.utils.data.Dataset):
 
 
 class PushDataset(datasets.DataSet):
+    # TODO forward kwargs to raw dataset, have separate dictionary for super args
     def __init__(self, N=None, data_dir='pushing', preprocessor=None, validation_ratio=0.2,
                  num_modes=3, predict_differences=True, **kwargs):
         """
