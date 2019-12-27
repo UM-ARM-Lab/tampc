@@ -4,6 +4,8 @@ from meta_contact.experiment import interactive_block_pushing as exp
 from meta_contact import prior
 from meta_contact import model
 from learn_hybrid_mpc import mpc, evaluation
+from pytorch_mppi import mppi
+import torch
 
 import logging
 
@@ -62,8 +64,8 @@ class GlobalLQRController(Controller):
     def command(self, obs):
         # remove the goal from xb yb
         x = np.array(obs)
-        # x[0:2] -= self.goal
-        x[2:4] -= self.goal
+        # x[0:2] -= self.goal[2:4]
+        x[2:4] -= self.goal[2:4]
         u = -self.K @ x.reshape((self.nx, 1))
 
         n = np.linalg.norm(u)
@@ -97,13 +99,6 @@ class GlobalNetworkCrossEntropyController(Controller):
         self.ce = mpc.CrossEntropy(self.mw, self.cost, 10, 175, nu, 7, 3, init_cov_diag=max_push_mag,
                                    ctrl_max_mag=max_push_mag)
 
-    def get_goal(self):
-        return self.goal
-
-    def set_goal(self, goal):
-        # assume goal is xb yb
-        self.goal = goal
-
     def command(self, obs):
         # use learn_mpc's Cross Entropy
         u = self.ce.action(np.array(obs))
@@ -111,6 +106,7 @@ class GlobalNetworkCrossEntropyController(Controller):
         return u
 
 
+# TODO generalize these CEM controllers to dynamics functions
 class GlobalLinearDynamicsCrossEntropyController(Controller):
     def __init__(self, name='', R=1, **kwargs):
         super().__init__()
@@ -125,13 +121,6 @@ class GlobalLinearDynamicsCrossEntropyController(Controller):
         max_push_mag = 0.03
         self.ce = mpc.CrossEntropy(self.prior, self.cost, 10, 175, nu, 7, 3, init_cov_diag=max_push_mag,
                                    ctrl_max_mag=max_push_mag)
-
-    def get_goal(self):
-        return self.goal
-
-    def set_goal(self, goal):
-        # assume goal is xb yb
-        self.goal = goal
 
     def command(self, obs):
         # use learn_mpc's Cross Entropy

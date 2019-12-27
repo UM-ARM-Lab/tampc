@@ -9,8 +9,11 @@ class Controller(abc.ABC):
     def __init__(self):
         self.goal = None
 
+    def get_goal(self):
+        return self.goal
+
     def set_goal(self, goal):
-        self.goal = goal[2:4]
+        self.goal = goal
 
     @abc.abstractmethod
     def command(self, obs):
@@ -25,7 +28,7 @@ class ArtificialController(Controller):
 
     def command(self, obs):
         x, y, xb, yb, yaw = obs
-        to_goal = np.subtract(self.goal, (xb, yb))
+        to_goal = np.subtract(self.goal[2:4], (xb, yb))
         desired_pusher_pos = np.subtract((xb, yb), to_goal / np.linalg.norm(to_goal) * self.block_width)
         dpusher = np.subtract(desired_pusher_pos, (x, y))
         ranMag = 0.2
