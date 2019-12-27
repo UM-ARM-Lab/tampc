@@ -184,13 +184,15 @@ class LinearPrior:
         self.nx = n - self.nu
         # get dynamics
         params, res, rank, _ = np.linalg.lstsq(XU.numpy(), Y.numpy())
+        # our call is setup to handle residual dynamics, so need to make sure that's the case
+        if not ds._pd:  # TODO use public methods/elements to determine if predicting differences
+            raise RuntimeError("Dynamics is set up to only handle residual dynamics")
         # convert dyanmics to x' = Ax + Bu (note that our y is dx, so have to add diag(1))
-        # self.A = np.diag([1., 1., 1., 1., 1.])
-        self.A = np.zeros((5, 5))
-        self.B = np.zeros((self.nx, self.nu))
+        self.A = np.zeros((self.nx, self.nx))
         self.A[2:, :] += params[:self.nx, :].T
-        # self.B[0, 0] = 1
-        # self.B[1, 1] = 1
+        self.B = np.zeros((self.nx, self.nu))
+        self.B[0, 0] = 1
+        self.B[1, 1] = 1
         self.B[2:, :] += params[self.nx:, :].T
 
     def __call__(self, x, u):
@@ -211,4 +213,30 @@ class LinearPrior:
         # directly move the pusher
         x[:2] += u
         x[2:] += dxb
+        return x
+
+
+class LinearPriorTorch(LinearPrior):
+    def __init__(self, ds):
+        super().__init__(ds)
+        self.A = torch.from_numpy(self.A)
+        self.B = torch.from_numpy(self.B)
+
+    def __call__(self, x, u):
+        xu = torch.cat((x, u), dim=1)
+
+        if self.dataset.preprocessor:
+            xu = self.dataset.preprocessor.transform_x(xu)
+
+        dxb = xu[:, :self.nx] @ self.A.transpose(0, 1) + xu[:, self.nx:] @ self.B.transpose(0, 1)
+        # dxb = self.A @ xu[:, :self.nx] + self.B @ xu[:, self.nx:]
+        # strip x,y of the pusher, which we add directly;
+        dxb = dxb[:, self.nu:]
+
+        if self.dataset.preprocessor:
+            dxb = self.dataset.preprocessor.invert_transform(dxb)
+
+        # directly move the pusher
+        x[:, :2] += u
+        x[:, 2:] += dxb
         return x
