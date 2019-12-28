@@ -142,7 +142,7 @@ def test_global_cem(level=0):
     ds.make_data()
     pm = prior.LinearPriorTorch(ds)
 
-    ctrl = global_controller.GlobalCEMController(pm)
+    ctrl = global_controller.GlobalCEMController(pm, num_samples=1000, horizon=7)
     env = get_easy_env(p.GUI, level=level)
     sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=100, plot=True, save=False)
 
@@ -185,8 +185,8 @@ def sandbox():
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=50, trial_length=50)
     # collect_notouch_freespace_data()
-    # test_global_cem(0)
-    test_global_mppi()
+    test_global_cem(0)
+    # test_global_mppi()
     # test_global_linear_dynamics()
     # test_local_dynamics()
     # sandbox()
