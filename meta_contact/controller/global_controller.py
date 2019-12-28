@@ -5,6 +5,7 @@ from pytorch_mppi import mppi
 from pytorch_cem import cem
 from arm_pytorch_utilities import linalg
 import torch
+import abc
 
 import logging
 
@@ -74,57 +75,52 @@ class GlobalLQRController(Controller):
         return u
 
 
-class GlobalCEMController(Controller):
-    def __init__(self, dynamics, R=1, **kwargs):
+class QRCostOptimalController(Controller):
+    def __init__(self, R=1):
         super().__init__()
 
-        nu = 2
-        nx = 5
-        max_push_mag = 0.03
-        dtype = torch.double
+        self.nu = 2
+        self.nx = 5
+        self.max_push_mag = 0.03
+        self.dtype = torch.double
 
-        self.Q = torch.diag(torch.tensor([0, 0, 1, 1, 0], dtype=dtype))
-        self.R = torch.eye(nu, dtype=dtype) * R
-        self.mpc = cem.CEM(dynamics, self._running_cost, nx, nu, num_samples=100, init_cov_diag=max_push_mag,
-                           ctrl_max_mag=max_push_mag, **kwargs)
+        self.Q = torch.diag(torch.tensor([0, 0, 1, 1, 0], dtype=self.dtype))
+        self.R = torch.eye(self.nu, dtype=self.dtype) * R
 
     def _running_cost(self, state, action):
         state = state - torch.tensor(self.goal, dtype=state.dtype, device=state.device)
         cost = linalg.batch_quadratic_product(state, self.Q) + linalg.batch_quadratic_product(action, self.R)
         return cost
 
+    @abc.abstractmethod
+    def _mpc_command(self, obs):
+        pass
+
     def command(self, obs):
         # use learn_mpc's Cross Entropy
-        u = self.mpc.command(torch.tensor(obs))
+        u = self._mpc_command(torch.tensor(obs))
         n = torch.norm(u)
-        if n > 0.04:
-            u = u / n * 0.04
+        if n > self.max_push_mag:
+            u = u / n * self.max_push_mag
         return u
 
 
-class GlobalMPPIController(Controller):
+class GlobalCEMController(QRCostOptimalController):
     def __init__(self, dynamics, R=1, **kwargs):
-        super().__init__()
+        super().__init__(R=R)
+        self.mpc = cem.CEM(dynamics, self._running_cost, self.nx, self.nu, init_cov_diag=self.max_push_mag,
+                           ctrl_max_mag=self.max_push_mag, **kwargs)
 
-        nu = 2
-        nx = 5
-        dtype = torch.double
-        self.Q = torch.diag(torch.tensor([0, 0, 1, 1, 0], dtype=dtype))
-        self.R = torch.eye(nu, dtype=dtype) * R
-        max_push_mag = 0.03
-        noise_sigma = torch.eye(nu, dtype=dtype) * max_push_mag * 0.03
-        self.mpc = mppi.MPPI(dynamics, self._running_cost, nx, noise_sigma=noise_sigma, horizon=10, num_samples=100,
+    def _mpc_command(self, obs):
+        return self.mpc.command(obs)
+
+
+class GlobalMPPIController(QRCostOptimalController):
+    def __init__(self, dynamics, R=1, **kwargs):
+        super().__init__(R=R)
+        noise_sigma = torch.eye(self.nu, dtype=self.dtype) * self.max_push_mag * 0.03
+        self.mpc = mppi.MPPI(dynamics, self._running_cost, self.nx, noise_sigma=noise_sigma, horizon=10,
                              **kwargs)
 
-    def _running_cost(self, state, action):
-        state = state - torch.tensor(self.goal, dtype=state.dtype, device=state.device)
-        cost = linalg.batch_quadratic_product(state, self.Q) + linalg.batch_quadratic_product(action, self.R)
-        return cost
-
-    def command(self, obs):
-        # use learn_mpc's Cross Entropy
-        u = self.mpc.command(torch.tensor(obs))
-        n = torch.norm(u)
-        if n > 0.04:
-            u = u / n * 0.04
-        return u
+    def _mpc_command(self, obs):
+        return self.mpc.command(obs)

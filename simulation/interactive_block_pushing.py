@@ -185,8 +185,8 @@ def sandbox():
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=50, trial_length=50)
     # collect_notouch_freespace_data()
-    test_global_cem(0)
+    # test_global_cem(0)
+    test_global_mppi()
     # test_global_linear_dynamics()
     # test_local_dynamics()
-    # test_global_mppi()
     # sandbox()
