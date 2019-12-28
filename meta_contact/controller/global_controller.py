@@ -1,8 +1,6 @@
 import numpy as np
 from meta_contact.controller.controller import Controller
 from meta_contact.experiment import interactive_block_pushing as exp
-from meta_contact import prior
-from meta_contact import model
 from learn_hybrid_mpc import mpc, evaluation
 from pytorch_mppi import mppi
 from arm_pytorch_utilities import linalg
@@ -76,56 +74,21 @@ class GlobalLQRController(Controller):
         return u
 
 
-class GlobalNetworkCrossEntropyController(Controller):
-    def __init__(self, model_user, name='', R=1, checkpoint=None, **kwargs):
+class GlobalCEMController(Controller):
+    def __init__(self, dynamics, R=1):
         super().__init__()
-        ds = exp.PushDataset(data_dir='pushing/touching.mat', **kwargs)
-        self.mw = model.NetworkModelWrapper(model_user, name, ds, 1e-3, 1e-5)
-        # learn prior model on data
-        # load data if we already have some, otherwise train from scratch
-        if checkpoint and self.mw.load(checkpoint):
-            logger.info("loaded checkpoint %s", checkpoint)
-        else:
-            self.mw.learn_model(100)
-
-        # freeze network
-        for param in self.mw.model.parameters():
-            param.requires_grad = False
 
         nu = 2
         self.Q = np.diag([0, 0, 1, 1, 0])
         self.R = np.diag([R for _ in range(nu)])
         self.cost = evaluation.QREvaluation(self.Q, self.R, self.Q, self.get_goal)
         max_push_mag = 0.03
-        self.ce = mpc.CrossEntropy(self.mw, self.cost, 10, 175, nu, 7, 3, init_cov_diag=max_push_mag,
-                                   ctrl_max_mag=max_push_mag)
+        self.mpc = mpc.CrossEntropy(dynamics, self.cost, 10, 175, nu, 7, 3, init_cov_diag=max_push_mag,
+                                    ctrl_max_mag=max_push_mag)
 
     def command(self, obs):
         # use learn_mpc's Cross Entropy
-        u = self.ce.action(np.array(obs))
-        u = u / np.linalg.norm(u) * 0.04
-        return u
-
-
-# TODO generalize these CEM controllers to dynamics functions
-class GlobalLinearDynamicsCrossEntropyController(Controller):
-    def __init__(self, name='', R=1, **kwargs):
-        super().__init__()
-        ds = exp.PushDataset(data_dir='pushing/touching.mat', validation_ratio=0.01, **kwargs)
-        ds.make_data()
-        self.prior = prior.LinearPrior(ds)
-
-        nu = 2
-        self.Q = np.diag([0, 0, 1, 1, 0])
-        self.R = np.diag([R for _ in range(nu)])
-        self.cost = evaluation.QREvaluation(self.Q, self.R, self.Q, self.get_goal)
-        max_push_mag = 0.03
-        self.ce = mpc.CrossEntropy(self.prior, self.cost, 10, 175, nu, 7, 3, init_cov_diag=max_push_mag,
-                                   ctrl_max_mag=max_push_mag)
-
-    def command(self, obs):
-        # use learn_mpc's Cross Entropy
-        u = self.ce.action(np.array(obs))
+        u = self.mpc.action(obs)
         n = np.linalg.norm(u)
         if n > 0.04:
             u = u / n * 0.04

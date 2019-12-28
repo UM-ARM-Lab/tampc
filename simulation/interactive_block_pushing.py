@@ -88,22 +88,20 @@ def collect_notouch_freespace_data(trials=100, trial_length=10):
     plt.show()
 
 
-def test_global_prior_dynamics(level=0):
+def test_global_cem(level=0):
     # mdn = make_mdn_model(num_components=3)
     preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
     preprocessor = None
-    # ctrl = baseline_prior.GlobalNetworkCrossEntropyController(mdn, 'mdn_cem', R=1, preprocessor=preprocessor,
-    #                                                           checkpoint='/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn.6000.tar')
+    ds = interactive_block_pushing.PushDataset(data_dir='pushing/touching.mat', validation_ratio=0.01,
+                                               predict_differences=True, preprocessor=preprocessor)
+    ds.make_data()
+    pm = prior.LinearPrior(ds)
 
-    ctrl = global_controller.GlobalLinearDynamicsCrossEntropyController(preprocessor=preprocessor)
-    # ctrl = baseline_prior.GlobalNetworkCrossEntropyController(
-    #     feature.SequentialFC(input_dim=2, feature_dim=3, hidden_units=10,
-    #                          hidden_layers=3).double(), R=1)
+    ctrl = global_controller.GlobalCEMController(pm)
     env = get_easy_env(p.GUI, level=level)
     sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=100, plot=True, save=False)
 
     seed = rand.seed()
-    # init_block_pos, init_block_yaw, init_pusher = random_touching_start()
     sim.run(seed)
     plt.ioff()
     plt.show()
@@ -188,8 +186,8 @@ def sandbox():
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=50, trial_length=50)
     # collect_notouch_freespace_data()
-    # test_global_prior_dynamics(0)
+    test_global_cem(0)
     # test_global_linear_dynamics()
     # test_local_dynamics()
-    test_global_mppi()
+    # test_global_mppi()
     # sandbox()
