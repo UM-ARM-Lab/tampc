@@ -7,9 +7,12 @@ from arm_pytorch_utilities import linalg
 logger = logging.getLogger(__name__)
 
 
-def xux_from_dataset(ds):
-    XU, _, _ = ds.training_set()
-    XUX = torch.cat((XU[:-1], XU[1:, :5]), dim=1)
+def xux_from_dataset(ds, nx=5):
+    XU, Y, _ = ds.training_set()
+    if not ds._pd:
+        XUX = torch.cat((XU, Y), dim=1)
+    else:
+        XUX = torch.cat((XU[:-1], XU[1:, :nx]), dim=1)
     return XUX
 
 
