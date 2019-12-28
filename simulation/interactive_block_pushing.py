@@ -134,7 +134,7 @@ def test_global_linear_dynamics():
     plt.show()
 
 
-def test_global_cem(level=0):
+def test_global_qr_cost_optimal_controller(controller, level=0, **kwargs):
     preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
     preprocessor = None
     ds = interactive_block_pushing.PushDataset(data_dir='pushing/touching.mat', validation_ratio=0.01,
@@ -142,32 +142,9 @@ def test_global_cem(level=0):
     ds.make_data()
     pm = prior.LinearPriorTorch(ds)
 
-    ctrl = global_controller.GlobalCEMController(pm, num_samples=1000, horizon=7)
+    ctrl = controller(pm, **kwargs)
     env = get_easy_env(p.GUI, level=level)
-    sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=100, plot=True, save=False)
-
-    seed = rand.seed()
-    sim.run(seed)
-    plt.ioff()
-    plt.show()
-
-
-def test_global_mppi(level=0):
-    preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
-    preprocessor = None
-    ds = interactive_block_pushing.PushDataset(data_dir='pushing/touching.mat', validation_ratio=0.01,
-                                               predict_differences=True, preprocessor=preprocessor)
-    ds.make_data()
-    pm = prior.LinearPriorTorch(ds)
-
-    def dynamics(state, action):
-        next_state = pm(state, action)
-        return next_state
-
-    ctrl = global_controller.GlobalMPPIController(dynamics, num_samples=1000, horizon=7)
-
-    env = get_easy_env(p.GUI, level=level)
-    sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=100, plot=True, save=False)
+    sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=200, plot=True, save=False)
 
     seed = rand.seed()
     sim.run(seed)
@@ -185,8 +162,8 @@ def sandbox():
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=50, trial_length=50)
     # collect_notouch_freespace_data()
-    test_global_cem(0)
-    # test_global_mppi()
+    # ctrl = global_controller.GlobalMPPIController
+    # test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7)
     # test_global_linear_dynamics()
-    # test_local_dynamics()
+    test_local_dynamics()
     # sandbox()
