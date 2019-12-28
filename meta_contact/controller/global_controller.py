@@ -118,9 +118,8 @@ class GlobalCEMController(QRCostOptimalController):
 class GlobalMPPIController(QRCostOptimalController):
     def __init__(self, dynamics, R=1, **kwargs):
         super().__init__(R=R)
-        noise_sigma = torch.eye(self.nu, dtype=self.dtype) * self.max_push_mag * 0.03
-        self.mpc = mppi.MPPI(dynamics, self._running_cost, self.nx, noise_sigma=noise_sigma, horizon=10,
-                             **kwargs)
+        noise_sigma = torch.eye(self.nu, dtype=self.dtype) * self.max_push_mag
+        self.mpc = mppi.MPPI(dynamics, self._running_cost, self.nx, noise_sigma=noise_sigma, **kwargs)
 
     def _mpc_command(self, obs):
         return self.mpc.command(obs)

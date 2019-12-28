@@ -164,7 +164,7 @@ def test_global_mppi(level=0):
         next_state = pm(state, action)
         return next_state
 
-    ctrl = global_controller.GlobalMPPIController(dynamics)
+    ctrl = global_controller.GlobalMPPIController(dynamics, num_samples=1000, horizon=7)
 
     env = get_easy_env(p.GUI, level=level)
     sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=100, plot=True, save=False)
