@@ -88,25 +88,6 @@ def collect_notouch_freespace_data(trials=100, trial_length=10):
     plt.show()
 
 
-def test_global_cem(level=0):
-    # mdn = make_mdn_model(num_components=3)
-    preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
-    preprocessor = None
-    ds = interactive_block_pushing.PushDataset(data_dir='pushing/touching.mat', validation_ratio=0.01,
-                                               predict_differences=True, preprocessor=preprocessor)
-    ds.make_data()
-    pm = prior.LinearPrior(ds)
-
-    ctrl = global_controller.GlobalCEMController(pm)
-    env = get_easy_env(p.GUI, level=level)
-    sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=100, plot=True, save=False)
-
-    seed = rand.seed()
-    sim.run(seed)
-    plt.ioff()
-    plt.show()
-
-
 def get_easy_env(mode=p.GUI, level=0):
     init_block_pos = [0, 0]
     init_block_yaw = 0
@@ -148,6 +129,24 @@ def test_global_linear_dynamics():
     sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=100, plot=True, save=False)
 
     seed = rand.seed(3)
+    sim.run(seed)
+    plt.ioff()
+    plt.show()
+
+
+def test_global_cem(level=0):
+    preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
+    preprocessor = None
+    ds = interactive_block_pushing.PushDataset(data_dir='pushing/touching.mat', validation_ratio=0.01,
+                                               predict_differences=True, preprocessor=preprocessor)
+    ds.make_data()
+    pm = prior.LinearPriorTorch(ds)
+
+    ctrl = global_controller.GlobalCEMController(pm)
+    env = get_easy_env(p.GUI, level=level)
+    sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=100, plot=True, save=False)
+
+    seed = rand.seed()
     sim.run(seed)
     plt.ioff()
     plt.show()

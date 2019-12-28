@@ -1,8 +1,8 @@
 import numpy as np
 from meta_contact.controller.controller import Controller
 from meta_contact.experiment import interactive_block_pushing as exp
-from learn_hybrid_mpc import mpc, evaluation
 from pytorch_mppi import mppi
+from pytorch_cem import cem
 from arm_pytorch_utilities import linalg
 import torch
 
@@ -75,21 +75,28 @@ class GlobalLQRController(Controller):
 
 
 class GlobalCEMController(Controller):
-    def __init__(self, dynamics, R=1):
+    def __init__(self, dynamics, R=1, **kwargs):
         super().__init__()
 
         nu = 2
-        self.Q = np.diag([0, 0, 1, 1, 0])
-        self.R = np.diag([R for _ in range(nu)])
-        self.cost = evaluation.QREvaluation(self.Q, self.R, self.Q, self.get_goal)
+        nx = 5
         max_push_mag = 0.03
-        self.mpc = mpc.CrossEntropy(dynamics, self.cost, 10, 175, nu, 7, 3, init_cov_diag=max_push_mag,
-                                    ctrl_max_mag=max_push_mag)
+        dtype = torch.double
+
+        self.Q = torch.diag(torch.tensor([0, 0, 1, 1, 0], dtype=dtype))
+        self.R = torch.eye(nu, dtype=dtype) * R
+        self.mpc = cem.CEM(dynamics, self._running_cost, nx, nu, num_samples=100, init_cov_diag=max_push_mag,
+                           ctrl_max_mag=max_push_mag, **kwargs)
+
+    def _running_cost(self, state, action):
+        state = state - torch.tensor(self.goal, dtype=state.dtype, device=state.device)
+        cost = linalg.batch_quadratic_product(state, self.Q) + linalg.batch_quadratic_product(action, self.R)
+        return cost
 
     def command(self, obs):
         # use learn_mpc's Cross Entropy
-        u = self.mpc.action(obs)
-        n = np.linalg.norm(u)
+        u = self.mpc.command(torch.tensor(obs))
+        n = torch.norm(u)
         if n > 0.04:
             u = u / n * 0.04
         return u
