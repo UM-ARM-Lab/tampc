@@ -9,7 +9,7 @@ import abc
 
 import logging
 
-from meta_contact.util import dlqr
+from arm_pytorch_utilities.trajectory import dlqr
 
 logger = logging.getLogger(__name__)
 
