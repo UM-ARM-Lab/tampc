@@ -144,18 +144,6 @@ class OnlineController(Controller):
 
         return LinearGaussianPolicy(np.tile(-K, tile), np.zeros((H, dU)), PSig, cholPSig, invPSig)
 
-        K = np.zeros((H, dU, dX))
-        k = np.zeros((H, dU))
-        # K = self.offline_K[:H]  # np.zeros((H, dU, dX))
-        # k = self.offline_k[:H]  # np.zeros((H, dU))
-        init_noise = 1
-        self.gamma = self.init_gamma
-        cholPSig = np.tile(np.sqrt(init_noise) * np.eye(dU), [H, 1, 1])
-        PSig = np.tile(init_noise * np.eye(dU), [H, 1, 1])
-        invPSig = np.tile(1 / init_noise * np.eye(dU), [H, 1, 1])
-        return LinearGaussianPolicy(K, k, PSig, cholPSig,
-                                    invPSig)
-
     def compute_action(self, lgpolicy, x, add_noise=True):
         """
         Compute dU-dimensional action from a
