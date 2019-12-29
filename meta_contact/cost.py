@@ -321,3 +321,33 @@ class CostFKOnline(object):
         # TODO: Add derivatives for the actual end-effector dimensions of state
         # Right now only derivatives w.r.t. joints are considered
         return l, lx, lu, lxx, luu, lux
+
+
+class CostQROnline(object):
+    """QR cost adopted from the GPS code base.
+
+    Assumes only parts of the state space is important for reaching the goal (termed ee - end effector)
+    """
+
+    def __init__(self, target, Q, R):
+        self.Q = Q
+        self.R = R
+        self.eetgt = target
+        self.final_penalty = 1.0  # weight = sum of remaining weight * final penalty
+
+    def eval(self, X, U, t, jac=None):
+        # Constants.
+        dX = X.shape[1]
+        dU = U.shape[1]
+        T = X.shape[0]
+
+        X = X - self.eetgt
+        l = 0.5 * (np.einsum('ij,kj,ik->i', X, self.Q, X) + np.einsum('ij,kj,ik->i', U, self.R, U))
+        # l = 0.5 * (linalg.batch_quadratic_product(X, self.Q) + linalg.batch_quadratic_product(U, self.R)).numpy()
+        lu = U @ self.R
+        lx = X @ self.Q
+        luu = np.tile(self.R, (T, 1, 1))
+        lxx = np.tile(self.Q, (T, 1, 1))
+        lux = np.zeros((T, dU, dX))
+
+        return l, lx, lu, lxx, luu, lux

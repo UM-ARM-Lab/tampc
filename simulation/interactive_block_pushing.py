@@ -111,8 +111,8 @@ def test_local_dynamics(level=0):
     ds.make_data()
     # pm = GMMPrior.from_data(ds)
     pm = prior.LSQPrior.from_data(ds)
-    ctrl = online_controller.OnlineController(pm, ds=ds, max_timestep=num_frames, R=5, horizon=15, lqr_iter=2,
-                                              init_gamma=0.1)
+    ctrl = online_controller.OnlineController(pm, ds=ds, max_timestep=num_frames, R=5, horizon=20, lqr_iter=2,
+                                              init_gamma=0.1, max_ctrl=0.03)
 
     env = get_easy_env(p.GUI, level=level)
     sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=num_frames, plot=True, save=False)
