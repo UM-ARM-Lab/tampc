@@ -109,8 +109,8 @@ def test_local_dynamics(level=0):
     ds = interactive_block_pushing.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor,
                                                validation_ratio=0.01, predict_differences=False)
     ds.make_data()
-    # pm = GMMPrior.from_data(ds)
-    pm = prior.LSQPrior.from_data(ds)
+    pm = prior.GMMPrior.from_data(ds)
+    # pm = prior.LSQPrior.from_data(ds)
     ctrl = online_controller.OnlineController(pm, ds=ds, max_timestep=num_frames, R=5, horizon=20, lqr_iter=2,
                                               init_gamma=0.1, max_ctrl=0.03)
 
