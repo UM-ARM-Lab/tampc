@@ -57,6 +57,9 @@ class NetworkModelWrapper:
         self.step = 0
         self.name = name
         # create model architecture
+        # TODO __call__ currently only supports predicting residuals
+        if dataset._pd:
+            raise RuntimeError("Currently only residual predictions are supported")
         self.dataset.make_data()
         self.XU, self.Y, self.labels = self.dataset.training_set()
         self.XUv, self.Yv, self.labelsv = self.dataset.validation_set()
@@ -138,10 +141,15 @@ class NetworkModelWrapper:
         if self.dataset.preprocessor:
             dxb = self.dataset.preprocessor.invert_transform(dxb).reshape(-1)
 
+        # TODO why do I need to convert to numpy again?
         if torch.is_tensor(dxb):
             dxb = dxb.numpy()
-        # dxb = self.model(xu)
-        # directly move the pusher
-        x[:2] += u
-        x[2:] += dxb
+
+        # depending on if our dataset says for us to predict the full state
+        if dxb.shape[0] == x.shape[0]:
+            x += dxb
+        else:
+            # directly move the pusher
+            x[:2] += u
+            x[2:] += dxb
         return x
