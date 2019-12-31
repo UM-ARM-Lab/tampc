@@ -2,7 +2,7 @@ import os
 
 import scipy.io
 
-from arm_pytorch_utilities import preprocess
+from arm_pytorch_utilities import preprocess, load_data
 import sklearn.preprocessing as skpre
 import numpy as np
 import torch
@@ -26,9 +26,9 @@ logging.basicConfig(level=logging.INFO,
 if __name__ == "__main__":
     preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
     # preprocessor = None
-    pd = True
+    config = load_data.DataConfig(predict_difference=True)
     ds = exp.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor, validation_ratio=0.2,
-                         predict_differences=pd)
+                         config=config)
 
     m = model.MDNUser(make.make_mdn_model(num_components=3))
     name = 'combined'
@@ -69,9 +69,7 @@ if __name__ == "__main__":
     # compare simulated results to what the model predicts
     start_index = 0
     sample = 5
-    ds = exp.PushDataset(data_dir=data_file, preprocessor=preprocessor, validation_ratio=0.01,
-                         predict_differences=pd)
-    ds.make_data()
+    ds = exp.PushDataset(data_dir=data_file, preprocessor=preprocessor, validation_ratio=0.01, config=config)
     X, Y, labels = ds.training_set()
     # labels = torch.from_numpy(d['contact'].astype(int)).flatten()
 

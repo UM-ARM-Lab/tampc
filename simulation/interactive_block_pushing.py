@@ -108,7 +108,6 @@ def test_local_dynamics(level=0):
     preprocessor = None
     ds = interactive_block_pushing.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor,
                                                validation_ratio=0.01, predict_differences=False)
-    ds.make_data()
     pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
     ctrl = online_controller.OnlineController(pm, ds=ds, max_timestep=num_frames, R=5, horizon=20, lqr_iter=2,
@@ -139,7 +138,6 @@ def test_global_qr_cost_optimal_controller(controller, level=0, **kwargs):
     preprocessor = None
     ds = interactive_block_pushing.PushDataset(data_dir='pushing/touching.mat', validation_ratio=0.01,
                                                predict_differences=True, preprocessor=preprocessor)
-    ds.make_data()
     pm = prior.LinearPriorTorch(ds)
 
     ctrl = controller(pm, **kwargs)

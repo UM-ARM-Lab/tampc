@@ -19,10 +19,9 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class PushLoader(load_data.DataLoader):
-    def __init__(self, *args, predict_difference=True, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.pd = predict_difference
+class PushLoader(load_utils.DataLoader):
+    def __init__(self, *args, file_cfg=cfg, **kwargs):
+        super().__init__(file_cfg, *args, **kwargs)
 
     def _process_file_raw_data(self, d):
         x = d['X']
@@ -30,7 +29,7 @@ class PushLoader(load_data.DataLoader):
         cc = d['contact'][1:]
 
         # TODO have separate option deciding whether to predict output of pusher positions or not (i.e. what state_col_offset is)
-        if self.pd:
+        if self.config.predict_difference:
             state_col_offset = 2
             dpos = x[1:, state_col_offset:-1] - x[:-1, state_col_offset:-1]
             dyaw = util.angular_diff_batch(x[1:, -1], x[:-1, -1])
@@ -57,6 +56,8 @@ class PushLoader(load_data.DataLoader):
         cc = cc[mask]
         y = y[mask]
 
+        self.config.load_data_info(x, u, y)
+
         # xy = xu[:, 2:4]
         # nxy = xy + y[:, :-1]
         # du = np.linalg.norm(nxy[:-1] - xy[1:], axis=1)
@@ -65,14 +66,14 @@ class PushLoader(load_data.DataLoader):
 
 
 class RawPushDataset(torch.utils.data.Dataset):
-    def __init__(self, dirs=('pushing',), mode='all', max_num=None, make_affine=False, predict_difference=True):
+    def __init__(self, dirs=('pushing',), mode='all', max_num=None, config=load_utils.DataConfig()):
         if type(dirs) is str:
             dirs = [dirs]
         self.XU = None
         self.Y = None
         self.contact = None
         for dir in dirs:
-            dl = PushLoader(dir, config=cfg, predict_difference=predict_difference)
+            dl = PushLoader(dir, config)
             XU, Y, contact = dl.load()
             if self.XU is None:
                 self.XU = XU
@@ -93,8 +94,8 @@ class RawPushDataset(torch.utils.data.Dataset):
             self.Y = self.Y[c, :]
             self.contact = self.contact[c, :]
 
-        if make_affine:
-            self.XU = load_data.make_affine(self.XU)
+        if config.force_affine:
+            self.XU = load_utils.make_affine(self.XU)
 
         if max_num is not None:
             self.XU = self.XU[:max_num]
@@ -113,7 +114,8 @@ class RawPushDataset(torch.utils.data.Dataset):
 class PushDataset(datasets.DataSet):
     # TODO forward kwargs to raw dataset, have separate dictionary for super args
     def __init__(self, N=None, data_dir='pushing', preprocessor=None, validation_ratio=0.2,
-                 num_modes=3, predict_differences=True, **kwargs):
+                 config=load_utils.DataConfig(),
+                 **kwargs):
         """
         :param N: total number of data points to use, None for all available in data_dir
         :param data_dir: data directory
@@ -124,18 +126,19 @@ class PushDataset(datasets.DataSet):
         """
 
         super().__init__(N=N, input_dim=PushAgainstWallEnv.nx + PushAgainstWallEnv.nu, output_dim=PushAgainstWallEnv.ny,
-                         num_modes=num_modes, **kwargs)
+                         **kwargs)
 
         self.preprocessor = preprocessor
+        self.config = config
         self._data_dir = data_dir
         self._validation_ratio = validation_ratio
-        self._pd = predict_differences
+        self.make_data()
 
     def make_parameters(self):
         pass
 
     def make_data(self):
-        full_set = RawPushDataset(dirs=self._data_dir, max_num=self.N, predict_difference=self._pd)
+        full_set = RawPushDataset(dirs=self._data_dir, max_num=self.N, config=self.config)
         train_set, validation_set = load_utils.splitTrainValidationSets(full_set,
                                                                         validation_ratio=self._validation_ratio)
 

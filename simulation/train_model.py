@@ -1,4 +1,4 @@
-from arm_pytorch_utilities import preprocess
+from arm_pytorch_utilities import preprocess, load_data
 import sklearn.preprocessing as skpre
 import numpy as np
 import matplotlib.pyplot as plt
@@ -20,8 +20,9 @@ if __name__ == "__main__":
 
     # ds = exp.PushDataset(data_dir='pushing', preprocessor=preprocessor)
     # compare on trajectory
+    config = load_data.DataConfig(predict_difference=True)
     ds = exp.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor, validation_ratio=0.2,
-                         predict_differences=True)
+                         config=config)
 
     m = model.MDNUser(make.make_mdn_model(num_components=3))
     name = 'mdn'

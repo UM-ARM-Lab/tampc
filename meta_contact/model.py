@@ -6,8 +6,10 @@ from arm_pytorch_utilities.model.mdn import MixtureDensityNetwork
 import torch
 from arm_pytorch_utilities.optim import Lookahead
 from meta_contact import cfg
-from meta_contact.prior import logger
 from tensorboardX import SummaryWriter
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class ModelUser(abc.ABC):
@@ -57,8 +59,8 @@ class NetworkModelWrapper:
         self.step = 0
         self.name = name
         # create model architecture
-        # TODO __call__ currently only supports predicting residuals
-        if dataset._pd:
+        # __call__ currently only supports predicting residuals
+        if not dataset.config.predict_difference:
             raise RuntimeError("Currently only residual predictions are supported")
         self.dataset.make_data()
         self.XU, self.Y, self.labels = self.dataset.training_set()
