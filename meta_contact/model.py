@@ -81,7 +81,7 @@ class NetworkModelWrapper:
         train_loader = torch.utils.data.DataLoader(ds_train, batch_size=batch_N, shuffle=True)
         self.step = 0
 
-        save_checkpoint_every_n_epochs = max_epoch // 20
+        save_checkpoint_every_n_epochs = max(max_epoch // 20, 5)
 
         for epoch in range(0, max_epoch):  # loop over the dataset multiple times
             if save_checkpoint_every_n_epochs and epoch % save_checkpoint_every_n_epochs == 0:
