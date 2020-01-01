@@ -79,7 +79,17 @@ def advance_state(config: load_data.DataConfig, use_np=True):
     return advance
 
 
-class NetworkModelWrapper:
+class DynamicsModel(abc.ABC):
+    @abc.abstractmethod
+    def __call__(self, x, u):
+        """
+        :param x: N x nx current state
+        :param u: N x nu current action
+        :return: N x nx next state
+        """
+
+
+class NetworkModelWrapper(DynamicsModel):
     def __init__(self, model_user: ModelUser, dataset, lr=1e-3, regularization=1e-5, name='', lookahead=True):
         self.dataset = dataset
         self.optimizer = None
@@ -182,7 +192,7 @@ class NetworkModelWrapper:
         return x
 
 
-class LinearModel:
+class LinearModel(DynamicsModel):
     def __init__(self, ds):
         self.dataset = ds
         XU, Y, _ = ds.training_set()
