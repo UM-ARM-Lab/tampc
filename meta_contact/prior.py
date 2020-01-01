@@ -244,14 +244,15 @@ class LinearPrior:
     def __init__(self, ds):
         self.dataset = ds
         XU, Y, _ = ds.training_set()
-        n = XU.shape[1]
-        self.nu = 2
-        self.nx = n - self.nu
+        self.nu = ds.config.nu
+        self.nx = ds.config.nx
         # get dynamics
         params, res, rank, _ = np.linalg.lstsq(XU.numpy(), Y.numpy())
         # our call is setup to handle residual dynamics, so need to make sure that's the case
         if not ds.config.predict_difference:
             raise RuntimeError("Dynamics is set up to only handle residual dynamics")
+        if ds.config.predict_all_dims:
+            raise RuntimeError("Dynamics is set up to only handle block dynamics")
         # convert dyanmics to x' = Ax + Bu (note that our y is dx, so have to add diag(1))
         self.A = np.zeros((self.nx, self.nx))
         self.A[2:, :] += params[:self.nx, :].T
@@ -259,6 +260,7 @@ class LinearPrior:
         self.B[0, 0] = 1
         self.B[1, 1] = 1
         self.B[2:, :] += params[self.nx:, :].T
+        self.advance = model.advance_state(ds.config, use_np=True)
 
     def __call__(self, x, u):
         xu = np.concatenate((x, u))
@@ -275,9 +277,7 @@ class LinearPrior:
         if torch.is_tensor(dxb):
             dxb = dxb.numpy()
         # dxb = self.model(xu)
-        # directly move the pusher
-        x[:2] += u
-        x[2:] += dxb
+        x = self.advance(x, u, dxb)
         return x
 
 
@@ -286,6 +286,7 @@ class LinearPriorTorch(LinearPrior):
         super().__init__(ds)
         self.A = torch.from_numpy(self.A)
         self.B = torch.from_numpy(self.B)
+        self.advance = model.advance_state(ds.config, use_np=False)
 
     def __call__(self, x, u):
         xu = torch.cat((x, u), dim=1)
@@ -301,7 +302,5 @@ class LinearPriorTorch(LinearPrior):
         if self.dataset.preprocessor:
             dxb = self.dataset.preprocessor.invert_transform(dxb)
 
-        # directly move the pusher
-        x[:, :2] += u
-        x[:, 2:] += dxb
+        x = self.advance(x, u, dxb)
         return x

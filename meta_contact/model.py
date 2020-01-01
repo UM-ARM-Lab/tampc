@@ -52,17 +52,40 @@ class DeterministicUser(ModelUser):
         return y
 
 
+def advance_state(config: load_data.DataConfig, use_np=True):
+    if use_np:
+        def cat(seq):
+            return np.column_stack(seq)
+    else:
+        def cat(seq):
+            return torch.cat(seq, dim=1)
+
+    if config.predict_difference:
+        if config.predict_all_dims:
+            def advance(x, u, dxb):
+                return x + dxb
+        else:
+            # directly move the pusher
+            def advance(x, u, dxb):
+                return x + cat((u, dxb))
+    else:
+        if config.predict_all_dims:
+            def advance(x, u, dxb):
+                return dxb
+        else:
+            def advance(x, u, dxb):
+                return cat((x[:config.nu] + u, dxb))
+
+    return advance
+
+
 class NetworkModelWrapper:
     def __init__(self, model_user: ModelUser, dataset, lr=1e-3, regularization=1e-5, name='', lookahead=True):
         self.dataset = dataset
         self.optimizer = None
         self.step = 0
         self.name = name
-        # create model architecture
-        # __call__ currently only supports predicting residuals
-        if not dataset.config.predict_difference:
-            raise RuntimeError("Currently only residual predictions are supported")
-        self.dataset.make_data()
+        self.advance = advance_state(dataset.config)
         self.XU, self.Y, self.labels = self.dataset.training_set()
         self.XUv, self.Yv, self.labelsv = self.dataset.validation_set()
         self.user = model_user
@@ -155,11 +178,5 @@ class NetworkModelWrapper:
         if torch.is_tensor(dxb):
             dxb = dxb.numpy()
 
-        # depending on if our dataset says for us to predict the full state
-        if dxb.shape[0] == x.shape[0]:
-            x += dxb
-        else:
-            # directly move the pusher
-            x[:2] += u
-            x[2:] += dxb
+        x = self.advance(x, u, dxb)
         return x
