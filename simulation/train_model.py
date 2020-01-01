@@ -24,9 +24,8 @@ if __name__ == "__main__":
     ds = exp.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor, validation_ratio=0.2,
                          config=config)
 
-    m = model.MDNUser(make.make_mdn_model(num_components=3))
-    name = 'mdn'
-    mw = model.NetworkModelWrapper(m, name, ds, 1e-3, 1e-5)
+    m = model.MDNUser(make.make_sequential_network(config, make.make_mdn_end_block(num_components=3)))
+    mw = model.NetworkModelWrapper(m, ds, name='mdn')
     # learn prior model on data
 
     checkpoint = None

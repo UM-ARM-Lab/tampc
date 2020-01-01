@@ -53,7 +53,7 @@ class DeterministicUser(ModelUser):
 
 
 class NetworkModelWrapper:
-    def __init__(self, model_user: ModelUser, name, dataset, lr, regularization, lookahead=True):
+    def __init__(self, model_user: ModelUser, dataset, lr=1e-3, regularization=1e-5, name='', lookahead=True):
         self.dataset = dataset
         self.optimizer = None
         self.step = 0

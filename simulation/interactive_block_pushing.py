@@ -15,6 +15,8 @@ from meta_contact.controller import online_controller
 from meta_contact.experiment import interactive_block_pushing
 from meta_contact.util import rotate_wrt_origin
 from meta_contact import prior
+from meta_contact import model
+from arm_pytorch_utilities.model import make
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
@@ -106,9 +108,15 @@ def test_local_dynamics(level=0):
     num_frames = 100
 
     preprocessor = None
+    config = load_data.DataConfig(predict_difference=True)
     ds = interactive_block_pushing.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor,
-                                               validation_ratio=0.01, predict_differences=False)
-    pm = prior.GMMPrior.from_data(ds)
+                                               validation_ratio=0.01, config=config)
+
+    m = model.DeterministicUser(make.make_sequential_network(num_components=3))
+    mw = model.NetworkModelWrapper(m, ds, name='contextual')
+
+    pm = prior.NNPrior.from_data(mw)
+    # pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
     ctrl = online_controller.OnlineController(pm, ds=ds, max_timestep=num_frames, R=5, horizon=20, lqr_iter=2,
                                               init_gamma=0.1, max_ctrl=0.03)
@@ -136,8 +144,9 @@ def test_global_linear_dynamics():
 def test_global_qr_cost_optimal_controller(controller, level=0, **kwargs):
     preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
     preprocessor = None
+    config = load_data.DataConfig(predict_difference=True)
     ds = interactive_block_pushing.PushDataset(data_dir='pushing/touching.mat', validation_ratio=0.01,
-                                               predict_differences=True, preprocessor=preprocessor)
+                                               config=config, preprocessor=preprocessor)
     pm = prior.LinearPriorTorch(ds)
 
     ctrl = controller(pm, **kwargs)
