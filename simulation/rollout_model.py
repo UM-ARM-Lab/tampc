@@ -9,7 +9,7 @@ import torch
 import matplotlib.pyplot as plt
 from arm_pytorch_utilities.draw import plot_mdn_prediction
 from meta_contact.experiment import interactive_block_pushing as exp
-from meta_contact import cfg
+from meta_contact import cfg, util
 from meta_contact.controller import controller
 import pybullet as p
 
@@ -73,8 +73,8 @@ if __name__ == "__main__":
     # labels = torch.from_numpy(d['contact'].astype(int)).flatten()
 
     axis_name = ['x robot (m)', 'y robot (m)', 'x block (m)', 'y block (m)', 'block rotation (rads)', 'dx', 'dy']
-    plot_mdn_prediction(mw.model, X, Y, labels, axis_name,
-                        'compared to sim', sample=sample, plot_states=False)
+    util.plotter_map[m.__class__](mw.model, X, Y, labels, axis_name,
+                                  'compared to sim', sample=sample, plot_states=False)
 
     plt.show()
     input()

@@ -2,9 +2,8 @@ from arm_pytorch_utilities import preprocess, load_data
 import sklearn.preprocessing as skpre
 import numpy as np
 import matplotlib.pyplot as plt
-from arm_pytorch_utilities.draw import plot_mdn_prediction
 from meta_contact.experiment import interactive_block_pushing as exp
-from meta_contact import model
+from meta_contact import model, util
 from arm_pytorch_utilities.model import make
 
 import logging
@@ -24,8 +23,9 @@ if __name__ == "__main__":
     ds = exp.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor, validation_ratio=0.2,
                          config=config)
 
-    m = model.MDNUser(make.make_sequential_network(config, make.make_mdn_end_block(num_components=3)))
-    mw = model.NetworkModelWrapper(m, ds, name='mdn')
+    # m = model.MDNUser(make.make_sequential_network(config, make.make_mdn_end_block(num_components=3)))
+    m = model.DeterministicUser(make.make_sequential_network(config))
+    mw = model.NetworkModelWrapper(m, ds, name='weird')
     # learn prior model on data
 
     checkpoint = None
@@ -35,30 +35,31 @@ if __name__ == "__main__":
     # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn_quasistatic_vanilla.2800.tar'
     # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn_quasistatic.2800.tar'
     # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn_quasistatic_lookahead.2800.tar'
-    checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn.1200.tar'
+    # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn.1200.tar'
     # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/dummy.2000.tar'
     # load data if we already have some, otherwise train from scratch
     if checkpoint and mw.load(checkpoint):
         logger.info("loaded checkpoint %s", checkpoint)
     else:
-        mw.learn_model(300)
+        mw.learn_model(50)
 
     # TODO use the model for roll outs instead of just 1 step prediction
     start_index = 0
     N = 50
     sample = 5
+    plotter = util.plotter_map[m.__class__]
     X = mw.XUv[start_index:N + start_index]
     Y = mw.Yv[start_index:N + start_index]
     labels = mw.labelsv[start_index:N + start_index]
 
     axis_name = ['x robot (m)', 'y robot (m)', 'x block (m)', 'y block (m)', 'block rotation (rads)', 'dx', 'dy']
-    plot_mdn_prediction(mw.model, X, Y, labels, axis_name, 'validation', sample=sample, plot_states=True)
+    plotter(mw.model, X, Y, labels, axis_name, 'validation', sample=sample)
 
     X = mw.XU[start_index:N + start_index]
     Y = mw.Y[start_index:N + start_index]
     labels = mw.labels[start_index:N + start_index]
 
-    plot_mdn_prediction(mw.model, X, Y, labels, axis_name, 'training', sample=sample)
+    plotter(mw.model, X, Y, labels, axis_name, 'training', sample=sample)
 
     plt.show()
     input()
