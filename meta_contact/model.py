@@ -74,6 +74,14 @@ class NetworkModelWrapper:
 
         self.writer = SummaryWriter(flush_secs=20, comment=os.path.basename(name))
 
+    def freeze(self):
+        for param in self.model.parameters():
+            param.requires_grad = False
+
+    def unfreeze(self):
+        for param in self.model.parameters():
+            param.requires_grad = True
+
     def _accumulate_stats(self, loss, vloss):
         self.writer.add_scalar('loss/training', loss, self.step)
         self.writer.add_scalar('loss/validation', vloss, self.step)
