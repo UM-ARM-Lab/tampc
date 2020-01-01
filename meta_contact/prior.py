@@ -14,7 +14,7 @@ def xux_from_dataset(ds):
     if ds.config.expanded_input:
         XU = XU[:, :ds.config.nx + ds.config.nu]
     if ds.config.predict_difference:
-        XUX = torch.cat((XU[:-1], XU[1:, :ds.config.nx]), dim=1)
+        XUX = torch.cat((XU, XU[:, :ds.config.nx] + Y), dim=1)
     else:
         XUX = torch.cat((XU, Y), dim=1)
     return XUX
