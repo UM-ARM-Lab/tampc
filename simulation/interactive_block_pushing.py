@@ -146,7 +146,7 @@ def test_global_qr_cost_optimal_controller(controller, level=0, **kwargs):
     config = load_data.DataConfig(predict_difference=True)
     ds = interactive_block_pushing.PushDataset(data_dir='pushing/touching.mat', validation_ratio=0.01,
                                                config=config, preprocessor=preprocessor)
-    pm = prior.LinearPriorTorch(ds)
+    pm = model.LinearModelTorch(ds)
 
     ctrl = controller(pm, **kwargs)
     env = get_easy_env(p.GUI, level=level)
