@@ -7,13 +7,12 @@ from arm_pytorch_utilities import preprocess
 import sklearn.preprocessing as skpre
 
 from meta_contact import cfg
-from arm_pytorch_utilities import rand, load_data
+from arm_pytorch_utilities import rand, load_data, math_utils
 
 from meta_contact.controller import controller
 from meta_contact.controller import global_controller
 from meta_contact.controller import online_controller
 from meta_contact.experiment import interactive_block_pushing
-from meta_contact.util import rotate_wrt_origin
 from meta_contact import prior
 from meta_contact import model
 from arm_pytorch_utilities.model import make
@@ -41,7 +40,7 @@ def random_touching_start(w=0.087):
     else:
         dxy = (non_fixed_val, -w)
     # rotate by yaw to match (around origin since these are differences)
-    dxy = rotate_wrt_origin(dxy, init_block_yaw)
+    dxy = math_utils.rotate_wrt_origin(dxy, init_block_yaw)
     init_pusher = np.add(init_block_pos, dxy)
     return init_block_pos, init_block_yaw, init_pusher
 
@@ -112,7 +111,7 @@ def test_local_dynamics(level=0):
     ds = interactive_block_pushing.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor,
                                                validation_ratio=0.01, config=config)
 
-    m = model.DeterministicUser(make.make_sequential_network(num_components=3))
+    m = model.DeterministicUser(make.make_sequential_network(config, num_components=3))
     mw = model.NetworkModelWrapper(m, ds, name='contextual')
 
     pm = prior.NNPrior.from_data(mw)
@@ -169,8 +168,8 @@ def sandbox():
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=50, trial_length=50)
     # collect_notouch_freespace_data()
-    # ctrl = global_controller.GlobalMPPIController
-    # test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7)
+    ctrl = global_controller.GlobalMPPIController
+    test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7)
     # test_global_linear_dynamics()
-    test_local_dynamics()
+    # test_local_dynamics()
     # sandbox()

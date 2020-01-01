@@ -2,7 +2,7 @@ import abc
 
 import numpy as np
 
-from meta_contact.util import rotate_wrt_origin
+from arm_pytorch_utilities.math_utils import rotate_wrt_origin
 
 
 class Controller(abc.ABC):

@@ -10,7 +10,7 @@ from matplotlib import pyplot as plt
 
 from meta_contact import cfg, util
 from arm_pytorch_utilities.make_data import datasets
-from arm_pytorch_utilities import load_data as load_utils, string
+from arm_pytorch_utilities import load_data as load_utils, string, math_utils
 from hybrid_sysid import simulation, load_data
 import pybullet_data
 
@@ -32,7 +32,7 @@ class PushLoader(load_utils.DataLoader):
         if self.config.predict_difference:
             state_col_offset = 2
             dpos = x[1:, state_col_offset:-1] - x[:-1, state_col_offset:-1]
-            dyaw = util.angular_diff_batch(x[1:, -1], x[:-1, -1])
+            dyaw = math_utils.angular_diff_batch(x[1:, -1], x[:-1, -1])
             y = np.concatenate((dpos, dyaw.reshape(-1, 1)), axis=1)
         else:
             y = x[1:]
