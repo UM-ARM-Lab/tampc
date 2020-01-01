@@ -62,40 +62,72 @@ def advance_state(config: load_data.DataConfig, use_np=True):
 
     if config.predict_difference:
         if config.predict_all_dims:
-            def advance(x, u, dxb):
-                return x + dxb
+            def advance(xu, dx):
+                x = xu[:, :config.nx]
+                return x + dx
         else:
             # directly move the pusher
-            def advance(x, u, dxb):
+            def advance(xu, dxb):
+                x = xu[:, :config.nx]
+                u = xu[:, config.nx:config.nx + config.nu]
                 return x + cat((u, dxb))
     else:
         if config.predict_all_dims:
-            def advance(x, u, dxb):
-                return dxb
+            def advance(xu, xup):
+                return xup
         else:
-            def advance(x, u, dxb):
-                return cat((x[:config.nu] + u, dxb))
+            def advance(xu, xb):
+                # TODO not general; specific to the case where the first nu states are controlled directly
+                u = xu[:, config.nx:config.nx + config.nu]
+                return cat((xu[:, :config.nu] + u, xb))
 
     return advance
 
 
 class DynamicsModel(abc.ABC):
+    def __init__(self, dataset, use_np=False):
+        self.dataset = dataset
+        self.advance = advance_state(dataset.config, use_np=use_np)
+
+    def predict(self, xu):
+        """
+        Predict next state
+        :param xu: N x (nx + nu) full input
+        :return: N x nx next states
+        """
+        if self.dataset.preprocessor:
+            xu = self.dataset.preprocessor.transform_x(xu)
+
+        dxb = self._apply_model(xu)
+
+        if self.dataset.preprocessor:
+            dxb = self.dataset.preprocessor.invert_transform(dxb)
+
+        x = self.advance(xu, dxb)
+        return x
+
     @abc.abstractmethod
+    def _apply_model(self, xu):
+        """
+        Apply model to input
+        :param xu: N x (nx+nu) State and input
+        :return: N x nx Next states or state residuals
+        """
+
     def __call__(self, x, u):
         """
-        :param x: N x nx current state
-        :param u: N x nu current action
-        :return: N x nx next state
+        Wrapper for predict when x and u are given separately
         """
+        xu = torch.cat((x, u), dim=1)
+        return self.predict(xu)
 
 
 class NetworkModelWrapper(DynamicsModel):
     def __init__(self, model_user: ModelUser, dataset, lr=1e-3, regularization=1e-5, name='', lookahead=True):
-        self.dataset = dataset
+        super(NetworkModelWrapper, self).__init__(dataset)
         self.optimizer = None
         self.step = 0
         self.name = name
-        self.advance = advance_state(dataset.config)
         self.XU, self.Y, self.labels = self.dataset.training_set()
         self.XUv, self.Yv, self.labelsv = self.dataset.validation_set()
         self.user = model_user
@@ -173,28 +205,14 @@ class NetworkModelWrapper(DynamicsModel):
         self.optimizer.load_state_dict(checkpoint['optimizer'])
         return True
 
-    def __call__(self, x, u):
-        xu = torch.tensor(np.concatenate((x, u))).reshape(1, -1)
-
-        if self.dataset.preprocessor:
-            xu = self.dataset.preprocessor.transform_x(xu)
-
-        dxb = self.user.sample(xu)
-
-        if self.dataset.preprocessor:
-            dxb = self.dataset.preprocessor.invert_transform(dxb).reshape(-1)
-
-        # TODO why do I need to convert to numpy again?
-        if torch.is_tensor(dxb):
-            dxb = dxb.numpy()
-
-        x = self.advance(x, u, dxb)
-        return x
+    def _apply_model(self, xu):
+        return self.user.sample(xu)
 
 
-class LinearModel(DynamicsModel):
+class LinearModelTorch(DynamicsModel):
     def __init__(self, ds):
-        self.dataset = ds
+        super().__init__(ds)
+
         XU, Y, _ = ds.training_set()
         self.nu = ds.config.nu
         self.nx = ds.config.nx
@@ -214,45 +232,14 @@ class LinearModel(DynamicsModel):
         self.B[2:, :] += params[self.nx:, :].T
         self.advance = advance_state(ds.config, use_np=True)
 
-    def __call__(self, x, u):
-        xu = np.concatenate((x, u))
-
-        if self.dataset.preprocessor:
-            xu = self.dataset.preprocessor.transform_x(xu.reshape(1, -1)).numpy().reshape(-1)
-
-        dxb = self.A @ xu[:self.nx] + self.B @ xu[self.nx:]
-        dxb = dxb[self.nu:]
-
-        if self.dataset.preprocessor:
-            dxb = self.dataset.preprocessor.invert_transform(dxb.reshape(1, -1)).reshape(-1)
-
-        if torch.is_tensor(dxb):
-            dxb = dxb.numpy()
-        # dxb = self.model(xu)
-        x = self.advance(x, u, dxb)
-        return x
-
-
-class LinearModelTorch(LinearModel):
-    def __init__(self, ds):
-        super().__init__(ds)
         self.A = torch.from_numpy(self.A)
         self.B = torch.from_numpy(self.B)
         self.advance = advance_state(ds.config, use_np=False)
 
-    def __call__(self, x, u):
-        xu = torch.cat((x, u), dim=1)
-
-        if self.dataset.preprocessor:
-            xu = self.dataset.preprocessor.transform_x(xu)
-
+    def _apply_model(self, xu):
+        # TODO handle other types of models (non-residual, full-state)
         dxb = xu[:, :self.nx] @ self.A.transpose(0, 1) + xu[:, self.nx:] @ self.B.transpose(0, 1)
         # dxb = self.A @ xu[:, :self.nx] + self.B @ xu[:, self.nx:]
         # strip x,y of the pusher, which we add directly;
         dxb = dxb[:, self.nu:]
-
-        if self.dataset.preprocessor:
-            dxb = self.dataset.preprocessor.invert_transform(dxb)
-
-        x = self.advance(x, u, dxb)
-        return x
+        return dxb
