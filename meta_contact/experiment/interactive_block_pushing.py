@@ -8,7 +8,7 @@ import random
 import numpy as np
 from matplotlib import pyplot as plt
 
-from meta_contact import cfg, util
+from meta_contact import cfg
 from arm_pytorch_utilities.make_data import datasets
 from arm_pytorch_utilities import load_data as load_utils, string, math_utils
 from hybrid_sysid import simulation, load_data
@@ -45,21 +45,39 @@ class PushLoader(load_utils.DataLoader):
         # du = np.linalg.norm(nxy[:-1] - xy[1:], axis=1)
 
         # potentially many trajectories, get rid of buffer state in between
-        mask = d['mask'][:-1].reshape(-1) != 0
+        mask = d['mask']
+        # pack expanded pxu into input if config allows (has to be done before masks); otherwise would use cross-file data)
+        if self.config.expanded_input:
+            # move y down 1 row (first element can't be used)
+            # (xu, pxu)
+            xu = np.column_stack((xu[1:], xu[:-1]))
+            y = y[1:]
+            cc = cc[1:]
 
-        # mm = mask[:-1]
+            mask = mask[1:-1]
+        else:
+            mask = mask[:-1]
+
+        mask = mask.reshape(-1) != 0
+
         # xy = xu[:, :2]
-        # nxy = xy + u
+        # nxy = xy + u[:, :xy.shape[1]]
         # du = np.linalg.norm(nxy[:-1] - xy[1:], axis=1)
+        # dd = du[mask[:-1]]
+
+        # _, res_before, _, _ = np.linalg.lstsq(xu, y)
 
         xu = xu[mask]
         cc = cc[mask]
         y = y[mask]
 
-        self.config.load_data_info(x, u, y)
+        # test that we achieve low residuals (proxy for correct masking - no inter-trajectory relationship)
+        # _, res, _, _ = np.linalg.lstsq(xu, y)
+
+        self.config.load_data_info(x, u, y, xu)
 
         # xy = xu[:, 2:4]
-        # nxy = xy + y[:, :-1]
+        # nxy = xy + y[:, 2:4]
         # du = np.linalg.norm(nxy[:-1] - xy[1:], axis=1)
 
         return xu, y, cc

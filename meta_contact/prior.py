@@ -9,19 +9,21 @@ from arm_pytorch_utilities import grad
 logger = logging.getLogger(__name__)
 
 
-def xux_from_dataset(ds, nx=5):
+def xux_from_dataset(ds):
     XU, Y, _ = ds.training_set()
-    if not ds.config.predict_difference:
-        XUX = torch.cat((XU, Y), dim=1)
+    if ds.config.expanded_input:
+        XU = XU[:, :ds.config.nx + ds.config.nu]
+    if ds.config.predict_difference:
+        XUX = torch.cat((XU[:-1], XU[1:, :ds.config.nx]), dim=1)
     else:
-        XUX = torch.cat((XU[:-1], XU[1:, :nx]), dim=1)
+        XUX = torch.cat((XU, Y), dim=1)
     return XUX
 
 
 def gaussian_params_from_dataset(ds):
     XUX = xux_from_dataset(ds)
     mu = XUX.mean(0)
-    sigma = linalg.cov(XUX)
+    sigma = linalg.cov(XUX, rowvar=False)
     assert sigma.shape[0] == XUX.shape[1]
     return sigma.numpy(), mu.numpy()
 
@@ -65,8 +67,11 @@ class NNPrior(OnlineDynamicsPrior):
     @classmethod
     def from_data(cls, mw: model.NetworkModelWrapper, checkpoint=None, train_epochs=50, **kwargs):
         # ensure that we're predicting residuals
-        if not mw.dataset.config.predict_difference:
-            raise RuntimeError("Network must be predicting residuals")
+        # if not mw.dataset.config.predict_difference:
+        #     raise RuntimeError("Network must be predicting residuals")
+        # ensure we have full context
+        if not mw.dataset.config.expanded_input:
+            raise RuntimeError("Network expects expanded input")
         # create (pytorch) network, load from checkpoint if given, otherwise train for some iterations
         if checkpoint and mw.load(checkpoint):
             logger.info("loaded checkpoint %s", checkpoint)
@@ -75,23 +80,26 @@ class NNPrior(OnlineDynamicsPrior):
 
         return NNPrior(mw, **kwargs)
 
-    def __init__(self, mw: model.NetworkModelWrapper, full_context=False, mix_strength=1.0):
-        # TODO ensure that the data matches the full context flag
-        self.full_context = full_context
+    def __init__(self, mw: model.NetworkModelWrapper, mix_strength=1.0):
         self.dyn_net = mw
         self.dyn_net.freeze()
         self.mix_prior_strength = mix_strength
 
     def mix(self, dX, dU, xu, pxu, xux, empsig, mun, N):
         # feed pxu and xu to network (full contextual network)
-        full_input = torch.tensor(np.concatenate((xu, pxu), axis=1))
-        F = grad.jacobian(self.dyn_net.model, full_input)
-        net_fwd = self.dyn_net.model(full_input)
-        f = -F.dot(xu) + net_fwd
+        full_input = torch.tensor(np.concatenate((xu, pxu)))
+        # jacobian of xu' wrt xu and pxu, need to strip the pxu columns
+        F = grad.jacobian(self.dyn_net.predict, full_input)
+        # first columns are xu, latter columns are pxu
+        F = F[:, :dX + dU].numpy()
+        # TODO not sure if this should be + xu since we're predicting residual, but f is currently unused
+        xp = self.dyn_net.predict(full_input.view(1, -1))
+        xp = xp.view(-1).numpy()
+        f = -F @ xu + xp
         # build \bar{Sigma} (nn_Phi) and \bar{mu} (nnf)
         nn_Phi, nnf = mix_prior(dX, dU, F, f, xu, strength=self.mix_prior_strength, use_least_squares=False)
         sigma = (N * empsig + nn_Phi) / (N + 1)
-        mun = (N * mun + np.r_[xu, F.dot(xu) + f]) / (N + 1)
+        mun = (N * mun + np.r_[xu, xp]) / (N + 1)
         return sigma, mun
 
 
@@ -238,5 +246,3 @@ class LSQPrior(OnlineDynamicsPrior):
         sigma = (N * empsig + self.mix_prior_strength * Phi) / (
                 N + self.mix_prior_strength)  # + ((N*m)/(N+m))*np.outer(mun-mu0,mun-mu0))/(N+n0)
         return sigma, mun
-
-
