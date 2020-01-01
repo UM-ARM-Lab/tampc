@@ -3,13 +3,15 @@ import logging
 from arm_pytorch_utilities.gmm import GMM
 import numpy as np
 from arm_pytorch_utilities import linalg
+from meta_contact import model
+from arm_pytorch_utilities import grad
 
 logger = logging.getLogger(__name__)
 
 
 def xux_from_dataset(ds, nx=5):
     XU, Y, _ = ds.training_set()
-    if not ds._pd:
+    if not ds.config.predict_difference:
         XUX = torch.cat((XU, Y), dim=1)
     else:
         XUX = torch.cat((XU[:-1], XU[1:, :nx]), dim=1)
@@ -30,7 +32,67 @@ class OnlineDynamicsPrior:
         return empsig, mun
 
 
-# TODO NNPrior
+def mix_prior(dX, dU, nnF, nnf, xu, sigma_x=None, strength=1.0, dyn_init_sig=None,
+              use_least_squares=False, full_calculation=False):
+    """
+    Provide a covariance/bias term for mixing NN with least squares model.
+    """
+    it = slice(dX + dU)
+
+    if use_least_squares:
+        sigX = dyn_init_sig[it, it]
+    else:
+        # \bar{Sigma}_xu,xu from section V.B, strength is alpha
+        sigX = np.eye(dX + dU) * strength
+
+    # lower left corner, nnF.T is df/dxu
+    sigXK = sigX.dot(nnF.T)
+    if full_calculation:
+        nn_Phi = np.r_[np.c_[sigX, sigXK],
+                       np.c_[sigXK.T, nnF.dot(sigX).dot(nnF.T) + sigma_x]]
+        # nnf is f(xu)
+        nn_mu = np.r_[xu, nnF.dot(xu) + nnf]
+    else:
+        # \bar{Sigma}, ignoring lower right
+        nn_Phi = np.r_[np.c_[sigX, sigXK],
+                       np.c_[sigXK.T, np.zeros((dX, dX))]]  # Lower right square is unused
+        nn_mu = None  # Unused
+
+    return nn_Phi, nn_mu
+
+
+class NNPrior(OnlineDynamicsPrior):
+    @classmethod
+    def from_data(cls, mw: model.NetworkModelWrapper, checkpoint=None, train_epochs=50, **kwargs):
+        # ensure that we're predicting residuals
+        if not mw.dataset.config.predict_difference:
+            raise RuntimeError("Network must be predicting residuals")
+        # create (pytorch) network, load from checkpoint if given, otherwise train for some iterations
+        if checkpoint and mw.load(checkpoint):
+            logger.info("loaded checkpoint %s", checkpoint)
+        else:
+            mw.learn_model(train_epochs)
+
+        return NNPrior(mw, **kwargs)
+
+    def __init__(self, mw: model.NetworkModelWrapper, full_context=False, mix_strength=1.0):
+        # TODO ensure that the data matches the full context flag
+        self.full_context = full_context
+        self.dyn_net = mw
+        self.dyn_net.freeze()
+        self.mix_prior_strength = mix_strength
+
+    def mix(self, dX, dU, xu, pxu, xux, empsig, mun, N):
+        # feed pxu and xu to network (full contextual network)
+        full_input = torch.tensor(np.concatenate((xu, pxu), axis=1))
+        F = grad.jacobian(self.dyn_net.model, full_input)
+        net_fwd = self.dyn_net.model(full_input)
+        f = -F.dot(xu) + net_fwd
+        # build \bar{Sigma} (nn_Phi) and \bar{mu} (nnf)
+        nn_Phi, nnf = mix_prior(dX, dU, F, f, xu, strength=self.mix_prior_strength, use_least_squares=False)
+        sigma = (N * empsig + nn_Phi) / (N + 1)
+        mun = (N * mun + np.r_[xu, F.dot(xu) + f]) / (N + 1)
+        return sigma, mun
 
 
 class GMMPrior(OnlineDynamicsPrior):
@@ -188,7 +250,7 @@ class LinearPrior:
         # get dynamics
         params, res, rank, _ = np.linalg.lstsq(XU.numpy(), Y.numpy())
         # our call is setup to handle residual dynamics, so need to make sure that's the case
-        if not ds._pd:  # TODO use public methods/elements to determine if predicting differences
+        if not ds.config.predict_difference:
             raise RuntimeError("Dynamics is set up to only handle residual dynamics")
         # convert dyanmics to x' = Ax + Bu (note that our y is dx, so have to add diag(1))
         self.A = np.zeros((self.nx, self.nx))
