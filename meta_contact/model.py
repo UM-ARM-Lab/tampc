@@ -183,6 +183,16 @@ class NetworkModelWrapper(DynamicsModel):
         # save after training
         self.save()
 
+        # compare prediction accuracy against least squares
+        XU, Y = self.XU.numpy(), self.Y.numpy()
+        params, res, rank, _ = np.linalg.lstsq(XU, Y)
+        XU, Y = self.XUv.numpy(), self.Yv.numpy()
+        Yhat = XU @ params
+        E = np.linalg.norm((Yhat - Y), axis=1)
+        Yhatn = self.user.sample(self.XUv).detach().numpy()
+        En = np.linalg.norm((Yhatn - Y), axis=1)
+        logger.info("Least squares error %f network error %f", E.mean(), En.mean())
+
     def save(self):
         state = {
             'step': self.step,
