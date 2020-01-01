@@ -28,14 +28,14 @@ class PushLoader(load_utils.DataLoader):
         u = d['U'][:-1]
         cc = d['contact'][1:]
 
-        # TODO have separate option deciding whether to predict output of pusher positions or not (i.e. what state_col_offset is)
+        # separate option deciding whether to predict output of pusher positions or not
+        state_col_offset = 0 if self.config.predict_all_dims else 2
         if self.config.predict_difference:
-            state_col_offset = 2
             dpos = x[1:, state_col_offset:-1] - x[:-1, state_col_offset:-1]
             dyaw = math_utils.angular_diff_batch(x[1:, -1], x[:-1, -1])
             y = np.concatenate((dpos, dyaw.reshape(-1, 1)), axis=1)
         else:
-            y = x[1:]
+            y = x[1:, state_col_offset:]
 
         x = x[:-1]
         xu = np.column_stack((x, u))
@@ -112,7 +112,6 @@ class RawPushDataset(torch.utils.data.Dataset):
 
 
 class PushDataset(datasets.DataSet):
-    # TODO forward kwargs to raw dataset, have separate dictionary for super args
     def __init__(self, N=None, data_dir='pushing', preprocessor=None, validation_ratio=0.2,
                  config=load_utils.DataConfig(),
                  **kwargs):
