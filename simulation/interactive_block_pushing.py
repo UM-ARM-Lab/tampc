@@ -152,7 +152,7 @@ def test_global_qr_cost_optimal_controller(controller, level=0, **kwargs):
     env = get_easy_env(p.GUI, level=level)
     sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=200, plot=True, save=False)
 
-    seed = rand.seed()
+    seed = rand.seed(67947)
     sim.run(seed)
     plt.ioff()
     plt.show()
