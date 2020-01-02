@@ -49,7 +49,7 @@ def collect_touching_freespace_data(trials=20, trial_length=40, level=0):
     # use random controller (with varying push direction)
     push_mag = 0.03
     ctrl = controller.RandomController(push_mag, .02, 1)
-    env = get_easy_env(p.DIRECT)
+    env = get_easy_env(p.DIRECT, level)
     # use mode p.GUI to see what the trials look like
     save_dir = 'pushing/touching{}'.format(level)
     sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=trial_length, plot=False, save=True,
@@ -175,7 +175,7 @@ def sandbox():
 
 
 if __name__ == "__main__":
-    collect_touching_freespace_data(trials=50, trial_length=50)
+    collect_touching_freespace_data(trials=50, trial_length=50, level=1)
     # collect_notouch_freespace_data()
     # ctrl = global_controller.GlobalMPPIController
     # test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7)
