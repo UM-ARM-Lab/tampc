@@ -136,7 +136,7 @@ def test_local_dynamics(level=0):
 
 
 def test_global_linear_dynamics(level=0):
-    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True)
+    config = load_data.DataConfig(predict_difference=False, predict_all_dims=True)
     ds = interactive_block_pushing.PushDataset(data_dir=get_data_dir(level), validation_ratio=0.01, config=config)
 
     ctrl = global_controller.GlobalLQRController(ds, 5)
@@ -151,11 +151,21 @@ def test_global_linear_dynamics(level=0):
 
 def test_global_qr_cost_optimal_controller(controller, level=0, **kwargs):
     preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
-    preprocessor = None
-    config = load_data.DataConfig(predict_difference=True)
+    # preprocessor = None
+    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True)
     ds = interactive_block_pushing.PushDataset(data_dir=get_data_dir(level), validation_ratio=0.01,
                                                config=config, preprocessor=preprocessor)
-    pm = model.LinearModelTorch(ds)
+    pml = model.LinearModelTorch(ds)
+    pm = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds)
+
+    checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/.1000.tar'
+    # checkpoint = None
+    if checkpoint and pm.load(checkpoint):
+        logger.info("loaded checkpoint %s", checkpoint)
+    else:
+        pm.learn_model(200)
+
+    pm.freeze()
 
     ctrl = controller(pm, **kwargs)
     env = get_easy_env(p.GUI, level=level)
@@ -175,10 +185,10 @@ def sandbox():
 
 
 if __name__ == "__main__":
-    collect_touching_freespace_data(trials=50, trial_length=50, level=1)
+    # collect_touching_freespace_data(trials=50, trial_length=50, level=1)
     # collect_notouch_freespace_data()
-    # ctrl = global_controller.GlobalMPPIController
-    # test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7)
-    # test_global_linear_dynamics()
+    ctrl = global_controller.GlobalCEMController
+    test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7)
+    # test_global_linear_dynamics(level=0)
     # test_local_dynamics()
     # sandbox()
