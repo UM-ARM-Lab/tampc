@@ -128,12 +128,10 @@ class DynamicsModel(abc.ABC):
         :return: N x nx next states
         """
         if self.dataset.preprocessor:
-            xu = self.dataset.preprocessor.transform_x(xu)
-
-        dxb = self._apply_model(xu)
-
-        if self.dataset.preprocessor:
+            dxb = self._apply_model(self.dataset.preprocessor.transform_x(xu))
             dxb = self.dataset.preprocessor.invert_transform(dxb)
+        else:
+            dxb = self._apply_model(xu)
 
         x = self.advance(xu, dxb)
         return x
