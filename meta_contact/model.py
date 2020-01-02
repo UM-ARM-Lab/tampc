@@ -44,7 +44,7 @@ class MDNUser(ModelUser):
 class DeterministicUser(ModelUser):
     def compute_loss(self, XU, Y):
         Yhat = self.model(XU)
-        E = (Y - Yhat).norm(2, dim=1) ** 2
+        E = (Y - Yhat).norm(2, dim=1)
         return E
 
     def sample(self, xu):
