@@ -45,13 +45,13 @@ def random_touching_start(w=0.087):
     return init_block_pos, init_block_yaw, init_pusher
 
 
-def collect_touching_freespace_data(trials=20, trial_length=40):
+def collect_touching_freespace_data(trials=20, trial_length=40, level=0):
     # use random controller (with varying push direction)
     push_mag = 0.03
     ctrl = controller.RandomController(push_mag, .02, 1)
     env = get_easy_env(p.DIRECT)
     # use mode p.GUI to see what the trials look like
-    save_dir = 'pushing/touching'
+    save_dir = 'pushing/touching{}'.format(level)
     sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=trial_length, plot=False, save=True,
                                                     save_dir=save_dir)
     for _ in range(trials):
@@ -67,6 +67,10 @@ def collect_touching_freespace_data(trials=20, trial_length=40):
         load_data.merge_data_in_dir(cfg, save_dir, save_dir)
     plt.ioff()
     plt.show()
+
+
+def get_data_dir(level=0):
+    return 'pushing/touching{}.mat'.format(level)
 
 
 def collect_notouch_freespace_data(trials=100, trial_length=10):
@@ -106,15 +110,17 @@ def get_easy_env(mode=p.GUI, level=0):
 def test_local_dynamics(level=0):
     num_frames = 100
 
+    # TODO preprocessor in online dynamics not yet supported
     preprocessor = None
-    config = load_data.DataConfig(predict_difference=True)
-    ds = interactive_block_pushing.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor,
+    config = load_data.DataConfig(predict_difference=False, predict_all_dims=True, expanded_input=True)
+    # config = load_data.DataConfig(predict_difference=True, predict_all_dims=True)
+    ds = interactive_block_pushing.PushDataset(data_dir=get_data_dir(level), preprocessor=preprocessor,
                                                validation_ratio=0.01, config=config)
 
-    m = model.DeterministicUser(make.make_sequential_network(config, num_components=3))
+    m = model.DeterministicUser(make.make_sequential_network(config))
     mw = model.NetworkModelWrapper(m, ds, name='contextual')
-
-    pm = prior.NNPrior.from_data(mw)
+    checkpoint = None
+    pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=200)
     # pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
     ctrl = online_controller.OnlineController(pm, ds=ds, max_timestep=num_frames, R=5, horizon=20, lqr_iter=2,
@@ -123,15 +129,18 @@ def test_local_dynamics(level=0):
     env = get_easy_env(p.GUI, level=level)
     sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=num_frames, plot=True, save=False)
 
-    seed = rand.seed()
+    seed = rand.seed(513521)
     sim.run(seed)
     plt.ioff()
     plt.show()
 
 
-def test_global_linear_dynamics():
-    ctrl = global_controller.GlobalLQRController(5)
-    env = get_easy_env(p.GUI)
+def test_global_linear_dynamics(level=0):
+    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True)
+    ds = interactive_block_pushing.PushDataset(data_dir=get_data_dir(level), validation_ratio=0.01, config=config)
+
+    ctrl = global_controller.GlobalLQRController(ds, 5)
+    env = get_easy_env(p.GUI, level)
     sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=100, plot=True, save=False)
 
     seed = rand.seed(3)
@@ -144,7 +153,7 @@ def test_global_qr_cost_optimal_controller(controller, level=0, **kwargs):
     preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
     preprocessor = None
     config = load_data.DataConfig(predict_difference=True)
-    ds = interactive_block_pushing.PushDataset(data_dir='pushing/touching.mat', validation_ratio=0.01,
+    ds = interactive_block_pushing.PushDataset(data_dir=get_data_dir(level), validation_ratio=0.01,
                                                config=config, preprocessor=preprocessor)
     pm = model.LinearModelTorch(ds)
 
@@ -166,10 +175,10 @@ def sandbox():
 
 
 if __name__ == "__main__":
-    # collect_touching_freespace_data(trials=50, trial_length=50)
+    collect_touching_freespace_data(trials=50, trial_length=50)
     # collect_notouch_freespace_data()
-    ctrl = global_controller.GlobalMPPIController
-    test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7)
+    # ctrl = global_controller.GlobalMPPIController
+    # test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7)
     # test_global_linear_dynamics()
     # test_local_dynamics()
     # sandbox()
