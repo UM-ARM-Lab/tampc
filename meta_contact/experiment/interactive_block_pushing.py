@@ -361,9 +361,12 @@ class PushAgainstWallEnv(MyPybulletEnv):
         # execute the action
         self._move_pusher(eePos)
         p.addUserDebugLine(eePos, np.add(eePos, [0, 0, 0.01]), [1, 1, 0], 4)
-        # TODO handle trying to go into wall
-        while not self._reached_command(eePos):
+        # handle trying to go into wall (if we don't succeed)
+        # we use a force insufficient for going into the wall
+        rest = 1
+        while not self._reached_command(eePos) and rest < self.initRestFrames:
             p.stepSimulation()
+            rest += 1
 
         # wait until simulation becomes static
         rest = 1
