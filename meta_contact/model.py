@@ -84,6 +84,38 @@ def advance_state(config: load_data.DataConfig, use_np=True):
     return advance
 
 
+def linear_model_from_ds(ds):
+    XU, Y, _ = ds.training_set()
+    XU = XU.numpy()
+    Y = Y.numpy()
+    # get dynamics
+    params, res, rank, _ = np.linalg.lstsq(XU, Y)
+    if ds.config.predict_difference:
+        # convert dyanmics to x' = Ax + Bu (note that our y is dx, so have to add diag(1))
+        state_offset = 0 if ds.config.predict_all_dims else ds.config.nu
+        # A = np.eye(ds.config.nx)
+        A = np.zeros((ds.config.nx, ds.config.nx))
+        B = np.zeros((ds.config.nx, ds.config.nu))
+        A[state_offset:, :] += params[:ds.config.nx, :].T
+        if not ds.config.predict_all_dims:
+            B[0, 0] = 1
+            B[1, 1] = 1
+        B[state_offset:, :] += params[ds.config.nx:, :].T
+    else:
+        if ds.config.predict_all_dims:
+            # predict dynamics rather than difference
+            A = params[:ds.config.nx, :].T
+            B = params[ds.config.nx:, :].T
+        else:
+            A = np.eye(ds.config.nx)
+            B = np.zeros((ds.config.nx, ds.config.nu))
+            A[ds.config.nu:, :] = params[:ds.config.nx, :].T
+            B[0, 0] = 1
+            B[1, 1] = 1
+            B[ds.config.nu:, :] = params[ds.config.nx:, :].T
+    return A, B
+
+
 class DynamicsModel(abc.ABC):
     def __init__(self, dataset, use_np=False):
         self.dataset = dataset
@@ -223,33 +255,19 @@ class LinearModelTorch(DynamicsModel):
     def __init__(self, ds):
         super().__init__(ds)
 
-        XU, Y, _ = ds.training_set()
         self.nu = ds.config.nu
         self.nx = ds.config.nx
         # get dynamics
-        params, res, rank, _ = np.linalg.lstsq(XU.numpy(), Y.numpy())
-        # our call is setup to handle residual dynamics, so need to make sure that's the case
-        if not ds.config.predict_difference:
-            raise RuntimeError("Dynamics is set up to only handle residual dynamics")
-        if ds.config.predict_all_dims:
-            raise RuntimeError("Dynamics is set up to only handle block dynamics")
-        # convert dyanmics to x' = Ax + Bu (note that our y is dx, so have to add diag(1))
-        self.A = np.zeros((self.nx, self.nx))
-        self.A[2:, :] += params[:self.nx, :].T
-        self.B = np.zeros((self.nx, self.nu))
-        self.B[0, 0] = 1
-        self.B[1, 1] = 1
-        self.B[2:, :] += params[self.nx:, :].T
-        self.advance = advance_state(ds.config, use_np=True)
+
+        self.A, self.B = linear_model_from_ds(ds)
 
         self.A = torch.from_numpy(self.A)
         self.B = torch.from_numpy(self.B)
-        self.advance = advance_state(ds.config, use_np=False)
 
     def _apply_model(self, xu):
-        # TODO handle other types of models (non-residual, full-state)
         dxb = xu[:, :self.nx] @ self.A.transpose(0, 1) + xu[:, self.nx:] @ self.B.transpose(0, 1)
         # dxb = self.A @ xu[:, :self.nx] + self.B @ xu[:, self.nx:]
         # strip x,y of the pusher, which we add directly;
-        dxb = dxb[:, self.nu:]
+        if not self.dataset.config.predict_all_dims:
+            dxb = dxb[:, self.nu:]
         return dxb

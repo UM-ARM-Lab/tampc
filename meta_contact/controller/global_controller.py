@@ -1,6 +1,6 @@
 import numpy as np
 from meta_contact.controller.controller import Controller
-from meta_contact.experiment import interactive_block_pushing as exp
+from meta_contact import model
 from pytorch_mppi import mppi
 from pytorch_cem import cem
 from arm_pytorch_utilities import linalg
@@ -21,32 +21,9 @@ class GlobalLQRController(Controller):
         self.nu = ds.config.nu
         self.nx = ds.config.nx
 
-        XU, Y, _ = ds.training_set()
-        XU = XU.numpy()
-        Y = Y.numpy()
-        # get dynamics
-        params, res, rank, _ = np.linalg.lstsq(XU, Y)
+        self.A, self.B = model.linear_model_from_ds(ds)
         if ds.config.predict_difference:
-            # convert dyanmics to x' = Ax + Bu (note that our y is dx, so have to add diag(1))
-            state_offset = 0 if ds.config.predict_all_dims else ds.config.nu
-            self.A = np.diag([1., 1., 1., 1., 1.])
-            self.B = np.zeros((self.nx, self.nu))
-            self.A[state_offset:, :] += params[:self.nx, :].T
-            self.B[0, 0] = 1
-            self.B[1, 1] = 1
-            self.B[state_offset:, :] += params[self.nx:, :].T
-        else:
-            if ds.config.predict_all_dims:
-                # predict dynamics rather than difference
-                self.A = params[:self.nx, :].T
-                self.B = params[self.nx:, :].T
-            else:
-                self.A = np.diag([1., 1., 1., 1., 1.])
-                self.B = np.zeros((self.nx, self.nu))
-                self.A[ds.config.nu:, :] = params[:self.nx, :].T
-                self.B[0, 0] = 1
-                self.B[1, 1] = 1
-                self.B[ds.config.nu:, :] = params[self.nx:, :].T
+            self.A += np.eye(self.nx)
 
         # TODO increase Q for yaw later (and when that becomes part of goal)
         # self.Q = np.diag([0, 0, 0.1, 0.1, 0])
