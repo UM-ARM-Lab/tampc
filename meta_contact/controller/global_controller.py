@@ -15,30 +15,38 @@ logger = logging.getLogger(__name__)
 
 
 class GlobalLQRController(Controller):
-    def __init__(self, R=1, predict_difference=False):
+    def __init__(self, ds, R=1):
         super().__init__()
         # load data and create LQR controller
-        ds = exp.RawPushDataset(predict_difference=predict_difference)
-        n = ds.XU.shape[1]
-        self.nu = 2
-        self.nx = n - self.nu
+        self.nu = ds.config.nu
+        self.nx = ds.config.nx
 
-        XU = ds.XU.numpy()
-        Y = ds.Y.numpy()
+        XU, Y, _ = ds.training_set()
+        XU = XU.numpy()
+        Y = Y.numpy()
         # get dynamics
         params, res, rank, _ = np.linalg.lstsq(XU, Y)
-        if predict_difference:
+        if ds.config.predict_difference:
             # convert dyanmics to x' = Ax + Bu (note that our y is dx, so have to add diag(1))
+            state_offset = 0 if ds.config.predict_all_dims else ds.config.nu
             self.A = np.diag([1., 1., 1., 1., 1.])
             self.B = np.zeros((self.nx, self.nu))
-            self.A[2:, :] += params[:self.nx, :].T
+            self.A[state_offset:, :] += params[:self.nx, :].T
             self.B[0, 0] = 1
             self.B[1, 1] = 1
-            self.B[2:, :] += params[self.nx:, :].T
+            self.B[state_offset:, :] += params[self.nx:, :].T
         else:
-            # predict dynamics rather than difference
-            self.A = params[:self.nx, :].T
-            self.B = params[self.nx:, :].T
+            if ds.config.predict_all_dims:
+                # predict dynamics rather than difference
+                self.A = params[:self.nx, :].T
+                self.B = params[self.nx:, :].T
+            else:
+                self.A = np.diag([1., 1., 1., 1., 1.])
+                self.B = np.zeros((self.nx, self.nu))
+                self.A[ds.config.nu:, :] = params[:self.nx, :].T
+                self.B[0, 0] = 1
+                self.B[1, 1] = 1
+                self.B[ds.config.nu:, :] = params[self.nx:, :].T
 
         # TODO increase Q for yaw later (and when that becomes part of goal)
         # self.Q = np.diag([0, 0, 0.1, 0.1, 0])
