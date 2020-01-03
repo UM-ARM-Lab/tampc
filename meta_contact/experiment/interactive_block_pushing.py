@@ -328,7 +328,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
         # add plane to push on (slightly below the base of the robot)
         self.planeId = p.loadURDF("plane.urdf", [0, 0, -0.05], useFixedBase=True)
         self.pusherId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "pusher.urdf"), self.initPusherPos)
-        self.blockId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "block_big.urdf"), self.initBlockPos)
+        self.blockId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "block_big.urdf"), self.initBlockPos,
+                                  p.getQuaternionFromEuler([0, 0, self.initBlockYaw]))
 
         self.walls = []
         if self.level == 0:
