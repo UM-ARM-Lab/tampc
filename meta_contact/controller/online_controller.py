@@ -46,13 +46,15 @@ class OnlineController(Controller):
         # self.cost = cost.CostFKOnline(self.goal, wu=self.weight_u, ee_idx=self.block_idx, maxT=self.maxT,
         #                               use_jacobian=False)
         self.cost = cost.CostQROnline(self.goal, np.diag([0, 0, 1., 1., 0]), np.diag(self.weight_u))
-        self.prior = prior
-        self.dynamics = OnlineDynamics(self.gamma, self.prior, self.dyn_init_mu, self.dyn_init_sig, self.dX, self.dU)
+        self.dynamics = OnlineDynamics(self.gamma, prior, self.dyn_init_mu, self.dyn_init_sig, self.dX, self.dU)
 
         self.prevx = None
         self.prevu = None
         self.prev_policy = None
         self.u_history = []
+
+    def update_prior(self, prior):
+        self.dynamics.prior = prior
 
     def set_goal(self, goal):
         super().set_goal(goal)
