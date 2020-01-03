@@ -13,27 +13,24 @@ LOGGER = logging.getLogger(__name__)
 class OnlineController(Controller):
     """Controller mixing locally linear model with prior model from https://arxiv.org/pdf/1509.06841.pdf"""
 
-    def __init__(self, prior, ds=None, max_timestep=100, R=1, horizon=15, lqr_iter=1, init_gamma=0.1, max_ctrl=None):
+    def __init__(self, prior, ds, max_timestep=100, Q=1, R=1, horizon=15, lqr_iter=1, init_gamma=0.1, max_ctrl=None):
         super().__init__()
-        self.dX = 5
-        self.dU = 2
+        self.dX = ds.config.nx
+        self.dU = ds.config.nu
         self.H = horizon
         self.maxT = max_timestep
         self.init_gamma = init_gamma
         self.gamma = self.init_gamma
         self.u_max = max_ctrl
         self.u_noise = 0.001
+        # TODO get rid of these environment specific parameters
         # self.block_idx = slice(0, 2)
-        self.block_idx = slice(2, 4)
+        # self.block_idx = slice(2, 4)
 
         self.ds = ds
-        if ds is not None:
-            sigma, mu = gaussian_params_from_dataset(ds)
-            self.dyn_init_sig = sigma
-            self.dyn_init_mu = mu
-        else:
-            self.dyn_init_mu = np.zeros(self.dX * 2 + self.dU)
-            self.dyn_init_sig = np.eye(self.dX * 2 + self.dU)
+        sigma, mu = gaussian_params_from_dataset(ds)
+        self.dyn_init_sig = sigma
+        self.dyn_init_mu = mu
 
         # LQR options
         self.min_mu = 1e-6
@@ -42,10 +39,16 @@ class OnlineController(Controller):
         self.lqr_iter = lqr_iter
 
         # Init objects
-        self.weight_u = np.array([1., 1.]) * R
+        if np.isscalar(Q):
+            self.Q = np.eye(self.dX) * Q
+        else:
+            self.Q = Q
+            assert self.Q.shape[0] == self.dX
+        self.weight_u = np.ones(self.dU) * R
+        self.R = np.diag(self.weight_u)
         # self.cost = cost.CostFKOnline(self.goal, wu=self.weight_u, ee_idx=self.block_idx, maxT=self.maxT,
         #                               use_jacobian=False)
-        self.cost = cost.CostQROnline(self.goal, np.diag([0, 0, 1., 1., 0]), np.diag(self.weight_u))
+        self.cost = cost.CostQROnline(self.goal, self.Q, self.R)
         self.dynamics = OnlineDynamics(self.gamma, prior, self.dyn_init_mu, self.dyn_init_sig, self.dX, self.dU)
 
         self.prevx = None
@@ -126,9 +129,7 @@ class OnlineController(Controller):
         # ignoring the affine part
         A = Fm[:, :self.dX]
         B = Fm[:, self.dX:]
-        Q = np.diag([0., 0., 1, 1, 0])
-        R = np.diag([self.weight_u[0] for _ in range(self.dU)])
-        K, _, _ = trajectory.dlqr(A, B, Q, R)
+        K, _, _ = trajectory.dlqr(A, B, self.Q, self.R)
 
         # # compare against ordinary least squares
         # params, res, rank, _ = np.linalg.lstsq(XU, Y)
@@ -153,7 +154,7 @@ class OnlineController(Controller):
         """
         # Only the first timestep of the policy is used
         # u = lgpolicy.K[0].dot(x-self.goal) + lgpolicy.k[0]
-        u = lgpolicy.K[0].dot(x) + lgpolicy.k[0]
+        u = lgpolicy.K[0] @ x + lgpolicy.k[0]
         if add_noise:
             u += lgpolicy.chol_pol_covar[0].dot(self.u_noise * np.random.randn(self.dU))
         if self.u_max:
