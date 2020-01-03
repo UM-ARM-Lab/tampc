@@ -15,27 +15,29 @@ logger = logging.getLogger(__name__)
 
 
 class GlobalLQRController(Controller):
-    def __init__(self, ds, R=1):
+    def __init__(self, ds, Q=1, R=1, u_max=None, goal_slice=None):
         super().__init__()
         # load data and create LQR controller
         self.nu = ds.config.nu
         self.nx = ds.config.nx
+        self.u_max = u_max
+        if goal_slice is None:
+            self.goal_slice = slice(self.nx)
 
-        self.A, self.B = model.linear_model_from_ds(ds)
-        if ds.config.predict_difference:
-            self.A += np.eye(self.nx)
-
-        # TODO increase Q for yaw later (and when that becomes part of goal)
-        # self.Q = np.diag([0, 0, 0.1, 0.1, 0])
-        # self.Q = np.diag([1, 1, 0, 0, 0])
-        self.Q = np.diag([0., 0., 1, 1, 0])
+        if np.isscalar(Q):
+            self.Q = np.eye(self.nx) * Q
+        else:
+            self.Q = Q
+            assert self.Q.shape[0] == self.nx
         self.R = np.diag([R for _ in range(self.nu)])
+
+        self.A, self.B, self.K = None, None, None
+        self.update_model(ds)
 
         # confirm in MATLAB
         # import os
         # from meta_contact import cfg
         # scipy.io.savemat(os.path.join(cfg.DATA_DIR, 'sys.mat'), {'A': self.A, 'B': self.B})
-        self.K, S, E = dlqr(self.A, self.B, self.Q, self.R)
 
         # self.Q = np.diag([1, 1])
         # self.K, S, E = dlqr(self.A[:2, :2], self.B[:2], self.Q, self.R)
@@ -46,17 +48,21 @@ class GlobalLQRController(Controller):
         # hand designed K works
         # self.K = -np.array([[0, 0, -0.05, 0, 0], [0, 0, 0, 0.05, 0]])
 
+    def update_model(self, ds):
+        self.A, self.B = model.linear_model_from_ds(ds)
+        if ds.config.predict_difference:
+            self.A += np.eye(self.nx)
+
+        self.K, S, E = dlqr(self.A, self.B, self.Q, self.R)
+
     def command(self, obs):
         # remove the goal from xb yb
         x = np.array(obs)
-        # x[0:2] -= self.goal[2:4]
-        x[2:4] -= self.goal[2:4]
-        u = -self.K @ x.reshape((self.nx, 1))
+        x[self.goal_slice] -= self.goal[self.goal_slice]
+        u = -self.K @ x
 
-        n = np.linalg.norm(u)
-        if n > 0.04:
-            u = u / n * 0.04
-        print(x)
+        if self.u_max:
+            u = np.clip(u, -self.u_max, self.u_max)
         return u
 
 
