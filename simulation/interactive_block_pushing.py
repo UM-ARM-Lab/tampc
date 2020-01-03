@@ -7,7 +7,7 @@ from arm_pytorch_utilities import preprocess
 import sklearn.preprocessing as skpre
 
 from meta_contact import cfg
-from arm_pytorch_utilities import rand, load_data, math_utils
+from arm_pytorch_utilities import rand, load_data
 
 from meta_contact.controller import controller
 from meta_contact.controller import global_controller
@@ -29,19 +29,11 @@ def random_touching_start(w=0.087):
     init_block_yaw = (np.random.random() - 0.5) * 2 * math.pi
     # randomly initialize pusher adjacent to block
     # choose which face we will be next to
-    non_fixed_val = (np.random.random() - 0.5) * 2 * w  # each face has 1 fixed value and 1 free value
+    along_face = (np.random.random() - 0.5) * 2 * w  # each face has 1 fixed value and 1 free value
     face = np.random.randint(0, 4)
-    if face == 0:  # right
-        dxy = (w, non_fixed_val)
-    elif face == 1:  # top
-        dxy = (non_fixed_val, w)
-    elif face == 2:  # left
-        dxy = (-w, non_fixed_val)
-    else:
-        dxy = (non_fixed_val, -w)
-    # rotate by yaw to match (around origin since these are differences)
-    dxy = math_utils.rotate_wrt_origin(dxy, init_block_yaw)
-    init_pusher = np.add(init_block_pos, dxy)
+    init_pusher = interactive_block_pushing.pusher_pos_for_touching(init_block_pos, init_block_yaw, from_center=w,
+                                                                    face=face,
+                                                                    along_face=along_face)
     return init_block_pos, init_block_yaw, init_pusher
 
 
@@ -97,12 +89,16 @@ def get_easy_env(mode=p.GUI, level=0):
     init_block_pos = [0, 0]
     init_block_yaw = 0
     init_pusher = [-0.095, 0]
+    # init_pusher = 0
     # goal_pos = [1.1, 0.5]
     # goal_pos = [0.8, 0.2]
     goal_pos = [0.5, 0.5]
     env = interactive_block_pushing.PushAgainstWallEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher,
                                                        init_block=init_block_pos, init_yaw=init_block_yaw,
                                                        environment_level=level)
+    # env = interactive_block_pushing.PushAgainstWallStickyEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher,
+    #                                                          init_block=init_block_pos, init_yaw=init_block_yaw,
+    #                                                          environment_level=level)
     return env
 
 

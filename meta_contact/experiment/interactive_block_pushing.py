@@ -20,6 +20,61 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+class BlockFace:
+    RIGHT = 0
+    TOP = 1
+    LEFT = 2
+    BOT = 3
+
+
+def pusher_pos_for_touching(block_pos, block_yaw, from_center=0.096, face=BlockFace.LEFT, along_face=0):
+    """
+    Get pusher (x,y) for it to be adjacent the face of the block
+    :param block_pos: (x,y) of the block
+    :param block_yaw: rotation of the block in radians
+    :param from_center: how perpendicular to the face to extend out in m
+    :param face: which block face to be adjacent to
+    :param along_face: how far up along the given face of the block the pusher is in m
+    :return:
+    """
+    if face == BlockFace.RIGHT:
+        dxy = (from_center, along_face)
+    elif face == BlockFace.TOP:
+        dxy = (along_face, from_center)
+    elif face == BlockFace.LEFT:
+        dxy = (-from_center, along_face)
+    else:
+        dxy = (along_face, -from_center)
+
+    # rotate by yaw to match (around origin since these are differences)
+    dxy = math_utils.rotate_wrt_origin(dxy, -block_yaw)
+    pusher_pos = np.add(block_pos, dxy)
+    return pusher_pos
+
+
+def pusher_pos_along_face(block_pos, block_yaw, pusher_pos, face=BlockFace.LEFT):
+    """
+    Get how far along the given face the pusher is (the reverse of the previous function essentially)
+    :param block_pos: (x,y) of the block
+    :param block_yaw: rotation of the block in radians
+    :param pusher_pos: (x,y) of the pusher
+    :param face: which block face to be adjacent to
+    :return:
+    """
+    dxy = np.subtract(pusher_pos, block_pos)
+    # rotate back by yaw to get wrt origin
+    dxy = math_utils.rotate_wrt_origin(dxy, block_yaw)
+    if face == BlockFace.RIGHT:
+        along_face = dxy[1]
+    elif face == BlockFace.TOP:
+        along_face = dxy[0]
+    elif face == BlockFace.LEFT:
+        along_face = dxy[1]
+    else:
+        along_face = dxy[0]
+    return along_face
+
+
 class PushLoader(load_utils.DataLoader):
     def __init__(self, *args, file_cfg=cfg, **kwargs):
         super().__init__(file_cfg, *args, **kwargs)
@@ -404,6 +459,111 @@ class PushAgainstWallEnv(MyPybulletEnv):
     @staticmethod
     def state_names():
         return ['x robot (m)', 'y robot (m)', 'x block (m)', 'y block (m)', 'block rotation (rads)']
+
+
+class PushAgainstWallStickyEnv(PushAgainstWallEnv):
+    """
+    Pusher in this env is forced to stick to the block; control is how much to slide along the side of the block and
+    how much to push perpendicularly into the adjacent face
+    """
+    nu = 2
+    nx = 4
+    ny = 4
+
+    def __init__(self, goal=(1.0, 0.), init_pusher=(-0.25, 0), init_block=(0., 0.), init_yaw=0.,
+                 environment_level=0, **kwargs):
+        super().__init__(**kwargs)
+        # TODO change init pusher to just be how far along a face it is
+        # TODO which face to pick?
+        self.initRestFrames = 20
+        self.level = environment_level
+
+        # initial config
+        self.goal = None
+        self.initPusherPos = None
+        self.initBlockPos = None
+        self.initBlockYaw = None
+        self.set_task_config(goal, init_pusher, init_block, init_yaw)
+
+        # quadratic cost
+        # TODO have cost just for the block states
+        self.Q = np.diag([0, 0, 1, 1, 0])
+        self.R = np.diag([1 for _ in range(2)])
+
+        self._setup_experiment()
+        # start at rest
+        for _ in range(self.initRestFrames):
+            p.stepSimulation()
+        self.state = self._obs()
+
+    def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
+        """Change task configuration"""
+        # TODO always set init pusher to be next to block, change goal to smaller dimension
+        if goal is not None:
+            # ignore the pusher position
+            self.goal = np.array(tuple(goal) + tuple(goal) + (0.1,))
+        if init_pusher is not None:
+            self.initPusherPos = tuple(init_pusher) + (0.05,)
+        if init_block is not None:
+            self.initBlockPos = tuple(init_block) + (0.0325,)
+        if init_yaw is not None:
+            self.initBlockYaw = init_yaw
+
+    def _obs(self):
+        # TODO calculate how much along one face the pusher is
+        x, y, z = self._observe_pusher()
+        return self._observe_block()
+
+    def step(self, action):
+        # TODO use new command states
+        # TODO restrict sliding of pusher along the face (never to slide off)
+        old_state = self._obs()
+        d = action
+        # set end effector pose
+        z = self.initPusherPos[2]
+        eePos = [old_state[0] + d[0], old_state[1] + d[1], z]
+
+        # get the net contact force between robot and block
+        info = {'contact_force': 0, 'contact_count': 0}
+        contactInfo = p.getContactPoints(self.pusherId, self.blockId)
+        if len(contactInfo) > 0:
+            f_c_temp = 0
+            for i in range(len(contactInfo)):
+                f_c_temp += contactInfo[i][9]
+            info['contact_force'] = f_c_temp
+            info['contact_count'] = len(contactInfo)
+
+        # execute the action
+        self._move_pusher(eePos)
+        p.addUserDebugLine(eePos, np.add(eePos, [0, 0, 0.01]), [1, 1, 0], 4)
+        # handle trying to go into wall (if we don't succeed)
+        # we use a force insufficient for going into the wall
+        rest = 1
+        while not self._reached_command(eePos) and rest < self.initRestFrames:
+            p.stepSimulation()
+            rest += 1
+
+        # wait until simulation becomes static
+        rest = 1
+        while not self._static_environment() and rest < self.initRestFrames:
+            p.stepSimulation()
+            rest += 1
+
+        self.state = self._obs()
+        # track trajectory
+        p.addUserDebugLine([old_state[0], old_state[1], z], [self.state[0], self.state[1], z], [1, 0, 0], 2)
+        p.addUserDebugLine([old_state[2], old_state[3], z], [self.state[2], self.state[3], z], [0, 0, 1], 2)
+
+        x = old_state - self.goal
+        cost = x.T.dot(self.Q).dot(x)
+        done = cost < 0.01
+        cost += action.T.dot(self.R).dot(action)
+
+        return np.copy(self.state), -cost, done, info
+
+    @staticmethod
+    def state_names():
+        return ['x block (m)', 'y block (m)', 'block rotation (rads)', 'pusher along face (m)']
 
 
 class InteractivePush(simulation.Simulation):
