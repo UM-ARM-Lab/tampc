@@ -56,8 +56,8 @@ def collect_touching_freespace_data(trials=20, trial_length=40, level=0):
                                                     save_dir=save_dir)
     for _ in range(trials):
         seed = rand.seed()
-        # init_block_pos, init_block_yaw, init_pusher = random_touching_start()
-        # env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
+        init_block_pos, init_block_yaw, init_pusher = random_touching_start()
+        env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
         # ctrl = controller.RandomStraightController(push_mag, .3, init_pusher, init_block_pos)
         ctrl = controller.RandomController(push_mag, .05, 1)
         sim.ctrl = ctrl
@@ -97,10 +97,9 @@ def get_easy_env(mode=p.GUI, level=0):
     init_block_pos = [0, 0]
     init_block_yaw = 0
     init_pusher = [-0.095, 0]
-    if level == 2:
-        goal_pos = [1.1, 0.5]
-    else:
-        goal_pos = [1.0, 0]
+    # goal_pos = [1.1, 0.5]
+    # goal_pos = [0.8, 0.2]
+    goal_pos = [0.5, 0.5]
     env = interactive_block_pushing.PushAgainstWallEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher,
                                                        init_block=init_block_pos, init_yaw=init_block_yaw,
                                                        environment_level=level)
@@ -109,7 +108,6 @@ def get_easy_env(mode=p.GUI, level=0):
 
 def test_local_dynamics(level=0):
     num_frames = 100
-
     # TODO preprocessor in online dynamics not yet supported
     preprocessor = None
     config = load_data.DataConfig(predict_difference=False, predict_all_dims=True, expanded_input=True)
@@ -119,17 +117,18 @@ def test_local_dynamics(level=0):
 
     m = model.DeterministicUser(make.make_sequential_network(config))
     mw = model.NetworkModelWrapper(m, ds, name='contextual')
+    checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/contextual.1000.tar'
     checkpoint = None
-    pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=200)
-    # pm = prior.GMMPrior.from_data(ds)
+    # pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=200)
+    pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
-    ctrl = online_controller.OnlineController(pm, ds=ds, max_timestep=num_frames, R=5, horizon=20, lqr_iter=2,
+    ctrl = online_controller.OnlineController(pm, ds=ds, max_timestep=num_frames, R=5, horizon=20, lqr_iter=3,
                                               init_gamma=0.1, max_ctrl=0.03)
 
     env = get_easy_env(p.GUI, level=level)
     sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=num_frames, plot=True, save=False)
 
-    seed = rand.seed(513521)
+    seed = rand.seed()
     sim.run(seed)
     plt.ioff()
     plt.show()
@@ -141,7 +140,7 @@ def test_global_linear_dynamics(level=0):
 
     ctrl = global_controller.GlobalLQRController(ds, 5)
     env = get_easy_env(p.GUI, level)
-    sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=100, plot=True, save=False)
+    sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=200, plot=True, save=False)
 
     seed = rand.seed(3)
     sim.run(seed)
@@ -159,7 +158,7 @@ def test_global_qr_cost_optimal_controller(controller, level=0, **kwargs):
     pm = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds)
 
     checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/.1000.tar'
-    # checkpoint = None
+    checkpoint = None
     if checkpoint and pm.load(checkpoint):
         logger.info("loaded checkpoint %s", checkpoint)
     else:
@@ -185,10 +184,10 @@ def sandbox():
 
 
 if __name__ == "__main__":
-    # collect_touching_freespace_data(trials=50, trial_length=50, level=1)
+    # collect_touching_freespace_data(trials=50, trial_length=50, level=0)
     # collect_notouch_freespace_data()
     ctrl = global_controller.GlobalCEMController
-    test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7)
+    test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7, level=0)
     # test_global_linear_dynamics(level=0)
-    # test_local_dynamics()
+    # test_local_dynamics(1)
     # sandbox()
