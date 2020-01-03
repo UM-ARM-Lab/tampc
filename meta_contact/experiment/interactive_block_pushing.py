@@ -4,6 +4,7 @@ import time
 import torch
 import math
 import random
+import abc
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -221,6 +222,12 @@ class MyPybulletEnv:
     def close(self):
         p.disconnect(self.physics_client)
 
+    @staticmethod
+    @abc.abstractmethod
+    def state_names():
+        """Get list of names, one for each state corresponding to the index"""
+        return []
+
 
 class PushAgainstWallEnv(MyPybulletEnv):
     nu = 2
@@ -394,6 +401,10 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.state = self._obs()
         return np.copy(self.state)
 
+    @staticmethod
+    def state_names():
+        return ['x robot (m)', 'y robot (m)', 'x block (m)', 'y block (m)', 'block rotation (rads)']
+
 
 class InteractivePush(simulation.Simulation):
     def __init__(self, env: PushAgainstWallEnv, controller, num_frames=1000, save_dir='pushing', observation_period=1,
@@ -474,8 +485,7 @@ class InteractivePush(simulation.Simulation):
         return {'X': X, 'U': self.u, 'contact': contact_flag, 'mask': mask.reshape(-1, 1)}
 
     def start_plot_runs(self):
-        axis_name = ['x robot (m)', 'y robot (m)', 'x block (m)', 'y block (m)', 'block rotation (rads)',
-                     'contact force (N)', 'contact count']
+        axis_name = self.env.state_names() + ['contact force (N)', 'contact count']
         state_dim = self.traj.shape[1] + 2
         assert state_dim == len(axis_name)
 
