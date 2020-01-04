@@ -28,7 +28,7 @@ class BlockFace:
 
 
 # TODO This is specific to this pusher and block; how to generalize this?
-DIST_FOR_JUST_TOUCHING = 0.096
+DIST_FOR_JUST_TOUCHING = 0.096 - 0.00001
 MAX_ALONG = 0.075
 
 
@@ -71,14 +71,16 @@ def pusher_pos_along_face(block_pos, block_yaw, pusher_pos, face=BlockFace.LEFT)
     # rotate back by yaw to get wrt origin
     dxy = math_utils.rotate_wrt_origin(dxy, block_yaw)
     if face == BlockFace.RIGHT:
-        along_face = dxy[1]
+        from_center, along_face = dxy
     elif face == BlockFace.TOP:
-        along_face = dxy[0]
+        along_face, from_center = dxy
     elif face == BlockFace.LEFT:
-        along_face = dxy[1]
+        from_center, along_face = dxy
+        from_center = - from_center
     else:
-        along_face = dxy[0]
-    return along_face
+        along_face, from_center = dxy
+        from_center = - from_center
+    return along_face, from_center
 
 
 class PushLoader(load_utils.DataLoader):
@@ -248,8 +250,8 @@ class MyPybulletEnv:
         self.mode = mode
         self.realtime = False
         self.sim_step_s = 1. / 240.
-        self._configure_physics_engine()
         self.randseed = None
+        self._configure_physics_engine()
 
     def _configure_physics_engine(self):
         mode_dict = {Mode.GUI: p.GUI, Mode.DIRECT: p.DIRECT}
@@ -517,7 +519,8 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
     def _obs(self):
         xb, yb, yaw = self._observe_block()
         x, y, z = self._observe_pusher()
-        along = pusher_pos_along_face((xb, yb), yaw, (x, y), self.face)
+        along, from_center = pusher_pos_along_face((xb, yb), yaw, (x, y), self.face)
+        logger.debug("dist between pusher and block %f", from_center - DIST_FOR_JUST_TOUCHING)
         return xb, yb, yaw, along
 
     def step(self, action):
@@ -531,6 +534,7 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         from_center = DIST_FOR_JUST_TOUCHING - d_into
         # restrict sliding of pusher along the face (never to slide off)
         along = np.clip(old_state[3] + d_along, -MAX_ALONG, MAX_ALONG)
+        logger.debug("along %f dalong %f", along, d_along)
         pos = pusher_pos_for_touching(old_state[:2], old_state[2], from_center=from_center, face=self.face,
                                       along_face=along)
         # set end effector pose
@@ -539,6 +543,8 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
 
         # execute the action
         self._move_and_wait(eePos)
+
+        logger.debug("dist between %s", eePos[:2] - self._observe_pusher()[:2])
 
         # get the net contact force between robot and block
         info = self._observe_contact()
@@ -601,13 +607,13 @@ class InteractivePush(simulation.Simulation):
             self.contactCount[simTime] = info['contact_count']
 
         # confirm dynamics is as expected
-        if self.env.level == 0:
-            xy = self.traj[:, :self.env.nu]
-            nxy = xy + self.u
-            du = np.linalg.norm(nxy[:-1] - xy[1:], axis=1)
-            if np.any(du > 2e-3):
-                logger.error(du)
-                raise RuntimeError("Dynamics not behaving as expected")
+        # if self.env.level == 0:
+        #     xy = self.traj[:, :self.env.nu]
+        #     nxy = xy + self.u
+        #     du = np.linalg.norm(nxy[:-1] - xy[1:], axis=1)
+        #     if np.any(du > 2e-3):
+        #         logger.error(du)
+        #         raise RuntimeError("Dynamics not behaving as expected")
 
         # contact force mask - get rid of trash in the beginning
         # self.contactForce[:300] = 0
