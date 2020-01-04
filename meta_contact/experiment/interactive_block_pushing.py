@@ -520,11 +520,19 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
                                           along_face=init_pusher)
             self.initPusherPos = tuple(pos) + (0.05,)
 
+    def _draw_goal(self):
+        goalVisualWidth = 0.15 / 2
+        goal = np.concatenate((self.goal[:2], (0.1,)))
+        p.addUserDebugLine(np.add(goal, [0, -goalVisualWidth, 0]), np.add(goal, [0, goalVisualWidth, 0]),
+                           [0, 1, 0], 2)
+        p.addUserDebugLine(np.add(goal, [-goalVisualWidth, 0, 0]), np.add(goal, [goalVisualWidth, 0, 0]),
+                           [0, 1, 0], 2)
+
     def _obs(self):
         xb, yb, yaw = self._observe_block()
         x, y, z = self._observe_pusher()
         along, from_center = pusher_pos_along_face((xb, yb), yaw, (x, y), self.face)
-        logger.debug("dist between pusher and block %f", from_center - DIST_FOR_JUST_TOUCHING)
+        # logger.debug("dist between pusher and block %f", from_center - DIST_FOR_JUST_TOUCHING)
         return xb, yb, yaw, along
 
     def step(self, action):
@@ -538,7 +546,7 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         from_center = DIST_FOR_JUST_TOUCHING - d_into
         # restrict sliding of pusher along the face (never to slide off)
         along = np.clip(old_state[3] + d_along, -MAX_ALONG, MAX_ALONG)
-        logger.debug("along %f dalong %f", along, d_along)
+        # logger.debug("along %f dalong %f", along, d_along)
         pos = pusher_pos_for_touching(old_state[:2], old_state[2], from_center=from_center, face=self.face,
                                       along_face=along)
         # set end effector pose
@@ -548,7 +556,7 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         # execute the action
         self._move_and_wait(eePos)
 
-        logger.debug("dist between %s", eePos[:2] - self._observe_pusher()[:2])
+        # logger.debug("dist between %s", eePos[:2] - self._observe_pusher()[:2])
 
         # get the net contact force between robot and block
         info = self._observe_contact()
