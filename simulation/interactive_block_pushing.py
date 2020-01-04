@@ -65,26 +65,6 @@ def get_data_dir(level=0):
     return 'pushing/touching{}.mat'.format(level)
 
 
-def collect_notouch_freespace_data(trials=100, trial_length=10):
-    ctrl = controller.FullRandomController(0.03)
-    # use mode p.GUI to see what the trials look like
-    save_dir = 'pushing/notouch_freespace'
-    env = interactive_block_pushing.PushAgainstWallEnv(mode=p.DIRECT)
-    sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=trial_length, plot=False, save=True,
-                                                    save_dir=save_dir)
-    for _ in range(trials):
-        seed = rand.seed()
-        init_block_pos, init_block_yaw, init_pusher = random_touching_start(0.4)
-        init_block_pos = [0, 0]
-        init_block_yaw = 0
-        init_pusher = [-0.25, 0]
-        env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
-        sim.run(seed)
-    load_data.merge_data_in_dir(cfg, save_dir, save_dir)
-    plt.ioff()
-    plt.show()
-
-
 def get_easy_env(mode=p.GUI, level=0):
     init_block_pos = [0, 0]
     init_block_yaw = 0
