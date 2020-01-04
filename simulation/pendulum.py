@@ -76,11 +76,20 @@ def angle_normalize(x):
 
 
 def compare_to_goal(state, goal):
-    if goal.dim() == 1:
+    if len(goal.shape) == 1:
         goal = goal.view(1, -1)
     dtheta = angular_diff_batch(state[:, 0], goal[:, 0])
     dtheta_dt = state[:, 1] - goal[:, 1]
     diff = torch.cat((dtheta.view(-1, 1), dtheta_dt.view(-1, 1)), dim=1)
+    return diff
+
+
+def compare_to_goal_np(state, goal):
+    if len(goal.shape) == 1:
+        goal = goal.reshape(1, -1)
+    dtheta = angular_diff_batch(state[:, 0], goal[:, 0])
+    dtheta_dt = state[:, 1] - goal[:, 1]
+    diff = np.column_stack((dtheta.reshape(-1, 1), dtheta_dt.reshape(-1, 1)))
     return diff
 
 
@@ -184,14 +193,12 @@ if __name__ == "__main__":
     fill_dataset(new_data)
     logger.info("bootstrapping finished")
 
-    # m = model.DeterministicUser(make.make_sequential_network(config))
-    # mw = model.NetworkModelWrapper(m, ds, name='pend')
-    # pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=200)
     # pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
-    pm = model.NetworkModelWrapper(
+    mw = model.NetworkModelWrapper(
         model.DeterministicUser(
             make.make_sequential_network(config, activation_factory=torch.nn.Tanh, h_units=(16, 16))), ds)
+    pm = prior.NNPrior.from_data(mw, train_epochs=0)
 
     Nv = 1000
     statev = torch.cat(((torch.rand(Nv, 1, dtype=torch.double) - 0.5) * 2 * math.pi,
@@ -208,7 +215,7 @@ if __name__ == "__main__":
             u = u[:, 0].view(-1, 1)
         xu = torch.cat((state, u), dim=1)
 
-        next_state = pm.predict(xu)
+        next_state = mw.predict(xu)
         next_state[:, 0] = angle_normalize(next_state[:, 0])
         return next_state
 
@@ -234,11 +241,11 @@ if __name__ == "__main__":
         return state
 
 
-    # ctrl = online_controller.OnlineController(pm, ds=ds, max_timestep=num_frames, R=1, horizon=20, lqr_iter=3,
-    #                                           init_gamma=0.1, max_ctrl=ACTION_HIGH)
+    ctrl = online_controller.OnlineController(pm, ds, max_timestep=num_frames, Q=Q.numpy(), R=R, horizon=20, lqr_iter=3,
+                                              init_gamma=0.1, max_ctrl=ACTION_HIGH, compare_to_goal=compare_to_goal_np)
     # ctrl = global_controller.GlobalLQRController(ds, u_max=ACTION_HIGH, Q=Q, R=R)
-    ctrl = global_controller.GlobalMPPIController(dynamics, ds, R=R, Q=Q, compare_to_goal=compare_to_goal,
-                                                  u_max=10)
+    # ctrl = global_controller.GlobalMPPIController(dynamics, ds, R=R, Q=Q, compare_to_goal=compare_to_goal,
+    #                                               u_max=10)
 
     ctrl.set_goal(np.array([0, 0]))
 
@@ -251,9 +258,9 @@ if __name__ == "__main__":
         # # update model based on database change (for global linear controllers)
         # ctrl.update_model(ds)
         # retrain network (for nn dynamics based controllers)
-        pm.unfreeze()
-        pm.learn_model(TRAIN_EPOCH, batch_N=10000)
-        pm.freeze()
+        mw.unfreeze()
+        mw.learn_model(TRAIN_EPOCH, batch_N=10000)
+        mw.freeze()
 
         # evaluate network against true dynamics
         yt = true_dynamics(statev, actionv)
