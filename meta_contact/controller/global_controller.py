@@ -15,11 +15,12 @@ logger = logging.getLogger(__name__)
 
 
 class GlobalLQRController(Controller):
-    def __init__(self, ds, Q=1, R=1, compare_to_goal=np.subtract, u_max=None):
+    def __init__(self, ds, Q=1, R=1, compare_to_goal=np.subtract, u_min=None, u_max=None):
         super().__init__(compare_to_goal)
         # load data and create LQR controller
         self.nu = ds.config.nu
         self.nx = ds.config.nx
+        self.u_min = u_min
         self.u_max = u_max
 
         if np.isscalar(Q):
@@ -60,7 +61,8 @@ class GlobalLQRController(Controller):
         u = -self.K @ x
 
         if self.u_max:
-            u = np.clip(u, -self.u_max, self.u_max)
+            self.u_min = -self.u_max if self.u_min is None else self.u_min
+            u = np.clip(u, self.u_min, self.u_max)
         return u
 
 
