@@ -14,3 +14,4 @@ runs
 checkpoints
 *.mat
 env*
+.DS_Store
