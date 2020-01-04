@@ -79,8 +79,12 @@ class QRCostOptimalController(Controller):
             self.Q = Q
             assert self.Q.shape[0] == self.nx
         else:
-            self.Q = np.eye(self.nx) * Q
-        self.R = torch.eye(self.nu, dtype=self.dtype) * R
+            self.Q = np.eye(self.nx, dtype=self.dtype) * Q
+        if torch.is_tensor(R):
+            self.R = R
+            assert self.R.shape[0] == self.nu
+        else:
+            self.R = torch.eye(self.nu, dtype=self.dtype) * R
 
     def _running_cost(self, state, action):
         diff = self.compare_to_goal(state, torch.tensor(self.goal, dtype=state.dtype, device=state.device))
