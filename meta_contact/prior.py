@@ -69,9 +69,6 @@ class NNPrior(OnlineDynamicsPrior):
         # ensure that we're predicting residuals
         # if not mw.dataset.config.predict_difference:
         #     raise RuntimeError("Network must be predicting residuals")
-        # ensure we have full context
-        if not mw.dataset.config.expanded_input:
-            raise RuntimeError("Network expects expanded input")
         # create (pytorch) network, load from checkpoint if given, otherwise train for some iterations
         if checkpoint and mw.load(checkpoint):
             logger.info("loaded checkpoint %s", checkpoint)
@@ -84,10 +81,12 @@ class NNPrior(OnlineDynamicsPrior):
         self.dyn_net = mw
         self.dyn_net.freeze()
         self.mix_prior_strength = mix_strength
+        self.full_context = mw.dataset.config.expanded_input
 
     def mix(self, dX, dU, xu, pxu, xux, empsig, mun, N):
         # feed pxu and xu to network (full contextual network)
-        full_input = torch.tensor(np.concatenate((xu, pxu)))
+        full_input = np.concatenate((xu, pxu)) if self.full_context else xu
+        full_input = torch.tensor(full_input, dtype=torch.double)
         # jacobian of xu' wrt xu and pxu, need to strip the pxu columns
         F = grad.jacobian(self.dyn_net.predict, full_input)
         # first columns are xu, latter columns are pxu
