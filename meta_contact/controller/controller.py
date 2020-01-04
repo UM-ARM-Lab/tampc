@@ -91,14 +91,13 @@ class FullRandomController(Controller):
 
 
 class PreDeterminedController(Controller):
-    def __init__(self, controls, p):
+    def __init__(self, controls):
         super().__init__()
-        self.p = p
         self.u = controls
         self.j = 0
 
     def command(self, obs):
         j = self.j
-        u = self.u[j * self.p:(j + 1) * self.p]
+        u = self.u[j]
         self.j += 1
         return u
