@@ -13,10 +13,10 @@ logging.basicConfig(level=logging.DEBUG,
 
 
 def test_pusher_placement_inverse():
-    init_block_pos = [-0.4, 0.3]
-    init_block_yaw = 1.2
+    init_block_pos = [0.2, 0.3]
+    init_block_yaw = -0.4
     face = interactive_block_pushing.BlockFace.LEFT
-    along_face = -0.04
+    along_face = 0.075
     from_center = 0.096
     init_pusher = interactive_block_pushing.pusher_pos_for_touching(init_block_pos, init_block_yaw,
                                                                     face=face, from_center=from_center,
@@ -26,8 +26,9 @@ def test_pusher_placement_inverse():
                                                        init_block=init_block_pos, init_yaw=init_block_yaw)
     pusher_pos = env._observe_pusher()
     init_block = np.array((*init_block_pos, init_block_yaw))
-    predicted_along_face = interactive_block_pushing.pusher_pos_along_face(init_block_pos, init_block_yaw, init_pusher,
-                                                                           face=face)
+    predicted_along_face, from_center = interactive_block_pushing.pusher_pos_along_face(init_block_pos, init_block_yaw,
+                                                                                        init_pusher,
+                                                                                        face=face)
     action = np.array([0, 0])
     env.step(action)
     logger.info("along set %f calculated %f", along_face, predicted_along_face)
@@ -53,7 +54,22 @@ def test_env_control():
     sim.run(seed)
 
 
+def test_friction():
+    init_block_pos = [0, 0]
+    init_block_yaw = 0
+    face = interactive_block_pushing.BlockFace.LEFT
+    along_face = interactive_block_pushing.MAX_ALONG
+    env = interactive_block_pushing.PushAgainstWallStickyEnv(mode=p.GUI, init_pusher=along_face, face=face,
+                                                             init_block=init_block_pos, init_yaw=init_block_yaw)
+    num_frames = 50
+    ctrl = controller.PreDeterminedController([(0.0, 0.02) for _ in range(num_frames)])
+    sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=num_frames, plot=False, save=False)
+    seed = rand.seed()
+    sim.run(seed)
+
+
 if __name__ == "__main__":
     # test_pusher_placement_inverse()
-    test_env_control()
+    # test_env_control()
+    test_friction()
     # TODO test pushing in one direction (diagonal to face); check friction cone; what angle do we start sliding
