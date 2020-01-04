@@ -1,8 +1,11 @@
 import abc
+import logging
 
 import numpy as np
 
 from arm_pytorch_utilities.math_utils import rotate_wrt_origin
+
+logger = logging.getLogger(__name__)
 
 
 class Controller(abc.ABC):
@@ -73,14 +76,17 @@ class RandomStraightController(Controller):
 
 
 class FullRandomController(Controller):
-    """Randomly push in any direction"""
+    """Uniform randomly compute control along all dimensions"""
 
-    def __init__(self, push_magnitude_max):
+    def __init__(self, nu, u_min, u_max):
         super().__init__()
-        self.push_magnitude_max = push_magnitude_max
+        self.nu = nu
+        self.u_min = u_min
+        self.u_max = u_max
 
     def command(self, obs):
-        u = (np.random.random((2,)) - 0.5) * self.push_magnitude_max
+        u = np.random.uniform(low=self.u_min, high=self.u_max, size=self.nu)
+        logger.debug(u)
         return u
 
 
