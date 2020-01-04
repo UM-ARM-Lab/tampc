@@ -158,12 +158,11 @@ class NetworkModelWrapper(DynamicsModel):
         self.optimizer = None
         self.step = 0
         self.name = name
-        self.XU, self.Y, self.labels = self.dataset.training_set()
-        self.XUv, self.Yv, self.labelsv = self.dataset.validation_set()
         self.user = model_user
         self.model = model_user.model
 
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=regularization)
+        # self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=regularization)
+        self.optimizer = torch.optim.Adam(self.model.parameters())
         if lookahead:
             self.optimizer = Lookahead(self.optimizer)
 
@@ -182,6 +181,8 @@ class NetworkModelWrapper(DynamicsModel):
         self.writer.add_scalar('loss/validation', vloss, self.step)
 
     def learn_model(self, max_epoch, batch_N=500):
+        self.XU, self.Y, self.labels = self.dataset.training_set()
+        self.XUv, self.Yv, self.labelsv = self.dataset.validation_set()
         ds_train = load_data.SimpleDataset(self.XU, self.Y, self.labels)
         train_loader = torch.utils.data.DataLoader(ds_train, batch_size=batch_N, shuffle=True)
         self.step = 0
@@ -209,9 +210,9 @@ class NetworkModelWrapper(DynamicsModel):
                 # torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
                 self.optimizer.step()
 
-                logger.info("Epoch %d loss %f", epoch, loss.mean().item())
+                logger.debug("Epoch %d loss %f", epoch, loss.mean().item())
         # save after training
-        self.save()
+        self.save(last=True)
 
         # compare prediction accuracy against least squares
         XU, Y = self.XU.numpy(), self.Y.numpy()
@@ -223,7 +224,7 @@ class NetworkModelWrapper(DynamicsModel):
         En = np.linalg.norm((Yhatn - Y), axis=1)
         logger.info("Least squares error %f network error %f", E.mean(), En.mean())
 
-    def save(self):
+    def save(self, last=False):
         state = {
             'step': self.step,
             'state_dict': self.model.state_dict(),
@@ -234,7 +235,8 @@ class NetworkModelWrapper(DynamicsModel):
             os.makedirs(base_dir, exist_ok=True)
         full_name = os.path.join(base_dir, '{}.{}.tar'.format(self.name, self.step))
         torch.save(state, full_name)
-        logger.info("saved checkpoint %s", full_name)
+        if last:
+            logger.info("saved checkpoint %s", full_name)
 
     def load(self, filename):
         if not os.path.isfile(filename):
