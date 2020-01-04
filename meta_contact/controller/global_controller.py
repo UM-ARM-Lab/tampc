@@ -67,12 +67,13 @@ class GlobalLQRController(Controller):
 
 
 class QRCostOptimalController(Controller):
-    def __init__(self, ds, Q=1, R=1, u_max=None):
+    def __init__(self, ds, Q=1, R=1, compare_to_goal=torch.sub, u_max=None):
         super().__init__()
 
         self.nu = ds.config.nu
         self.nx = ds.config.nx
         self.u_max = u_max
+        self.compare_to_goal = compare_to_goal
         self.dtype = torch.double
 
         if torch.is_tensor(Q):
@@ -83,8 +84,8 @@ class QRCostOptimalController(Controller):
         self.R = torch.eye(self.nu, dtype=self.dtype) * R
 
     def _running_cost(self, state, action):
-        state = state - torch.tensor(self.goal, dtype=state.dtype, device=state.device)
-        cost = linalg.batch_quadratic_product(state, self.Q) + linalg.batch_quadratic_product(action, self.R)
+        diff = self.compare_to_goal(state, torch.tensor(self.goal, dtype=state.dtype, device=state.device))
+        cost = linalg.batch_quadratic_product(diff, self.Q) + linalg.batch_quadratic_product(action, self.R)
         return cost
 
     @abc.abstractmethod
@@ -100,8 +101,8 @@ class QRCostOptimalController(Controller):
 
 
 class GlobalCEMController(QRCostOptimalController):
-    def __init__(self, dynamics, ds, Q=1, R=1, u_max=None, **kwargs):
-        super().__init__(ds, Q=Q, R=R, u_max=u_max)
+    def __init__(self, dynamics, ds, Q=1, R=1, u_max=None, compare_to_goal=torch.sub, **kwargs):
+        super().__init__(ds, Q=Q, R=R, compare_to_goal=compare_to_goal, u_max=u_max)
         self.mpc = cem.CEM(dynamics, self._running_cost, self.nx, self.nu, init_cov_diag=self.u_max,
                            ctrl_max_mag=self.u_max, **kwargs)
 
@@ -110,8 +111,8 @@ class GlobalCEMController(QRCostOptimalController):
 
 
 class GlobalMPPIController(QRCostOptimalController):
-    def __init__(self, dynamics, ds, Q=1, R=1, u_max=None, **kwargs):
-        super().__init__(ds, Q=Q, R=R, u_max=u_max)
+    def __init__(self, dynamics, ds, Q=1, R=1, u_max=None, compare_to_goal=torch.sub, **kwargs):
+        super().__init__(ds, Q=Q, R=R, compare_to_goal=compare_to_goal, u_max=u_max)
         noise_mult = self.u_max or 1
         noise_sigma = torch.eye(self.nu, dtype=self.dtype) * noise_mult
         self.mpc = mppi.MPPI(dynamics, self._running_cost, self.nx, noise_sigma=noise_sigma, **kwargs)
