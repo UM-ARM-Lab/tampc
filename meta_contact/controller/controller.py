@@ -6,8 +6,12 @@ from arm_pytorch_utilities.math_utils import rotate_wrt_origin
 
 
 class Controller(abc.ABC):
-    def __init__(self):
+    def __init__(self, compare_to_goal=np.subtract):
+        """
+        :param compare_to_goal: function (state, goal) -> diff batched difference
+        """
         self.goal = None
+        self.compare_to_goal = compare_to_goal
 
     def get_goal(self):
         return self.goal

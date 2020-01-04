@@ -13,8 +13,9 @@ LOGGER = logging.getLogger(__name__)
 class OnlineController(Controller):
     """Controller mixing locally linear model with prior model from https://arxiv.org/pdf/1509.06841.pdf"""
 
-    def __init__(self, prior, ds, max_timestep=100, Q=1, R=1, horizon=15, lqr_iter=1, init_gamma=0.1, max_ctrl=None):
-        super().__init__()
+    def __init__(self, prior, ds, max_timestep=100, Q=1, R=1, horizon=15, lqr_iter=1, init_gamma=0.1,
+                 compare_to_goal=np.subtract, max_ctrl=None):
+        super().__init__(compare_to_goal)
         self.dX = ds.config.nx
         self.dU = ds.config.nu
         self.H = horizon
@@ -48,7 +49,7 @@ class OnlineController(Controller):
         self.R = np.diag(self.weight_u)
         # self.cost = cost.CostFKOnline(self.goal, wu=self.weight_u, ee_idx=self.block_idx, maxT=self.maxT,
         #                               use_jacobian=False)
-        self.cost = cost.CostQROnline(self.goal, self.Q, self.R)
+        self.cost = cost.CostQROnline(self.goal, self.Q, self.R, self.compare_to_goal)
         self.dynamics = OnlineDynamics(self.gamma, prior, self.dyn_init_mu, self.dyn_init_sig, self.dX, self.dU)
 
         self.prevx = None
@@ -153,7 +154,6 @@ class OnlineController(Controller):
         time-varying LG policy's first timestep (and add noise)
         """
         # Only the first timestep of the policy is used
-        # u = lgpolicy.K[0].dot(x-self.goal) + lgpolicy.k[0]
         u = lgpolicy.K[0] @ x + lgpolicy.k[0]
         if add_noise:
             u += lgpolicy.chol_pol_covar[0].dot(self.u_noise * np.random.randn(self.dU))

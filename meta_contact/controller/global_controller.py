@@ -15,14 +15,12 @@ logger = logging.getLogger(__name__)
 
 
 class GlobalLQRController(Controller):
-    def __init__(self, ds, Q=1, R=1, u_max=None, goal_slice=None):
-        super().__init__()
+    def __init__(self, ds, Q=1, R=1, compare_to_goal=np.subtract, u_max=None):
+        super().__init__(compare_to_goal)
         # load data and create LQR controller
         self.nu = ds.config.nu
         self.nx = ds.config.nx
         self.u_max = u_max
-        if goal_slice is None:
-            self.goal_slice = slice(self.nx)
 
         if np.isscalar(Q):
             self.Q = np.eye(self.nx) * Q
@@ -58,7 +56,7 @@ class GlobalLQRController(Controller):
     def command(self, obs):
         # remove the goal from xb yb
         x = np.array(obs)
-        x[self.goal_slice] -= self.goal[self.goal_slice]
+        x = self.compare_to_goal(x, self.goal)
         u = -self.K @ x
 
         if self.u_max:
@@ -68,12 +66,11 @@ class GlobalLQRController(Controller):
 
 class QRCostOptimalController(Controller):
     def __init__(self, ds, Q=1, R=1, compare_to_goal=torch.sub, u_max=None):
-        super().__init__()
+        super().__init__(compare_to_goal)
 
         self.nu = ds.config.nu
         self.nx = ds.config.nx
         self.u_max = u_max
-        self.compare_to_goal = compare_to_goal
         self.dtype = torch.double
 
         if torch.is_tensor(Q):

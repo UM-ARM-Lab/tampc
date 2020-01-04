@@ -329,10 +329,11 @@ class CostQROnline(object):
     Assumes only parts of the state space is important for reaching the goal (termed ee - end effector)
     """
 
-    def __init__(self, target, Q, R):
+    def __init__(self, target, Q, R, compare_to_goal):
         self.Q = Q
         self.R = R
         self.eetgt = target
+        self.compare_to_goal = compare_to_goal
         self.final_penalty = 1.0  # weight = sum of remaining weight * final penalty
 
     def eval(self, X, U, t, jac=None):
@@ -341,7 +342,7 @@ class CostQROnline(object):
         dU = U.shape[1]
         T = X.shape[0]
 
-        X = X - self.eetgt
+        X = self.compare_to_goal(X, self.eetgt)
         l = 0.5 * (np.einsum('ij,kj,ik->i', X, self.Q, X) + np.einsum('ij,kj,ik->i', U, self.R, U))
         # l = 0.5 * (linalg.batch_quadratic_product(X, self.Q) + linalg.batch_quadratic_product(U, self.R)).numpy()
         lu = U @ self.R
