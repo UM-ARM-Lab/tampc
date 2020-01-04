@@ -75,6 +75,15 @@ def angle_normalize(x):
     return (((x + math.pi) % (2 * math.pi)) - math.pi)
 
 
+def compare_to_goal(state, goal):
+    if goal.dim() == 1:
+        goal = goal.view(1, -1)
+    dtheta = angular_diff_batch(state[:, 0], goal[:, 0])
+    dtheta_dt = state[:, 1] - goal[:, 1]
+    diff = torch.cat((dtheta.view(-1, 1), dtheta_dt.view(-1, 1)), dim=1)
+    return diff
+
+
 # def running_cost(state, action):
 #     theta = state[:, 0]
 #     theta_dt = state[:, 1]
@@ -128,6 +137,9 @@ if __name__ == "__main__":
 
     nx = 2
     nu = 1
+
+    Q = torch.tensor([[1, 0], [0, 0.1]], dtype=dtype)
+    R = 0.001
 
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True)
 
@@ -222,13 +234,23 @@ if __name__ == "__main__":
         return state
 
 
+    # ctrl = online_controller.OnlineController(pm, ds=ds, max_timestep=num_frames, R=1, horizon=20, lqr_iter=3,
+    #                                           init_gamma=0.1, max_ctrl=ACTION_HIGH)
+    # ctrl = global_controller.GlobalLQRController(ds, u_max=ACTION_HIGH, Q=Q, R=R)
+    ctrl = global_controller.GlobalMPPIController(dynamics, ds, R=R, Q=Q, compare_to_goal=compare_to_goal,
+                                                  u_max=10)
+
+    ctrl.set_goal(np.array([0, 0]))
+
+
     def update_model():
         # TODO recreate prior if necessary (for non-network based priors; since they contain data directly)
         # pm = prior.LSQPrior.from_data(ds)
         # pm = prior.GMMPrior.from_data(ds)
         # ctrl.update_prior(pm)
+        # # update model based on database change (for global linear controllers)
         # ctrl.update_model(ds)
-        # TODO retrain network
+        # retrain network (for nn dynamics based controllers)
         pm.unfreeze()
         pm.learn_model(TRAIN_EPOCH, batch_N=10000)
         pm.freeze()
@@ -250,25 +272,6 @@ if __name__ == "__main__":
 
 
     update_model()
-    Q = torch.tensor([[1, 0], [0, 0.1]], dtype=dtype)
-    R = 0.001
-
-
-    # ctrl = online_controller.OnlineController(pm, ds=ds, max_timestep=num_frames, R=1, horizon=20, lqr_iter=3,
-    #                                           init_gamma=0.1, max_ctrl=ACTION_HIGH)
-    # ctrl = global_controller.GlobalLQRController(ds, u_max=ACTION_HIGH)
-    def compare_to_goal(state, goal):
-        if goal.dim() == 1:
-            goal = goal.view(1, -1)
-        dtheta = angular_diff_batch(state[:, 0], goal[:, 0])
-        dtheta_dt = state[:, 1] - goal[:, 1]
-        diff = torch.cat((dtheta.view(-1, 1), dtheta_dt.view(-1, 1)), dim=1)
-        return diff
-
-
-    ctrl = global_controller.GlobalMPPIController(dynamics, ds, R=R, Q=Q, compare_to_goal=compare_to_goal,
-                                                  u_max=10)
-    ctrl.set_goal(np.array([0, 0]))
 
     # reset state so it's ready to run
     env = wrappers.Monitor(env, '/tmp/meta_pend/', force=True)
