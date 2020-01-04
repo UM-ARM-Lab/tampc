@@ -3,6 +3,8 @@ import numpy as np
 import logging
 import time
 from meta_contact.experiment import interactive_block_pushing
+from meta_contact.controller import controller
+from arm_pytorch_utilities import rand
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
@@ -38,5 +40,20 @@ def test_pusher_placement_inverse():
         time.sleep(0.1)
 
 
+def test_env_control():
+    init_block_pos = [0, 0]
+    init_block_yaw = 0
+    face = interactive_block_pushing.BlockFace.LEFT
+    along_face = 0
+    env = interactive_block_pushing.PushAgainstWallStickyEnv(mode=p.GUI, init_pusher=along_face, face=face,
+                                                             init_block=init_block_pos, init_yaw=init_block_yaw)
+    ctrl = controller.FullRandomController(2, (-0.01, 0), (0.01, 0.03))
+    sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=100, plot=False, save=False)
+    seed = rand.seed()
+    sim.run(seed)
+
+
 if __name__ == "__main__":
-    test_pusher_placement_inverse()
+    # test_pusher_placement_inverse()
+    test_env_control()
+    # TODO test pushing in one direction (diagonal to face); check friction cone; what angle do we start sliding
