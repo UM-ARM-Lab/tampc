@@ -138,7 +138,7 @@ if __name__ == "__main__":
     d = "cpu"
     dtype = torch.double
 
-    logger.info("random seed %d", rand.seed(6))
+    logger.info("random seed %d", rand.seed(7))
 
     # new hyperparmaeters for approximate dynamics
     TRAIN_EPOCH = 150
@@ -241,11 +241,14 @@ if __name__ == "__main__":
         return state
 
 
-    ctrl = online_controller.OnlineController(pm, ds, max_timestep=num_frames, Q=Q.numpy(), R=R, horizon=20, lqr_iter=3,
-                                              init_gamma=0.1, max_ctrl=ACTION_HIGH, compare_to_goal=compare_to_goal_np)
+    # ctrl = online_controller.OnlineController(pm, ds, max_timestep=num_frames, Q=Q.numpy(), R=R, horizon=20, lqr_iter=3,
+    #                                           init_gamma=0.1, max_ctrl=ACTION_HIGH, compare_to_goal=compare_to_goal_np)
     # ctrl = global_controller.GlobalLQRController(ds, u_max=ACTION_HIGH, Q=Q, R=R)
-    # ctrl = global_controller.GlobalMPPIController(dynamics, ds, R=R, Q=Q, compare_to_goal=compare_to_goal,
-    #                                               u_max=10)
+    # NOTE setting u_max to be ACTION_HIGH doesn't work due to over-clamping trajectory (no longer Gaussian)
+    # ctrl = global_controller.GlobalCEMController(dynamics, ds, R=R, Q=Q, compare_to_goal=compare_to_goal,
+    #                                              u_max=ACTION_HIGH, init_cov_diag=10)
+    ctrl = global_controller.GlobalMPPIController(dynamics, ds, R=R, Q=Q, compare_to_goal=compare_to_goal,
+                                                  u_max=ACTION_HIGH, noise_sigma=torch.eye(nu, dtype=dtype) * 5)
 
     ctrl.set_goal(np.array([0, 0]))
 

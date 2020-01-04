@@ -67,13 +67,18 @@ class GlobalLQRController(Controller):
 
 
 class QRCostOptimalController(Controller):
-    def __init__(self, ds, Q=1, R=1, compare_to_goal=torch.sub, u_max=None):
+    def __init__(self, ds, Q=1, R=1, compare_to_goal=torch.sub, u_min=None, u_max=None):
         super().__init__(compare_to_goal)
 
         self.nu = ds.config.nu
         self.nx = ds.config.nx
+        self.u_min = u_min
         self.u_max = u_max
         self.dtype = torch.double
+        if self.u_max is not None and self.u_min is None:
+            self.u_min = -self.u_max
+        if self.u_min is not None and self.u_max is None:
+            self.u_max = -self.u_min
 
         if torch.is_tensor(Q):
             self.Q = Q
@@ -99,25 +104,30 @@ class QRCostOptimalController(Controller):
         # use learn_mpc's Cross Entropy
         u = self._mpc_command(torch.tensor(obs))
         if self.u_max:
-            u = torch.clamp(u, -self.u_max, self.u_max)
+            u = torch.clamp(u, self.u_min, self.u_max)
         return u
 
 
 class GlobalCEMController(QRCostOptimalController):
-    def __init__(self, dynamics, ds, Q=1, R=1, u_max=None, compare_to_goal=torch.sub, **kwargs):
-        super().__init__(ds, Q=Q, R=R, compare_to_goal=compare_to_goal, u_max=u_max)
-        self.mpc = cem.CEM(dynamics, self._running_cost, self.nx, self.nu, init_cov_diag=self.u_max,
-                           ctrl_max_mag=self.u_max, **kwargs)
+    def __init__(self, dynamics, ds, Q=1, R=1, u_min=None, u_max=None, compare_to_goal=torch.sub, **kwargs):
+        super().__init__(ds, Q=Q, R=R, compare_to_goal=compare_to_goal, u_min=u_min, u_max=u_max)
+        self.mpc = cem.CEM(dynamics, self._running_cost, self.nx, self.nu, u_min=u_min, u_max=u_max, **kwargs)
 
     def _mpc_command(self, obs):
         return self.mpc.command(obs)
 
 
 class GlobalMPPIController(QRCostOptimalController):
-    def __init__(self, dynamics, ds, Q=1, R=1, u_max=None, compare_to_goal=torch.sub, **kwargs):
-        super().__init__(ds, Q=Q, R=R, compare_to_goal=compare_to_goal, u_max=u_max)
-        noise_mult = self.u_max or 1
-        noise_sigma = torch.eye(self.nu, dtype=self.dtype) * noise_mult
+    def __init__(self, dynamics, ds, Q=1, R=1, u_min=None, u_max=None, compare_to_goal=torch.sub, **kwargs):
+        super().__init__(ds, Q=Q, R=R, compare_to_goal=compare_to_goal, u_min=u_min, u_max=u_max)
+        # if not given we give it a default value
+        noise_sigma = kwargs.pop('noise_sigma', None)
+        if noise_sigma is None:
+            if torch.is_tensor(self.u_max):
+                noise_sigma = torch.diag(self.u_max)
+            else:
+                noise_mult = self.u_max or 1
+                noise_sigma = torch.eye(self.nu, dtype=self.dtype) * noise_mult
         self.mpc = mppi.MPPI(dynamics, self._running_cost, self.nx, noise_sigma=noise_sigma, **kwargs)
 
     def _mpc_command(self, obs):
