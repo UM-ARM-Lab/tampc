@@ -300,7 +300,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
     def __init__(self, goal=(1.0, 0.), init_pusher=(-0.25, 0), init_block=(0., 0.), init_yaw=0.,
                  environment_level=0, **kwargs):
         super().__init__(**kwargs)
-        self.initRestFrames = 20
+        self.initRestFrames = 50
         self.level = environment_level
 
         # initial config
@@ -433,12 +433,16 @@ class PushAgainstWallEnv(MyPybulletEnv):
         while not self._reached_command(eePos) and rest < self.initRestFrames:
             p.stepSimulation()
             rest += 1
+        if rest == self.initRestFrames:
+            logger.warning("Ran out of steps push")
 
         # wait until simulation becomes static
         rest = 1
         while not self._static_environment() and rest < self.initRestFrames:
             p.stepSimulation()
             rest += 1
+        if rest == self.initRestFrames:
+            logger.warning("Ran out of steps static")
 
     def _evaluate_cost(self, action):
         # TODO consider using different cost function for yaw (wrap) - for example take use a compare_to_goal func
