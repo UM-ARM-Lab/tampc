@@ -210,7 +210,7 @@ class NetworkModelWrapper(DynamicsModel):
                 # torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
                 self.optimizer.step()
 
-                logger.debug("Epoch %d loss %f", epoch, loss.mean().item())
+                logger.debug("Epoch %d loss %f vloss %f", epoch, loss.mean().item(), vloss.mean().item())
         # save after training
         self.save(last=True)
 
