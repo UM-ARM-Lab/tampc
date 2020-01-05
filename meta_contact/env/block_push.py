@@ -146,52 +146,6 @@ class PushLoader(load_utils.DataLoader):
         return xu, y, cc
 
 
-class RawPushDataset(torch.utils.data.Dataset):
-    def __init__(self, dirs=('pushing',), mode='all', max_num=None, config=load_utils.DataConfig()):
-        if type(dirs) is str:
-            dirs = [dirs]
-        self.XU = None
-        self.Y = None
-        self.contact = None
-        for dir in dirs:
-            dl = PushLoader(dir, config)
-            XU, Y, contact = dl.load()
-            if self.XU is None:
-                self.XU = XU
-                self.Y = Y
-                self.contact = contact
-            else:
-                self.XU = np.row_stack((self.XU, XU))
-                self.Y = np.row_stack((self.Y, Y))
-                self.contact = np.row_stack((self.contact, contact))
-        self.XU = torch.from_numpy(self.XU).double()
-        self.Y = torch.from_numpy(self.Y).double()
-        self.contact = torch.from_numpy(self.contact).byte()
-        if mode is 'contact' or mode is 'nocontact':
-            c = self.contact.squeeze()
-            if mode is 'nocontact':
-                c = c ^ 1
-            self.XU = self.XU[c, :]
-            self.Y = self.Y[c, :]
-            self.contact = self.contact[c, :]
-
-        if config.force_affine:
-            self.XU = load_utils.make_affine(self.XU)
-
-        if max_num is not None:
-            self.XU = self.XU[:max_num]
-            self.Y = self.Y[:max_num]
-            self.contact = self.contact[:max_num]
-
-        super().__init__()
-
-    def __len__(self):
-        return self.XU.shape[0]
-
-    def __getitem__(self, idx):
-        return self.XU[idx], self.Y[idx], self.contact[idx]
-
-
 class PushDataset(datasets.DataSet):
     def __init__(self, N=None, data_dir='pushing', preprocessor=None, validation_ratio=0.2,
                  config=load_utils.DataConfig(),
@@ -218,7 +172,8 @@ class PushDataset(datasets.DataSet):
         pass
 
     def make_data(self):
-        full_set = RawPushDataset(dirs=self._data_dir, max_num=self.N, config=self.config)
+        full_set = load_utils.LoaderXUYDataset(loader=PushLoader, dirs=self._data_dir, max_num=self.N,
+                                               config=self.config)
         train_set, validation_set = load_utils.splitTrainValidationSets(full_set,
                                                                         validation_ratio=self._validation_ratio)
 
