@@ -301,6 +301,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
                  environment_level=0, **kwargs):
         super().__init__(**kwargs)
         self.initRestFrames = 50
+        self.max_move_step = 0.001
         self.level = environment_level
 
         # initial config
@@ -376,8 +377,25 @@ class PushAgainstWallEnv(MyPybulletEnv):
         p.addUserDebugLine(np.add(goal, [-goalVisualWidth, 0, 0]), np.add(goal, [goalVisualWidth, 0, 0]),
                            [0, 1, 0], 2)
 
-    def _move_pusher(self, endEffectorPos):
-        p.changeConstraint(self.pusherConstraint, endEffectorPos, maxForce=200)
+    def _move_pusher(self, end):
+        # linearly interpolate to position from current position
+        start = self._observe_pusher()
+        move_dir = np.subtract(end, start)
+        # normalize move direction so we're moving a fixed amount each time
+        moves_required = np.linalg.norm(move_dir) / self.max_move_step
+        move_step = move_dir / moves_required
+        while moves_required > 0:
+            if moves_required <= 1:
+                this_end = end
+            else:
+                this_end = np.add(start, move_step)
+
+            p.changeConstraint(self.pusherConstraint, this_end, maxForce=300)
+            for _ in range(5):
+                p.stepSimulation()
+
+            start = this_end
+            moves_required -= 1
 
     def _observe_block(self):
         blockPose = p.getBasePositionAndOrientation(self.blockId)
@@ -532,7 +550,8 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         xb, yb, yaw = self._observe_block()
         x, y, z = self._observe_pusher()
         along, from_center = pusher_pos_along_face((xb, yb), yaw, (x, y), self.face)
-        # logger.debug("dist between pusher and block %f", from_center - DIST_FOR_JUST_TOUCHING)
+        # debugging to make sure we're quasi-static and adjacent to the block
+        logger.debug("dist between pusher and block %f", from_center - DIST_FOR_JUST_TOUCHING)
         return xb, yb, yaw, along
 
     def step(self, action):
@@ -555,8 +574,6 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
 
         # execute the action
         self._move_and_wait(eePos)
-
-        # logger.debug("dist between %s", eePos[:2] - self._observe_pusher()[:2])
 
         # get the net contact force between robot and block
         info = self._observe_contact()
