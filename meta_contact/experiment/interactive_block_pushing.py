@@ -377,7 +377,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
                            [0, 1, 0], 2)
 
     def _move_pusher(self, endEffectorPos):
-        p.changeConstraint(self.pusherConstraint, endEffectorPos, maxForce=100)
+        p.changeConstraint(self.pusherConstraint, endEffectorPos, maxForce=200)
 
     def _observe_block(self):
         blockPose = p.getBasePositionAndOrientation(self.blockId)
