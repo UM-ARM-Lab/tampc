@@ -1,6 +1,7 @@
 import abc
 import random
 import time
+from datetime import datetime
 
 import pybullet as p
 import pybullet_data
@@ -30,7 +31,8 @@ class MyPybulletEnv:
         self.physics_client = p.connect(mode)  # p.GUI for GUI or p.DIRECT for non-graphical version
 
         if self.log_video:
-            p.startStateLogging(p.STATE_LOGGING_VIDEO_MP4, "{}.mp4".format(self.randseed))
+            p.startStateLogging(p.STATE_LOGGING_VIDEO_MP4,
+                                "{}_{}.mp4".format(datetime.now().strftime('%Y_%m_%d_%H_%M_%S'), self.randseed))
 
         # use data provided by PyBullet
         p.setAdditionalSearchPath(pybullet_data.getDataPath())  # optionally
