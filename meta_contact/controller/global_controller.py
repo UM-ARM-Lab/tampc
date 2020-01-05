@@ -21,8 +21,7 @@ class GlobalLQRController(Controller):
         # load data and create LQR controller
         self.nu = ds.config.nu
         self.nx = ds.config.nx
-        self.u_min = u_min
-        self.u_max = u_max
+        self.u_min, self.u_max = math_utils.get_bounds(u_min, u_max)
 
         if np.isscalar(Q):
             self.Q = np.eye(self.nx) * Q
@@ -61,8 +60,7 @@ class GlobalLQRController(Controller):
         x = self.compare_to_goal(x, self.goal)
         u = -self.K @ x
 
-        if self.u_max:
-            self.u_min = -self.u_max if self.u_min is None else self.u_min
+        if self.u_max is not None:
             u = np.clip(u, self.u_min, self.u_max)
         return u
 
@@ -73,13 +71,8 @@ class QRCostOptimalController(Controller):
 
         self.nu = ds.config.nu
         self.nx = ds.config.nx
-        self.u_min = u_min
-        self.u_max = u_max
+        self.u_min, self.u_max = math_utils.get_bounds(u_min, u_max)
         self.dtype = torch.double
-        if self.u_max is not None and self.u_min is None:
-            self.u_min = -self.u_max
-        if self.u_min is not None and self.u_max is None:
-            self.u_max = -self.u_min
 
         if torch.is_tensor(Q):
             self.Q = Q

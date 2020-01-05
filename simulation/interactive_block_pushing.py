@@ -25,7 +25,6 @@ logging.basicConfig(level=logging.DEBUG,
 
 
 def random_touching_start(w=interactive_block_pushing.DIST_FOR_JUST_TOUCHING):
-    # w = 0.087 will be touching_wall, anything greater will not be
     init_block_pos = (np.random.random((2,)) - 0.5)
     init_block_yaw = (np.random.random() - 0.5) * 2 * math.pi
     # randomly initialize pusher adjacent to block
@@ -40,17 +39,25 @@ def random_touching_start(w=interactive_block_pushing.DIST_FOR_JUST_TOUCHING):
     return init_block_pos, init_block_yaw, init_pusher
 
 
+def get_control_bounds():
+    u_min = np.array([-0.02, 0])
+    u_max = np.array([0.02, 0.03])
+    return u_min, u_max
+
+
 def collect_touching_freespace_data(trials=20, trial_length=40, level=0):
     # use random controller (with varying push direction)
     push_mag = 0.03
     # ctrl = controller.RandomController(push_mag, .02, 1)
-    ctrl = controller.FullRandomController(2, (-0.01, 0), (0.01, 0.03))
+    u_min, u_max = get_control_bounds()
+    ctrl = controller.FullRandomController(2, u_min, u_max)
 
     env = get_easy_env(p.DIRECT, level)
     # use mode p.GUI to see what the trials look like
     save_dir = 'pushing/touching{}'.format(level)
     sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=trial_length, plot=False, save=True,
                                                     save_dir=save_dir)
+    rand.seed(4)
     # deterministically spread out the data
     # init_block_pos = (0, 0)
     # for init_block_yaw in np.linspace(-2., 2., 10):
@@ -68,7 +75,7 @@ def collect_touching_freespace_data(trials=20, trial_length=40, level=0):
         # start at fixed location
         init_block_pos, init_block_yaw, init_pusher = random_touching_start()
         env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
-        ctrl = controller.FullRandomController(2, (-0.02, 0), (0.02, 0.03))
+        ctrl = controller.FullRandomController(2, u_min, u_max)
         sim.ctrl = ctrl
         sim.run(seed)
 
@@ -93,30 +100,31 @@ def get_easy_env(mode=p.GUI, level=0):
     # env = interactive_block_pushing.PushAgainstWallEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher,
     #                                                    init_block=init_block_pos, init_yaw=init_block_yaw,
     #                                                    environment_level=level)
-    env = interactive_block_pushing.PushAgainstWallStickyEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher,
+    env = interactive_block_pushing.PushAgainstWallStickyEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher, log_video=True,
                                                              init_block=init_block_pos, init_yaw=init_block_yaw,
                                                              environment_level=level)
     return env
 
 
 def test_local_dynamics(level=0):
-    num_frames = 100
+    num_frames = 70
     # TODO preprocessor in online dynamics not yet supported
     preprocessor = None
     config = load_data.DataConfig(predict_difference=False, predict_all_dims=True, expanded_input=True)
     # config = load_data.DataConfig(predict_difference=True, predict_all_dims=True)
     ds = interactive_block_pushing.PushDataset(data_dir=get_data_dir(level), preprocessor=preprocessor,
-                                               validation_ratio=0.01, config=config)
+                                               validation_ratio=0.1, config=config)
 
     m = model.DeterministicUser(make.make_sequential_network(config))
     mw = model.NetworkModelWrapper(m, ds, name='contextual')
-    checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/contextual.1000.tar'
-    checkpoint = None
-    # pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=200)
-    pm = prior.GMMPrior.from_data(ds)
+    checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/contextual.1800.tar'
+    # checkpoint = None
+    pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=200)
+    # pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
+    u_min, u_max = get_control_bounds()
     ctrl = online_controller.OnlineController(pm, ds=ds, max_timestep=num_frames, R=5, horizon=20, lqr_iter=3,
-                                              init_gamma=0.1, max_ctrl=0.03)
+                                              init_gamma=0.1, u_min=u_min, u_max=u_max)
 
     env = get_easy_env(p.GUI, level=level)
     sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=num_frames, plot=True, save=False)
@@ -131,11 +139,10 @@ def test_global_linear_dynamics(level=0):
     config = load_data.DataConfig(predict_difference=False, predict_all_dims=True)
     ds = interactive_block_pushing.PushDataset(data_dir=get_data_dir(level), validation_ratio=0.01, config=config)
 
-    u_min = [-0.02, 0]
-    u_max = [0.02, 0.03]
+    u_min, u_max = get_control_bounds()
     ctrl = global_controller.GlobalLQRController(ds, R=100, u_min=u_min, u_max=u_max)
     env = get_easy_env(p.GUI, level)
-    sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=200, plot=True, save=False)
+    sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=50, plot=True, save=False)
 
     seed = rand.seed()
     sim.run(seed)
@@ -144,7 +151,7 @@ def test_global_linear_dynamics(level=0):
 
 
 def test_global_qr_cost_optimal_controller(controller, level=0, **kwargs):
-    # preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
+    preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
     preprocessor = None
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True)
     ds = interactive_block_pushing.PushDataset(data_dir=get_data_dir(level), validation_ratio=0.1,
@@ -164,8 +171,9 @@ def test_global_qr_cost_optimal_controller(controller, level=0, **kwargs):
     pm.freeze()
 
     Q = torch.diag(torch.tensor([1, 1, 0, 0.01], dtype=torch.double))
-    u_min = torch.tensor([-0.02, 0], dtype=torch.double)
-    u_max = torch.tensor([0.02, 0.03], dtype=torch.double)
+    u_min, u_max = get_control_bounds()
+    u_min = torch.tensor(u_min, dtype=torch.double)
+    u_max = torch.tensor(u_max, dtype=torch.double)
     ctrl = controller(pm, ds, Q=Q, u_min=u_min, u_max=u_max, **kwargs)
     env = get_easy_env(p.GUI, level=level)
     sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=200, plot=True, save=False)
@@ -177,14 +185,14 @@ def test_global_qr_cost_optimal_controller(controller, level=0, **kwargs):
 
 
 if __name__ == "__main__":
-    # collect_touching_freespace_data(trials=50, trial_length=50, level=0)
-    ctrl = global_controller.GlobalCEMController
-    test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7, num_elite=50, level=0,
-                                           init_cov_diag=0.002) # CEM options
+    # collect_touching_freespace_data(trials=100, trial_length=50, level=0)
+    # ctrl = global_controller.GlobalCEMController
+    # test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7, num_elite=50, level=0,
+    #                                        init_cov_diag=0.002)  # CEM options
     # ctrl = global_controller.GlobalMPPIController
     # test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7, level=0, lambda_=0.1,
     #                                        noise_sigma=torch.diag(
     #                                            torch.tensor([0.01, 0.01], dtype=torch.double)))  # MPPI options
-    # test_global_linear_dynamics(level=0)
+    test_global_linear_dynamics(level=0)
     # test_local_dynamics(0)
     # sandbox()

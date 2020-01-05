@@ -5,7 +5,7 @@ from meta_contact.prior import gaussian_params_from_dataset
 import logging
 import numpy as np
 from arm_pytorch_utilities.policy.lin_gauss import LinearGaussianPolicy
-from arm_pytorch_utilities import trajectory
+from arm_pytorch_utilities import trajectory, math_utils
 
 LOGGER = logging.getLogger(__name__)
 
@@ -14,7 +14,7 @@ class OnlineController(Controller):
     """Controller mixing locally linear model with prior model from https://arxiv.org/pdf/1509.06841.pdf"""
 
     def __init__(self, prior, ds, max_timestep=100, Q=1, R=1, horizon=15, lqr_iter=1, init_gamma=0.1,
-                 compare_to_goal=np.subtract, max_ctrl=None):
+                 compare_to_goal=np.subtract, u_min=None, u_max=None):
         super().__init__(compare_to_goal)
         self.dX = ds.config.nx
         self.dU = ds.config.nu
@@ -22,7 +22,8 @@ class OnlineController(Controller):
         self.maxT = max_timestep
         self.init_gamma = init_gamma
         self.gamma = self.init_gamma
-        self.u_max = max_ctrl
+        self.u_min, self.u_max = math_utils.get_bounds(u_min, u_max)
+
         self.u_noise = 0.001
         # TODO get rid of these environment specific parameters
         # self.block_idx = slice(0, 2)
