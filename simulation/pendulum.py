@@ -246,9 +246,10 @@ if __name__ == "__main__":
     # ctrl = global_controller.GlobalLQRController(ds, u_max=ACTION_HIGH, Q=Q, R=R)
     # NOTE setting u_max to be ACTION_HIGH doesn't work due to over-clamping trajectory (no longer Gaussian)
     # ctrl = global_controller.GlobalCEMController(dynamics, ds, R=R, Q=Q, compare_to_goal=compare_to_goal,
-    #                                              u_max=ACTION_HIGH, init_cov_diag=10)
+    #                                              u_max=torch.tensor(ACTION_HIGH, dtype=dtype), init_cov_diag=10)
     ctrl = global_controller.GlobalMPPIController(dynamics, ds, R=R, Q=Q, compare_to_goal=compare_to_goal,
-                                                  u_max=ACTION_HIGH, noise_sigma=torch.eye(nu, dtype=dtype) * 5)
+                                                  u_max=torch.tensor(ACTION_HIGH, dtype=dtype),
+                                                  noise_sigma=torch.eye(nu, dtype=dtype) * 5)
 
     ctrl.set_goal(np.array([0, 0]))
 
