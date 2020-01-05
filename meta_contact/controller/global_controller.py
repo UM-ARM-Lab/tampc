@@ -4,6 +4,7 @@ from meta_contact import model
 from pytorch_mppi import mppi
 from pytorch_cem import cem
 from arm_pytorch_utilities import linalg
+from arm_pytorch_utilities import math_utils
 import torch
 import abc
 
@@ -103,8 +104,8 @@ class QRCostOptimalController(Controller):
     def command(self, obs):
         # use learn_mpc's Cross Entropy
         u = self._mpc_command(torch.tensor(obs))
-        if self.u_max:
-            u = torch.clamp(u, self.u_min, self.u_max)
+        if self.u_max is not None:
+            u = math_utils.clip(u, self.u_min, self.u_max)
         return u
 
 
