@@ -5,7 +5,9 @@ from datetime import datetime
 
 import pybullet as p
 import pybullet_data
-from meta_contact.experiment.interactive_block_pushing import logger
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class Mode:

@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 from arm_pytorch_utilities.draw import plot_mdn_prediction
-from meta_contact.experiment import interactive_block_pushing as exp
+from meta_contact.env import block_push as exp
 from meta_contact import cfg, util
 from meta_contact.controller import controller
 import pybullet as p

@@ -13,5 +13,5 @@ temp.*
 runs
 checkpoints
 *.mat
-env/
+.env/
 .DS_Store

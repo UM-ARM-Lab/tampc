@@ -14,7 +14,7 @@ from hybrid_sysid import simulation, load_data
 
 import logging
 
-from meta_contact.experiment.environment import MyPybulletEnv
+from meta_contact.env.myenv import MyPybulletEnv
 
 logger = logging.getLogger(__name__)
 

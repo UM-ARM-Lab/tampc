@@ -2,7 +2,7 @@ import pybullet as p
 import numpy as np
 import logging
 import time
-from meta_contact.experiment import interactive_block_pushing
+from meta_contact.env import block_push
 from meta_contact.controller import controller
 from arm_pytorch_utilities import rand
 
@@ -15,20 +15,20 @@ logging.basicConfig(level=logging.DEBUG,
 def test_pusher_placement_inverse():
     init_block_pos = [0.2, 0.3]
     init_block_yaw = -0.4
-    face = interactive_block_pushing.BlockFace.LEFT
+    face = block_push.BlockFace.LEFT
     along_face = 0.075
     from_center = 0.096
-    init_pusher = interactive_block_pushing.pusher_pos_for_touching(init_block_pos, init_block_yaw,
-                                                                    face=face, from_center=from_center,
-                                                                    along_face=along_face)
+    init_pusher = block_push.pusher_pos_for_touching(init_block_pos, init_block_yaw,
+                                                     face=face, from_center=from_center,
+                                                     along_face=along_face)
     # initializing env to visually confirm the first function works
-    env = interactive_block_pushing.PushAgainstWallEnv(mode=p.GUI, init_pusher=init_pusher,
-                                                       init_block=init_block_pos, init_yaw=init_block_yaw)
+    env = block_push.PushAgainstWallEnv(mode=p.GUI, init_pusher=init_pusher,
+                                        init_block=init_block_pos, init_yaw=init_block_yaw)
     pusher_pos = env._observe_pusher()
     init_block = np.array((*init_block_pos, init_block_yaw))
-    predicted_along_face, from_center = interactive_block_pushing.pusher_pos_along_face(init_block_pos, init_block_yaw,
-                                                                                        init_pusher,
-                                                                                        face=face)
+    predicted_along_face, from_center = block_push.pusher_pos_along_face(init_block_pos, init_block_yaw,
+                                                                         init_pusher,
+                                                                         face=face)
     action = np.array([0, 0])
     env.step(action)
     logger.info("along set %f calculated %f", along_face, predicted_along_face)
@@ -44,12 +44,12 @@ def test_pusher_placement_inverse():
 def test_env_control():
     init_block_pos = [0, 0]
     init_block_yaw = 0
-    face = interactive_block_pushing.BlockFace.LEFT
+    face = block_push.BlockFace.LEFT
     along_face = 0
-    env = interactive_block_pushing.PushAgainstWallStickyEnv(mode=p.GUI, init_pusher=along_face, face=face,
-                                                             init_block=init_block_pos, init_yaw=init_block_yaw)
+    env = block_push.PushAgainstWallStickyEnv(mode=p.GUI, init_pusher=along_face, face=face,
+                                              init_block=init_block_pos, init_yaw=init_block_yaw)
     ctrl = controller.FullRandomController(2, (-0.01, 0), (0.01, 0.03))
-    sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=100, plot=False, save=False)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=100, plot=False, save=False)
     seed = rand.seed()
     sim.run(seed)
 
@@ -57,13 +57,13 @@ def test_env_control():
 def test_friction():
     init_block_pos = [0, 0]
     init_block_yaw = 0
-    face = interactive_block_pushing.BlockFace.LEFT
-    along_face = interactive_block_pushing.MAX_ALONG
-    env = interactive_block_pushing.PushAgainstWallStickyEnv(mode=p.GUI, init_pusher=along_face, face=face,
-                                                             init_block=init_block_pos, init_yaw=init_block_yaw)
+    face = block_push.BlockFace.LEFT
+    along_face = block_push.MAX_ALONG
+    env = block_push.PushAgainstWallStickyEnv(mode=p.GUI, init_pusher=along_face, face=face,
+                                              init_block=init_block_pos, init_yaw=init_block_yaw)
     num_frames = 50
     ctrl = controller.PreDeterminedController([(0.0, 0.02) for _ in range(num_frames)])
-    sim = interactive_block_pushing.InteractivePush(env, ctrl, num_frames=num_frames, plot=False, save=False)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=False, save=False)
     seed = rand.seed()
     sim.run(seed)
 

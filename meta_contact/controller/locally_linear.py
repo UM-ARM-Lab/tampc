@@ -2,7 +2,7 @@
 import numpy as np
 import scipy.linalg
 from meta_contact.controller.controller import Controller
-from meta_contact.experiment import interactive_block_pushing as exp
+from meta_contact.env import block_push as exp
 from meta_contact import prior
 from meta_contact import util
 
