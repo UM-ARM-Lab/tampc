@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 from sklearn.preprocessing import PolynomialFeatures
 from matplotlib.patches import Circle
 import matplotlib.path as mpath
@@ -7,6 +8,55 @@ import matplotlib.patches as mpatches
 from meta_contact.env import myenv
 from hybrid_sysid import simulation
 from meta_contact import cfg
+from arm_pytorch_utilities.make_data import datasource
+from arm_pytorch_utilities import load_data as load_utils, string, math_utils
+
+
+class LinearLoader(load_utils.DataLoader):
+    def __init__(self, *args, file_cfg=cfg, **kwargs):
+        super().__init__(file_cfg, *args, **kwargs)
+
+    def _process_file_raw_data(self, d):
+        x = d['X']
+        u = d['U'][:-1]
+        cc = d['labels'][1:]
+
+        if self.config.predict_difference:
+            y = x[1:] - x[:-1]
+        else:
+            y = x[1:]
+
+        x = x[:-1]
+        xu = np.column_stack((x, u))
+
+        # potentially many trajectories, get rid of buffer state in between
+        mask = d['mask']
+        # pack expanded pxu into input if config allows (has to be done before masks); otherwise would use cross-file data)
+        if self.config.expanded_input:
+            # move y down 1 row (first element can't be used)
+            # (xu, pxu)
+            xu = np.column_stack((xu[1:], xu[:-1]))
+            y = y[1:]
+            cc = cc[1:]
+
+            mask = mask[1:-1]
+        else:
+            mask = mask[:-1]
+
+        mask = mask.reshape(-1) != 0
+
+        xu = xu[mask]
+        cc = cc[mask]
+        y = y[mask]
+
+        self.config.load_data_info(x, u, y, xu)
+
+        return xu, y, cc
+
+
+class LinearDataSource(datasource.FileDataSource):
+    def __init__(self, data_dir='linear', **kwargs):
+        super().__init__(LinearLoader, data_dir, **kwargs)
 
 
 class WaterWorld:
