@@ -19,7 +19,7 @@ class LinearLoader(load_utils.DataLoader):
     def _process_file_raw_data(self, d):
         x = d['X']
         u = d['U'][:-1]
-        cc = d['labels'][1:]
+        cc = d['label'][1:]
 
         if self.config.predict_difference:
             y = x[1:] - x[:-1]
