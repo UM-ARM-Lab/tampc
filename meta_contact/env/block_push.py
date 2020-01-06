@@ -8,7 +8,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 from meta_contact import cfg
-from arm_pytorch_utilities.make_data import datasets
+from arm_pytorch_utilities.make_data import datasource
 from arm_pytorch_utilities import load_data as load_utils, string, math_utils
 from hybrid_sysid import simulation, load_data
 
@@ -146,51 +146,9 @@ class PushLoader(load_utils.DataLoader):
         return xu, y, cc
 
 
-class PushDataset(datasets.DataSet):
-    def __init__(self, N=None, data_dir='pushing', preprocessor=None, validation_ratio=0.2,
-                 config=load_utils.DataConfig(),
-                 **kwargs):
-        """
-        :param N: total number of data points to use, None for all available in data_dir
-        :param data_dir: data directory
-        :param predict_difference: whether the output should be the state differences or states
-        :param preprocessor: data preprocessor, such as StandardizeVariance
-        :param validation_ratio: amount of data set aside for validation
-        :param kwargs:
-        """
-
-        super().__init__(N=N, input_dim=PushAgainstWallEnv.nx + PushAgainstWallEnv.nu, output_dim=PushAgainstWallEnv.ny,
-                         **kwargs)
-
-        self.preprocessor = preprocessor
-        self.config = config
-        self._data_dir = data_dir
-        self._validation_ratio = validation_ratio
-        self.make_data()
-
-    def make_parameters(self):
-        pass
-
-    def make_data(self):
-        full_set = load_utils.LoaderXUYDataset(loader=PushLoader, dirs=self._data_dir, max_num=self.N,
-                                               config=self.config)
-        train_set, validation_set = load_utils.splitTrainValidationSets(full_set,
-                                                                        validation_ratio=self._validation_ratio)
-
-        self.N = len(train_set)
-
-        if self.preprocessor:
-            self.preprocessor.fit(train_set)
-            # apply on training and validation set
-            train_set = self.preprocessor.transform(train_set)
-            validation_set = self.preprocessor.transform(validation_set)
-
-        self._train = load_data.get_states_from_dataset(train_set)
-        self._val = load_data.get_states_from_dataset(validation_set)
-
-    def data_id(self):
-        """String identification for this data"""
-        return "{}_N_{}".format(self._data_dir, string.f2s(self.N))
+class PushDataSource(datasource.FileDataSource):
+    def __init__(self, data_dir='pushing', **kwargs):
+        super().__init__(PushLoader, data_dir, **kwargs)
 
 
 class PushAgainstWallEnv(MyPybulletEnv):

@@ -112,8 +112,8 @@ def test_local_dynamics(level=0):
     preprocessor = None
     config = load_data.DataConfig(predict_difference=False, predict_all_dims=True, expanded_input=True)
     # config = load_data.DataConfig(predict_difference=True, predict_all_dims=True)
-    ds = block_push.PushDataset(data_dir=get_data_dir(level), preprocessor=preprocessor,
-                                validation_ratio=0.1, config=config)
+    ds = block_push.PushDataSource(data_dir=get_data_dir(level), preprocessor=preprocessor,
+                                   validation_ratio=0.1, config=config)
 
     m = model.DeterministicUser(make.make_sequential_network(config))
     mw = model.NetworkModelWrapper(m, ds, name='contextual')
@@ -137,7 +137,7 @@ def test_local_dynamics(level=0):
 
 def test_global_linear_dynamics(level=0):
     config = load_data.DataConfig(predict_difference=False, predict_all_dims=True)
-    ds = block_push.PushDataset(data_dir=get_data_dir(level), validation_ratio=0.01, config=config)
+    ds = block_push.PushDataSource(data_dir=get_data_dir(level), validation_ratio=0.01, config=config)
 
     u_min, u_max = get_control_bounds()
     ctrl = global_controller.GlobalLQRController(ds, R=100, u_min=u_min, u_max=u_max)
@@ -154,8 +154,8 @@ def test_global_qr_cost_optimal_controller(controller, level=0, **kwargs):
     preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
     preprocessor = None
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True)
-    ds = block_push.PushDataset(data_dir=get_data_dir(level), validation_ratio=0.1,
-                                config=config, preprocessor=preprocessor)
+    ds = block_push.PushDataSource(data_dir=get_data_dir(level), validation_ratio=0.1,
+                                   config=config, preprocessor=preprocessor)
     pml = model.LinearModelTorch(ds)
     pm = model.NetworkModelWrapper(
         model.DeterministicUser(
@@ -186,13 +186,13 @@ def test_global_qr_cost_optimal_controller(controller, level=0, **kwargs):
 
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=100, trial_length=50, level=0)
-    # ctrl = global_controller.GlobalCEMController
-    # test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7, num_elite=50, level=0,
-    #                                        init_cov_diag=0.002)  # CEM options
+    ctrl = global_controller.GlobalCEMController
+    test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7, num_elite=50, level=0,
+                                           init_cov_diag=0.002)  # CEM options
     # ctrl = global_controller.GlobalMPPIController
     # test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7, level=0, lambda_=0.1,
     #                                        noise_sigma=torch.diag(
     #                                            torch.tensor([0.01, 0.01], dtype=torch.double)))  # MPPI options
-    test_global_linear_dynamics(level=0)
+    # test_global_linear_dynamics(level=0)
     # test_local_dynamics(0)
     # sandbox()

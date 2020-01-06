@@ -20,8 +20,8 @@ if __name__ == "__main__":
     # ds = exp.PushDataset(data_dir='pushing', preprocessor=preprocessor)
     # compare on trajectory
     config = load_data.DataConfig(predict_difference=True)
-    ds = exp.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor, validation_ratio=0.2,
-                         config=config)
+    ds = exp.PushDataSource(data_dir='pushing/touching.mat', preprocessor=preprocessor, validation_ratio=0.2,
+                            config=config)
 
     # m = model.MDNUser(make.make_sequential_network(config, make.make_mdn_end_block(num_components=3)))
     m = model.DeterministicUser(make.make_sequential_network(config))

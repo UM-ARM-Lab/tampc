@@ -27,8 +27,8 @@ if __name__ == "__main__":
     preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
     # preprocessor = None
     config = load_data.DataConfig(predict_difference=True)
-    ds = exp.PushDataset(data_dir='pushing/touching.mat', preprocessor=preprocessor, validation_ratio=0.2,
-                         config=config)
+    ds = exp.PushDataSource(data_dir='pushing/touching.mat', preprocessor=preprocessor, validation_ratio=0.2,
+                            config=config)
 
     m = model.MDNUser(make.make_sequential_network(config, make.make_mdn_end_block(num_components=3)))
     mw = model.NetworkModelWrapper(m, ds, name='combined')
@@ -68,7 +68,7 @@ if __name__ == "__main__":
     # compare simulated results to what the model predicts
     start_index = 0
     sample = 5
-    ds = exp.PushDataset(data_dir=data_file, preprocessor=preprocessor, validation_ratio=0.01, config=config)
+    ds = exp.PushDataSource(data_dir=data_file, preprocessor=preprocessor, validation_ratio=0.01, config=config)
     X, Y, labels = ds.training_set()
     # labels = torch.from_numpy(d['contact'].astype(int)).flatten()
 
