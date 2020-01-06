@@ -37,27 +37,37 @@ class OnlineDynamics(object):
         """
         Compute F, f - the linear dynamics where next_x = F*[curx, curu] + f
         """
-        dX = self.dX
-        dU = self.dU
+        return get_locally_linear_dynamics(self.dX, self.dU, prevx, prevu, curx, curu, self.empsig_N, self.sigma,
+                                           self.mu, self.prior, self.sigreg)
 
-        it = slice(dX + dU)
-        ip = slice(dX + dU, dX + dU + dX)
 
-        N = self.empsig_N
+def get_locally_linear_dynamics(nx, nu, px, pu, cx, cu, N, emp_mu, emp_sigma, prior, sigreg=1e-5):
+    # TODO use faster way of constructing xu and pxu (concatenate)
+    xu = np.r_[cx, cu].astype(np.float32)
+    pxu = np.r_[px, pu]
+    xux = np.r_[px, pu, cx]
 
-        xu = np.r_[curx, curu].astype(np.float32)
-        pxu = np.r_[prevx, prevu]
-        xux = np.r_[prevx, prevu, curx]
+    # Mix and add regularization (equation 1)
+    sigma, mun = prior.mix(nx, nu, xu, pxu, xux, emp_sigma, emp_mu, N)
+    return conditioned_dynamics(nx, nu, sigma, mun, sigreg)
 
-        # Mix and add regularization (equation 1)
-        sigma, mun = self.prior.mix(dX, dU, xu, pxu, xux, self.sigma, self.mu, N)
-        sigma[it, it] = sigma[it, it] + self.sigreg * np.eye(dX + dU)
-        sigma_inv = invert_psd(sigma[it, it])
 
-        # Solve normal equations to get dynamics. (equation 2)
-        Fm = sigma_inv.dot(sigma[it, ip]).T  # f_xu
-        fv = mun[ip] - Fm.dot(mun[it])  # f_c
-        dyn_covar = sigma[ip, ip] - Fm.dot(sigma[it, it]).dot(Fm.T)  # F
-        dyn_covar = 0.5 * (dyn_covar + dyn_covar.T)  # Guarantee symmetric
+def conditioned_dynamics(nx, nu, sigma, mu, sigreg=1e-5):
+    it = slice(nx + nu)
+    ip = slice(nx + nu, nx + nu + nx)
+    sigma[it, it] = sigma[it, it] + sigreg * np.eye(nx + nu)
+    sigma_inv = invert_psd(sigma[it, it])
 
-        return Fm, fv, dyn_covar
+    # Solve normal equations to get dynamics. (equation 2)
+    Fm = sigma_inv.dot(sigma[it, ip]).T  # f_xu
+    fv = mu[ip] - Fm.dot(mu[it])  # f_c
+    dyn_covar = sigma[ip, ip] - Fm.dot(sigma[it, it]).dot(Fm.T)  # F
+    dyn_covar = 0.5 * (dyn_covar + dyn_covar.T)  # Guarantee symmetric
+
+    return Fm, fv, dyn_covar
+
+
+def evaluate_dynamics(x, u, F, f, cov=None):
+    # TODO sample from multivariate normal if covariance is given
+    xp = F @ np.concatenate(x, u) + f
+    return xp
