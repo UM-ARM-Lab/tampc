@@ -147,8 +147,12 @@ class PushLoader(load_utils.DataLoader):
 
 
 class PushDataSource(datasource.FileDataSource):
-    def __init__(self, data_dir='pushing', **kwargs):
-        super().__init__(PushLoader, data_dir, **kwargs)
+    def __init__(self, env, data_dir='pushing', **kwargs):
+        if isinstance(env, PushAgainstWallEnv) or isinstance(env, PushAgainstWallStickyEnv):
+            loader = PushLoader
+        else:
+            raise RuntimeError("Unrecognized data source for env {}".format(env))
+        super().__init__(loader, data_dir, **kwargs)
 
 
 class PushAgainstWallEnv(MyPybulletEnv):

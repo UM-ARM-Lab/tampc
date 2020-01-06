@@ -108,11 +108,12 @@ def get_easy_env(mode=p.GUI, level=0):
 
 def test_local_dynamics(level=0):
     num_frames = 70
+    env = get_easy_env(p.GUI, level=level)
     # TODO preprocessor in online dynamics not yet supported
     preprocessor = None
     config = load_data.DataConfig(predict_difference=False, predict_all_dims=True, expanded_input=True)
     # config = load_data.DataConfig(predict_difference=True, predict_all_dims=True)
-    ds = block_push.PushDataSource(data_dir=get_data_dir(level), preprocessor=preprocessor,
+    ds = block_push.PushDataSource(env, data_dir=get_data_dir(level), preprocessor=preprocessor,
                                    validation_ratio=0.1, config=config)
 
     m = model.DeterministicUser(make.make_sequential_network(config))
@@ -126,7 +127,6 @@ def test_local_dynamics(level=0):
     ctrl = online_controller.OnlineController(pm, ds=ds, max_timestep=num_frames, R=5, horizon=20, lqr_iter=3,
                                               init_gamma=0.1, u_min=u_min, u_max=u_max)
 
-    env = get_easy_env(p.GUI, level=level)
     sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=True, save=False)
 
     seed = rand.seed()
@@ -136,12 +136,12 @@ def test_local_dynamics(level=0):
 
 
 def test_global_linear_dynamics(level=0):
+    env = get_easy_env(p.GUI, level)
     config = load_data.DataConfig(predict_difference=False, predict_all_dims=True)
-    ds = block_push.PushDataSource(data_dir=get_data_dir(level), validation_ratio=0.01, config=config)
+    ds = block_push.PushDataSource(env, data_dir=get_data_dir(level), validation_ratio=0.01, config=config)
 
     u_min, u_max = get_control_bounds()
     ctrl = global_controller.GlobalLQRController(ds, R=100, u_min=u_min, u_max=u_max)
-    env = get_easy_env(p.GUI, level)
     sim = block_push.InteractivePush(env, ctrl, num_frames=50, plot=True, save=False)
 
     seed = rand.seed()
@@ -151,10 +151,11 @@ def test_global_linear_dynamics(level=0):
 
 
 def test_global_qr_cost_optimal_controller(controller, level=0, **kwargs):
+    env = get_easy_env(p.GUI, level=level)
     preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
     preprocessor = None
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True)
-    ds = block_push.PushDataSource(data_dir=get_data_dir(level), validation_ratio=0.1,
+    ds = block_push.PushDataSource(env, data_dir=get_data_dir(level), validation_ratio=0.1,
                                    config=config, preprocessor=preprocessor)
     pml = model.LinearModelTorch(ds)
     pm = model.NetworkModelWrapper(
@@ -175,7 +176,6 @@ def test_global_qr_cost_optimal_controller(controller, level=0, **kwargs):
     u_min = torch.tensor(u_min, dtype=torch.double)
     u_max = torch.tensor(u_max, dtype=torch.double)
     ctrl = controller(pm, ds, Q=Q, u_min=u_min, u_max=u_max, **kwargs)
-    env = get_easy_env(p.GUI, level=level)
     sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=True, save=False)
 
     seed = rand.seed()
