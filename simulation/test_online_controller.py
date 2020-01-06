@@ -8,6 +8,8 @@ from arm_pytorch_utilities import rand, load_data
 from meta_contact import cfg
 from meta_contact import prior
 from meta_contact import online_dynamics
+from meta_contact import model
+from arm_pytorch_utilities.model import make
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
@@ -79,12 +81,21 @@ def show_prior_accuracy():
 
     # plot a contour map over the state space - input space of how accurate the prior is
     preprocessor = None
-    config = load_data.DataConfig(predict_difference=False, predict_all_dims=True)
-    ds = linear.LinearDataSource(data_dir=save_dir, preprocessor=preprocessor, validation_ratio=0.1, config=config)
+    config = load_data.DataConfig(predict_difference=False, predict_all_dims=True, expanded_input=False)
+    ds = linear.LinearDataSource(data_dir=save_dir + '.mat', preprocessor=preprocessor, validation_ratio=0.1,
+                                 config=config)
     env = get_env(myenv.Mode.DIRECT)
 
     # load prior
-    pm = prior.LSQPrior.from_data(ds)
+    # pm = prior.LSQPrior.from_data(ds)
+    # pm = prior.GMMPrior.from_data(ds)
+    mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds,
+                                   name='linear_full')
+    checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/linear.1000.tar'
+    checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/linear_full.2400.tar'
+    # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/linear_full.9600.tar'
+    checkpoint = None
+    pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=50, batch_N=500)
 
     # we can evaluate just prior dynamics by mixing with N=0 (no weight for empirical data)
     nx, nu = linear.WaterWorld.nx, linear.WaterWorld.nu
@@ -104,10 +115,11 @@ def show_prior_accuracy():
             diff = F - F1
         Z[i] = (diff.T @ diff).trace()
 
+    Z = np.sqrt(Z)
     Z = Z.reshape(X.shape)
 
     fig, ax = plt.subplots()
-    CS = ax.contourf(X, Y, Z, cmap='plasma')
+    CS = ax.contourf(X, Y, Z, cmap='plasma', vmin=0, vmax=0.8)
     CBI = fig.colorbar(CS)
     CBI.ax.set_ylabel('local model error')
     ax.set_ylabel('y')
@@ -118,5 +130,5 @@ def show_prior_accuracy():
 
 if __name__ == "__main__":
     # test_env_control()
-    # collect_data(50, 50)
+    # collect_data(500, 50)
     show_prior_accuracy()

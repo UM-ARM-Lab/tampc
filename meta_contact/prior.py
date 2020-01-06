@@ -65,7 +65,7 @@ def mix_prior(dX, dU, nnF, nnf, xu, sigma_x=None, strength=1.0, dyn_init_sig=Non
 
 class NNPrior(OnlineDynamicsPrior):
     @classmethod
-    def from_data(cls, mw: model.NetworkModelWrapper, checkpoint=None, train_epochs=50, **kwargs):
+    def from_data(cls, mw: model.NetworkModelWrapper, checkpoint=None, train_epochs=50, batch_N=500, **kwargs):
         # ensure that we're predicting residuals
         # if not mw.dataset.config.predict_difference:
         #     raise RuntimeError("Network must be predicting residuals")
@@ -73,7 +73,7 @@ class NNPrior(OnlineDynamicsPrior):
         if checkpoint and mw.load(checkpoint):
             logger.info("loaded checkpoint %s", checkpoint)
         else:
-            mw.learn_model(train_epochs)
+            mw.learn_model(train_epochs, batch_N=batch_N)
 
         return NNPrior(mw, **kwargs)
 
