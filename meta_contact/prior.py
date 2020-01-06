@@ -5,6 +5,7 @@ import numpy as np
 from arm_pytorch_utilities import linalg
 from meta_contact import model
 from arm_pytorch_utilities import grad
+import abc
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,10 @@ def gaussian_params_from_dataset(ds):
 
 
 class OnlineDynamicsPrior:
+    @abc.abstractmethod
+    def get_params(self, dX, dU, xu, pxu, xux):
+        """Get normal inverse-Wishart prior parameters (Phi, mu0, m, n0) evaluated at this (pxu,xu)"""
+
     def mix(self, dX, dU, xu, pxu, xux, empsig, mun, N):
         """Mix global and local dynamics returning MAP covariance and mean (local gaussian dynamics)"""
         return empsig, mun
@@ -83,7 +88,7 @@ class NNPrior(OnlineDynamicsPrior):
         self.mix_prior_strength = mix_strength
         self.full_context = mw.dataset.config.expanded_input
 
-    def mix(self, dX, dU, xu, pxu, xux, empsig, mun, N):
+    def get_params(self, dX, dU, xu, pxu, xux):
         # feed pxu and xu to network (full contextual network)
         full_input = np.concatenate((xu, pxu)) if self.full_context else xu
         full_input = torch.tensor(full_input, dtype=torch.double)
@@ -97,8 +102,15 @@ class NNPrior(OnlineDynamicsPrior):
         f = -F @ xu + xp
         # build \bar{Sigma} (nn_Phi) and \bar{mu} (nnf)
         nn_Phi, nnf = mix_prior(dX, dU, F, f, xu, strength=self.mix_prior_strength, use_least_squares=False)
-        sigma = (N * empsig + nn_Phi) / (N + 1)
-        mun = (N * mun + np.r_[xu, xp]) / (N + 1)
+        # NOTE nnf is not used
+        mu0 = np.r_[xu, xp]
+        # m and n0 are 1 (mix prior strength already scaled nn_Phi)
+        return nn_Phi, mu0, 1, 1
+
+    def mix(self, dX, dU, xu, pxu, xux, empsig, mun, N):
+        nn_Phi, mu0, m, n0 = self.get_params(dX, dU, xu, pxu, xux)
+        sigma = (N * empsig + nn_Phi) / (N + n0)
+        mun = (N * mun + m * mu0) / (N + m)
         return sigma, mun
 
 
@@ -215,11 +227,13 @@ class GMMPrior(OnlineDynamicsPrior):
 
         # Multiply Phi by m (since it was normalized before).
         Phi *= m
-        return mu0, Phi, m, n0
+        return Phi, mu0, m, n0
+
+    def get_params(self, dX, dU, xu, pxu, xux):
+        return self.eval(dX, dU, xux.reshape(1, dX + dU + dX))
 
     def mix(self, dX, dU, xu, pxu, xux, empsig, mun, N):
-        mu0, Phi, m, n0 = self.eval(dX, dU, xux.reshape(1, dX + dU + dX))
-        m = m
+        Phi, mu0, m, n0 = self.get_params(dX, dU, xu, pxu, xux)
         mun = (N * mun + mu0 * m) / (N + m)  # Use bias
         sigma = (N * empsig + Phi + ((N * m) / (N + m)) * np.outer(mun - mu0, mun - mu0)) / (N + n0)
         return sigma, mun
@@ -238,10 +252,22 @@ class LSQPrior(OnlineDynamicsPrior):
         # m in equation 1
         self.mix_prior_strength = mix_strength
 
+    def get_params(self, dX, dU, xu, pxu, xux):
+        return self.dyn_init_sig, self.dyn_init_mu, self.mix_prior_strength, self.mix_prior_strength
+
     def mix(self, dX, dU, xu, pxu, xux, empsig, mun, N):
+        Phi, mu0, m, n0 = self.get_params(dX, dU, xu, pxu, xux)
         # equation 1
-        mu0, Phi = (self.dyn_init_mu, self.dyn_init_sig)
-        mun = (N * mun + mu0 * self.mix_prior_strength) / (N + self.mix_prior_strength)
-        sigma = (N * empsig + self.mix_prior_strength * Phi) / (
-                N + self.mix_prior_strength)  # + ((N*m)/(N+m))*np.outer(mun-mu0,mun-mu0))/(N+n0)
+        mun = (N * mun + mu0 * m) / (N + m)
+        sigma = (N * empsig + Phi + ((N * m) / (N + m)) * np.outer(mun - mu0, mun - mu0)) / (N + n0)
+        # sigma = (N * empsig + self.mix_prior_strength * Phi) / (
+        #         N + self.mix_prior_strength)  # + ((N*m)/(N+m))*np.outer(mun-mu0,mun-mu0))/(N+n0)
         return sigma, mun
+
+
+def mix_distributions(emp_sigma, emp_mu, N, Phi, mu0, m, n0):
+    """Mix empirical normal with normal inverse-Wishart prior, giving a normal distribution"""
+    mu = (N * emp_mu + mu0 * m) / (N + m)
+    # TODO is the mun used in the sigma calculation from before or currently?
+    sigma = (N * emp_sigma + Phi + ((N * m) / (N + m)) * np.outer(emp_mu - mu0, emp_mu - mu0)) / (N + n0)
+    return sigma, mu
