@@ -1,18 +1,21 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import logging
-import time
 from meta_contact.env import myenv
 from meta_contact.env import linear
 from meta_contact.controller import controller
 from arm_pytorch_utilities import rand, load_data
 from meta_contact import cfg
+from meta_contact import prior
+from meta_contact import online_dynamics
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
                     datefmt='%m-%d %H:%M:%S')
 logging.getLogger('matplotlib.font_manager').disabled = True
+
+save_dir = 'linear/linear0'
 
 
 def get_control_bounds():
@@ -44,7 +47,6 @@ def collect_data(trials=20, trial_length=40):
     ctrl = controller.FullRandomController(2, u_min, u_max)
 
     env = get_env(myenv.Mode.DIRECT)
-    save_dir = 'linear/linear0'
     sim = linear.LinearSim(env, ctrl, num_frames=trial_length, plot=False, save=True, save_dir=save_dir)
 
     # randomly distribute data
@@ -64,6 +66,57 @@ def collect_data(trials=20, trial_length=40):
     plt.show()
 
 
+def show_prior_accuracy():
+    # create grid over state-input space
+    delta = 0.2
+    start = -3
+    end = 3.01
+
+    x = y = np.arange(start, end, delta)
+    X, Y = np.meshgrid(x, y)
+    XY = np.c_[X.ravel(), Y.ravel()]
+    Z = np.zeros(XY.shape[0])
+
+    # plot a contour map over the state space - input space of how accurate the prior is
+    preprocessor = None
+    config = load_data.DataConfig(predict_difference=False, predict_all_dims=True)
+    ds = linear.LinearDataSource(data_dir=save_dir, preprocessor=preprocessor, validation_ratio=0.1, config=config)
+    env = get_env(myenv.Mode.DIRECT)
+
+    # load prior
+    pm = prior.LSQPrior.from_data(ds)
+
+    # we can evaluate just prior dynamics by mixing with N=0 (no weight for empirical data)
+    nx, nu = linear.WaterWorld.nx, linear.WaterWorld.nu
+    N = 0
+    emp_mu = np.zeros(2 * nx + nu)
+    emp_sigma = np.zeros((2 * nx + nu, 2 * nx + nu))
+    u = np.zeros(nu)
+    # true dynamics
+    F1 = np.concatenate((env.A1, env.B1), axis=1)
+    F2 = np.concatenate((env.A2, env.B2), axis=1)
+    for i, xy in enumerate(XY):
+        F, f, _ = online_dynamics.get_locally_linear_dynamics(nx, nu, xy, u, xy, u, N, emp_mu, emp_sigma, pm)
+        # compare F against A and B
+        if env.is_in_water(xy):
+            diff = F - F2
+        else:
+            diff = F - F1
+        Z[i] = (diff.T @ diff).trace()
+
+    Z = Z.reshape(X.shape)
+
+    fig, ax = plt.subplots()
+    CS = ax.contourf(X, Y, Z, cmap='plasma')
+    CBI = fig.colorbar(CS)
+    CBI.ax.set_ylabel('local model error')
+    ax.set_ylabel('y')
+    ax.set_xlabel('x')
+    ax.set_title('linearized prior model error')
+    plt.show()
+
+
 if __name__ == "__main__":
     # test_env_control()
-    collect_data(50, 50)
+    # collect_data(50, 50)
+    show_prior_accuracy()
