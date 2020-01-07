@@ -24,7 +24,7 @@ class OnlineController(Controller):
         self.gamma = self.init_gamma
         self.u_min, self.u_max = math_utils.get_bounds(u_min, u_max)
 
-        self.u_noise = 0.001
+        self.u_noise = 0.1
         # TODO get rid of these environment specific parameters
         # self.block_idx = slice(0, 2)
         # self.block_idx = slice(2, 4)
@@ -66,7 +66,7 @@ class OnlineController(Controller):
         self.cost.eetgt = goal
 
     def command(self, obs):
-        return self.act(obs, obs, len(self.u_history))
+        return self.act(obs, obs, len(self.u_history), noise=True)
 
     def act(self, x, obs, t, noise=None, sample=None):
         """
@@ -86,6 +86,7 @@ class OnlineController(Controller):
 
         add_noise = noise is not None
         u = self.compute_action(lgpolicy, x, add_noise)
+        self.dynamics.evaluate_error(self.prevx, self.prevu, x, u)
         # if self.prevu is not None:  # smooth
         #    u = 0.5*u+0.5*self.prevu
         self.prev_policy = lgpolicy
@@ -158,7 +159,7 @@ class OnlineController(Controller):
         u = lgpolicy.K[0] @ x + lgpolicy.k[0]
         if add_noise:
             u += lgpolicy.chol_pol_covar[0].dot(self.u_noise * np.random.randn(self.dU))
-        if self.u_max:
+        if self.u_max is not None:
             u = np.clip(u, -self.u_max, self.u_max)
         return u
 
