@@ -3,7 +3,7 @@ import torch
 import numpy as np
 import logging
 from meta_contact.env import myenv
-from meta_contact.env import linear
+from meta_contact.env import toy
 from meta_contact.controller import controller
 from arm_pytorch_utilities import rand, load_data
 from meta_contact import cfg
@@ -35,7 +35,7 @@ def get_env(mode=myenv.Mode.GUI):
     goal = [2, -2]
     # noise = (0.04, 0.04)
     noise = (0.0, 0.0)
-    env = linear.WaterWorld(init_state, goal, mode=mode, process_noise=noise, max_move_step=0.01)
+    env = toy.WaterWorld(init_state, goal, mode=mode, process_noise=noise, max_move_step=0.01)
     return env
 
 
@@ -43,20 +43,19 @@ def test_env_control():
     env = get_env(myenv.Mode.GUI)
     u_min, u_max = get_control_bounds()
     ctrl = controller.FullRandomController(env.nu, u_min, u_max)
-    sim = linear.LinearSim(env, ctrl, num_frames=100, plot=False, save=False)
+    sim = toy.ToySim(env, ctrl, num_frames=100, plot=False, save=False)
     seed = rand.seed()
     sim.run(seed)
 
 
-def collect_data(trials=20, trial_length=40):
+def collect_data(trials=20, trial_length=40, min_allowed_y=0):
     u_min, u_max = get_control_bounds()
     ctrl = controller.FullRandomController(2, u_min, u_max)
 
     env = get_env(myenv.Mode.DIRECT)
-    sim = linear.LinearSim(env, ctrl, num_frames=trial_length, plot=False, save=True, save_dir=save_dir)
+    sim = toy.ToySim(env, ctrl, num_frames=trial_length, plot=False, save=True, save_dir=save_dir)
 
     # randomly distribute data
-    min_allowed_y = 0
     for _ in range(trials):
         seed = rand.seed()
         # randomize so that our prior is accurate in one mode but not the other
@@ -88,8 +87,8 @@ def show_prior_accuracy():
     preprocessor = preprocess.PytorchPreprocessing(preprocess.MinMaxScaler())
     preprocessor = None
     config = load_data.DataConfig(predict_difference=False, predict_all_dims=True, expanded_input=False)
-    ds = linear.LinearDataSource(data_dir=save_dir + '.mat', preprocessor=preprocessor, validation_ratio=0.1,
-                                 config=config)
+    ds = toy.ToyDataSource(data_dir=save_dir + '.mat', preprocessor=preprocessor, validation_ratio=0.1,
+                           config=config)
     env = get_env(myenv.Mode.DIRECT)
 
     # load prior
@@ -101,7 +100,7 @@ def show_prior_accuracy():
     # pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=30, batch_N=500)
 
     # we can evaluate just prior dynamics by mixing with N=0 (no weight for empirical data)
-    nx, nu = linear.WaterWorld.nx, linear.WaterWorld.nu
+    nx, nu = toy.WaterWorld.nx, toy.WaterWorld.nu
     N = 0
     emp_mu = np.zeros(2 * nx + nu)
     emp_sigma = np.zeros((2 * nx + nu, 2 * nx + nu))
@@ -117,7 +116,7 @@ def show_prior_accuracy():
     for i, xy in enumerate(XY):
         F, f, _ = dynamics.get_dynamics(i, xy, u, xy, u)
         # compare F against A and B
-        if env.is_in_water(xy):
+        if env.state_label(xy):
             diff = F - F2
         else:
             diff = F - F1
@@ -150,19 +149,19 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50):
     # data source
     preprocessor = preprocess.PytorchPreprocessing(preprocess.MinMaxScaler())
     preprocessor = None
-    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=True)
-    ds = linear.LinearDataSource(data_dir=save_dir + '.mat', preprocessor=preprocessor, validation_ratio=0.1,
-                                 config=config)
+    config = load_data.DataConfig(predict_difference=False, predict_all_dims=True, expanded_input=True)
+    ds = toy.ToyDataSource(data_dir=save_dir + '.mat', preprocessor=preprocessor, validation_ratio=0.1,
+                           config=config)
 
     # load prior
-    # pm = prior.LSQPrior.from_data(ds)
+    pm = prior.LSQPrior.from_data(ds)
     # pm = prior.GMMPrior.from_data(ds)
-    mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds,
-                                   name='linear')
-    # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/linear.1470.tar'
-    # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/linear_full.1470.tar'
-    checkpoint = None
-    pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=30, batch_N=500)
+    # mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds,
+    #                                name='linear')
+    # # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/linear.1470.tar'
+    # # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/linear_full.1470.tar'
+    # checkpoint = None
+    # pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=70, batch_N=500)
     u_min, u_max = get_control_bounds()
     ctrl = online_controller.OnlineController(pm, ds=ds, max_timestep=trial_length, R=5, horizon=10, lqr_iter=3,
                                               init_gamma=0.1, u_min=u_min, u_max=u_max)
@@ -231,6 +230,6 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50):
 
 if __name__ == "__main__":
     # test_env_control()
-    # collect_data(500, 50)
+    # collect_data(250, 50, min_allowed_y=-3)
     # show_prior_accuracy()
     compare_empirical_and_prior_error(200, 50)

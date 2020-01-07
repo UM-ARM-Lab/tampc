@@ -1,3 +1,4 @@
+import abc
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
@@ -12,7 +13,7 @@ from arm_pytorch_utilities.make_data import datasource
 from arm_pytorch_utilities import load_data as load_utils, string, math_utils
 
 
-class LinearLoader(load_utils.DataLoader):
+class ToyLoader(load_utils.DataLoader):
     def __init__(self, *args, file_cfg=cfg, **kwargs):
         super().__init__(file_cfg, *args, **kwargs)
 
@@ -54,19 +55,19 @@ class LinearLoader(load_utils.DataLoader):
         return xu, y, cc
 
 
-class LinearDataSource(datasource.FileDataSource):
+class ToyDataSource(datasource.FileDataSource):
     def __init__(self, data_dir='linear', **kwargs):
-        super().__init__(LinearLoader, data_dir, **kwargs)
+        super().__init__(ToyLoader, data_dir, **kwargs)
 
 
-class WaterWorld:
-    """Simple, fully kinematics world with water and air where water takes more effort to navigate"""
+class ToyEnv:
+    """Simple, fully kinematic 2D env that can be visualized"""
     nx = 2
     nu = 2
     ny = 2
 
     def __init__(self, init_state, goal, xlim=(-3, 3), ylim=(-3, 3), mode=myenv.Mode.GUI,
-                 process_noise=(0.04, 0.04), max_move_step=0.01,
+                 process_noise=(0.01, 0.01), max_move_step=0.01,
                  hide_disp=False):
         """Simulate for T time steps with a controller"""
         # set at initialization time without a way to change it
@@ -81,13 +82,6 @@ class WaterWorld:
         self.hide_disp = hide_disp
 
         self.max_move_step = max_move_step
-        self.A1 = np.eye(self.nx)
-        self.A2 = np.eye(self.nx)
-        # self.A2[1,0] = 0.01
-        self.B1 = np.eye(self.nu) * 0.5
-        self.B2 = np.eye(self.nu) * 0.7
-        self.B2[1, 0] = 0.3
-        self.B2[0, 1] = -0.2
 
         # quadratic cost
         self.Q = np.eye(self.nx)
@@ -115,8 +109,7 @@ class WaterWorld:
         self.ax.set_xlabel('$x$')
         self.ax.set_ylabel('$y$')
 
-        # draw water
-        self._draw_water()
+        self._draw_background()
 
         # if hiding display, create figures but don't show to speed up computation
         if self.hide_disp:
@@ -125,11 +118,6 @@ class WaterWorld:
             plt.ion()
             plt.show()
         self.render()
-
-    def _draw_water(self):
-        self.ax.fill([self.xlim[0], self.xlim[0], self.xlim[1], self.xlim[1]], [0, self.ylim[0], self.ylim[0], 0],
-                     facecolor="none", hatch="X",
-                     edgecolor="b")
 
     def stop_visualization(self):
         plt.close(self.f)
@@ -143,22 +131,6 @@ class WaterWorld:
         self.state = self.init_state
         self.last_state = None
         return np.copy(self.state)
-
-    def true_dynamics(self, x, u):
-        """Actual x' = f(x,u) model of the environment; only deals with non-batch input for now"""
-        # TODO batch this (assuming each step keeps you inside the same mode)
-        total_step = np.linalg.norm(u)
-        move_step = u / total_step * self.max_move_step
-        # cache the result of action
-        u1 = self.B1 @ move_step
-        u2 = self.B2 @ move_step
-        while total_step > 0:
-            if self.is_in_water(x):
-                x = self.A2 @ x + u2
-            else:
-                x = self.A1 @ x + u1
-            total_step -= self.max_move_step
-        return x
 
     def _evaluate_cost(self, action):
         diff = self.state - self.goal
@@ -175,12 +147,7 @@ class WaterWorld:
 
         cost, done = self._evaluate_cost(action)
 
-        return np.copy(self.state), -cost, done, self.is_in_water(self.state)
-
-    def is_in_water(self, x):
-        if len(x.shape) == 2:
-            return x[:, 1] < 0
-        return x[1] < 0
+        return np.copy(self.state), -cost, done, self.state_label(self.state)
 
     def render(self):
         if self.f is None:
@@ -201,6 +168,58 @@ class WaterWorld:
             self.f.canvas.draw()
             plt.pause(0.00001)
 
+    @abc.abstractmethod
+    def true_dynamics(self, x, u):
+        """Actual x' = f(x,u) model of the environment; preferrably deals with batch data"""
+
+    @abc.abstractmethod
+    def state_label(self, x):
+        """Give a label (integer or float) for the given state"""
+
+    @abc.abstractmethod
+    def _draw_background(self):
+        """Draw background of this env to self.ax"""
+
+
+class WaterWorld(ToyEnv):
+    """Simple, fully kinematics world with water and air where water takes more effort to navigate"""
+
+    def __init__(self, *args, **kwargs):
+        self.A1 = np.eye(self.nx)
+        self.A2 = np.eye(self.nx)
+        # self.A2[1,0] = 0.01
+        self.B1 = np.eye(self.nu) * 0.5
+        self.B2 = np.eye(self.nu) * 0.7
+        self.B2[1, 0] = 0.3
+        self.B2[0, 1] = -0.2
+        super().__init__(*args, **kwargs)
+
+    def _draw_background(self):
+        self.ax.fill([self.xlim[0], self.xlim[0], self.xlim[1], self.xlim[1]], [0, self.ylim[0], self.ylim[0], 0],
+                     facecolor="none", hatch="X",
+                     edgecolor="b")
+
+    def true_dynamics(self, x, u):
+        """Actual x' = f(x,u) model of the environment; only deals with non-batch input for now"""
+        # TODO batch this (assuming each step keeps you inside the same mode)
+        total_step = np.linalg.norm(u)
+        move_step = u / total_step * self.max_move_step
+        # cache the result of action
+        u1 = self.B1 @ move_step
+        u2 = self.B2 @ move_step
+        while total_step > 0:
+            if self.state_label(x):
+                x = self.A2 @ x + u2
+            else:
+                x = self.A1 @ x + u1
+            total_step -= self.max_move_step
+        return x
+
+    def state_label(self, x):
+        if len(x.shape) == 2:
+            return x[:, 1] < 0
+        return x[1] < 0
+
 
 def make_circle(r):
     t = np.arange(0, np.pi * 2.0, 0.01)
@@ -220,9 +239,8 @@ class ComplexWaterWorld(WaterWorld):
         self.rr = 1.8 * r
         self.r = r
         super(ComplexWaterWorld, self).__init__(*args, **kwargs)
-        self.B2 *= 0.2
 
-    def _draw_water(self):
+    def _draw_background(self):
         iv = make_circle(self.r)
         ov = make_circle(self.rr)
         codes = np.ones(
@@ -248,7 +266,7 @@ class ComplexWaterWorld(WaterWorld):
         r = np.sqrt(xx[:, 2] + xx[:, 4])
         return r
 
-    def is_in_water(self, x):
+    def state_label(self, x):
         oned = len(x.shape) == 1
         r = self.feature(x)
         res = np.logical_or(r < self.r, r > self.rr)
@@ -257,9 +275,9 @@ class ComplexWaterWorld(WaterWorld):
         return res
 
 
-class LinearSim(simulation.Simulation):
-    def __init__(self, env: WaterWorld, controller, num_frames=100, save_dir='linear', **kwargs):
-        super(LinearSim, self).__init__(save_dir=save_dir, num_frames=num_frames, config=cfg, **kwargs)
+class ToySim(simulation.Simulation):
+    def __init__(self, env: ToyEnv, controller, num_frames=100, save_dir='linear', **kwargs):
+        super(ToySim, self).__init__(save_dir=save_dir, num_frames=num_frames, config=cfg, **kwargs)
         self.mode = env.mode
 
         self.env = env
