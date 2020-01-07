@@ -258,11 +258,11 @@ class LSQPrior(OnlineDynamicsPrior):
     def mix(self, dX, dU, xu, pxu, xux, empsig, mun, N):
         Phi, mu0, m, n0 = self.get_params(dX, dU, xu, pxu, xux)
         # equation 1
-        mun = (N * mun + mu0 * m) / (N + m)
+        mu = (N * mun + mu0 * m) / (N + m)
         sigma = (N * empsig + Phi + ((N * m) / (N + m)) * np.outer(mun - mu0, mun - mu0)) / (N + n0)
         # sigma = (N * empsig + self.mix_prior_strength * Phi) / (
         #         N + self.mix_prior_strength)  # + ((N*m)/(N+m))*np.outer(mun-mu0,mun-mu0))/(N+n0)
-        return sigma, mun
+        return sigma, mu
 
 
 def mix_distributions(emp_sigma, emp_mu, N, Phi, mu0, m, n0):

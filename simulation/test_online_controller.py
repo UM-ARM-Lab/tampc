@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import torch
 import numpy as np
 import logging
 from meta_contact.env import myenv
@@ -10,6 +11,7 @@ from meta_contact import prior
 from meta_contact import online_dynamics
 from meta_contact import model
 from arm_pytorch_utilities.model import make
+from arm_pytorch_utilities import preprocess
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
@@ -80,6 +82,8 @@ def show_prior_accuracy():
     Z = np.zeros(XY.shape[0])
 
     # plot a contour map over the state space - input space of how accurate the prior is
+    # can't use preprocessor except for the neural network prior because their returned matrices are wrt transformed
+    preprocessor = preprocess.PytorchPreprocessing(preprocess.MinMaxScaler())
     preprocessor = None
     config = load_data.DataConfig(predict_difference=False, predict_all_dims=True, expanded_input=False)
     ds = linear.LinearDataSource(data_dir=save_dir + '.mat', preprocessor=preprocessor, validation_ratio=0.1,
@@ -87,27 +91,29 @@ def show_prior_accuracy():
     env = get_env(myenv.Mode.DIRECT)
 
     # load prior
-    # pm = prior.LSQPrior.from_data(ds)
+    pm = prior.LSQPrior.from_data(ds)
     # pm = prior.GMMPrior.from_data(ds)
-    mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds,
-                                   name='linear_full')
-    checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/linear.1000.tar'
-    checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/linear_full.2400.tar'
-    # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/linear_full.9600.tar'
-    checkpoint = None
-    pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=50, batch_N=500)
+    # mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds,
+    #                                name='linear_full')
+    # checkpoint = None
+    # pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=30, batch_N=500)
 
     # we can evaluate just prior dynamics by mixing with N=0 (no weight for empirical data)
     nx, nu = linear.WaterWorld.nx, linear.WaterWorld.nu
     N = 0
     emp_mu = np.zeros(2 * nx + nu)
     emp_sigma = np.zeros((2 * nx + nu, 2 * nx + nu))
+
+    dynamics = online_dynamics.OnlineDynamics(0.1, pm, emp_mu, emp_sigma, nx, nu)
+
     u = np.zeros(nu)
     # true dynamics
     F1 = np.concatenate((env.A1, env.B1), axis=1)
     F2 = np.concatenate((env.A2, env.B2), axis=1)
+    if preprocessor is not None and not isinstance(pm, prior.NNPrior):
+        raise RuntimeError("Can't use preprocessor with non NN-prior since it'll return matrices wrt transformed units")
     for i, xy in enumerate(XY):
-        F, f, _ = online_dynamics.get_locally_linear_dynamics(nx, nu, xy, u, xy, u, N, emp_mu, emp_sigma, pm)
+        F, f, _ = dynamics.get_dynamics(i, xy, u, xy, u)
         # compare F against A and B
         if env.is_in_water(xy):
             diff = F - F2

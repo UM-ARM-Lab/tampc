@@ -1,5 +1,6 @@
 import numpy as np
 from arm_pytorch_utilities.trajectory import invert_psd
+from meta_contact import prior
 
 
 class OnlineDynamics(object):
@@ -8,7 +9,7 @@ class OnlineDynamics(object):
     Note gamma here is (1-gamma) described in the paper, so high gamma forgets quicker
     """
 
-    def __init__(self, gamma, prior, init_mu, init_sigma, dX, dU, N=1, sigreg=1e-5):
+    def __init__(self, gamma, prior: prior.OnlineDynamicsPrior, init_mu, init_sigma, dX, dU, N=1, sigreg=1e-5):
         self.gamma = gamma
         self.prior = prior
         self.sigreg = sigreg  # Covariance regularization (adds sigreg*eye(N))
@@ -33,12 +34,22 @@ class OnlineDynamics(object):
         self.xxt = 0.5 * (self.xxt + self.xxt.T)
         self.sigma = self.xxt - np.outer(self.mu, self.mu)
 
-    def get_dynamics(self, t, prevx, prevu, curx, curu):
+    def get_dynamics(self, t, px, pu, cx, cu):
         """
         Compute F, f - the linear dynamics where next_x = F*[curx, curu] + f
         """
-        return get_locally_linear_dynamics(self.dX, self.dU, prevx, prevu, curx, curu, self.empsig_N, self.sigma,
-                                           self.mu, self.prior, self.sigreg)
+        # TODO evaluate the accuracy of empirical and prior dynamics on (xux')
+        Fe, fe, _ = conditioned_dynamics(self.dX, self.dU, self.sigma, self.mu)
+        # prior parameters and dynamics
+        xu = np.r_[cx, cu].astype(np.float32)
+        pxu = np.r_[px, pu]
+        xux = np.r_[px, pu, cx]
+        Phi, mu0, m, n0 = self.prior.get_params(self.dX, self.dU, xu, pxu, xux)
+        Fp, fp, _ = conditioned_dynamics(self.dX, self.dU, Phi / n0, mu0)
+        # TODO update gamma based on the relative error of these dynamics
+        # mix prior and empirical distribution
+        sigma, mu = prior.mix_distributions(self.sigma, self.mu, self.empsig_N, Phi, mu0, m, n0)
+        return conditioned_dynamics(self.dX, self.dU, sigma, mu)
 
 
 def get_locally_linear_dynamics(nx, nu, px, pu, cx, cu, N, emp_mu, emp_sigma, prior, sigreg=1e-5):
