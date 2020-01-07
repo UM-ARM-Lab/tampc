@@ -31,11 +31,15 @@ def get_control_bounds():
 
 
 def get_env(mode=myenv.Mode.GUI):
+    global save_dir
     init_state = [-1.5, 1.5]
     goal = [2, -2]
     # noise = (0.04, 0.04)
     noise = (0.0, 0.0)
-    env = toy.WaterWorld(init_state, goal, mode=mode, process_noise=noise, max_move_step=0.01)
+    # env = toy.WaterWorld(init_state, goal, mode=mode, process_noise=noise, max_move_step=0.01)
+    # save_dir = 'linear/linear0'
+    env = toy.PolynomialWorld(init_state, goal, mode=mode, process_noise=noise, max_move_step=0.01)
+    save_dir = 'poly/poly0'
     return env
 
 
@@ -230,6 +234,6 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50):
 
 if __name__ == "__main__":
     # test_env_control()
-    # collect_data(250, 50, min_allowed_y=-3)
+    collect_data(250, 50, min_allowed_y=-3)
     # show_prior_accuracy()
-    compare_empirical_and_prior_error(200, 50)
+    # compare_empirical_and_prior_error(200, 50)
