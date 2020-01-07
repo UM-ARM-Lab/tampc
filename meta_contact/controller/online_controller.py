@@ -58,6 +58,12 @@ class OnlineController(Controller):
         self.prev_policy = None
         self.u_history = []
 
+    def reset(self):
+        self.prevx = None
+        self.prevu = None
+        self.prev_policy = None
+        self.u_history = []
+
     def update_prior(self, prior):
         self.dynamics.prior = prior
 
