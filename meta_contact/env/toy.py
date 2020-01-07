@@ -275,6 +275,47 @@ class ComplexWaterWorld(WaterWorld):
         return res
 
 
+class PolynomialWorld(ToyEnv):
+    def __init__(self, *args, **kwargs):
+        self.order = 2
+        self.poly = PolynomialFeatures(self.order, include_bias=False)
+        # create input sample to fit (tells sklearn what input sizes to expect)
+        u = np.random.rand(self.nu).reshape(1, -1)
+        self.poly.fit(u)
+        super().__init__(*args, **kwargs)
+
+    def _draw_background(self):
+        delta = 0.2
+        x = np.arange(self.xlim[0], self.xlim[1] + 0.01, delta)
+        y = np.arange(self.ylim[0], self.ylim[1] + 0.01, delta)
+        X, Y = np.meshgrid(x, y)
+        XY = np.c_[X.ravel(), Y.ravel()]
+        Z = self.feature(XY)
+        Z = Z.reshape(X.shape)
+        CS = self.ax.contourf(X, Y, Z, cmap='plasma')
+        CBI = self.f.colorbar(CS)
+        CBI.ax.set_ylabel('control scale')
+
+    def true_dynamics(self, x, u):
+        # don't interpolate in discrete time to prevent complicating the dynamics
+        f = self.feature(x)
+        # simply scale control
+        dx = u * f
+        return x + dx
+
+    def feature(self, x):
+        oned = len(x.shape) == 1
+        if oned:
+            x = x.reshape(1, -1)
+        xx = self.poly.transform(x)
+        # x y x^2 xy y^2
+        r = np.sqrt(xx[:, 2] + xx[:, 4])
+        return r
+
+    def state_label(self, x):
+        return self.feature(x)
+
+
 class ToySim(simulation.Simulation):
     def __init__(self, env: ToyEnv, controller, num_frames=100, save_dir='linear', **kwargs):
         super(ToySim, self).__init__(save_dir=save_dir, num_frames=num_frames, config=cfg, **kwargs)
