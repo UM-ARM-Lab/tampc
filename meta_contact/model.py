@@ -185,7 +185,6 @@ class NetworkModelWrapper(DynamicsModel):
         self.XUv, self.Yv, self.labelsv = self.dataset.validation_set()
         ds_train = load_data.SimpleDataset(self.XU, self.Y, self.labels)
         train_loader = torch.utils.data.DataLoader(ds_train, batch_size=batch_N, shuffle=True)
-        self.step = 0
 
         save_checkpoint_every_n_epochs = max(max_epoch // 20, 5)
 
