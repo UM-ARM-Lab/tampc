@@ -309,7 +309,8 @@ class PolynomialWorld(ToyEnv):
             x = x.reshape(1, -1)
         xx = self.poly.transform(x)
         # x y x^2 xy y^2
-        r = np.sqrt(xx[:, 2] + xx[:, 4])
+        # r = np.sqrt(xx[:, 2] + xx[:, 4])
+        r = xx[:, 2] - xx[:, 4]
         return r
 
     def state_label(self, x):
