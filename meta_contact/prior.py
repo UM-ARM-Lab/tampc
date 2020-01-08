@@ -158,8 +158,8 @@ class GMMPrior(OnlineDynamicsPrior):
         """
         Update prior with additional data.
         Args:
-            X: A N x T x dX matrix of sequential state data.
-            U: A N x T x dU matrix of sequential control data.
+            X: A N x T x nx matrix of sequential state data.
+            U: A N x T x nu matrix of sequential control data.
         """
         # Constants.
         T = X.shape[1] - 1

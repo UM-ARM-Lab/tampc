@@ -38,7 +38,8 @@ def get_env(mode=myenv.Mode.GUI):
     noise = (0.0, 0.0)
     # env = toy.WaterWorld(init_state, goal, mode=mode, process_noise=noise, max_move_step=0.01)
     # save_dir = 'linear/linear0'
-    env = toy.PolynomialWorld(init_state, goal, mode=mode, process_noise=noise, max_move_step=0.01, keep_within_bounds=False)
+    env = toy.PolynomialWorld(init_state, goal, mode=mode, process_noise=noise, max_move_step=0.01,
+                              keep_within_bounds=False)
     save_dir = 'poly/poly0'
     return env
 
@@ -168,8 +169,8 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
     checkpoint = None
     pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=70, batch_N=500)
     u_min, u_max = get_control_bounds()
-    ctrl = online_controller.OnlineController(pm, ds=ds, max_timestep=trial_length, R=3, horizon=10, lqr_iter=3,
-                                              init_gamma=0.1, u_min=u_min, u_max=u_max)
+    ctrl = online_controller.OnlineLQR(pm, ds=ds, max_timestep=trial_length, R=3, horizon=10, lqr_iter=3,
+                                       init_gamma=0.1, u_min=u_min, u_max=u_max)
 
     logger.info("initial random seed %d", rand.seed(1))
     # randomly distribute data

@@ -9,12 +9,14 @@ class OnlineDynamics(object):
     Note gamma here is (1-gamma) described in the paper, so high gamma forgets quicker
     """
 
-    def __init__(self, gamma, prior: prior.OnlineDynamicsPrior, init_mu, init_sigma, dX, dU, N=1, sigreg=1e-5):
+    def __init__(self, gamma, online_prior: prior.OnlineDynamicsPrior, ds, N=1, sigreg=1e-5):
         self.gamma = gamma
-        self.prior = prior
+        self.prior = online_prior
         self.sigreg = sigreg  # Covariance regularization (adds sigreg*eye(N))
-        self.dX = dX
-        self.dU = dU
+        sigma, mu = prior.gaussian_params_from_dataset(ds)
+
+        self.nx = ds.config.nx
+        self.nu = ds.config.nu
         self.empsig_N = N
         self.emp_error = None
         self.prior_error = None
@@ -22,9 +24,9 @@ class OnlineDynamics(object):
         self.prior_trust_coefficient = 0.1  # the lower it is the more we trust the prior; 0 means only ever use prior
         # TODO can track only mu and xxt, generate sigma when asking for dynamics?
         # Initial values
-        self.mu = init_mu
-        self.sigma = init_sigma
-        self.xxt = init_sigma + np.outer(self.mu, self.mu)
+        self.mu = mu
+        self.sigma = sigma
+        self.xxt = sigma + np.outer(self.mu, self.mu)
 
     def evaluate_error(self, px, pu, cx, cu):
         """After updating dynamics and using that dynamics to plan an action,
@@ -34,12 +36,12 @@ class OnlineDynamics(object):
             self.emp_error = self.prior_error = None
             return
         xu, pxu, xux = concatenate_state_control(px, pu, cx, cu)
-        Phi, mu0, m, n0 = self.prior.get_params(self.dX, self.dU, xu, pxu, xux)
+        Phi, mu0, m, n0 = self.prior.get_params(self.nx, self.nu, xu, pxu, xux)
         # evaluate the accuracy of empirical and prior dynamics on (xux')
-        Fe, fe, _ = conditioned_dynamics(self.dX, self.dU, self.sigma, self.mu, sigreg=self.sigreg)
+        Fe, fe, _ = conditioned_dynamics(self.nx, self.nu, self.sigma, self.mu, sigreg=self.sigreg)
         emp_x = evaluate_dynamics(px, pu, Fe, fe)
         # prior dynamics
-        Fp, fp, _ = conditioned_dynamics(self.dX, self.dU, Phi / n0, mu0, sigreg=self.sigreg)
+        Fp, fp, _ = conditioned_dynamics(self.nx, self.nu, Phi / n0, mu0, sigreg=self.sigreg)
         prior_x = evaluate_dynamics(px, pu, Fp, fp)
 
         # compare against actual x'
@@ -67,11 +69,11 @@ class OnlineDynamics(object):
         """
         # prior parameters
         xu, pxu, xux = concatenate_state_control(px, pu, cx, cu)
-        Phi, mu0, m, n0 = self.prior.get_params(self.dX, self.dU, xu, pxu, xux)
+        Phi, mu0, m, n0 = self.prior.get_params(self.nx, self.nu, xu, pxu, xux)
 
         # mix prior and empirical distribution
         sigma, mu = prior.mix_distributions(self.sigma, self.mu, self.empsig_N, Phi, mu0, m, n0)
-        return conditioned_dynamics(self.dX, self.dU, sigma, mu, self.sigreg)
+        return conditioned_dynamics(self.nx, self.nu, sigma, mu, self.sigreg)
 
 
 def concatenate_state_control(px, pu, cx, cu):
