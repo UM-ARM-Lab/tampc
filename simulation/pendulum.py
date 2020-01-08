@@ -60,10 +60,6 @@ class PendulumDataset(datasource.DataSource):
         return "{}".format(self.N)
 
 
-def angle_normalize(x):
-    return (((x + math.pi) % (2 * math.pi)) - math.pi)
-
-
 def compare_to_goal(state, goal):
     if len(goal.shape) == 1:
         goal = goal.view(1, -1)
@@ -148,7 +144,7 @@ if __name__ == "__main__":
     def fill_dataset(new_data):
         global ds
         # not normalized inside the simulator
-        new_data[:, 0] = angle_normalize(new_data[:, 0])
+        new_data[:, 0] = math_utils.angle_normalize(new_data[:, 0])
         if not torch.is_tensor(new_data):
             new_data = torch.from_numpy(new_data)
         # clamp actions
@@ -205,7 +201,7 @@ if __name__ == "__main__":
         xu = torch.cat((state, u), dim=1)
 
         next_state = mw.predict(xu)
-        next_state[:, 0] = angle_normalize(next_state[:, 0])
+        next_state[:, 0] = math_utils.angle_normalize(next_state[:, 0])
         return next_state
 
 
@@ -230,15 +226,14 @@ if __name__ == "__main__":
         return state
 
 
-    # ctrl = online_controller.OnlineController(pm, ds, max_timestep=num_frames, Q=Q.numpy(), R=R, horizon=20, lqr_iter=3,
-    #                                           init_gamma=0.1, max_ctrl=ACTION_HIGH, compare_to_goal=compare_to_goal_np)
+    ctrl = online_controller.OnlineController(pm, ds, max_timestep=num_frames, Q=Q.numpy(), R=R, horizon=20, lqr_iter=3,
+                                              init_gamma=0.1, u_max=ACTION_HIGH, compare_to_goal=compare_to_goal_np)
     # ctrl = global_controller.GlobalLQRController(ds, u_max=ACTION_HIGH, Q=Q, R=R)
-    # NOTE setting u_max to be ACTION_HIGH doesn't work due to over-clamping trajectory (no longer Gaussian)
     # ctrl = global_controller.GlobalCEMController(dynamics, ds, R=R, Q=Q, compare_to_goal=compare_to_goal,
     #                                              u_max=torch.tensor(ACTION_HIGH, dtype=dtype), init_cov_diag=10)
-    ctrl = global_controller.GlobalMPPIController(dynamics, ds, R=R, Q=Q, compare_to_goal=compare_to_goal,
-                                                  u_max=torch.tensor(ACTION_HIGH, dtype=dtype),
-                                                  noise_sigma=torch.eye(nu, dtype=dtype) * 5)
+    # ctrl = global_controller.GlobalMPPIController(dynamics, ds, R=R, Q=Q, compare_to_goal=compare_to_goal,
+    #                                               u_max=torch.tensor(ACTION_HIGH, dtype=dtype),
+    #                                               noise_sigma=torch.eye(nu, dtype=dtype) * 5)
 
     ctrl.set_goal(np.array([0, 0]))
 
