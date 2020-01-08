@@ -140,7 +140,7 @@ def show_prior_accuracy():
     plt.show()
 
 
-def compare_empirical_and_prior_error(trials=20, trial_length=50):
+def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_error=1.):
     env = get_env(myenv.Mode.DIRECT)
 
     # data to collect
@@ -153,19 +153,19 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50):
     # data source
     preprocessor = preprocess.PytorchPreprocessing(preprocess.MinMaxScaler())
     preprocessor = None
-    config = load_data.DataConfig(predict_difference=False, predict_all_dims=True, expanded_input=True)
+    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds = toy.ToyDataSource(data_dir=save_dir + '.mat', preprocessor=preprocessor, validation_ratio=0.1,
                            config=config)
 
     # load prior
-    pm = prior.LSQPrior.from_data(ds)
+    # pm = prior.LSQPrior.from_data(ds)
     # pm = prior.GMMPrior.from_data(ds)
-    # mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds,
-    #                                name='linear')
-    # # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/linear.1470.tar'
-    # # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/linear_full.1470.tar'
-    # checkpoint = None
-    # pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=70, batch_N=500)
+    mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds,
+                                   name='linear')
+    # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/linear.1470.tar'
+    # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/linear_full.1470.tar'
+    checkpoint = None
+    pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=70, batch_N=500)
     u_min, u_max = get_control_bounds()
     ctrl = online_controller.OnlineController(pm, ds=ds, max_timestep=trial_length, R=5, horizon=10, lqr_iter=3,
                                               init_gamma=0.1, u_min=u_min, u_max=u_max)
@@ -214,7 +214,8 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50):
     plt.ioff()
 
     fig, ax = plt.subplots()
-    CS = ax.tricontourf(xy[:, 0], xy[:, 1], emp_error, cmap='plasma', vmin=0, vmax=0.3)
+    # CS = ax.tricontourf(xy[:, 0], xy[:, 1], emp_error, 10, cmap='plasma', vmin=0, vmax=expected_max_error)
+    CS = ax.tripcolor(xy[:, 0], xy[:, 1], emp_error, cmap='plasma', vmin=0, vmax=expected_max_error / 2)
     CBI = fig.colorbar(CS)
     CBI.ax.set_ylabel('model error')
     ax.set_ylabel('y')
@@ -222,7 +223,8 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50):
     ax.set_title('empirical local model error')
 
     fig2, ax2 = plt.subplots()
-    CS2 = ax2.tricontourf(xy[:, 0], xy[:, 1], prior_error, cmap='plasma', vmin=0, vmax=0.3)
+    # CS2 = ax2.tricontourf(xy[:, 0], xy[:, 1], prior_error, 10, cmap='plasma', vmin=0, vmax=expected_max_error)
+    CS2 = ax2.tripcolor(xy[:, 0], xy[:, 1], prior_error, cmap='plasma', vmin=0, vmax=expected_max_error)
     CBI2 = fig2.colorbar(CS2)
     CBI2.ax.set_ylabel('model error')
     ax2.set_ylabel('y')
@@ -234,6 +236,6 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50):
 
 if __name__ == "__main__":
     # test_env_control()
-    collect_data(250, 50, min_allowed_y=-3)
+    # collect_data(250, 50, min_allowed_y=-3)
     # show_prior_accuracy()
-    # compare_empirical_and_prior_error(200, 50)
+    compare_empirical_and_prior_error(200, 50)
