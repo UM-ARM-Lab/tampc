@@ -68,7 +68,7 @@ class ToyEnv:
 
     def __init__(self, init_state, goal, xlim=(-3, 3), ylim=(-3, 3), mode=myenv.Mode.GUI,
                  process_noise=(0.01, 0.01), max_move_step=0.01,
-                 hide_disp=False):
+                 hide_disp=False, keep_within_bounds=True):
         """Simulate for T time steps with a controller"""
         # set at initialization time without a way to change it
         self.init_state, self.goal, self.last_state, self.state = None, None, None, None
@@ -80,6 +80,7 @@ class ToyEnv:
 
         self.mode = mode
         self.hide_disp = hide_disp
+        self.keep_within_bounds = keep_within_bounds
 
         self.max_move_step = max_move_step
 
@@ -144,6 +145,10 @@ class ToyEnv:
         self.state = self.true_dynamics(self.state, action)
         if add_noise:
             self.state += np.random.randn(self.nu) * self.noise
+
+        if self.keep_within_bounds:
+            bounds = tuple(zip(self.xlim, self.ylim))
+            self.state = np.clip(self.state, bounds[0], bounds[1])
 
         cost, done = self._evaluate_cost(action)
 
@@ -309,8 +314,8 @@ class PolynomialWorld(ToyEnv):
             x = x.reshape(1, -1)
         xx = self.poly.transform(x)
         # x y x^2 xy y^2
-        # r = np.sqrt(xx[:, 2] + xx[:, 4])
-        r = xx[:, 2] - xx[:, 4]
+        r = np.sqrt(xx[:, 2] + xx[:, 4]) + xx[:,0]
+        # r = (xx[:, 2] + 2*xx[:, 3] - xx[:, 4])*0.1
         return r
 
     def state_label(self, x):

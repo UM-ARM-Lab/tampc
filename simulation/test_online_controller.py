@@ -38,7 +38,7 @@ def get_env(mode=myenv.Mode.GUI):
     noise = (0.0, 0.0)
     # env = toy.WaterWorld(init_state, goal, mode=mode, process_noise=noise, max_move_step=0.01)
     # save_dir = 'linear/linear0'
-    env = toy.PolynomialWorld(init_state, goal, mode=mode, process_noise=noise, max_move_step=0.01)
+    env = toy.PolynomialWorld(init_state, goal, mode=mode, process_noise=noise, max_move_step=0.01, keep_within_bounds=False)
     save_dir = 'poly/poly0'
     return env
 
@@ -53,6 +53,7 @@ def test_env_control():
 
 
 def collect_data(trials=20, trial_length=40, min_allowed_y=0):
+    logger.info("initial random seed %d", rand.seed(1))
     u_min, u_max = get_control_bounds()
     ctrl = controller.FullRandomController(2, u_min, u_max)
 
@@ -163,14 +164,14 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
     mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds,
                                    name='linear')
     # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/linear.1470.tar'
-    # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/linear_full.1470.tar'
+    checkpoint = '/home/zhsh/catkin_ws/src/meta_contact/checkpoints/linear.630.tar'
     checkpoint = None
     pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=70, batch_N=500)
     u_min, u_max = get_control_bounds()
-    ctrl = online_controller.OnlineController(pm, ds=ds, max_timestep=trial_length, R=5, horizon=10, lqr_iter=3,
+    ctrl = online_controller.OnlineController(pm, ds=ds, max_timestep=trial_length, R=3, horizon=10, lqr_iter=3,
                                               init_gamma=0.1, u_min=u_min, u_max=u_max)
 
-    logger.info("random seed %d", rand.seed(1))
+    logger.info("initial random seed %d", rand.seed(1))
     # randomly distribute data
     min_allowed_y = -2
     i = 0
@@ -236,6 +237,6 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
 
 if __name__ == "__main__":
     # test_env_control()
-    # collect_data(250, 50, min_allowed_y=-3)
+    # collect_data(200, 50, min_allowed_y=-3)
     # show_prior_accuracy()
     compare_empirical_and_prior_error(200, 50)
