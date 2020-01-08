@@ -82,14 +82,6 @@ def concatenate_state_control(px, pu, cx, cu):
     return xu, pxu, xux
 
 
-def get_locally_linear_dynamics(nx, nu, px, pu, cx, cu, N, emp_mu, emp_sigma, prior, sigreg=1e-5):
-    xu, pxu, xux = concatenate_state_control(px, pu, cx, cu)
-
-    # Mix and add regularization (equation 1)
-    sigma, mun = prior.mix(nx, nu, xu, pxu, xux, emp_sigma, emp_mu, N)
-    return conditioned_dynamics(nx, nu, sigma, mun, sigreg)
-
-
 def conditioned_dynamics(nx, nu, sigma, mu, sigreg=1e-5):
     it = slice(nx + nu)
     ip = slice(nx + nu, nx + nu + nx)
