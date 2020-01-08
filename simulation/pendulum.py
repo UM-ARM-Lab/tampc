@@ -4,14 +4,14 @@ import torch
 import logging
 import math
 from gym import wrappers, logger as gym_log
-from arm_pytorch_utilities import rand, load_data
+from arm_pytorch_utilities import rand, load_data, math_utils
 
 from meta_contact.controller import global_controller
 from meta_contact.controller import online_controller
 from meta_contact import prior
 from meta_contact import model
 from arm_pytorch_utilities.model import make
-from arm_pytorch_utilities.make_data import datasets
+from arm_pytorch_utilities.make_data import datasource
 import time
 
 gym_log.set_level(gym_log.INFO)
@@ -21,25 +21,22 @@ logging.basicConfig(level=logging.INFO,
                     datefmt='%m-%d %H:%M:%S')
 
 
-class PendulumDataset(datasets.DataSet):
+class PendulumDataset(datasource.DataSource):
     def __init__(self, data, preprocessor=None, config=load_data.DataConfig(), **kwargs):
 
-        super().__init__(input_dim=3, output_dim=2, **kwargs)
+        super().__init__(**kwargs)
 
         self.data = data
         self.preprocessor = preprocessor
         self.config = config
         self.make_data()
 
-    def make_parameters(self):
-        pass
-
     def make_data(self):
         if self.data is None:
             return
         XU = self.data
         if self.config.predict_difference:
-            dtheta = angular_diff_batch(XU[1:, 0], XU[:-1, 0])
+            dtheta = math_utils.angular_diff_batch(XU[1:, 0], XU[:-1, 0])
             dtheta_dt = XU[1:, 1] - XU[:-1, 1]
             Y = torch.cat((dtheta.view(-1, 1), dtheta_dt.view(-1, 1)), dim=1)  # x' - x residual
         else:
@@ -63,14 +60,6 @@ class PendulumDataset(datasets.DataSet):
         return "{}".format(self.N)
 
 
-def angular_diff_batch(a, b):
-    """Angle difference from b to a (a - b)"""
-    d = a - b
-    d[d > math.pi] -= 2 * math.pi
-    d[d < -math.pi] += 2 * math.pi
-    return d
-
-
 def angle_normalize(x):
     return (((x + math.pi) % (2 * math.pi)) - math.pi)
 
@@ -78,7 +67,7 @@ def angle_normalize(x):
 def compare_to_goal(state, goal):
     if len(goal.shape) == 1:
         goal = goal.view(1, -1)
-    dtheta = angular_diff_batch(state[:, 0], goal[:, 0])
+    dtheta = math_utils.angular_diff_batch(state[:, 0], goal[:, 0])
     dtheta_dt = state[:, 1] - goal[:, 1]
     diff = torch.cat((dtheta.view(-1, 1), dtheta_dt.view(-1, 1)), dim=1)
     return diff
@@ -87,7 +76,7 @@ def compare_to_goal(state, goal):
 def compare_to_goal_np(state, goal):
     if len(goal.shape) == 1:
         goal = goal.reshape(1, -1)
-    dtheta = angular_diff_batch(state[:, 0], goal[:, 0])
+    dtheta = math_utils.angular_diff_batch(state[:, 0], goal[:, 0])
     dtheta_dt = state[:, 1] - goal[:, 1]
     diff = np.column_stack((dtheta.reshape(-1, 1), dtheta_dt.reshape(-1, 1)))
     return diff
@@ -269,7 +258,7 @@ if __name__ == "__main__":
         # evaluate network against true dynamics
         yt = true_dynamics(statev, actionv)
         yp = dynamics(statev, actionv)
-        dtheta = angular_diff_batch(yp[:, 0], yt[:, 0])
+        dtheta = math_utils.angular_diff_batch(yp[:, 0], yt[:, 0])
         dtheta_dt = yp[:, 1] - yt[:, 1]
         E = torch.cat((dtheta.view(-1, 1), dtheta_dt.view(-1, 1)), dim=1).norm(dim=1)
         logger.info("Error with true dynamics theta %f theta_dt %f norm %f", dtheta.abs().mean(),
