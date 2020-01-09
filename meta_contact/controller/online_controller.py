@@ -7,6 +7,7 @@ import numpy as np
 from arm_pytorch_utilities.policy.lin_gauss import LinearGaussianPolicy
 from arm_pytorch_utilities import trajectory, math_utils
 from pytorch_cem import cem
+from pytorch_mppi import mppi
 import torch
 
 LOGGER = logging.getLogger(__name__)
@@ -94,16 +95,16 @@ def noop_constrain(state):
     return state
 
 
-class OnlineCEM(OnlineController):
-    def __init__(self, *args, mpc_opts=None, constrain_state=noop_constrain, dtype=torch.double, **kwargs):
+class OnlineMPC(OnlineController):
+    """
+    Online controller with a pytorch based MPC method (CEM, MPPI)
+    """
+
+    def __init__(self, *args, constrain_state=noop_constrain, dtype=torch.double, **kwargs):
         super().__init__(*args, **kwargs)
-        if mpc_opts is None:
-            mpc_opts = {}
-        self.mpc = cem.CEM(self.apply_dynamics, self.get_running_cost, self.nx, self.nu,
-                           u_min=torch.tensor(self.u_min, dtype=dtype),
-                           u_max=torch.tensor(self.u_max, dtype=dtype),
-                           **mpc_opts)
         self.constrain_state = constrain_state
+        self.mpc = None
+        self.dtype = dtype
 
     def apply_dynamics(self, state, u):
         if state.dim() is 1 or u.dim() is 1:
@@ -126,6 +127,32 @@ class OnlineCEM(OnlineController):
 
     def compute_action(self, x):
         return self.mpc.command(torch.from_numpy(x)).numpy()
+
+
+class OnlineCEM(OnlineMPC):
+    def __init__(self, *args, mpc_opts=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if mpc_opts is None:
+            mpc_opts = {}
+        self.mpc = cem.CEM(self.apply_dynamics, self.get_running_cost, self.nx, self.nu,
+                           u_min=torch.tensor(self.u_min, dtype=self.dtype),
+                           u_max=torch.tensor(self.u_max, dtype=self.dtype),
+                           **mpc_opts)
+
+
+class OnlineMPPI(OnlineMPC):
+    def __init__(self, *args, mpc_opts=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if mpc_opts is None:
+            mpc_opts = {}
+        noise_sigma = mpc_opts.pop('noise_sigma', None)
+        if noise_sigma is None:
+            if torch.is_tensor(self.u_max):
+                noise_sigma = torch.diag(self.u_max)
+            else:
+                noise_mult = self.u_max or 1
+                noise_sigma = torch.eye(self.nu, dtype=self.dtype) * noise_mult
+        self.mpc = mppi.MPPI(self.apply_dynamics, self.get_running_cost, self.nx, noise_sigma=noise_sigma, **mpc_opts)
 
 
 class OnlineLQR(OnlineController):
