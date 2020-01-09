@@ -105,15 +105,10 @@ class OnlineCEM(OnlineController):
             state = state.view(1, -1)
             u = u.view(1, -1)
 
-        next_state = torch.zeros_like(state)
-        N = state.shape[0]
-        for i in range(N):
-            # TODO the MPC method doesn't give dynamics px and pu (different from our prevx and prevu)
-            # TODO batch the called functions? (seems too difficult)
-            cx = state[i].numpy()
-            cu = u[i].numpy()
-            local_dynamic_params = self.dynamics.get_dynamics(None, None, None, cx, cu)
-            next_state[i] = torch.from_numpy(online_dynamics.evaluate_dynamics(cx, cu, *local_dynamic_params))
+        # TODO the MPC method doesn't give dynamics px and pu (different from our prevx and prevu)
+        # verified against non-batch calculations
+        batch_params = self.dynamics.get_batch_dynamics(None, None, state, u)
+        next_state = online_dynamics.batch_evaluate_dynamics(state, u, *batch_params)
 
         # TODO handle this outside by passing parameter in?
         next_state[:, 0] = math_utils.angle_normalize(next_state[:, 0])

@@ -34,6 +34,10 @@ class OnlineDynamicsPrior:
     def get_params(self, nx, nu, xu, pxu, xux):
         """Get normal inverse-Wishart prior parameters (Phi, mu0, m, n0) evaluated at this (pxu,xu)"""
 
+    @abc.abstractmethod
+    def get_batch_params(self, nx, nu, xu, pxu, xux):
+        """Get normal inverse-Wishart prior parameters for batch of data (first dimension is batch)"""
+
 
 def mix_prior(dX, dU, nnF, nnf, xu, sigma_x=None, strength=1.0, dyn_init_sig=None,
               use_least_squares=False, full_calculation=False):
@@ -60,6 +64,25 @@ def mix_prior(dX, dU, nnF, nnf, xu, sigma_x=None, strength=1.0, dyn_init_sig=Non
         nn_Phi = np.r_[np.c_[sigX, sigXK],
                        np.c_[sigXK.T, np.zeros((dX, dX))]]  # Lower right square is unused
         nn_mu = None  # Unused
+
+    return nn_Phi, nn_mu
+
+
+def batch_mix_prior(nx, nu, nnF, strength=1.0):
+    """
+    Mix prior but with batch nnF and expect pytorch tensor instead of np
+    """
+    N = nnF.shape[0]
+    # \bar{Sigma}_xu,xu from section V.B, strength is alpha
+    sigX = torch.eye(nx + nu, dtype=nnF.dtype).repeat(N, 1, 1) * strength
+    # lower left corner, nnF.T is df/dxu
+    sigXK = sigX @ nnF.transpose(1, 2)
+    # TODO check correctness (might need to switch dim between lr, and nn_Phi's cat)
+    # \bar{Sigma}, ignoring lower right
+    top = torch.cat((sigX, sigXK), dim=2)
+    bot = torch.cat((sigXK.transpose(1, 2), torch.zeros((N, nx, nx), dtype=nnF.dtype)), dim=2)
+    nn_Phi = torch.cat((top, bot), dim=1)
+    nn_mu = None  # Unused
 
     return nn_Phi, nn_mu
 
@@ -100,6 +123,21 @@ class NNPrior(OnlineDynamicsPrior):
         nn_Phi, nnf = mix_prior(nx, nu, F, f, xu, strength=self.mix_prior_strength, use_least_squares=False)
         # NOTE nnf is not used
         mu0 = np.r_[xu, xp]
+        # m and n0 are 1 (mix prior strength already scaled nn_Phi)
+        return nn_Phi, mu0, 1, 1
+
+    def get_batch_params(self, nx, nu, xu, pxu, xux):
+        # feed pxu and xu to network (full contextual network)
+        full_input = torch.cat((xu, pxu), 1) if self.full_context else xu
+        # jacobian of xu' wrt xu and pxu, need to strip the pxu columns
+        F = grad.batch_jacobian(self.dyn_net.predict, full_input)
+        # first columns are xu, latter columns are pxu
+        F = F[:, :, :nx + nu]
+        xp = self.dyn_net.predict(full_input)
+        # build \bar{Sigma} (nn_Phi) and \bar{mu} (nnf)
+        nn_Phi, nnf = batch_mix_prior(nx, nu, F, strength=self.mix_prior_strength)
+        # NOTE nnf is not used
+        mu0 = torch.cat((xu, xp), 1)
         # m and n0 are 1 (mix prior strength already scaled nn_Phi)
         return nn_Phi, mu0, 1, 1
 
@@ -222,6 +260,10 @@ class GMMPrior(OnlineDynamicsPrior):
     def get_params(self, nx, nu, xu, pxu, xux):
         return self.eval(nx, nu, xux.reshape(1, nx + nu + nx))
 
+    def get_batch_params(self, nx, nu, xu, pxu, xux):
+        # TODO implement this?
+        raise NotImplementedError
+
 
 class LSQPrior(OnlineDynamicsPrior):
     @classmethod
@@ -239,9 +281,22 @@ class LSQPrior(OnlineDynamicsPrior):
     def get_params(self, nx, nu, xu, pxu, xux):
         return self.dyn_init_sig, self.dyn_init_mu, self.mix_prior_strength, self.mix_prior_strength
 
+    def get_batch_params(self, nx, nu, xu, pxu, xux):
+        N = xu.shape[0]
+        return torch.from_numpy(self.dyn_init_sig).repeat(N, 1, 1), torch.from_numpy(self.dyn_init_mu).repeat(N, 1), \
+               self.mix_prior_strength, self.mix_prior_strength
+
 
 def mix_distributions(emp_sigma, emp_mu, N, Phi, mu0, m, n0):
     """Mix empirical normal with normal inverse-Wishart prior, giving a normal distribution"""
     mu = (N * emp_mu + mu0 * m) / (N + m)
     sigma = (N * emp_sigma + Phi + ((N * m) / (N + m)) * np.outer(emp_mu - mu0, emp_mu - mu0)) / (N + n0)
+    return sigma, mu
+
+
+def batch_mix_distribution(emp_sigma, emp_mu, N, Phi, mu0, m, n0):
+    """Mix current empirical normal with batch prior"""
+    mu = (N * emp_mu + mu0 * m) / (N + m)
+    d = emp_mu - mu0
+    sigma = (N * emp_sigma + Phi + ((N * m) / (N + m)) * linalg.batch_outer_product(d, d)) / (N + n0)
     return sigma, mu
