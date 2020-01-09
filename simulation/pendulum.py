@@ -226,10 +226,16 @@ if __name__ == "__main__":
         return state
 
 
+    # note that it works even if we don't constrain state
+    def constrain_state(state):
+        state[:, 0] = math_utils.angle_normalize(state[:, 0])
+        return state
+
+
     # ctrl = online_controller.OnlineLQR(pm, ds, max_timestep=num_frames, Q=Q.numpy(), R=R, horizon=20, lqr_iter=3,
     #                                    init_gamma=0.1, u_max=ACTION_HIGH, compare_to_goal=compare_to_goal_np)
     ctrl = online_controller.OnlineCEM(pm, ds, Q=Q.numpy(), R=R, u_max=ACTION_HIGH, compare_to_goal=compare_to_goal_np,
-                                       mpc_opts={'init_cov_diag': 10})
+                                       constrain_state=constrain_state, mpc_opts={'init_cov_diag': 10})
     # ctrl = global_controller.GlobalLQRController(ds, u_max=ACTION_HIGH, Q=Q, R=R)
     # ctrl = global_controller.GlobalCEMController(dynamics, ds, R=R, Q=Q, compare_to_goal=compare_to_goal,
     #                                              u_max=torch.tensor(ACTION_HIGH, dtype=dtype), init_cov_diag=10)

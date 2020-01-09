@@ -90,8 +90,12 @@ class OnlineController(Controller):
         """
 
 
+def noop_constrain(state):
+    return state
+
+
 class OnlineCEM(OnlineController):
-    def __init__(self, *args, mpc_opts=None, dtype=torch.double, **kwargs):
+    def __init__(self, *args, mpc_opts=None, constrain_state=noop_constrain, dtype=torch.double, **kwargs):
         super().__init__(*args, **kwargs)
         if mpc_opts is None:
             mpc_opts = {}
@@ -99,6 +103,7 @@ class OnlineCEM(OnlineController):
                            u_min=torch.tensor(self.u_min, dtype=dtype),
                            u_max=torch.tensor(self.u_max, dtype=dtype),
                            **mpc_opts)
+        self.constrain_state = constrain_state
 
     def apply_dynamics(self, state, u):
         if state.dim() is 1 or u.dim() is 1:
@@ -110,8 +115,7 @@ class OnlineCEM(OnlineController):
         batch_params = self.dynamics.get_batch_dynamics(None, None, state, u)
         next_state = online_dynamics.batch_evaluate_dynamics(state, u, *batch_params)
 
-        # TODO handle this outside by passing parameter in?
-        next_state[:, 0] = math_utils.angle_normalize(next_state[:, 0])
+        next_state = self.constrain_state(next_state)
         return next_state
 
     def get_running_cost(self, state, u):
