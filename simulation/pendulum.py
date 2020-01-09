@@ -3,6 +3,8 @@ import numpy as np
 import torch
 import logging
 import math
+import os
+import scipy.io
 from gym import wrappers, logger as gym_log
 from arm_pytorch_utilities import rand, load_data, math_utils
 
@@ -10,6 +12,7 @@ from meta_contact.controller import global_controller
 from meta_contact.controller import online_controller
 from meta_contact import prior
 from meta_contact import model
+from meta_contact import cfg
 from arm_pytorch_utilities.model import make
 from arm_pytorch_utilities.make_data import datasource
 import time
@@ -118,12 +121,16 @@ if __name__ == "__main__":
     N_SAMPLES = 100  # K
     ACTION_LOW = -2.0
     ACTION_HIGH = 2.0
-    num_frames = 1000
+    USE_PREVIOUS_TRIAL_DATA = False
+    num_frames = 500
 
     d = "cpu"
     dtype = torch.double
 
-    logger.info("random seed %d", rand.seed(7))
+    seed = 7
+    logger.info("random seed %d", rand.seed(seed))
+    save_dir = os.path.join(cfg.DATA_DIR, ENV_NAME)
+    save_to = os.path.join(save_dir, "{}.mat".format(seed))
 
     # new hyperparmaeters for approximate dynamics
     TRAIN_EPOCH = 150
@@ -277,6 +284,11 @@ if __name__ == "__main__":
         update_model()
 
 
+    # load data from before if it exists
+    if USE_PREVIOUS_TRIAL_DATA:
+        loaded_data = scipy.io.loadmat(save_to)
+        fill_dataset(loaded_data['XU'])
+
     update_model()
 
     # reset state so it's ready to run
@@ -286,3 +298,9 @@ if __name__ == "__main__":
         env.env.state = [np.pi, 1]
     total_reward, data = run(ctrl, env, train, config, iter=num_frames)
     logger.info("Total reward %f", total_reward)
+    # save data (on successful trials could be used as prior for the next)
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    # export in matlab/numpy compatible format
+    scipy.io.savemat(save_to, mdict={'XU': data.numpy()})
+    logger.info("Finished saving to {}".format(save_to))
