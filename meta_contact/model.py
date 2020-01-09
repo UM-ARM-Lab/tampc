@@ -123,10 +123,15 @@ class DynamicsModel(abc.ABC):
 
     def predict(self, xu):
         """
-        Predict next state
-        :param xu: N x (nx + nu) full input
-        :return: N x nx next states
+        Predict next state; will return with the same dimensions as xu
+        :param xu: B x N x (nx + nu) or N x (nx + nu) full input (if missing B will add it)
+        :return: B x N x nx or N x nx next states
         """
+        orig_shape = xu.shape
+        if len(orig_shape) > 2:
+            # reduce all batch dimensions down to the first one
+            xu = xu.view(-1, orig_shape[-1])
+
         if self.dataset.preprocessor:
             dxb = self._apply_model(self.dataset.preprocessor.transform_x(xu))
             dxb = self.dataset.preprocessor.invert_transform(dxb)
@@ -134,6 +139,9 @@ class DynamicsModel(abc.ABC):
             dxb = self._apply_model(xu)
 
         x = self.advance(xu, dxb)
+        if len(orig_shape) > 2:
+            # restore original batch dimensions; keep variable dimension (nx)
+            x = x.view(*orig_shape[:-1], -1)
         return x
 
     @abc.abstractmethod
