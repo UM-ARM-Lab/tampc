@@ -1,11 +1,13 @@
 import abc
 from meta_contact.controller.controller import Controller
 from meta_contact import cost
-from meta_contact.online_dynamics import OnlineDynamics
+from meta_contact import online_dynamics
 import logging
 import numpy as np
 from arm_pytorch_utilities.policy.lin_gauss import LinearGaussianPolicy
 from arm_pytorch_utilities import trajectory, math_utils
+from pytorch_cem import cem
+import torch
 
 LOGGER = logging.getLogger(__name__)
 
@@ -13,14 +15,16 @@ LOGGER = logging.getLogger(__name__)
 class OnlineController(Controller):
     """Controller mixing locally linear model with prior model from https://arxiv.org/pdf/1509.06841.pdf"""
 
-    def __init__(self, prior, ds, Q=1, R=1, init_gamma=0.1,
-                 compare_to_goal=np.subtract, u_min=None, u_max=None, u_noise=0.1):
+    def __init__(self, prior, ds, init_gamma=0.1,
+                 compare_to_goal=np.subtract, u_min=None, u_max=None, Q=1, R=1, u_noise=0.1):
         super().__init__(compare_to_goal)
         self.nx = ds.config.nx
         self.nu = ds.config.nu
         self.u_min, self.u_max = math_utils.get_bounds(u_min, u_max)
 
         self.u_noise = u_noise
+
+        self.dynamics = online_dynamics.OnlineDynamics(init_gamma, prior, ds)
 
         # Init objects
         if np.isscalar(Q):
@@ -32,7 +36,6 @@ class OnlineController(Controller):
         self.weight_u = np.ones(self.nu) * R
         self.R = np.diag(self.weight_u)
         self.cost = cost.CostQROnline(self.goal, self.Q, self.R, self.compare_to_goal)
-        self.dynamics = OnlineDynamics(init_gamma, prior, ds)
 
         self.prevx = None
         self.prevu = None
@@ -43,12 +46,12 @@ class OnlineController(Controller):
         self.prevu = None
         self.u_history = []
 
-    def update_prior(self, prior):
-        self.dynamics.prior = prior
-
     def set_goal(self, goal):
         super().set_goal(goal)
         self.cost.eetgt = goal
+
+    def update_prior(self, prior):
+        self.dynamics.prior = prior
 
     def command(self, obs):
         t = len(self.u_history)
@@ -85,6 +88,45 @@ class OnlineController(Controller):
         """
         Compute nu-dimensional action from current policy
         """
+
+
+class OnlineCEM(OnlineController):
+    def __init__(self, *args, mpc_opts=None, dtype=torch.double, **kwargs):
+        super().__init__(*args, **kwargs)
+        if mpc_opts is None:
+            mpc_opts = {}
+        self.mpc = cem.CEM(self.apply_dynamics, self.get_running_cost, self.nx, self.nu,
+                           u_min=torch.tensor(self.u_min, dtype=dtype),
+                           u_max=torch.tensor(self.u_max, dtype=dtype),
+                           **mpc_opts)
+
+    def apply_dynamics(self, state, u):
+        if state.dim() is 1 or u.dim() is 1:
+            state = state.view(1, -1)
+            u = u.view(1, -1)
+
+        next_state = torch.zeros_like(state)
+        N = state.shape[0]
+        for i in range(N):
+            # TODO the MPC method doesn't give dynamics px and pu (different from our prevx and prevu)
+            # TODO batch the called functions? (seems too difficult)
+            cx = state[i].numpy()
+            cu = u[i].numpy()
+            local_dynamic_params = self.dynamics.get_dynamics(None, None, None, cx, cu)
+            next_state[i] = torch.from_numpy(online_dynamics.evaluate_dynamics(cx, cu, *local_dynamic_params))
+
+        # TODO handle this outside by passing parameter in?
+        next_state[:, 0] = math_utils.angle_normalize(next_state[:, 0])
+        return next_state
+
+    def get_running_cost(self, state, u):
+        return torch.from_numpy(self.cost(state.numpy(), u.numpy()))
+
+    def update_policy(self, t, x):
+        pass
+
+    def compute_action(self, x):
+        return self.mpc.command(torch.from_numpy(x)).numpy()
 
 
 class OnlineLQR(OnlineController):

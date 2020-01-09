@@ -324,10 +324,7 @@ class CostFKOnline(object):
 
 
 class CostQROnline(object):
-    """QR cost adopted from the GPS code base.
-
-    Assumes only parts of the state space is important for reaching the goal (termed ee - end effector)
-    """
+    """QR cost adopted from the GPS code base."""
 
     def __init__(self, target, Q, R, compare_to_goal):
         self.Q = Q
@@ -336,19 +333,23 @@ class CostQROnline(object):
         self.compare_to_goal = compare_to_goal
         self.final_penalty = 1.0  # weight = sum of remaining weight * final penalty
 
-    def eval(self, X, U, t, jac=None):
-        # Constants.
-        dX = X.shape[1]
-        dU = U.shape[1]
-        T = X.shape[0]
-
+    def __call__(self, X, U):
         X = self.compare_to_goal(X, self.eetgt)
         l = 0.5 * (np.einsum('ij,kj,ik->i', X, self.Q, X) + np.einsum('ij,kj,ik->i', U, self.R, U))
-        # l = 0.5 * (linalg.batch_quadratic_product(X, self.Q) + linalg.batch_quadratic_product(U, self.R)).numpy()
+        return l
+
+    def eval(self, X, U, t, jac=None):
+        # Constants.
+        nx = X.shape[1]
+        nu = U.shape[1]
+        T = X.shape[0]
+
+        l = self.__call__(X, U)
+        X = self.compare_to_goal(X, self.eetgt)
         lu = U @ self.R
         lx = X @ self.Q
         luu = np.tile(self.R, (T, 1, 1))
         lxx = np.tile(self.Q, (T, 1, 1))
-        lux = np.zeros((T, dU, dX))
+        lux = np.zeros((T, nu, nx))
 
         return l, lx, lu, lxx, luu, lux
