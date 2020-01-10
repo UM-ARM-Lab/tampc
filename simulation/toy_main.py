@@ -77,9 +77,9 @@ def collect_data(trials=20, trial_length=40, min_allowed_y=0):
     plt.show()
 
 
-def show_prior_accuracy():
+def show_prior_accuracy(expected_max_error=1., relative=True):
     """
-    Plot a contour map of prior model accuracy linearized across a grid over the state and 0 action
+    Plot a contour map of prior model accuracy linearized across a grid over the state and sampled actions at each state
     :return:
     """
     # create grid over state-input space
@@ -96,49 +96,58 @@ def show_prior_accuracy():
     # can't use preprocessor except for the neural network prior because their returned matrices are wrt transformed
     preprocessor = preprocess.PytorchPreprocessing(preprocess.MinMaxScaler())
     preprocessor = None
-    config = load_data.DataConfig(predict_difference=False, predict_all_dims=True, expanded_input=False)
+    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds = toy.ToyDataSource(data_dir=save_dir + '.mat', preprocessor=preprocessor, validation_ratio=0.1,
                            config=config)
     env = get_env(myenv.Mode.DIRECT)
-    # only for underlying linear env
-    if not isinstance(env, toy.WaterWorld):
-        raise NotImplementedError("Only designed for underlying linear system")
 
     # load prior
-    pm = prior.LSQPrior.from_data(ds)
+    # pm = prior.LSQPrior.from_data(ds)
     # pm = prior.GMMPrior.from_data(ds)
-    # mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds,
-    #                                name='linear_full')
-    # checkpoint = None
-    # pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=30, batch_N=500)
+    mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds,
+                                   name='linear')
+    checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/linear.1150.tar'
+    pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=50, batch_N=500)
 
     # we can evaluate just prior dynamics by mixing with N=0 (no weight for empirical data)
-    nx, nu = toy.WaterWorld.nx, toy.WaterWorld.nu
-    dynamics = online_dynamics.OnlineDynamics(0.1, pm, ds)
+    dynamics = online_dynamics.OnlineDynamics(0.1, pm, ds, N=0)
 
-    u = np.zeros(nu)
-    # true dynamics
-    F1 = np.concatenate((env.A1, env.B1), axis=1)
-    F2 = np.concatenate((env.A2, env.B2), axis=1)
+    bounds = get_control_bounds()
+    num_actions = 20
+    logger.info("random seed %d", rand.seed(1))
+    u = torch.from_numpy(np.random.uniform(*bounds, (num_actions, env.nu)))
     if preprocessor is not None and not isinstance(pm, prior.NNPrior):
         raise RuntimeError("Can't use preprocessor with non NN-prior since it'll return matrices wrt transformed units")
     for i, xy in enumerate(XY):
-        F, f, _ = dynamics.get_dynamics(i, xy, u, xy, u)
-        # compare F against A and B
-        if env.state_label(xy):
-            diff = F - F2
-        else:
-            diff = F - F1
-        Z[i] = (diff.T @ diff).trace()
+        xy = torch.from_numpy(xy).repeat(num_actions, 1)
+        params = dynamics.get_batch_dynamics(xy, u, xy, u)
+        nxp = online_dynamics.batch_evaluate_dynamics(xy, u, *params)
+        nxt = torch.from_numpy(env.true_dynamics(xy.numpy(), u.numpy()))
 
-    Z = np.sqrt(Z)
+        diff = nxt - nxp
+
+        if relative:
+            actual_delta = torch.norm(nxt - xy, dim=1)
+            valid = actual_delta > 0
+            diff = diff[valid]
+            actual_delta = actual_delta[valid]
+            if torch.any(valid):
+                Z[i] = (torch.norm(diff, dim=1) / actual_delta).mean()
+            else:
+                Z[i] = 0
+        else:
+            Z[i] = (torch.norm(diff, dim=1)).mean()
+
+    # normalize to per action
     Z = Z.reshape(X.shape)
+    logger.info("Error min %f max %f median %f std %f", Z.min(), Z.max(), np.median(Z), Z.std())
 
     fig, ax = plt.subplots()
 
-    CS = ax.contourf(X, Y, Z, cmap='plasma', vmin=0, vmax=0.8)
+    # CS = ax.contourf(X, Y, Z, cmap='plasma', vmin=0, vmax=expected_max_error)
+    CS = ax.tripcolor(X.ravel(), Y.ravel(), Z.ravel(), cmap='plasma', vmin=0, vmax=expected_max_error)
     CBI = fig.colorbar(CS)
-    CBI.ax.set_ylabel('local model error')
+    CBI.ax.set_ylabel('local model relative error')
     ax.set_ylabel('y')
     ax.set_xlabel('x')
     ax.set_title('linearized prior model error')
@@ -248,7 +257,7 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
 
 
 if __name__ == "__main__":
-    test_env_control()
+    # test_env_control()
     # collect_data(200, 50, min_allowed_y=-3)
-    # show_prior_accuracy()
+    show_prior_accuracy(relative=False)
     # compare_empirical_and_prior_error(200, 50)
