@@ -264,10 +264,10 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
     plt.show()
 
 
-def learn_invariance():
+def learn_invariance(seed=1):
     dtype = torch.double
     MAX_EPOCH = 50
-    BATCH_SIZE = 1000
+    BATCH_SIZE = 1
     TOO_FAR_FOR_NEIGHBOUR = 1.0  # how far from current point to consider for neighbourhood
     env = get_env(myenv.Mode.DIRECT)
 
@@ -280,7 +280,6 @@ def learn_invariance():
     x = np.random.rand(env.nx).reshape(1, -1)
     poly.fit(x)
 
-    seed = 1
     logger.info("initial random seed %d", rand.seed(seed))
     params = torch.rand(poly.n_output_features_, dtype=dtype, requires_grad=True)
 
@@ -330,8 +329,7 @@ def learn_invariance():
                 np.max(neighbourhood_size),
                 np.median(neighbourhood_size), np.mean(neighbourhood_size))
 
-    # TODO attach summarywriter
-    writer = SummaryWriter(flush_secs=20, comment="{}_batch_{}".format(seed, BATCH_SIZE))
+    writer = SummaryWriter(flush_secs=20, comment="s{}_batch{}".format(seed, BATCH_SIZE))
 
     # actually do training
     optimizer = torch.optim.Adam([params])
@@ -341,6 +339,7 @@ def learn_invariance():
     optimizer.zero_grad()
     batch_cov_loss = None
     batch_mse_loss = None
+    true_params = torch.from_numpy(env.true_params)
     for epoch in range(MAX_EPOCH):
         # randomize the order we're looking at the neighbourhoods
         neighbour_order = np.random.permutation(N)
@@ -355,13 +354,15 @@ def learn_invariance():
                     optimizer.step()
 
                     losses.append(batch_cov_loss.mean().item())
-                    c = torch.nn.functional.cosine_similarity(params, torch.from_numpy(env.true_params), dim=0)
+                    c = torch.nn.functional.cosine_similarity(params, true_params, dim=0)
                     cos_sim.append(c.item())
-                    logger.info("step %d loss %f cos dist %f", step, losses[-1], cos_sim[-1])
+                    dist = torch.norm(params - true_params).item()
+                    logger.info("step %d loss %f cos dist %f dist %f", step, losses[-1], cos_sim[-1], dist)
 
                     writer.add_scalar('mse_loss', batch_mse_loss.mean().item(), step)
                     writer.add_scalar('cov_loss', batch_cov_loss.mean().item(), step)
                     writer.add_scalar('cosine_similiarty', cos_sim[-1], step)
+                    writer.add_scalar('param_diff', dist, step)
 
                     optimizer.zero_grad()
 
@@ -371,8 +372,10 @@ def learn_invariance():
             neighbours = neighbourhood[i]
             # TODO reject neighbourhoods that are too small
             xu = XU[neighbours]
+            x, u = torch.split(xu, env.nx, 1)
             y = Y[neighbours]
-            z = encode(xu[:, :env.nx])
+            # TODO consider other formulations where we encode the x as well
+            z = encode(x)
 
             if len(z.shape) < 2:
                 z = z.view(-1, 1)
@@ -389,20 +392,10 @@ def learn_invariance():
 
             step += 1
 
-    plt.plot(losses)
-    plt.xlabel('step')
-    plt.ylabel('local loss')
-
-    plt.figure()
-    plt.plot(cos_sim)
-    plt.xlabel('step')
-    plt.ylabel('cosine similarity')
-    plt.show()
-
 
 if __name__ == "__main__":
     # test_env_control()
     # collect_data(500, 20, x_min=(-3, -3), x_max=(3, 3))
     # show_prior_accuracy(relative=False)
     # compare_empirical_and_prior_error(200, 50)
-    learn_invariance()
+    learn_invariance(1)
