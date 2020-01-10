@@ -78,6 +78,10 @@ def collect_data(trials=20, trial_length=40, min_allowed_y=0):
 
 
 def show_prior_accuracy():
+    """
+    Plot a contour map of prior model accuracy linearized across a grid over the state and 0 action
+    :return:
+    """
     # create grid over state-input space
     delta = 0.2
     start = -3
@@ -96,6 +100,9 @@ def show_prior_accuracy():
     ds = toy.ToyDataSource(data_dir=save_dir + '.mat', preprocessor=preprocessor, validation_ratio=0.1,
                            config=config)
     env = get_env(myenv.Mode.DIRECT)
+    # only for underlying linear env
+    if not isinstance(env, toy.WaterWorld):
+        raise NotImplementedError("Only designed for underlying linear system")
 
     # load prior
     pm = prior.LSQPrior.from_data(ds)
@@ -107,11 +114,7 @@ def show_prior_accuracy():
 
     # we can evaluate just prior dynamics by mixing with N=0 (no weight for empirical data)
     nx, nu = toy.WaterWorld.nx, toy.WaterWorld.nu
-    N = 0
-    emp_mu = np.zeros(2 * nx + nu)
-    emp_sigma = np.zeros((2 * nx + nu, 2 * nx + nu))
-
-    dynamics = online_dynamics.OnlineDynamics(0.1, pm, emp_mu, emp_sigma, nx, nu)
+    dynamics = online_dynamics.OnlineDynamics(0.1, pm, ds)
 
     u = np.zeros(nu)
     # true dynamics
@@ -143,6 +146,14 @@ def show_prior_accuracy():
 
 
 def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_error=1.):
+    """
+    Compare the empirical linear model against the linearized prior model's accuracy through running
+    an online controller on randomly sampled trials.
+    :param trials:
+    :param trial_length:
+    :param expected_max_error:
+    :return:
+    """
     env = get_env(myenv.Mode.DIRECT)
 
     # data to collect
@@ -237,7 +248,7 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
 
 
 if __name__ == "__main__":
-    # test_env_control()
+    test_env_control()
     # collect_data(200, 50, min_allowed_y=-3)
     # show_prior_accuracy()
-    compare_empirical_and_prior_error(200, 50)
+    # compare_empirical_and_prior_error(200, 50)
