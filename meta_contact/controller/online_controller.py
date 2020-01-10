@@ -17,13 +17,11 @@ class OnlineController(Controller):
     """Controller mixing locally linear model with prior model from https://arxiv.org/pdf/1509.06841.pdf"""
 
     def __init__(self, prior, ds, init_gamma=0.1,
-                 compare_to_goal=np.subtract, u_min=None, u_max=None, Q=1, R=1, u_noise=0.1):
+                 compare_to_goal=np.subtract, u_min=None, u_max=None, Q=1, R=1):
         super().__init__(compare_to_goal)
         self.nx = ds.config.nx
         self.nu = ds.config.nu
         self.u_min, self.u_max = math_utils.get_bounds(u_min, u_max)
-
-        self.u_noise = u_noise
 
         self.dynamics = online_dynamics.OnlineDynamics(init_gamma, prior, ds)
 
@@ -156,11 +154,13 @@ class OnlineMPPI(OnlineMPC):
 
 
 class OnlineLQR(OnlineController):
-    def __init__(self, prior, ds, max_timestep=100, horizon=15, lqr_iter=1, **kwargs):
+    def __init__(self, prior, ds, max_timestep=100, horizon=15, lqr_iter=1, u_noise=0.1, **kwargs):
         super().__init__(prior, ds, **kwargs)
         self.H = horizon
         self.maxT = max_timestep
         self.ds = ds
+
+        self.u_noise = u_noise
 
         # LQR options
         self.min_mu = 1e-6

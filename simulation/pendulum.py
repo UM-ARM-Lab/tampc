@@ -90,7 +90,7 @@ def compare_to_goal_np(state, goal):
 
 
 def run(ctrl, env, retrain_dynamics, config, retrain_after_iter=50, iter=1000, render=True):
-    dataset = torch.zeros((retrain_after_iter, config.nx + config.nu), dtype=torch.double)
+    dataset = torch.zeros((iter, config.nx + config.nu), dtype=torch.double)
     total_reward = 0
     for i in range(iter):
         state = env.state.copy()
@@ -107,11 +107,10 @@ def run(ctrl, env, retrain_dynamics, config, retrain_after_iter=50, iter=1000, r
 
         di = i % retrain_after_iter
         if di == 0 and i > 0:
-            retrain_dynamics(dataset)
-            # don't have to clear dataset since it'll be overridden, but useful for debugging
-            dataset.zero_()
-        dataset[di, :config.nx] = torch.tensor(state)
-        dataset[di, config.nx:] = torch.tensor(action)
+            # just retrain with the recent points
+            retrain_dynamics(dataset[i - retrain_after_iter:i])
+        dataset[i, :config.nx] = torch.tensor(state)
+        dataset[i, config.nx:] = torch.tensor(action)
     return total_reward, dataset
 
 
@@ -122,18 +121,19 @@ if __name__ == "__main__":
     ACTION_LOW = -2.0
     ACTION_HIGH = 2.0
     USE_PREVIOUS_TRIAL_DATA = False
+    SAVE_TRIAL_DATA = False
     num_frames = 500
 
     d = "cpu"
     dtype = torch.double
 
-    seed = 7
+    seed = 6
     logger.info("random seed %d", rand.seed(seed))
     save_dir = os.path.join(cfg.DATA_DIR, ENV_NAME)
     save_to = os.path.join(save_dir, "{}.mat".format(seed))
 
     # new hyperparmaeters for approximate dynamics
-    TRAIN_EPOCH = 150
+    TRAIN_EPOCH = 150  # need more epochs if we're freezing prior (~800)
     BOOT_STRAP_ITER = 100
 
     nx = 2
@@ -240,12 +240,13 @@ if __name__ == "__main__":
 
 
     # ctrl = online_controller.OnlineLQR(pm, ds, max_timestep=num_frames, Q=Q.numpy(), R=R, horizon=20, lqr_iter=3,
+    #                                    u_noise=0.1,
     #                                    init_gamma=0.1, u_max=ACTION_HIGH, compare_to_goal=compare_to_goal_np)
     # ctrl = online_controller.OnlineCEM(pm, ds, Q=Q.numpy(), R=R, u_max=ACTION_HIGH, compare_to_goal=compare_to_goal_np,
-    #                                    constrain_state=constrain_state, mpc_opts={'init_cov_diag': 10})
+    #                                    constrain_state=constrain_state, mpc_opts={'init_cov_diag': 10}) # use seed 7
     ctrl = online_controller.OnlineMPPI(pm, ds, Q=Q.numpy(), R=R, u_max=ACTION_HIGH, compare_to_goal=compare_to_goal_np,
                                         constrain_state=constrain_state,
-                                        mpc_opts={'noise_sigma': torch.eye(nu, dtype=dtype) * 5})  # works with seed 6
+                                        mpc_opts={'noise_sigma': torch.eye(nu, dtype=dtype) * 5})  # use seed 6
     # ctrl = global_controller.GlobalLQRController(ds, u_max=ACTION_HIGH, Q=Q, R=R)
     # ctrl = global_controller.GlobalCEMController(dynamics, ds, R=R, Q=Q, compare_to_goal=compare_to_goal,
     #                                              u_max=torch.tensor(ACTION_HIGH, dtype=dtype), init_cov_diag=10)
@@ -257,7 +258,7 @@ if __name__ == "__main__":
 
 
     def update_model():
-        # TODO recreate prior if necessary (for non-network based priors; since they contain data directly)
+        # recreate prior if necessary (for non-network based priors; since they contain data directly)
         # pm = prior.LSQPrior.from_data(ds)
         # pm = prior.GMMPrior.from_data(ds)
         # ctrl.update_prior(pm)
@@ -265,7 +266,7 @@ if __name__ == "__main__":
         # ctrl.update_model(ds)
         # retrain network (for nn dynamics based controllers)
         mw.unfreeze()
-        mw.learn_model(TRAIN_EPOCH, batch_N=10000)
+        mw.learn_model(TRAIN_EPOCH, batch_N=500)
         mw.freeze()
 
         # evaluate network against true dynamics
@@ -285,9 +286,11 @@ if __name__ == "__main__":
 
 
     # load data from before if it exists
-    if USE_PREVIOUS_TRIAL_DATA:
+    if USE_PREVIOUS_TRIAL_DATA and os.path.isfile(save_to):
         loaded_data = scipy.io.loadmat(save_to)
-        fill_dataset(loaded_data['XU'])
+        new_data = loaded_data['XU']
+        logger.info("Load previous data from {} ({} rows)".format(save_to, new_data.shape[0]))
+        fill_dataset(new_data)
 
     update_model()
 
@@ -299,8 +302,9 @@ if __name__ == "__main__":
     total_reward, data = run(ctrl, env, train, config, iter=num_frames)
     logger.info("Total reward %f", total_reward)
     # save data (on successful trials could be used as prior for the next)
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-    # export in matlab/numpy compatible format
-    scipy.io.savemat(save_to, mdict={'XU': data.numpy()})
-    logger.info("Finished saving to {}".format(save_to))
+    if SAVE_TRIAL_DATA:
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        # export in matlab/numpy compatible format
+        scipy.io.savemat(save_to, mdict={'XU': data.numpy()})
+        logger.info("Finished saving to {}".format(save_to))
