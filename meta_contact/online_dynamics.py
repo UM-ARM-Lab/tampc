@@ -83,8 +83,9 @@ class OnlineDynamics(object):
         """
         # prior parameters
         xu = torch.cat((cx, cu), 1)
-        # TODO handle pxu and xux
-        Phi, mu0, m, n0 = self.prior.get_batch_params(self.nx, self.nu, xu, None, None)
+        pxu = torch.cat((px, pu), 1) if px is not None else None
+        xux = torch.cat((px, pu, cx), 1) if px is not None else None
+        Phi, mu0, m, n0 = self.prior.get_batch_params(self.nx, self.nu, xu, pxu, xux)
 
         # mix prior and empirical distribution
         sigma, mu = prior.batch_mix_distribution(torch.from_numpy(self.sigma), torch.from_numpy(self.mu), self.empsig_N,

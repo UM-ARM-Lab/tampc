@@ -261,8 +261,18 @@ class GMMPrior(OnlineDynamicsPrior):
         return self.eval(nx, nu, xux.reshape(1, nx + nu + nx))
 
     def get_batch_params(self, nx, nu, xu, pxu, xux):
-        # TODO implement this?
-        raise NotImplementedError
+        N = xu.shape[0]
+        nxux = 2 * nx + nu
+        Phi = torch.zeros((N, nxux, nxux), dtype=xu.dtype)
+        mu0 = torch.zeros((N, nxux), dtype=xu.dtype)
+        m = 1
+        n0 = 1
+        for i in range(N):
+            Phi_i, mu0_i, m, n0 = self.get_params(nx, nu, xu[i].numpy(), pxu[i].numpy(), xux[i].numpy())
+            Phi[i] = torch.from_numpy(Phi_i)
+            mu0[i] = torch.from_numpy(mu0_i)
+
+        return Phi, mu0, m, n0
 
 
 class LSQPrior(OnlineDynamicsPrior):
