@@ -304,7 +304,7 @@ class PolynomialWorld(ToyEnv):
         # don't interpolate in discrete time to prevent complicating the dynamics
         f = self.feature(x)
         # simply scale control
-        dx = u * f
+        dx = u * f.reshape(-1, 1)
         return x + dx
 
     def feature(self, x):
