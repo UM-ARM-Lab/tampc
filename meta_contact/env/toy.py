@@ -3,14 +3,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from sklearn.preprocessing import PolynomialFeatures
-from matplotlib.patches import Circle
 import matplotlib.path as mpath
 import matplotlib.patches as mpatches
 from meta_contact.env import myenv
 from hybrid_sysid import simulation
 from meta_contact import cfg
 from arm_pytorch_utilities.make_data import datasource
-from arm_pytorch_utilities import load_data as load_utils, string, math_utils
+from arm_pytorch_utilities import load_data as load_utils
 
 
 class ToyLoader(load_utils.DataLoader):
@@ -314,7 +313,7 @@ class PolynomialWorld(ToyEnv):
             x = x.reshape(1, -1)
         xx = self.poly.transform(x)
         # x y x^2 xy y^2
-        r = np.sqrt(xx[:, 2] + xx[:, 4]) + xx[:,0]
+        r = np.sqrt(xx[:, 2] + xx[:, 4]) + xx[:, 0]
         # r = (xx[:, 2] + 2*xx[:, 3] - xx[:, 4])*0.1
         return r
 
