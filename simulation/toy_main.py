@@ -264,10 +264,10 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
     plt.show()
 
 
-def learn_invariance(seed=1):
+def learn_invariance(seed=1, name=""):
     dtype = torch.double
-    MAX_EPOCH = 50
-    BATCH_SIZE = 1
+    MAX_EPOCH = 10
+    BATCH_SIZE = 100
     TOO_FAR_FOR_NEIGHBOUR = 1.0  # how far from current point to consider for neighbourhood
     env = get_env(myenv.Mode.DIRECT)
 
@@ -282,6 +282,11 @@ def learn_invariance(seed=1):
 
     logger.info("initial random seed %d", rand.seed(seed))
     params = torch.rand(poly.n_output_features_, dtype=dtype, requires_grad=True)
+    true_params = torch.from_numpy(env.true_params)
+
+    # try initialization at correct parameters
+    # params = true_params.clone()
+    # params.requires_grad_(True)
 
     # TODO try a more generalized encoder later (NN with state as input; should be able to learn polynomial)
     def encode(state):
@@ -329,7 +334,7 @@ def learn_invariance(seed=1):
                 np.max(neighbourhood_size),
                 np.median(neighbourhood_size), np.mean(neighbourhood_size))
 
-    writer = SummaryWriter(flush_secs=20, comment="s{}_batch{}".format(seed, BATCH_SIZE))
+    writer = SummaryWriter(flush_secs=20, comment="{}_s{}_batch{}".format(name, seed, BATCH_SIZE))
 
     # actually do training
     optimizer = torch.optim.Adam([params])
@@ -339,7 +344,6 @@ def learn_invariance(seed=1):
     optimizer.zero_grad()
     batch_cov_loss = None
     batch_mse_loss = None
-    true_params = torch.from_numpy(env.true_params)
     for epoch in range(MAX_EPOCH):
         # randomize the order we're looking at the neighbourhoods
         neighbour_order = np.random.permutation(N)
@@ -348,29 +352,34 @@ def learn_invariance(seed=1):
             bi = step % BATCH_SIZE
             if bi == 0:
                 # treat previous batch
-                if batch_cov_loss is not None:
+                if batch_cov_loss is not None and len(batch_cov_loss):
                     # hold stats
-                    batch_cov_loss.mean().backward()
+                    # reduced_loss = sum(batch_cov_loss) / BATCH_SIZE
+                    reduced_loss = sum(batch_mse_loss) / BATCH_SIZE
+                    reduced_loss.backward()
                     optimizer.step()
 
-                    losses.append(batch_cov_loss.mean().item())
+                    losses.append(reduced_loss.item())
                     c = torch.nn.functional.cosine_similarity(params, true_params, dim=0)
                     cos_sim.append(c.item())
                     dist = torch.norm(params - true_params).item()
                     logger.info("step %d loss %f cos dist %f dist %f", step, losses[-1], cos_sim[-1], dist)
 
-                    writer.add_scalar('mse_loss', batch_mse_loss.mean().item(), step)
-                    writer.add_scalar('cov_loss', batch_cov_loss.mean().item(), step)
+                    writer.add_scalar('mse_loss', (sum(batch_mse_loss) / BATCH_SIZE).item(), step)
+                    writer.add_scalar('cov_loss', (sum(batch_cov_loss) / BATCH_SIZE).item(), step)
                     writer.add_scalar('cosine_similiarty', cos_sim[-1], step)
                     writer.add_scalar('param_diff', dist, step)
+                    writer.add_scalar('param_norm', params.norm().item(), step)
 
                     optimizer.zero_grad()
 
-                batch_cov_loss = torch.zeros(BATCH_SIZE)
-                batch_mse_loss = torch.zeros_like(batch_cov_loss)
+                batch_cov_loss = []
+                batch_mse_loss = []
 
             neighbours = neighbourhood[i]
-            # TODO reject neighbourhoods that are too small
+            # reject neighbourhoods that are too small
+            if neighbours.stop - neighbours.start < env.ny + 1:  # dimension of latent space is 1
+                continue
             xu = XU[neighbours]
             x, u = torch.split(xu, env.nx, 1)
             y = Y[neighbours]
@@ -379,16 +388,21 @@ def learn_invariance(seed=1):
 
             if len(z.shape) < 2:
                 z = z.view(-1, 1)
+            # TODO consider other formulations where the transformation of xu is more general
+            z = u * z
             # fit linear model to latent state
             p, cov = linalg.ls_cov(z, y)
             # covariance loss
             cov_loss = cov.trace()
+
+            # nan means no cov?
+
             # mse loss
             yhat = z @ p.t()
             mse_loss = torch.norm(yhat - y, dim=1)
 
-            batch_cov_loss[bi] = cov_loss.mean()
-            batch_mse_loss[bi] = mse_loss.mean()
+            batch_cov_loss.append(cov_loss.mean())
+            batch_mse_loss.append(mse_loss.mean())
 
             step += 1
 
@@ -398,4 +412,5 @@ if __name__ == "__main__":
     # collect_data(500, 20, x_min=(-3, -3), x_max=(3, 3))
     # show_prior_accuracy(relative=False)
     # compare_empirical_and_prior_error(200, 50)
-    learn_invariance(1)
+    for seed in range(10):
+        learn_invariance(seed, "mseloss")
