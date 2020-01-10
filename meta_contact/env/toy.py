@@ -142,6 +142,8 @@ class ToyEnv:
     def step(self, action, add_noise=True):
         self.last_state = self.state.copy()
         self.state = self.true_dynamics(self.state, action)
+        # reduce to 1 dim
+        self.state = self.state.reshape(-1)
         if add_noise:
             self.state += np.random.randn(self.nu) * self.noise
 
@@ -286,6 +288,8 @@ class PolynomialWorld(ToyEnv):
         # create input sample to fit (tells sklearn what input sizes to expect)
         u = np.random.rand(self.nu).reshape(1, -1)
         self.poly.fit(u)
+        # self.true_params = np.array([3, 0, 0.6, 0, -0.8])
+        self.true_params = np.array([0, 0, 0.1, 0, 0.1])
         super().__init__(*args, **kwargs)
 
     def _draw_background(self):
@@ -313,8 +317,7 @@ class PolynomialWorld(ToyEnv):
             x = x.reshape(1, -1)
         xx = self.poly.transform(x)
         # x y x^2 xy y^2
-        r = np.sqrt(xx[:, 2] + xx[:, 4]) + xx[:, 0]
-        # r = (xx[:, 2] + 2*xx[:, 3] - xx[:, 4])*0.1
+        r = xx @ self.true_params
         return r
 
     def state_label(self, x):
