@@ -1,23 +1,21 @@
-import os
-from tensorboardX import SummaryWriter
+import logging
 
 import matplotlib.pyplot as plt
-import torch
 import numpy as np
-import logging
+import torch
+from arm_pytorch_utilities import preprocess
+from arm_pytorch_utilities import rand, load_data
+from arm_pytorch_utilities.model import make
+from meta_contact import cfg
+from meta_contact import invariant
+from meta_contact import model
+from meta_contact import online_dynamics
+from meta_contact import prior
+from meta_contact.controller import controller
+from meta_contact.controller import online_controller
 from meta_contact.env import myenv
 from meta_contact.env import toy
-from meta_contact.controller import controller
-from arm_pytorch_utilities import rand, load_data
-from meta_contact import cfg
-from meta_contact import prior
-from meta_contact import online_dynamics
-from meta_contact import model
-from arm_pytorch_utilities.model import make
-from arm_pytorch_utilities import preprocess
-from meta_contact.controller import online_controller
 from sklearn.preprocessing import PolynomialFeatures
-from arm_pytorch_utilities import linalg
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
@@ -264,147 +262,69 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
     plt.show()
 
 
+class PolynomialInvariantTransform(invariant.InvariantTransform):
+    def __init__(self, ds, nx, true_params, order=2, dtype=torch.double, **kwargs):
+        self.poly = PolynomialFeatures(order, include_bias=False)
+        x = np.random.rand(nx).reshape(1, -1)
+        self.poly.fit(x)
+        self.params = torch.rand(self.poly.n_output_features_, dtype=dtype, requires_grad=True)
+        self.true_params = true_params
+        super().__init__(ds, 1, **kwargs)
+
+    def __call__(self, state, action):
+        poly_out = self.poly.transform(state)
+        z = torch.from_numpy(poly_out) @ self.params
+
+        if len(z.shape) < 2:
+            z = z.view(-1, 1)
+        z = action * z
+        return z
+
+    def parameters(self):
+        return [self.params]
+
+    def _model_state_dict(self):
+        return self.params
+
+    def _load_model_state_dict(self, saved_state_dict):
+        self.params = saved_state_dict
+
+    def _record_metrics(self, writer, batch_mse_loss, batch_cov_loss):
+        super()._record_metrics(writer, batch_mse_loss, batch_cov_loss)
+
+        cs = torch.nn.functional.cosine_similarity(self.params, self.true_params, dim=0).item()
+        dist = torch.norm(self.params - self.true_params).item()
+
+        logger.info("step %d cos dist %f dist %f", self.step, cs, dist)
+
+        writer.add_scalar('cosine_similiarty', cs, self.step)
+        writer.add_scalar('param_diff', dist, self.step)
+        writer.add_scalar('param_norm', self.params.norm().item(), self.step)
+
+
 def learn_invariance(seed=1, name=""):
     dtype = torch.double
     MAX_EPOCH = 10
-    BATCH_SIZE = 100
+    BATCH_SIZE = 10
     TOO_FAR_FOR_NEIGHBOUR = 1.0  # how far from current point to consider for neighbourhood
     env = get_env(myenv.Mode.DIRECT)
-
-    # encoding of the invariance
-    # for the easiest case, parameterize our encoder just broadly enough to include the actual encoding
-    # we know there is linear dynamics in the invariant/latent space
-    order = 2
-    poly = PolynomialFeatures(order, include_bias=False)
-    # create input sample to fit (tells sklearn what input sizes to expect)
-    x = np.random.rand(env.nx).reshape(1, -1)
-    poly.fit(x)
-
-    logger.info("initial random seed %d", rand.seed(seed))
-    params = torch.rand(poly.n_output_features_, dtype=dtype, requires_grad=True)
-    true_params = torch.from_numpy(env.true_params)
-
-    # try initialization at correct parameters
-    # params = true_params.clone()
-    # params.requires_grad_(True)
-
-    # TODO try a more generalized encoder later (NN with state as input; should be able to learn polynomial)
-    def encode(state):
-        polyout = poly.transform(state)
-        z = torch.from_numpy(polyout) @ params
-        return z
 
     preprocessor = None
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds = toy.ToyDataSource(data_dir=save_dir + '.mat', preprocessor=preprocessor, validation_ratio=0.1,
                            config=config)
-    # train from samples of ds that are close in euclidean space
-    XU, Y, _ = ds.training_set()
-    X, U = torch.split(XU, config.nx, dim=1)
-    N = XU.shape[0]
-    neighbourhood = []
-    # predetermine which datapoints are neighbours since it's dependent on only XUY (which don't change during training)
-    # since training set is not shuffled, we can just look at adjacent datapoints sequentially
-    # TODO remove this assumption by doing (expensive) pairwise-distance, or sampling?
-    # for each datapoint we look at other datapoints close to it
-    for i in range(N):
-        # TODO for now just consider distance in X, later consider U and also Y? (for example would indicate contact)
-        # bounds on neighbourhood (assume continuous)
-        li = i
-        ri = i
-        cur = X[i]
-        while li > 0:
-            next = X[li]
-            # TODO encapsulate comparison for being too far
-            if torch.norm(next - cur) > TOO_FAR_FOR_NEIGHBOUR:
-                break
-            li -= 1
-            # TODO decide if we also should update our cur - will result in chaining neighbours
-            # cur = next
-        while ri < N:
-            next = X[ri]
-            if torch.norm(next - cur) > TOO_FAR_FOR_NEIGHBOUR:
-                break
-            ri += 1
-        neighbourhood.append(slice(li, ri))
 
-    # analysis for neighbourhood size; useful for tuning hyperparameters
-    neighbourhood_size = [s.stop - s.start for s in neighbourhood]
-    logger.info("min neighbourhood size %d max %d median %d median %f", np.min(neighbourhood_size),
-                np.max(neighbourhood_size),
-                np.median(neighbourhood_size), np.mean(neighbourhood_size))
+    true_params = torch.from_numpy(env.true_params)
+    logger.info("initial random seed %d", rand.seed(seed))
+    # encoding of the invariance
+    # for the easiest case, parameterize our encoder just broadly enough to include the actual encoding
+    # we know there is linear dynamics in the invariant/latent space
+    # TODO try a more generalized encoder later (NN with state as input; should be able to learn polynomial)
+    invariant_tsf = PolynomialInvariantTransform(ds, env.nx, true_params, dtype=dtype,
+                                                 too_far_for_neighbour=TOO_FAR_FOR_NEIGHBOUR,
+                                                 name='{}_s{}'.format(name, seed))
 
-    writer = SummaryWriter(flush_secs=20, comment="{}_s{}_batch{}".format(name, seed, BATCH_SIZE))
-
-    # actually do training
-    optimizer = torch.optim.Adam([params])
-    losses = []
-    cos_sim = []
-    step = 0
-    optimizer.zero_grad()
-    batch_cov_loss = None
-    batch_mse_loss = None
-    for epoch in range(MAX_EPOCH):
-        # randomize the order we're looking at the neighbourhoods
-        neighbour_order = np.random.permutation(N)
-        # TODO batch process neighbours
-        for i in neighbour_order:
-            bi = step % BATCH_SIZE
-            if bi == 0:
-                # treat previous batch
-                if batch_cov_loss is not None and len(batch_cov_loss):
-                    # hold stats
-                    # reduced_loss = sum(batch_cov_loss) / BATCH_SIZE
-                    reduced_loss = sum(batch_mse_loss) / BATCH_SIZE
-                    reduced_loss.backward()
-                    optimizer.step()
-
-                    losses.append(reduced_loss.item())
-                    c = torch.nn.functional.cosine_similarity(params, true_params, dim=0)
-                    cos_sim.append(c.item())
-                    dist = torch.norm(params - true_params).item()
-                    logger.info("step %d loss %f cos dist %f dist %f", step, losses[-1], cos_sim[-1], dist)
-
-                    writer.add_scalar('mse_loss', (sum(batch_mse_loss) / BATCH_SIZE).item(), step)
-                    writer.add_scalar('cov_loss', (sum(batch_cov_loss) / BATCH_SIZE).item(), step)
-                    writer.add_scalar('cosine_similiarty', cos_sim[-1], step)
-                    writer.add_scalar('param_diff', dist, step)
-                    writer.add_scalar('param_norm', params.norm().item(), step)
-
-                    optimizer.zero_grad()
-
-                batch_cov_loss = []
-                batch_mse_loss = []
-
-            neighbours = neighbourhood[i]
-            # reject neighbourhoods that are too small
-            if neighbours.stop - neighbours.start < env.ny + 1:  # dimension of latent space is 1
-                continue
-            xu = XU[neighbours]
-            x, u = torch.split(xu, env.nx, 1)
-            y = Y[neighbours]
-            # TODO consider other formulations where we encode the x as well
-            z = encode(x)
-
-            if len(z.shape) < 2:
-                z = z.view(-1, 1)
-            # TODO consider other formulations where the transformation of xu is more general
-            z = u * z
-            # fit linear model to latent state
-            p, cov = linalg.ls_cov(z, y)
-            # covariance loss
-            cov_loss = cov.trace()
-
-            # nan means no cov?
-
-            # mse loss
-            yhat = z @ p.t()
-            mse_loss = torch.norm(yhat - y, dim=1)
-
-            batch_cov_loss.append(cov_loss.mean())
-            batch_mse_loss.append(mse_loss.mean())
-
-            step += 1
+    invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
 if __name__ == "__main__":
