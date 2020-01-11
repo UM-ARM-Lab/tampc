@@ -184,6 +184,8 @@ class NetworkInvariantTransform(InvariantTransform):
         xu = torch.cat((state, action), dim=1)
         z = self.user.sample(xu)
 
+        if self.nz is 1:
+            z = z.view(-1, 1)
         # TODO see if we need to formulate it as action * z for toy problem (less generalized, but easier, and nz=1)
         # z = action * z
         return z
