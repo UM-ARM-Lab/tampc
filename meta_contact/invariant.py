@@ -22,6 +22,7 @@ class InvariantTransform(LearnableParameterizedModel):
 
         self.ds = ds
         self.neighbourhood = None
+        self.neighbourhood_validation = None
         self.too_far_for_neighbour = too_far_for_neighbour
         self.nz = nz
 
@@ -52,6 +53,25 @@ class InvariantTransform(LearnableParameterizedModel):
         writer.add_scalar('mse_loss', (sum(batch_mse_loss) / B).item(), self.step)
         writer.add_scalar('cov_loss', (sum(batch_cov_loss) / B).item(), self.step)
 
+    def _evaluate_validation_set(self, writer):
+        with torch.no_grad:
+            X, U, Y = self._get_separate_data_columns(self.ds.validation_set())
+            N = X.shape[0]
+            cov_losses = []
+            mse_losses = []
+            for i in range(N):
+                cov_loss, mse_loss = self._evaluate_neighbour(X, U, Y, self.neighbourhood_validation, i)
+                cov_losses.append(cov_loss.mean())
+                mse_losses.append(mse_loss.mean())
+
+            writer.add_scalar('cov_loss/validation', (sum(cov_losses) / N).item(), self.step)
+            writer.add_scalar('mse_loss/validation', (sum(mse_losses) / N).item(), self.step)
+
+    def _get_separate_data_columns(self, data_set):
+        XU, Y, _ = data_set
+        X, U = torch.split(XU, self.ds.config.nx, dim=1)
+        return X, U, Y
+
     def _is_in_neighbourhood(self, cur, candidate):
         return torch.norm(candidate - cur) < self.too_far_for_neighbour
 
@@ -64,10 +84,20 @@ class InvariantTransform(LearnableParameterizedModel):
         fullname = os.path.join(cfg.DATA_DIR, name)
         if os.path.exists(fullname):
             with open(fullname, 'rb') as f:
-                self.neighbourhood = pickle.load(f)
+                self.neighbourhood, self.neighbourhood_validation = pickle.load(f)
                 logger.info("loaded neighbourhood info from %s", fullname)
+                return
+
+        self.neighbourhood = self._do_calculate_neighbourhood(*self.ds.training_set())
+        self.neighbourhood_validation = self._do_calculate_neighbourhood(*self.ds.validation_set())
+
+        # analysis for neighbourhood size; useful for tuning hyperparameters
+        with open(fullname, 'wb') as f:
+            pickle.dump((self.neighbourhood, self.neighbourhood_validation), f)
+            logger.info("saved neighbourhood info to %s", fullname)
+
+    def _do_calculate_neighbourhood(self, XU, Y, labels):
         # train from samples of ds that are close in euclidean space
-        XU, Y, _ = self.ds.training_set()
         X, U = torch.split(XU, self.ds.config.nx, dim=1)
         N = XU.shape[0]
         neighbourhood = []
@@ -94,16 +124,29 @@ class InvariantTransform(LearnableParameterizedModel):
                     break
                 ri += 1
             neighbourhood.append(slice(li, ri))
-
-        self.neighbourhood = neighbourhood
-        # analysis for neighbourhood size; useful for tuning hyperparameters
         neighbourhood_size = [s.stop - s.start for s in neighbourhood]
         logger.info("min neighbourhood size %d max %d median %d median %f", np.min(neighbourhood_size),
                     np.max(neighbourhood_size),
                     np.median(neighbourhood_size), np.mean(neighbourhood_size))
-        with open(fullname, 'wb') as f:
-            pickle.dump(self.neighbourhood, f)
-            logger.info("saved neighbourhood info to %s", fullname)
+        return neighbourhood
+
+    def _evaluate_neighbour(self, X, U, Y, neighbourhood, i):
+        neighbours = neighbourhood[i]
+        if neighbours.stop - neighbours.start < self.ds.config.ny + self.nz:
+            return None
+        x, u = X[neighbours], U[neighbours]
+        y = Y[neighbours]
+        z = self.__call__(x, u)
+
+        # fit linear model to latent state
+        p, cov = linalg.ls_cov(z, y)
+        # covariance loss
+        cov_loss = cov.trace()
+
+        # mse loss
+        yhat = z @ p.t()
+        mse_loss = torch.norm(yhat - y, dim=1)
+        return cov_loss, mse_loss
 
     def learn_model(self, max_epoch, batch_N=500):
         if self.neighbourhood is None:
@@ -111,9 +154,8 @@ class InvariantTransform(LearnableParameterizedModel):
 
         writer = SummaryWriter(flush_secs=20, comment="{}_batch{}".format(self.name, batch_N))
 
-        XU, Y, _ = self.ds.training_set()
-        X, U = torch.split(XU, self.ds.config.nx, dim=1)
-        N = XU.shape[0]
+        X, U, Y = self._get_separate_data_columns(self.ds.training_set())
+        N = X.shape[0]
 
         save_checkpoint_every_n_epochs = max(max_epoch // 20, 5)
 
@@ -122,6 +164,8 @@ class InvariantTransform(LearnableParameterizedModel):
         batch_cov_loss = None
         batch_mse_loss = None
         for epoch in range(max_epoch):
+            # evaluate on validation at the start of epochs
+            self._evaluate_validation_set(writer)
             if save_checkpoint_every_n_epochs and epoch % save_checkpoint_every_n_epochs == 0:
                 self.save()
             # randomize the order we're looking at the neighbourhoods
@@ -144,23 +188,7 @@ class InvariantTransform(LearnableParameterizedModel):
                     batch_cov_loss = []
                     batch_mse_loss = []
 
-                neighbours = self.neighbourhood[i]
-                # reject neighbourhoods that are too small
-                if neighbours.stop - neighbours.start < self.ds.config.ny + 1:  # dimension of latent space is 1
-                    continue
-                x, u = X[neighbours], U[neighbours]
-                y = Y[neighbours]
-                # TODO this is formulation 1 where y is directly linear in z; consider formulation 2
-                z = self.__call__(x, u)
-
-                # fit linear model to latent state
-                p, cov = linalg.ls_cov(z, y)
-                # covariance loss
-                cov_loss = cov.trace()
-
-                # mse loss
-                yhat = z @ p.t()
-                mse_loss = torch.norm(yhat - y, dim=1)
+                cov_loss, mse_loss = self._evaluate_neighbour(X, U, Y, self.neighbourhood, i)
 
                 batch_cov_loss.append(cov_loss.mean())
                 batch_mse_loss.append(mse_loss.mean())
