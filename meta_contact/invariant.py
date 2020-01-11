@@ -1,6 +1,8 @@
 import abc
 import copy
 import logging
+import os
+import pickle
 
 import numpy as np
 import torch
@@ -57,7 +59,13 @@ class InvariantTransform(LearnableParameterizedModel):
         """
         Calculate information about the neighbour of each data point needed for training
         """
-        # TODO load and save this information since it's expensive to calculate
+        # load and save this information since it's expensive to calculate
+        name = "neighbour_info_{}_{}.pkl".format(self.ds.N, self.ds.config)
+        fullname = os.path.join(cfg.DATA_DIR, name)
+        if os.path.exists(fullname):
+            with open(fullname, 'rb') as f:
+                self.neighbourhood = pickle.load(f)
+                logger.info("loaded neighbourhood info from %s", fullname)
         # train from samples of ds that are close in euclidean space
         XU, Y, _ = self.ds.training_set()
         X, U = torch.split(XU, self.ds.config.nx, dim=1)
@@ -93,6 +101,9 @@ class InvariantTransform(LearnableParameterizedModel):
         logger.info("min neighbourhood size %d max %d median %d median %f", np.min(neighbourhood_size),
                     np.max(neighbourhood_size),
                     np.median(neighbourhood_size), np.mean(neighbourhood_size))
+        with open(fullname, 'wb') as f:
+            pickle.dump(self.neighbourhood, f)
+            logger.info("saved neighbourhood info to %s", fullname)
 
     def learn_model(self, max_epoch, batch_N=500):
         if self.neighbourhood is None:
