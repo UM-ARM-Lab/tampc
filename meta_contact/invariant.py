@@ -119,9 +119,9 @@ class InvariantTransform(LearnableParameterizedModel):
         return neighbourhood
 
     def _evaluate_neighbour(self, X, U, Y, neighbourhood, i):
-        neighbours, neighbour_weights = array_utils.extract_positive_weights(neighbourhood[i])
+        neighbours, neighbour_weights, N = array_utils.extract_positive_weights(neighbourhood[i])
 
-        if neighbour_weights.shape[0] < self.ds.config.ny + self.nz:
+        if N < self.ds.config.ny + self.nz:
             return None
         x, u = X[neighbours], U[neighbours]
         y = Y[neighbours]
