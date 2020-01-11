@@ -303,10 +303,8 @@ class PolynomialInvariantTransform(invariant.InvariantTransform):
         writer.add_scalar('param_norm', self.params.norm().item(), self.step)
 
 
-def learn_invariance(seed=1, name=""):
+def learn_invariance(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
     dtype = torch.double
-    MAX_EPOCH = 10
-    BATCH_SIZE = 10
     TOO_FAR_FOR_NEIGHBOUR = 1.0  # how far from current point to consider for neighbourhood
     env = get_env(myenv.Mode.DIRECT)
 
@@ -336,4 +334,4 @@ if __name__ == "__main__":
     # show_prior_accuracy(relative=False)
     # compare_empirical_and_prior_error(200, 50)
     for seed in range(10):
-        learn_invariance(seed, "general_representation")
+        learn_invariance(seed, "covloss_nn", MAX_EPOCH=40, BATCH_SIZE=5)
