@@ -6,6 +6,7 @@ import pickle
 
 import numpy as np
 import torch
+from arm_pytorch_utilities import array_utils
 from arm_pytorch_utilities import linalg
 from arm_pytorch_utilities.make_data import datasource
 from arm_pytorch_utilities.model import make
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class InvariantTransform(LearnableParameterizedModel):
-    def __init__(self, ds: datasource.DataSource, nz, too_far_for_neighbour=1., **kwargs):
+    def __init__(self, ds: datasource.DataSource, nz, too_far_for_neighbour=0.3, **kwargs):
         super().__init__(cfg.ROOT_DIR, **kwargs)
 
         self.ds = ds
@@ -99,47 +100,35 @@ class InvariantTransform(LearnableParameterizedModel):
     def _do_calculate_neighbourhood(self, XU, Y, labels):
         # train from samples of ds that are close in euclidean space
         X, U = torch.split(XU, self.ds.config.nx, dim=1)
-        N = XU.shape[0]
-        neighbourhood = []
         # can precalculate since XUY won't change during training and it's only dependent on these
         # assume training set is not shuffled, we can just look at adjacent datapoints sequentially
-        # TODO remove this assumption by doing (expensive) pairwise-distance, or sampling?
-        # for each datapoint we look at other datapoints close to it
-        for i in range(N):
-            # TODO for now just consider distance in X, later consider U and also Y?
-            # bounds on neighbourhood (assume continuous)
-            li = i
-            ri = i
-            cur = X[i]
-            while li > 0:
-                neighbour = X[li]
-                if not self._is_in_neighbourhood(cur, neighbour):
-                    break
-                li -= 1
-                # could also update our cur - will result in chaining neighbours
-                # cur = next
-            while ri < N:
-                neighbour = X[ri]
-                if not self._is_in_neighbourhood(cur, neighbour):
-                    break
-                ri += 1
-            neighbourhood.append(slice(li, ri))
-        neighbourhood_size = [s.stop - s.start for s in neighbourhood]
-        logger.info("min neighbourhood size %d max %d median %d median %f", np.min(neighbourhood_size),
-                    np.max(neighbourhood_size),
-                    np.median(neighbourhood_size), np.mean(neighbourhood_size))
+        dists = torch.cdist(X, X)
+        dd = -(dists - self.too_far_for_neighbour)
+
+        # avoid edge case of multiple elements at kth closest distance causing them to become 0
+        dd += 1e-10
+
+        # make neighbours weighted on dist to data (to be used in weighted least squares)
+        weights = dd.clamp(min=0)
+        neighbourhood = weights
+        neighbourhood_size = neighbourhood.sum(1)
+
+        logger.info("min neighbourhood size %d max %d median %d median %f", neighbourhood_size.min(),
+                    neighbourhood_size.max(),
+                    neighbourhood_size.median(), neighbourhood_size.mean())
         return neighbourhood
 
     def _evaluate_neighbour(self, X, U, Y, neighbourhood, i):
-        neighbours = neighbourhood[i]
-        if neighbours.stop - neighbours.start < self.ds.config.ny + self.nz:
+        neighbours, neighbour_weights = array_utils.extract_positive_weights(neighbourhood[i])
+
+        if neighbour_weights.shape[0] < self.ds.config.ny + self.nz:
             return None
         x, u = X[neighbours], U[neighbours]
         y = Y[neighbours]
         z = self.__call__(x, u)
 
         # fit linear model to latent state
-        p, cov = linalg.ls_cov(z, y)
+        p, cov = linalg.ls_cov(z, y, weights=neighbour_weights)
         # covariance loss
         cov_loss = cov.trace()
 
@@ -188,12 +177,15 @@ class InvariantTransform(LearnableParameterizedModel):
                     batch_cov_loss = []
                     batch_mse_loss = []
 
-                cov_loss, mse_loss = self._evaluate_neighbour(X, U, Y, self.neighbourhood, i)
+                self.step += 1
 
+                losses = self._evaluate_neighbour(X, U, Y, self.neighbourhood, i)
+                if losses is None:
+                    continue
+
+                cov_loss, mse_loss = losses
                 batch_cov_loss.append(cov_loss.mean())
                 batch_mse_loss.append(mse_loss.mean())
-
-                self.step += 1
 
         self.save(last=True)
 
