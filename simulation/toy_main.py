@@ -15,6 +15,7 @@ from meta_contact.controller import controller
 from meta_contact.controller import online_controller
 from meta_contact.env import myenv
 from meta_contact.env import toy
+from meta_contact.invariant import NetworkInvariantTransform
 from sklearn.preprocessing import PolynomialFeatures
 
 logger = logging.getLogger(__name__)
@@ -319,10 +320,12 @@ def learn_invariance(seed=1, name=""):
     # encoding of the invariance
     # for the easiest case, parameterize our encoder just broadly enough to include the actual encoding
     # we know there is linear dynamics in the invariant/latent space
-    # TODO try a more generalized encoder later (NN with state as input; should be able to learn polynomial)
-    invariant_tsf = PolynomialInvariantTransform(ds, env.nx, true_params, dtype=dtype,
-                                                 too_far_for_neighbour=TOO_FAR_FOR_NEIGHBOUR,
-                                                 name='{}_s{}'.format(name, seed))
+    # invariant_tsf = PolynomialInvariantTransform(ds, env.nx, true_params, dtype=dtype,
+    #                                              too_far_for_neighbour=TOO_FAR_FOR_NEIGHBOUR,
+    #                                              name='{}_s{}'.format(name, seed))
+    invariant_tsf = NetworkInvariantTransform(ds, 2, too_far_for_neighbour=TOO_FAR_FOR_NEIGHBOUR,
+                                              name='{}_s{}'.format(name, seed))
+    # more generalized encoder
 
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
@@ -333,4 +336,4 @@ if __name__ == "__main__":
     # show_prior_accuracy(relative=False)
     # compare_empirical_and_prior_error(200, 50)
     for seed in range(10):
-        learn_invariance(seed, "mseloss")
+        learn_invariance(seed, "general_representation")

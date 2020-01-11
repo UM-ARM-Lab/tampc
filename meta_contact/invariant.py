@@ -1,12 +1,14 @@
 import abc
+import copy
 import logging
 
 import numpy as np
 import torch
 from arm_pytorch_utilities import linalg
 from arm_pytorch_utilities.make_data import datasource
+from arm_pytorch_utilities.model import make
 from arm_pytorch_utilities.model.common import LearnableParameterizedModel
-from meta_contact import cfg
+from meta_contact import cfg, model
 from tensorboardX import SummaryWriter
 
 logger = logging.getLogger(__name__)
@@ -55,6 +57,7 @@ class InvariantTransform(LearnableParameterizedModel):
         """
         Calculate information about the neighbour of each data point needed for training
         """
+        # TODO load and save this information since it's expensive to calculate
         # train from samples of ds that are close in euclidean space
         XU, Y, _ = self.ds.training_set()
         X, U = torch.split(XU, self.ds.config.nx, dim=1)
@@ -154,3 +157,31 @@ class InvariantTransform(LearnableParameterizedModel):
                 self.step += 1
 
         self.save(last=True)
+
+
+class NetworkInvariantTransform(InvariantTransform):
+    def __init__(self, ds, nz, model_opts=None, **kwargs):
+        if model_opts is None:
+            model_opts = {}
+        config = copy.deepcopy(ds.config)
+        # output the latent space instead of y
+        config.ny = nz
+        self.user = model.DeterministicUser(make.make_sequential_network(config, **model_opts))
+        super().__init__(ds, nz, **kwargs)
+
+    def __call__(self, state, action):
+        xu = torch.cat((state, action), dim=1)
+        z = self.user.sample(xu)
+
+        # TODO see if we need to formulate it as action * z for toy problem (less generalized, but easier, and nz=1)
+        # z = action * z
+        return z
+
+    def parameters(self):
+        return self.user.model.parameters()
+
+    def _model_state_dict(self):
+        return self.user.model.state_dict()
+
+    def _load_model_state_dict(self, saved_state_dict):
+        self.user.model.load_state_dict(saved_state_dict)
