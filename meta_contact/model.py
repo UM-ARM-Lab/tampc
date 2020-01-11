@@ -1,13 +1,14 @@
-import os
 import abc
+import logging
+import os
+
 import numpy as np
-from arm_pytorch_utilities import load_data
-from arm_pytorch_utilities.model.mdn import MixtureDensityNetwork
 import torch
-from arm_pytorch_utilities.optim import Lookahead
+from arm_pytorch_utilities import load_data
+from arm_pytorch_utilities.model.common import LearnableParameterizedModel
+from arm_pytorch_utilities.model.mdn import MixtureDensityNetwork
 from meta_contact import cfg
 from tensorboardX import SummaryWriter
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -160,29 +161,14 @@ class DynamicsModel(abc.ABC):
         return self.predict(xu)
 
 
-class NetworkModelWrapper(DynamicsModel):
-    def __init__(self, model_user: ModelUser, dataset, lr=1e-3, regularization=1e-5, name='', lookahead=True):
-        super(NetworkModelWrapper, self).__init__(dataset)
-        self.optimizer = None
-        self.step = 0
-        self.name = name
+class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
+    def __init__(self, model_user: ModelUser, dataset, lr=1e-3, regularization=1e-5, **kwargs):
+        DynamicsModel.__init__(self, dataset)
+        LearnableParameterizedModel.__init__(self, cfg.ROOT_DIR, **kwargs)
         self.user = model_user
         self.model = model_user.model
 
-        # self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=lr, weight_decay=regularization)
-        self.optimizer = torch.optim.Adam(self.model.parameters())
-        if lookahead:
-            self.optimizer = Lookahead(self.optimizer)
-
-        self.writer = SummaryWriter(flush_secs=20, comment=os.path.basename(name))
-
-    def freeze(self):
-        for param in self.model.parameters():
-            param.requires_grad = False
-
-    def unfreeze(self):
-        for param in self.model.parameters():
-            param.requires_grad = True
+        self.writer = SummaryWriter(flush_secs=20, comment=os.path.basename(self.name))
 
     def _accumulate_stats(self, loss, vloss):
         self.writer.add_scalar('loss/training', loss, self.step)
@@ -231,28 +217,14 @@ class NetworkModelWrapper(DynamicsModel):
         En = np.linalg.norm((Yhatn - Y), axis=1)
         logger.info("Least squares error %f network error %f", E.mean(), En.mean())
 
-    def save(self, last=False):
-        state = {
-            'step': self.step,
-            'state_dict': self.model.state_dict(),
-            'optimizer': self.optimizer.state_dict()
-        }
-        base_dir = os.path.join(cfg.ROOT_DIR, 'checkpoints')
-        if not os.path.isdir(base_dir):
-            os.makedirs(base_dir, exist_ok=True)
-        full_name = os.path.join(base_dir, '{}.{}.tar'.format(self.name, self.step))
-        torch.save(state, full_name)
-        if last:
-            logger.info("saved checkpoint %s", full_name)
+    def _model_state_dict(self):
+        return self.model.state_dict()
 
-    def load(self, filename):
-        if not os.path.isfile(filename):
-            return False
-        checkpoint = torch.load(filename)
-        self.step = checkpoint['step']
-        self.model.load_state_dict(checkpoint['state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer'])
-        return True
+    def _load_model_state_dict(self, saved_state_dict):
+        self.model.load_state_dict(saved_state_dict)
+
+    def parameters(self):
+        return self.model.parameters()
 
     def _apply_model(self, xu):
         return self.user.sample(xu)
