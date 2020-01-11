@@ -133,8 +133,8 @@ class InvariantTransform(LearnableParameterizedModel):
                     # treat previous batch
                     if batch_cov_loss is not None and len(batch_cov_loss):
                         # hold stats
-                        # reduced_loss = sum(batch_cov_loss) / batch_N
-                        reduced_loss = sum(batch_mse_loss) / batch_N
+                        # reduced_loss = sum(batch_cov_loss)
+                        reduced_loss = sum(batch_mse_loss)
                         reduced_loss.backward()
                         self.optimizer.step()
                         self.optimizer.zero_grad()
