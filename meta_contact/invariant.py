@@ -18,13 +18,15 @@ logger = logging.getLogger(__name__)
 
 
 class InvariantTransform(LearnableParameterizedModel):
-    def __init__(self, ds: datasource.DataSource, nz, too_far_for_neighbour=0.3, **kwargs):
+    def __init__(self, ds: datasource.DataSource, nz, too_far_for_neighbour=0.3,
+                 train_on_continuous_data=False, **kwargs):
         super().__init__(cfg.ROOT_DIR, **kwargs)
 
         self.ds = ds
         self.neighbourhood = None
         self.neighbourhood_validation = None
         self.too_far_for_neighbour = too_far_for_neighbour
+        self.train_on_continuous_data = train_on_continuous_data
         self.nz = nz
 
     @abc.abstractmethod
@@ -55,13 +57,16 @@ class InvariantTransform(LearnableParameterizedModel):
         writer.add_scalar('cov_loss', (sum(batch_cov_loss) / B).item(), self.step)
 
     def _evaluate_validation_set(self, writer):
-        with torch.no_grad:
+        with torch.no_grad():
             X, U, Y = self._get_separate_data_columns(self.ds.validation_set())
             N = X.shape[0]
             cov_losses = []
             mse_losses = []
             for i in range(N):
-                cov_loss, mse_loss = self._evaluate_neighbour(X, U, Y, self.neighbourhood_validation, i)
+                losses = self._evaluate_neighbour(X, U, Y, self.neighbourhood_validation, i)
+                if losses is None:
+                    continue
+                cov_loss, mse_loss = losses
                 cov_losses.append(cov_loss.mean())
                 mse_losses.append(mse_loss.mean())
 
@@ -89,7 +94,8 @@ class InvariantTransform(LearnableParameterizedModel):
                 logger.info("loaded neighbourhood info from %s", fullname)
                 return
 
-        self.neighbourhood = self._do_calculate_neighbourhood(*self.ds.training_set())
+        self.neighbourhood = self._do_calculate_neighbourhood(*self.ds.training_set(),
+                                                              consider_only_continuous=self.train_on_continuous_data)
         self.neighbourhood_validation = self._do_calculate_neighbourhood(*self.ds.validation_set())
 
         # analysis for neighbourhood size; useful for tuning hyperparameters
@@ -97,21 +103,46 @@ class InvariantTransform(LearnableParameterizedModel):
             pickle.dump((self.neighbourhood, self.neighbourhood_validation), f)
             logger.info("saved neighbourhood info to %s", fullname)
 
-    def _do_calculate_neighbourhood(self, XU, Y, labels):
+    def _do_calculate_neighbourhood(self, XU, Y, labels, consider_only_continuous=False):
         # train from samples of ds that are close in euclidean space
         X, U = torch.split(XU, self.ds.config.nx, dim=1)
         # can precalculate since XUY won't change during training and it's only dependent on these
-        # assume training set is not shuffled, we can just look at adjacent datapoints sequentially
-        dists = torch.cdist(X, X)
-        dd = -(dists - self.too_far_for_neighbour)
+        # TODO for now just consider distance in X, later consider U and also Y?
+        if consider_only_continuous:
+            # assume training set is not shuffled, we can just look at adjacent datapoints sequentially
+            N = XU.shape[0]
+            neighbourhood = []
+            for i in range(N):
+                # bounds on neighbourhood (assume continuous)
+                li = i
+                ri = i
+                cur = X[i]
+                while li > 0:
+                    neighbour = X[li]
+                    if not self._is_in_neighbourhood(cur, neighbour):
+                        break
+                    li -= 1
+                    # could also update our cur - will result in chaining neighbours
+                    # cur = next
+                while ri < N:
+                    neighbour = X[ri]
+                    if not self._is_in_neighbourhood(cur, neighbour):
+                        break
+                    ri += 1
+                neighbourhood.append(slice(li, ri))
+            neighbourhood_size = torch.tensor([s.stop - s.start for s in neighbourhood], dtype=torch.double)
+        else:
+            # resort to calculating pairwise distance for all data points
+            dists = torch.cdist(X, X)
+            dd = -(dists - self.too_far_for_neighbour)
 
-        # avoid edge case of multiple elements at kth closest distance causing them to become 0
-        dd += 1e-10
+            # avoid edge case of multiple elements at kth closest distance causing them to become 0
+            dd += 1e-10
 
-        # make neighbours weighted on dist to data (to be used in weighted least squares)
-        weights = dd.clamp(min=0)
-        neighbourhood = weights
-        neighbourhood_size = neighbourhood.sum(1)
+            # make neighbours weighted on dist to data (to be used in weighted least squares)
+            weights = dd.clamp(min=0)
+            neighbourhood = weights
+            neighbourhood_size = neighbourhood.sum(1)
 
         logger.info("min neighbourhood size %d max %d median %d median %f", neighbourhood_size.min(),
                     neighbourhood_size.max(),
