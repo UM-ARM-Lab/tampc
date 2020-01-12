@@ -8,6 +8,7 @@ import numpy as np
 import torch
 from arm_pytorch_utilities import array_utils
 from arm_pytorch_utilities import linalg
+from arm_pytorch_utilities import math_utils
 from arm_pytorch_utilities.make_data import datasource
 from arm_pytorch_utilities.model import make
 from arm_pytorch_utilities.model.common import LearnableParameterizedModel
@@ -62,22 +63,43 @@ class InvariantTransform(LearnableParameterizedModel):
         writer.add_scalar('mse_loss', (sum(batch_mse_loss) / B).item(), self.step)
         writer.add_scalar('cov_loss', (sum(batch_cov_loss) / B).item(), self.step)
 
-    def _evaluate_validation_set(self, writer):
+    def _evaluate_metrics_on_whole_set(self, neighbourhood, tsf):
         with torch.no_grad():
-            X, U, Y = self._get_separate_data_columns(self.ds.validation_set())
+            data_set = self.ds.validation_set() if neighbourhood is self.neighbourhood_validation else \
+                self.ds.training_set()
+            X, U, Y = self._get_separate_data_columns(data_set)
             N = X.shape[0]
             cov_losses = []
             mse_losses = []
             for i in range(N):
-                losses = self._evaluate_neighbour(X, U, Y, self.neighbourhood_validation, i)
+                losses = self._evaluate_neighbour(X, U, Y, neighbourhood, i, tsf)
                 if losses is None:
                     continue
                 cov_loss, mse_loss = losses
                 cov_losses.append(cov_loss.mean())
                 mse_losses.append(mse_loss.mean())
 
-            writer.add_scalar('cov_loss/validation', (sum(cov_losses) / N).item(), self.step)
-            writer.add_scalar('mse_loss/validation', (sum(mse_losses) / N).item(), self.step)
+            cov_losses = torch.tensor(cov_losses)
+            mse_losses = torch.tensor(mse_losses)
+            # filter out nan/inf
+            math_utils.replace_nan_and_inf(cov_losses, 0)
+            return [losses.mean().item() for losses in (cov_losses, mse_losses)]
+
+    def _evaluate_validation_set(self, writer):
+        cov_loss, mse_loss = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation,
+                                                                 TransformToUse.LATENT_SPACE)
+        writer.add_scalar('cov_loss/validation', cov_loss, self.step)
+        writer.add_scalar('mse_loss/validation', mse_loss, self.step)
+
+    def _evaluate_no_transform(self, writer):
+        cov_loss, mse_loss = self._evaluate_metrics_on_whole_set(self.neighbourhood,
+                                                                 TransformToUse.NO_TRANSFORM)
+        writer.add_scalar('original_cov_loss', cov_loss, self.step)
+        writer.add_scalar('original_mse_loss', mse_loss, self.step)
+        cov_loss, mse_loss = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation,
+                                                                 TransformToUse.NO_TRANSFORM)
+        writer.add_scalar('original_cov_loss/validation', cov_loss, self.step)
+        writer.add_scalar('original_mse_loss/validation', mse_loss, self.step)
 
     def _get_separate_data_columns(self, data_set):
         XU, Y, _ = data_set
@@ -197,6 +219,7 @@ class InvariantTransform(LearnableParameterizedModel):
         self.optimizer.zero_grad()
         batch_cov_loss = None
         batch_mse_loss = None
+        self._evaluate_no_transform(writer)
         for epoch in range(max_epoch):
             logger.info("Start epoch %d", epoch)
             # evaluate on validation at the start of epochs
@@ -234,6 +257,7 @@ class InvariantTransform(LearnableParameterizedModel):
                 batch_mse_loss.append(mse_loss.mean())
 
         self.save(last=True)
+        self._evaluate_no_transform(writer)
 
 
 class NetworkInvariantTransform(InvariantTransform):
