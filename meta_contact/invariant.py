@@ -17,6 +17,12 @@ from tensorboardX import SummaryWriter
 logger = logging.getLogger(__name__)
 
 
+class TransformToUse:
+    NO_TRANSFORM = 0
+    REDUCE_TO_INPUT = 1
+    LATENT_SPACE = 2
+
+
 class InvariantTransform(LearnableParameterizedModel):
     def __init__(self, ds: datasource.DataSource, nz, too_far_for_neighbour=0.3,
                  train_on_continuous_data=False, **kwargs):
@@ -149,14 +155,22 @@ class InvariantTransform(LearnableParameterizedModel):
                     neighbourhood_size.median(), neighbourhood_size.mean())
         return neighbourhood
 
-    def _evaluate_neighbour(self, X, U, Y, neighbourhood, i):
+    def _evaluate_neighbour(self, X, U, Y, neighbourhood, i, tsf=TransformToUse.LATENT_SPACE):
         neighbours, neighbour_weights, N = array_utils.extract_positive_weights(neighbourhood[i])
 
         if N < self.ds.config.ny + self.nz:
             return None
         x, u = X[neighbours], U[neighbours]
         y = Y[neighbours]
-        z = self.__call__(x, u)
+
+        if tsf is TransformToUse.LATENT_SPACE:
+            z = self.__call__(x, u)
+        elif tsf is TransformToUse.REDUCE_TO_INPUT:
+            z = u
+        elif tsf is TransformToUse.NO_TRANSFORM:
+            z = torch.cat((x, u), dim=1)
+        else:
+            raise RuntimeError("Unrecognized option for transform")
 
         # fit linear model to latent state
         p, cov = linalg.ls_cov(z, y, weights=neighbour_weights)
