@@ -219,6 +219,8 @@ class InvariantTransform(LearnableParameterizedModel):
         else:
             raise RuntimeError("Unrecognized option for transform")
 
+        if N < self.ds.config.ny + z.shape[1]:
+            return None
         # fit linear model to latent state
         p, cov = linalg.ls_cov(z, y, weights=neighbour_weights)
         # covariance loss
