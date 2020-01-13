@@ -339,14 +339,16 @@ class InvariantPreprocessor(preprocess.Preprocess):
     def __init__(self, tsf: InvariantTransform, **kwargs):
         self.tsf = tsf
         self.tsf.freeze()
-        self.tsf_output_dim = None
+        self.model_input_dim = None
+        self.model_output_dim = None
         super(InvariantPreprocessor, self).__init__(**kwargs)
 
     def update_data_config(self, config: load_data.DataConfig):
-        if self.tsf_output_dim is None:
+        if self.model_output_dim is None:
             raise RuntimeError("Fit the preprocessor for it to know what the proper output dim is")
-        config.n_input = self.tsf.nz
-        config.ny = self.tsf_output_dim  # either ny or nz
+        # this is not just tsf.nz because the tsf could have an additional structure such as z*u as output
+        config.n_input = self.model_input_dim
+        config.ny = self.model_output_dim  # either ny or nz
 
     def transform_x(self, XU):
         X, U = torch.split(XU, self.tsf.config.nx, dim=1)
@@ -361,5 +363,8 @@ class InvariantPreprocessor(preprocess.Preprocess):
 
     def _fit_impl(self, XU, Y, labels):
         """Figure out what the transform outputs"""
+        x, u = torch.split(XU[0].view(1, -1), self.tsf.config.nx, dim=1)
+        z = self.tsf.xu_to_z(x, u)
+        self.model_input_dim = z.shape[1]
         dz = self.tsf.dx_to_dz(Y[0].view(1, -1))
-        self.tsf_output_dim = dz.shape[1]
+        self.model_output_dim = dz.shape[1]
