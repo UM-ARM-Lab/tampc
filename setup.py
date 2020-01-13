@@ -13,5 +13,5 @@ setup(
     tests_require=[
         'pytest',
         'tensorboardX'
-    ], install_requires=['matplotlib', 'numpy', 'scikit-learn']
+    ], install_requires=['matplotlib', 'numpy', 'scikit-learn', 'torch']
 )
