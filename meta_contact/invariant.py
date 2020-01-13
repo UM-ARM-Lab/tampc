@@ -30,7 +30,6 @@ class InvariantTransform(LearnableParameterizedModel):
     def __init__(self, ds: datasource.DataSource, nz, too_far_for_neighbour=0.3,
                  train_on_continuous_data=False, **kwargs):
         super().__init__(cfg.ROOT_DIR, **kwargs)
-
         self.ds = ds
         # copy of config in case it gets modified later (such as by preprocessors)
         self.config = copy.deepcopy(ds.config)
@@ -39,6 +38,8 @@ class InvariantTransform(LearnableParameterizedModel):
         self.too_far_for_neighbour = too_far_for_neighbour
         self.train_on_continuous_data = train_on_continuous_data
         self.nz = nz
+        # update name with parameteres
+        self.name = '{}_{}'.format(self.nz, self.name)
 
     @abc.abstractmethod
     def xu_to_z(self, state, action):
