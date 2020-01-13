@@ -162,7 +162,7 @@ class DynamicsModel(abc.ABC):
 
 
 class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
-    def __init__(self, model_user: ModelUser, dataset, lr=1e-3, regularization=1e-5, **kwargs):
+    def __init__(self, model_user: ModelUser, dataset,  **kwargs):
         self.user = model_user
         self.model = model_user.model
 
