@@ -163,10 +163,11 @@ class DynamicsModel(abc.ABC):
 
 class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
     def __init__(self, model_user: ModelUser, dataset, lr=1e-3, regularization=1e-5, **kwargs):
-        DynamicsModel.__init__(self, dataset)
-        LearnableParameterizedModel.__init__(self, cfg.ROOT_DIR, **kwargs)
         self.user = model_user
         self.model = model_user.model
+
+        DynamicsModel.__init__(self, dataset)
+        LearnableParameterizedModel.__init__(self, cfg.ROOT_DIR, **kwargs)
 
         self.writer = SummaryWriter(flush_secs=20, comment=os.path.basename(self.name))
 
