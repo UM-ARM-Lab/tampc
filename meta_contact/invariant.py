@@ -41,7 +41,7 @@ class InvariantTransform(LearnableParameterizedModel):
         self.nz = nz
 
     @abc.abstractmethod
-    def __call__(self, state, action):
+    def xu_to_z(self, state, action):
         """
         Transform state and action down to underlying latent input of dynamics.
         This transform should be invariant to certain variations in state action, such as
@@ -190,7 +190,7 @@ class InvariantTransform(LearnableParameterizedModel):
         y = Y[neighbours]
 
         if tsf is TransformToUse.LATENT_SPACE:
-            z = self.__call__(x, u)
+            z = self.xu_to_z(x, u)
         elif tsf is TransformToUse.REDUCE_TO_INPUT:
             z = u
         elif tsf is TransformToUse.NO_TRANSFORM:
@@ -274,7 +274,7 @@ class NetworkInvariantTransform(InvariantTransform):
         self.user = model.DeterministicUser(make.make_sequential_network(config, **model_opts))
         super().__init__(ds, nz, **kwargs)
 
-    def __call__(self, state, action):
+    def xu_to_z(self, state, action):
         xu = torch.cat((state, action), dim=1)
         z = self.user.sample(xu)
 
@@ -307,7 +307,7 @@ class InvariantUser(preprocess.Preprocess):
 
     def transform_x(self, XU):
         X, U = torch.split(XU, self.tsf.config.nx, dim=1)
-        return self.tsf(X, U)
+        return self.tsf.xu_to_z(X, U)
 
     def transform_y(self, Y):
         # never have to implement this since the invariant transform

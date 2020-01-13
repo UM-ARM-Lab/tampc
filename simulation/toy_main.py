@@ -272,7 +272,7 @@ class PolynomialInvariantTransform(invariant.InvariantTransform):
         self.true_params = true_params
         super().__init__(ds, 1, **kwargs)
 
-    def __call__(self, state, action):
+    def xu_to_z(self, state, action):
         poly_out = self.poly.transform(state)
         z = torch.from_numpy(poly_out) @ self.params
 
