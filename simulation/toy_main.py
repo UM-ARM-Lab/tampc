@@ -304,8 +304,6 @@ class PolynomialInvariantTransform(invariant.DirectLinearDynamicsTransform):
 
 
 def learn_invariance(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
-    dtype = torch.double
-    TOO_FAR_FOR_NEIGHBOUR = 1.0  # how far from current point to consider for neighbourhood
     env = get_env(myenv.Mode.DIRECT)
 
     preprocessor = None
@@ -318,10 +316,10 @@ def learn_invariance(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
     # encoding of the invariance
     # for the easiest case, parameterize our encoder just broadly enough to include the actual encoding
     # we know there is linear dynamics in the invariant/latent space
-    # invariant_tsf = PolynomialInvariantTransform(ds, env.nx, true_params, dtype=dtype,
-    #                                              too_far_for_neighbour=TOO_FAR_FOR_NEIGHBOUR,
+    # invariant_tsf = PolynomialInvariantTransform(ds, env.nx, true_params,
+    #                                              too_far_for_neighbour=1.,
     #                                              name='{}_s{}'.format(name, seed))
-    invariant_tsf = NetworkInvariantTransform(ds, 2, too_far_for_neighbour=TOO_FAR_FOR_NEIGHBOUR,
+    invariant_tsf = NetworkInvariantTransform(ds, 2, too_far_for_neighbour=0.3,
                                               name='{}_s{}'.format(name, seed))
     # more generalized encoder
 
@@ -333,5 +331,5 @@ if __name__ == "__main__":
     # collect_data(500, 20, x_min=(-3, -3), x_max=(3, 3))
     # show_prior_accuracy(relative=False)
     # compare_empirical_and_prior_error(200, 50)
-    for seed in range(10):
-        learn_invariance(seed, "covloss_nn", MAX_EPOCH=40, BATCH_SIZE=5)
+    for seed in range(5):
+        learn_invariance(seed, "default", MAX_EPOCH=40, BATCH_SIZE=5)
