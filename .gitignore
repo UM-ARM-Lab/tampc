@@ -11,6 +11,7 @@ constraint.py
 *~
 temp.*
 runs
+old_runs
 checkpoints
 *.mat
 .env/

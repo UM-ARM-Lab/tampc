@@ -15,7 +15,6 @@ from meta_contact.controller import controller
 from meta_contact.controller import online_controller
 from meta_contact.env import myenv
 from meta_contact.env import toy
-from meta_contact.invariant import NetworkInvariantTransform
 from sklearn.preprocessing import PolynomialFeatures
 
 logger = logging.getLogger(__name__)
@@ -172,13 +171,6 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
     """
     env = get_env(myenv.Mode.DIRECT)
 
-    # data to collect
-    N = trials * (trial_length - 1)
-    xy = np.zeros((N, env.nx))
-    u = np.zeros((N, env.nu))
-    emp_error = np.zeros(N)
-    prior_error = np.zeros_like(emp_error)
-
     # data source
     preprocessor = preprocess.PytorchPreprocessing(preprocess.MinMaxScaler())
     preprocessor = None
@@ -199,6 +191,39 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
     ctrl = online_controller.OnlineLQR(pm, ds=ds, max_timestep=trial_length, R=3, horizon=10, lqr_iter=3,
                                        init_gamma=0.1, u_min=u_min, u_max=u_max)
 
+    xy, emp_error, prior_error, total_cost = evaluate_ctrl(env, ctrl, trials, trial_length)
+
+    plt.ioff()
+
+    fig, ax = plt.subplots()
+    # CS = ax.tricontourf(xy[:, 0], xy[:, 1], emp_error, 10, cmap='plasma', vmin=0, vmax=expected_max_error)
+    CS = ax.tripcolor(xy[:, 0], xy[:, 1], emp_error, cmap='plasma', vmin=0, vmax=expected_max_error / 2)
+    CBI = fig.colorbar(CS)
+    CBI.ax.set_ylabel('model error')
+    ax.set_ylabel('y')
+    ax.set_xlabel('x')
+    ax.set_title('empirical local model error')
+
+    fig2, ax2 = plt.subplots()
+    # CS2 = ax2.tricontourf(xy[:, 0], xy[:, 1], prior_error, 10, cmap='plasma', vmin=0, vmax=expected_max_error)
+    CS2 = ax2.tripcolor(xy[:, 0], xy[:, 1], prior_error, cmap='plasma', vmin=0, vmax=expected_max_error)
+    CBI2 = fig2.colorbar(CS2)
+    CBI2.ax.set_ylabel('model error')
+    ax2.set_ylabel('y')
+    ax2.set_xlabel('x')
+    ax2.set_title('prior linearized model error')
+
+    plt.show()
+
+
+def evaluate_ctrl(env, ctrl, trials, trial_length):
+    # data to collect
+    N = trials * (trial_length - 1)
+    xy = np.zeros((N, env.nx))
+    u = np.zeros((N, env.nu))
+    emp_error = np.zeros(N)
+    prior_error = np.zeros_like(emp_error)
+
     logger.info("initial random seed %d", rand.seed(1))
     # randomly distribute data
     min_allowed_y = -2
@@ -213,6 +238,7 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
         env.set_task_config(init_state=init_state, goal=goal)
         ctrl.set_goal(goal)
 
+        rew = 0
         for j in range(trial_length):
             xy[i] = env.state
             action = ctrl.command(env.state)
@@ -239,28 +265,7 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
     xy = xy[:i]
     emp_error = emp_error[:i]
     prior_error = prior_error[:i]
-
-    plt.ioff()
-
-    fig, ax = plt.subplots()
-    # CS = ax.tricontourf(xy[:, 0], xy[:, 1], emp_error, 10, cmap='plasma', vmin=0, vmax=expected_max_error)
-    CS = ax.tripcolor(xy[:, 0], xy[:, 1], emp_error, cmap='plasma', vmin=0, vmax=expected_max_error / 2)
-    CBI = fig.colorbar(CS)
-    CBI.ax.set_ylabel('model error')
-    ax.set_ylabel('y')
-    ax.set_xlabel('x')
-    ax.set_title('empirical local model error')
-
-    fig2, ax2 = plt.subplots()
-    # CS2 = ax2.tricontourf(xy[:, 0], xy[:, 1], prior_error, 10, cmap='plasma', vmin=0, vmax=expected_max_error)
-    CS2 = ax2.tripcolor(xy[:, 0], xy[:, 1], prior_error, cmap='plasma', vmin=0, vmax=expected_max_error)
-    CBI2 = fig2.colorbar(CS2)
-    CBI2.ax.set_ylabel('model error')
-    ax2.set_ylabel('y')
-    ax2.set_xlabel('x')
-    ax2.set_title('prior linearized model error')
-
-    plt.show()
+    return xy, emp_error, prior_error, total_cost
 
 
 class PolynomialInvariantTransform(invariant.DirectLinearDynamicsTransform):
@@ -271,6 +276,7 @@ class PolynomialInvariantTransform(invariant.DirectLinearDynamicsTransform):
         self.params = torch.rand(self.poly.n_output_features_, dtype=dtype, requires_grad=True)
         self.true_params = true_params
         super().__init__(ds, 1, **kwargs)
+        self.name = 'poly_{}'.format(self.name)
 
     def xu_to_z(self, state, action):
         poly_out = self.poly.transform(state)
@@ -303,7 +309,7 @@ class PolynomialInvariantTransform(invariant.DirectLinearDynamicsTransform):
         writer.add_scalar('param_norm', self.params.norm().item(), self.step)
 
 
-def learn_invariance(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
+def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
     env = get_env(myenv.Mode.DIRECT)
 
     preprocessor = None
@@ -317,13 +323,55 @@ def learn_invariance(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
     # for the easiest case, parameterize our encoder just broadly enough to include the actual encoding
     # we know there is linear dynamics in the invariant/latent space
     # invariant_tsf = PolynomialInvariantTransform(ds, env.nx, true_params,
-    #                                              too_far_for_neighbour=1.,
+    #                                              too_far_for_neighbour=1., train_on_continuous_data=True,
     #                                              name='{}_s{}'.format(name, seed))
-    invariant_tsf = NetworkInvariantTransform(ds, 2, too_far_for_neighbour=0.3,
-                                              name='{}_s{}'.format(name, seed))
+    invariant_tsf = invariant.NetworkInvariantTransform(ds, 2, too_far_for_neighbour=0.3,
+                                                        name='{}_s{}'.format(name, seed))
     # more generalized encoder
 
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
+
+
+def evaluate_invariant(name='', trials=5, trial_length=50):
+    env = get_env(myenv.Mode.DIRECT)
+    seed = 1
+
+    preprocessor = None
+    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
+    ds = toy.ToyDataSource(data_dir=save_dir + '.mat', preprocessor=preprocessor, validation_ratio=0.1,
+                           config=config)
+
+    logger.info("initial random seed %d", rand.seed(seed))
+
+    # create the invariant transform
+    invariant_tsf = PolynomialInvariantTransform(ds, env.nx, torch.from_numpy(env.true_params),
+                                                 too_far_for_neighbour=1., train_on_continuous_data=True,
+                                                 name='{}_s{}'.format(name, seed))
+    # invariant_tsf = invariant.NetworkInvariantTransform(ds, 2, too_far_for_neighbour=0.3,
+    #                                                     name='{}_s{}'.format(name, seed))
+
+    # either load or learn the transform
+    if not invariant_tsf.load(invariant_tsf.get_last_checkpoint()):
+        invariant_tsf.learn_model(10, 5)
+
+    # wrap the transform as a data preprocessor
+    preprocessor = invariant.InvariantPreprocessor(invariant_tsf)
+    # update the datasource to use transformed data
+    ds.update_preprocessor(preprocessor)
+
+    # train global prior dynamics model on the same datasource
+    pm = prior.LSQPrior.from_data(ds)
+    # mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds,
+    #                                name='{}_linear'.format(invariant_tsf.name))
+    # pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=70, batch_N=500)
+    u_min, u_max = get_control_bounds()
+
+    # create online controller with this prior (and transformed data)
+    ctrl = online_controller.OnlineLQR(pm, ds=ds, max_timestep=trial_length, R=3, horizon=10, lqr_iter=3,
+                                       init_gamma=0.1, u_min=u_min, u_max=u_max)
+
+    # TODO analyze error
+    xy, emp_error, prior_error, total_cost = evaluate_ctrl(env, ctrl, trials, trial_length)
 
 
 if __name__ == "__main__":
@@ -331,5 +379,6 @@ if __name__ == "__main__":
     # collect_data(500, 20, x_min=(-3, -3), x_max=(3, 3))
     # show_prior_accuracy(relative=False)
     # compare_empirical_and_prior_error(200, 50)
-    for seed in range(5):
-        learn_invariance(seed, "default", MAX_EPOCH=40, BATCH_SIZE=5)
+    # for seed in range(5):
+    #     learn_invariance(seed, "default", MAX_EPOCH=40, BATCH_SIZE=5)
+    evaluate_invariant('default', 5, 50)
