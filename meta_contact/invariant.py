@@ -330,12 +330,17 @@ class NetworkInvariantTransform(DirectLinearDynamicsTransform):
         self.user.model.load_state_dict(saved_state_dict)
 
 
-class InvariantUser(preprocess.Preprocess):
+class InvariantPreprocessor(preprocess.Preprocess):
+    """
+    Use an invariant transform to transform the data when needed, such that the dynamics model learned using
+    the processed data source will be in the latent space.
+    """
+
     def __init__(self, tsf: InvariantTransform, **kwargs):
         self.tsf = tsf
         self.tsf.freeze()
         self.tsf_output_dim = None
-        super(InvariantUser, self).__init__(**kwargs)
+        super(InvariantPreprocessor, self).__init__(**kwargs)
 
     def update_data_config(self, config: load_data.DataConfig):
         if self.tsf_output_dim is None:
