@@ -8,7 +8,9 @@ import numpy as np
 import torch
 from arm_pytorch_utilities import array_utils
 from arm_pytorch_utilities import linalg
+from arm_pytorch_utilities import load_data
 from arm_pytorch_utilities import math_utils
+from arm_pytorch_utilities import preprocess
 from arm_pytorch_utilities.make_data import datasource
 from arm_pytorch_utilities.model import make
 from arm_pytorch_utilities.model.common import LearnableParameterizedModel
@@ -30,6 +32,8 @@ class InvariantTransform(LearnableParameterizedModel):
         super().__init__(cfg.ROOT_DIR, **kwargs)
 
         self.ds = ds
+        # copy of config in case it gets modified later (such as by preprocessors)
+        self.config = copy.deepcopy(ds.config)
         self.neighbourhood = None
         self.neighbourhood_validation = None
         self.too_far_for_neighbour = too_far_for_neighbour
@@ -103,7 +107,7 @@ class InvariantTransform(LearnableParameterizedModel):
 
     def _get_separate_data_columns(self, data_set):
         XU, Y, _ = data_set
-        X, U = torch.split(XU, self.ds.config.nx, dim=1)
+        X, U = torch.split(XU, self.config.nx, dim=1)
         return X, U, Y
 
     def _is_in_neighbourhood(self, cur, candidate):
@@ -114,7 +118,7 @@ class InvariantTransform(LearnableParameterizedModel):
         Calculate information about the neighbour of each data point needed for training
         """
         # load and save this information since it's expensive to calculate
-        name = "neighbour_info_{}_{}_{}.pkl".format(self.ds.N, self.too_far_for_neighbour, self.ds.config)
+        name = "neighbour_info_{}_{}_{}.pkl".format(self.ds.N, self.too_far_for_neighbour, self.config)
         fullname = os.path.join(cfg.DATA_DIR, name)
         if os.path.exists(fullname):
             with open(fullname, 'rb') as f:
@@ -133,7 +137,7 @@ class InvariantTransform(LearnableParameterizedModel):
 
     def _do_calculate_neighbourhood(self, XU, Y, labels, consider_only_continuous=False):
         # train from samples of ds that are close in euclidean space
-        X, U = torch.split(XU, self.ds.config.nx, dim=1)
+        X, U = torch.split(XU, self.config.nx, dim=1)
         # can precalculate since XUY won't change during training and it's only dependent on these
         # TODO for now just consider distance in X, later consider U and also Y?
         if consider_only_continuous:
@@ -180,7 +184,7 @@ class InvariantTransform(LearnableParameterizedModel):
     def _evaluate_neighbour(self, X, U, Y, neighbourhood, i, tsf=TransformToUse.LATENT_SPACE):
         neighbours, neighbour_weights, N = array_utils.extract_positive_weights(neighbourhood[i])
 
-        if N < self.ds.config.ny + self.nz:
+        if N < self.config.ny + self.nz:
             return None
         x, u = X[neighbours], U[neighbours]
         y = Y[neighbours]
@@ -288,3 +292,32 @@ class NetworkInvariantTransform(InvariantTransform):
 
     def _load_model_state_dict(self, saved_state_dict):
         self.user.model.load_state_dict(saved_state_dict)
+
+
+class InvariantUser(preprocess.Preprocess):
+    def __init__(self, tsf: InvariantTransform, **kwargs):
+        self.tsf = tsf
+        self.tsf.freeze()
+        super(InvariantUser, self).__init__(**kwargs)
+
+    def update_data_config(self, config: load_data.DataConfig):
+        config.n_input = self.tsf.nz
+        # TODO consider if output (ny) needs to be changed for proposal #2 since we would be predicting dz
+        # config.ny = self.tsf.nz
+
+    def transform_x(self, XU):
+        X, U = torch.split(XU, self.tsf.config.nx, dim=1)
+        return self.tsf(X, U)
+
+    def transform_y(self, Y):
+        # never have to implement this since the invariant transform
+        return Y
+
+    def invert_transform(self, Y):
+        """Invert transformation on Y"""
+        # TODO for proposal #2 use transform from dz to dx
+        return Y
+
+    def _fit_impl(self, XU, Y, labels):
+        """Assuming tsf's already trained"""
+        pass
