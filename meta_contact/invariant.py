@@ -55,6 +55,24 @@ class InvariantTransform(LearnableParameterizedModel):
         :return: z, N x nz latent space
         """
 
+    @abc.abstractmethod
+    def dz_to_dx(self, x, dz):
+        """
+        Reverse transform from difference in latent space back to difference in observation space at a given
+        observation state
+        :param x:
+        :param dz:
+        :return:
+        """
+
+    @abc.abstractmethod
+    def dx_to_dz(self, dx):
+        """
+        Transform differences in observation state to latent state for training
+        :param dx:
+        :return:
+        """
+
     def _record_metrics(self, writer, batch_mse_loss, batch_cov_loss):
         """
         Use summary writer and passed in losses to
@@ -191,6 +209,8 @@ class InvariantTransform(LearnableParameterizedModel):
 
         if tsf is TransformToUse.LATENT_SPACE:
             z = self.xu_to_z(x, u)
+            # TODO can't actually train dx->dz together with xu->z? (can probably do dual gradient descent/alternate)
+            y = self.dx_to_dz(y)
         elif tsf is TransformToUse.REDUCE_TO_INPUT:
             z = u
         elif tsf is TransformToUse.NO_TRANSFORM:
@@ -264,7 +284,20 @@ class InvariantTransform(LearnableParameterizedModel):
         self._evaluate_no_transform(writer)
 
 
-class NetworkInvariantTransform(InvariantTransform):
+class DirectLinearDynamicsTransform(InvariantTransform):
+    """
+    Assume dynamics is dynamics is directly linear from z to dx, that is we don't need transforms between
+    dx and dz; for simpler dynamics this assumption should be good enough
+    """
+
+    def dz_to_dx(self, x, dz):
+        return dz
+
+    def dx_to_dz(self, dx):
+        return dx
+
+
+class NetworkInvariantTransform(DirectLinearDynamicsTransform):
     def __init__(self, ds, nz, model_opts=None, **kwargs):
         if model_opts is None:
             model_opts = {}
@@ -298,26 +331,27 @@ class InvariantUser(preprocess.Preprocess):
     def __init__(self, tsf: InvariantTransform, **kwargs):
         self.tsf = tsf
         self.tsf.freeze()
+        self.tsf_output_dim = None
         super(InvariantUser, self).__init__(**kwargs)
 
     def update_data_config(self, config: load_data.DataConfig):
+        if self.tsf_output_dim is None:
+            raise RuntimeError("Fit the preprocessor for it to know what the proper output dim is")
         config.n_input = self.tsf.nz
-        # TODO consider if output (ny) needs to be changed for proposal #2 since we would be predicting dz
-        # config.ny = self.tsf.nz
+        config.ny = self.tsf_output_dim  # either ny or nz
 
     def transform_x(self, XU):
         X, U = torch.split(XU, self.tsf.config.nx, dim=1)
         return self.tsf.xu_to_z(X, U)
 
     def transform_y(self, Y):
-        # never have to implement this since the invariant transform
-        return Y
+        return self.tsf.dx_to_dz(Y)
 
-    def invert_transform(self, Y):
+    def invert_transform(self, Y, X=None):
         """Invert transformation on Y"""
-        # TODO for proposal #2 use transform from dz to dx
-        return Y
+        return self.tsf.dz_to_dx(X, Y)
 
     def _fit_impl(self, XU, Y, labels):
-        """Assuming tsf's already trained"""
-        pass
+        """Figure out what the transform outputs"""
+        dz = self.tsf.dx_to_dz(Y[0].view(1, -1))
+        self.tsf_output_dim = dz.shape[1]

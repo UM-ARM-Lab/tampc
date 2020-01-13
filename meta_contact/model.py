@@ -135,7 +135,7 @@ class DynamicsModel(abc.ABC):
 
         if self.dataset.preprocessor:
             dxb = self._apply_model(self.dataset.preprocessor.transform_x(xu))
-            dxb = self.dataset.preprocessor.invert_transform(dxb)
+            dxb = self.dataset.preprocessor.invert_transform(dxb, xu)  # TODO should probably give just x
         else:
             dxb = self._apply_model(xu)
 

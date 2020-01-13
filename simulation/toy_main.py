@@ -263,7 +263,7 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
     plt.show()
 
 
-class PolynomialInvariantTransform(invariant.InvariantTransform):
+class PolynomialInvariantTransform(invariant.DirectLinearDynamicsTransform):
     def __init__(self, ds, nx, true_params, order=2, dtype=torch.double, **kwargs):
         self.poly = PolynomialFeatures(order, include_bias=False)
         x = np.random.rand(nx).reshape(1, -1)
