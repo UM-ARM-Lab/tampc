@@ -74,6 +74,16 @@ class InvariantTransform(LearnableParameterizedModel):
         :return:
         """
 
+    @staticmethod
+    @abc.abstractmethod
+    def supports_only_direct_z_to_dx():
+        """
+        Whether this transformation only supports direct linear dynamics from z to dx, or if it
+        supports dynamics in z to dz, then a nonlinear transform from dz to dx.
+        If false, then dz to dx and dx to dz should not be trivial.
+        :return: True or False
+        """
+
     def _record_metrics(self, writer, batch_mse_loss, batch_cov_loss):
         """
         Use summary writer and passed in losses to
@@ -293,6 +303,10 @@ class DirectLinearDynamicsTransform(InvariantTransform):
     dx and dz; for simpler dynamics this assumption should be good enough
     """
 
+    @staticmethod
+    def supports_only_direct_z_to_dx():
+        return True
+
     def dz_to_dx(self, x, dz):
         return dz
 
@@ -346,19 +360,32 @@ class InvariantPreprocessor(preprocess.Preprocess):
     def update_data_config(self, config: load_data.DataConfig):
         if self.model_output_dim is None:
             raise RuntimeError("Fit the preprocessor for it to know what the proper output dim is")
+        # enforce our transform's proclaimed support
+        assert self.model_output_dim is config.ny if self.tsf.supports_only_direct_z_to_dx() else self.tsf.nz
         # this is not just tsf.nz because the tsf could have an additional structure such as z*u as output
-        config.n_input = self.model_input_dim
+        # TODO for our current transform we go from xu->z instead of x->z, u->v and we can treat this as nu = 0
+        config.nx = self.model_input_dim
+        config.nu = 0
         config.ny = self.model_output_dim  # either ny or nz
+        # if we're predicting dx with z, then that's not predicting differences; if we're predicting dz then we are
+        # TODO how to handle the difference in original data's predict differences?
+        config.predict_difference = not self.tsf.supports_only_direct_z_to_dx()
 
     def transform_x(self, XU):
         X, U = torch.split(XU, self.tsf.config.nx, dim=1)
         return self.tsf.xu_to_z(X, U)
 
     def transform_y(self, Y):
+        # no transformation needed our output is already dx
+        if self.tsf.supports_only_direct_z_to_dx():
+            return Y
         return self.tsf.dx_to_dz(Y)
 
     def invert_transform(self, Y, X=None):
         """Invert transformation on Y"""
+        # no transformation needed our output is already dx
+        if self.tsf.supports_only_direct_z_to_dx():
+            return Y
         return self.tsf.dz_to_dx(X, Y)
 
     def _fit_impl(self, XU, Y, labels):
