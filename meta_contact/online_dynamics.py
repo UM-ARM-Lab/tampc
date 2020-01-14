@@ -1,14 +1,18 @@
 import numpy as np
+import torch
+from arm_pytorch_utilities import linalg
 from arm_pytorch_utilities.trajectory import invert_psd
 from meta_contact import prior
-from arm_pytorch_utilities import linalg
-import torch
 
 
 class OnlineDynamics(object):
     """ Moving average estimate of locally linear dynamics from https://arxiv.org/pdf/1509.06841.pdf
 
-    Note gamma here is (1-gamma) described in the paper, so high gamma forgets quicker
+    Note gamma here is (1-gamma) described in the paper, so high gamma forgets quicker.
+
+    All dynamics public API takes input and returns output in original xu space,
+    while internally (functions starting with underscore) they all operate in transformed space.
+    TODO save and apply transforms here
     """
 
     def __init__(self, gamma, online_prior: prior.OnlineDynamicsPrior, ds, N=1, sigreg=1e-5):
@@ -37,7 +41,7 @@ class OnlineDynamics(object):
         if px is None:
             self.emp_error = self.prior_error = None
             return
-        xu, pxu, xux = concatenate_state_control(px, pu, cx, cu)
+        xu, pxu, xux = _concatenate_state_control(px, pu, cx, cu)
         Phi, mu0, m, n0 = self.prior.get_params(self.nx, self.nu, xu, pxu, xux)
         # evaluate the accuracy of empirical and prior dynamics on (xux')
         Fe, fe, _ = conditioned_dynamics(self.nx, self.nu, self.sigma, self.mu, sigreg=self.sigreg)
@@ -69,17 +73,19 @@ class OnlineDynamics(object):
         """
         Compute F, f - the linear dynamics where next_x = F*[curx, curu] + f
         """
+        # TODO make this private? It doesn't handle transforms
         # prior parameters
-        xu, pxu, xux = concatenate_state_control(px, pu, cx, cu)
+        xu, pxu, xux = _concatenate_state_control(px, pu, cx, cu)
         Phi, mu0, m, n0 = self.prior.get_params(self.nx, self.nu, xu, pxu, xux)
 
         # mix prior and empirical distribution
         sigma, mu = prior.mix_distributions(self.sigma, self.mu, self.empsig_N, Phi, mu0, m, n0)
         return conditioned_dynamics(self.nx, self.nu, sigma, mu, self.sigreg)
 
-    def get_batch_dynamics(self, px, pu, cx, cu):
+    def _get_batch_dynamics(self, px, pu, cx, cu):
         """
-        Compute F, f - the linear dynamics where next_x = F*[curx, curu] + f
+        Compute F, f - the linear dynamics where either dx or next_x = F*[curx, curu] + f
+        The semantics depends on the data source the prior was trained on and that this was initialized on
         """
         # prior parameters
         xu = torch.cat((cx, cu), 1)
@@ -90,10 +96,21 @@ class OnlineDynamics(object):
         # mix prior and empirical distribution
         sigma, mu = prior.batch_mix_distribution(torch.from_numpy(self.sigma), torch.from_numpy(self.mu), self.empsig_N,
                                                  Phi, mu0, m, n0)
-        return batch_conditioned_dynamics(self.nx, self.nu, sigma, mu, self.sigreg)
+        return _batch_conditioned_dynamics(self.nx, self.nu, sigma, mu, self.sigreg)
+
+    def predict(self, px, pu, cx, cu):
+        """
+        Predict next state; will return with the same dimensions as cx
+        :return: B x N x nx or N x nx next states
+        """
+        # TODO wrap transform and inverse transform around these calls
+        params = self._get_batch_dynamics(px, pu, cx, cu)
+        # TODO have some advance_state method here similar to DynamicsModel to handle different data formats
+        next_state = _batch_evaluate_dynamics(cx, cu, *params)
+        return next_state
 
 
-def concatenate_state_control(px, pu, cx, cu):
+def _concatenate_state_control(px, pu, cx, cu):
     # TODO use faster way of constructing xu and pxu (concatenate)
     xu = np.r_[cx, cu].astype(np.float32)
     pxu = np.r_[px, pu]
@@ -116,7 +133,7 @@ def conditioned_dynamics(nx, nu, sigma, mu, sigreg=1e-5):
     return Fm, fv, dyn_covar
 
 
-def batch_conditioned_dynamics(nx, nu, sigma, mu, sigreg=1e-5):
+def _batch_conditioned_dynamics(nx, nu, sigma, mu, sigreg=1e-5):
     it = slice(nx + nu)
     ip = slice(nx + nu, nx + nu + nx)
     # guarantee symmetric positive definite with regularization
@@ -137,7 +154,7 @@ def evaluate_dynamics(x, u, F, f, cov=None):
     return xp
 
 
-def batch_evaluate_dynamics(x, u, F, f, cov=None):
+def _batch_evaluate_dynamics(x, u, F, f, cov=None):
     xu = torch.cat((x, u), 1)
     xp = linalg.batch_batch_product(xu, F) + f
     return xp

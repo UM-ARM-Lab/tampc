@@ -118,14 +118,21 @@ def linear_model_from_ds(ds):
 
 
 class DynamicsModel(abc.ABC):
+    """
+    All public API takes input and returns output in original xu space,
+    while internally (functions starting with underscore) they all operate in transformed space.
+    """
+
     def __init__(self, dataset, use_np=False):
         self.dataset = dataset
+        # TODO check correctness of advance state function when we have have a transform (data is not xux' or xudx)
         self.advance = advance_state(dataset.config, use_np=use_np)
 
-    def predict(self, xu):
+    def predict(self, xu, already_transformed=False):
         """
         Predict next state; will return with the same dimensions as xu
         :param xu: B x N x (nx + nu) or N x (nx + nu) full input (if missing B will add it)
+        :param already_transformed: whether the input xu has already been transformed (such as in chained calls)
         :return: B x N x nx or N x nx next states
         """
         orig_shape = xu.shape
@@ -133,7 +140,7 @@ class DynamicsModel(abc.ABC):
             # reduce all batch dimensions down to the first one
             xu = xu.view(-1, orig_shape[-1])
 
-        if self.dataset.preprocessor:
+        if self.dataset.preprocessor and not already_transformed:
             dxb = self._apply_model(self.dataset.preprocessor.transform_x(xu))
             dxb = self.dataset.preprocessor.invert_transform(dxb, xu)  # TODO should probably give just x
         else:
@@ -162,7 +169,7 @@ class DynamicsModel(abc.ABC):
 
 
 class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
-    def __init__(self, model_user: ModelUser, dataset,  **kwargs):
+    def __init__(self, model_user: ModelUser, dataset, **kwargs):
         self.user = model_user
         self.model = model_user.model
 

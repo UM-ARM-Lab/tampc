@@ -1,11 +1,12 @@
-import torch
-import logging
-from arm_pytorch_utilities.gmm import GMM
-import numpy as np
-from arm_pytorch_utilities import linalg
-from meta_contact import model
-from arm_pytorch_utilities import grad
 import abc
+import logging
+
+import numpy as np
+import torch
+from arm_pytorch_utilities import grad
+from arm_pytorch_utilities import linalg
+from arm_pytorch_utilities.gmm import GMM
+from meta_contact import model
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,11 @@ def gaussian_params_from_dataset(ds):
 
 
 class OnlineDynamicsPrior:
+    """
+    Dynamics model priors. May model dx = f(x,u) or x' = f(x,u) depending on data.
+    Assumes all input are in transformed space and doesn't do any transformation itself.
+    """
+
     @abc.abstractmethod
     def get_params(self, nx, nu, xu, pxu, xux):
         """Get normal inverse-Wishart prior parameters (Phi, mu0, m, n0) evaluated at this (pxu,xu)"""
@@ -115,7 +121,8 @@ class NNPrior(OnlineDynamicsPrior):
         # first columns are xu, latter columns are pxu
         F = F[:, :nx + nu].numpy()
         # TODO not sure if this should be + xu since we're predicting residual, but f is currently unused
-        xp = self.dyn_net.predict(full_input.view(1, -1))
+        # TODO check correctness of linearization when our input isn't xu (transformed z)
+        xp = self.dyn_net.predict(full_input.view(1, -1), already_transformed=True)
         xp = xp.view(-1).numpy()
         f = -F @ xu + xp
         # build \bar{Sigma} (nn_Phi) and \bar{mu} (nnf)

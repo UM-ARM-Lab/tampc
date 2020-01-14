@@ -111,8 +111,7 @@ class OnlineMPC(OnlineController):
 
         # TODO the MPC method doesn't give dynamics px and pu (different from our prevx and prevu)
         # verified against non-batch calculations
-        batch_params = self.dynamics.get_batch_dynamics(None, None, state, u)
-        next_state = online_dynamics.batch_evaluate_dynamics(state, u, *batch_params)
+        next_state = self.dynamics.predict(None, None, state, u)
 
         next_state = self.constrain_state(next_state)
         return next_state
