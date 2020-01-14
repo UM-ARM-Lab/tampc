@@ -77,7 +77,6 @@ def batch_mix_prior(nx, nu, nnF, strength=1.0):
     sigX = torch.eye(nx + nu, dtype=nnF.dtype).repeat(N, 1, 1) * strength
     # lower left corner, nnF.T is df/dxu
     sigXK = sigX @ nnF.transpose(1, 2)
-    # TODO check correctness (might need to switch dim between lr, and nn_Phi's cat)
     # \bar{Sigma}, ignoring lower right
     top = torch.cat((sigX, sigXK), dim=2)
     bot = torch.cat((sigXK.transpose(1, 2), torch.zeros((N, nx, nx), dtype=nnF.dtype)), dim=2)
