@@ -148,9 +148,11 @@ class DynamicsModel(abc.ABC):
 
         if self.ds.preprocessor and not already_transformed:
             dxb = self._apply_model(self.ds.preprocessor.transform_x(xu))
-            dxb = self.ds.preprocessor.invert_transform(dxb, xu)  # TODO should probably give just x
         else:
             dxb = self._apply_model(xu)
+
+        if self.ds.preprocessor:
+            dxb = self.ds.preprocessor.invert_transform(dxb, xu)  # TODO should probably give just x
 
         x = self.advance(xu, dxb)
         if len(orig_shape) > 2:
