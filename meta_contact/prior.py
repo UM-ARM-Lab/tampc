@@ -121,12 +121,12 @@ class NNPrior(OnlineDynamicsPrior):
         full_input = np.concatenate((xu, pxu)) if self.full_context else xu
         full_input = torch.tensor(full_input, dtype=torch.double)
         # jacobian of xu' wrt xu and pxu, need to strip the pxu columns
-        F = grad.jacobian(self.dyn_net.predict, full_input)
+        F = grad.jacobian(self._predict, full_input)
         # first columns are xu, latter columns are pxu
         F = F[:, :nx + nu].numpy()
         # TODO not sure if this should be + xu since we're predicting residual, but f is currently unused
         # TODO check correctness of linearization when our input isn't xu (transformed z)
-        xp = self.dyn_net.predict(full_input.view(1, -1), already_transformed=True)
+        xp = self._predict(full_input.view(1, -1))
         xp = xp.view(-1).numpy()
         f = -F @ xu + xp
         # build \bar{Sigma} (nn_Phi) and \bar{mu} (nnf)
@@ -136,14 +136,17 @@ class NNPrior(OnlineDynamicsPrior):
         # m and n0 are 1 (mix prior strength already scaled nn_Phi)
         return nn_Phi, mu0, 1, 1
 
+    def _predict(self, *args):
+        return self.dyn_net.predict(*args, already_transformed=True)
+
     def get_batch_params(self, nx, nu, xu, pxu, xux):
         # feed pxu and xu to network (full contextual network)
         full_input = torch.cat((xu, pxu), 1) if self.full_context else xu
         # jacobian of xu' wrt xu and pxu, need to strip the pxu columns
-        F = grad.batch_jacobian(self.dyn_net.predict, full_input)
+        F = grad.batch_jacobian(self._predict, full_input)
         # first columns are xu, latter columns are pxu
         F = F[:, :, :nx + nu]
-        xp = self.dyn_net.predict(full_input)
+        xp = self._predict(full_input)
         # build \bar{Sigma} (nn_Phi) and \bar{mu} (nnf)
         nn_Phi, nnf = batch_mix_prior(nx, nu, F, strength=self.mix_prior_strength)
         # NOTE nnf is not used

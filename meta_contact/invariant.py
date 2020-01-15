@@ -377,7 +377,8 @@ class InvariantPreprocessor(preprocess.Preprocess):
             config.predict_difference = True
 
     def transform_x(self, XU):
-        X, U = torch.split(XU, self.tsf.config.nx, dim=1)
+        X = XU[:, :self.tsf.config.nx]
+        U = XU[:, self.tsf.config.nx:]
         return self.tsf.xu_to_z(X, U)
 
     def transform_y(self, Y):
