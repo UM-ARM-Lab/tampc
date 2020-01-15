@@ -3,6 +3,7 @@ import logging
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.nn
 from arm_pytorch_utilities import preprocess
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.model import make
@@ -16,6 +17,7 @@ from meta_contact.controller import online_controller
 from meta_contact.env import myenv
 from meta_contact.env import toy
 from sklearn.preprocessing import PolynomialFeatures
+from torch.nn.functional import cosine_similarity
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
@@ -88,15 +90,6 @@ def show_prior_accuracy(expected_max_error=1., relative=True):
     Plot a contour map of prior model accuracy linearized across a grid over the state and sampled actions at each state
     :return:
     """
-    # create grid over state-input space
-    delta = 0.2
-    start = -3
-    end = 3.01
-
-    x = y = np.arange(start, end, delta)
-    X, Y = np.meshgrid(x, y)
-    XY = np.c_[X.ravel(), Y.ravel()]
-    Z = np.zeros(XY.shape[0])
 
     # plot a contour map over the state space - input space of how accurate the prior is
     # can't use preprocessor except for the neural network prior because their returned matrices are wrt transformed
@@ -115,43 +108,12 @@ def show_prior_accuracy(expected_max_error=1., relative=True):
     checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/linear.1150.tar'
     pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=50, batch_N=500)
 
-    # we can evaluate just prior dynamics by mixing with N=0 (no weight for empirical data)
-    dynamics = online_dynamics.OnlineDynamics(0.1, pm, ds, N=0)
-
-    bounds = get_control_bounds()
-    num_actions = 20
-    logger.info("random seed %d", rand.seed(1))
-    u = torch.from_numpy(np.random.uniform(*bounds, (num_actions, env.nu)))
-    if preprocessor is not None and not isinstance(pm, prior.NNPrior):
-        raise RuntimeError("Can't use preprocessor with non NN-prior since it'll return matrices wrt transformed units")
-    for i, xy in enumerate(XY):
-        xy = torch.from_numpy(xy).repeat(num_actions, 1)
-        params = dynamics.get_batch_dynamics(xy, u, xy, u)
-        nxp = online_dynamics.batch_evaluate_dynamics(xy, u, *params)
-        nxt = torch.from_numpy(env.true_dynamics(xy.numpy(), u.numpy()))
-
-        diff = nxt - nxp
-
-        if relative:
-            actual_delta = torch.norm(nxt - xy, dim=1)
-            valid = actual_delta > 0
-            diff = diff[valid]
-            actual_delta = actual_delta[valid]
-            if torch.any(valid):
-                Z[i] = (torch.norm(diff, dim=1) / actual_delta).mean()
-            else:
-                Z[i] = 0
-        else:
-            Z[i] = (torch.norm(diff, dim=1)).mean()
-
-    # normalize to per action
-    Z = Z.reshape(X.shape)
-    logger.info("Error min %f max %f median %f std %f", Z.min(), Z.max(), np.median(Z), Z.std())
+    XY, Z = evaluate_prior(env, pm, ds, relative)
 
     fig, ax = plt.subplots()
 
-    # CS = ax.contourf(X, Y, Z, cmap='plasma', vmin=0, vmax=expected_max_error)
-    CS = ax.tripcolor(X.ravel(), Y.ravel(), Z.ravel(), cmap='plasma', vmin=0, vmax=expected_max_error)
+    # CS = ax.contourf(XY[:, 0], XY[:, 1], Z, cmap='plasma', vmin=0, vmax=expected_max_error)
+    CS = ax.tripcolor(XY[:, 0], XY[:, 1], Z, cmap='plasma', vmin=0, vmax=expected_max_error)
     CBI = fig.colorbar(CS)
     CBI.ax.set_ylabel('local model relative error')
     ax.set_ylabel('y')
@@ -214,6 +176,51 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
     ax2.set_title('prior linearized model error')
 
     plt.show()
+
+
+def evaluate_prior(env, pm, ds, relative=True):
+    # create grid over state-input space
+    delta = 0.2
+    start = -3
+    end = 3.01
+
+    x = y = np.arange(start, end, delta)
+    X, Y = np.meshgrid(x, y)
+    XY = np.c_[X.ravel(), Y.ravel()]
+    Z = np.zeros(XY.shape[0])
+
+    # we can evaluate just prior dynamics by mixing with N=0 (no weight for empirical data)
+    dynamics = online_dynamics.OnlineDynamics(0.1, pm, ds, N=0)
+
+    bounds = get_control_bounds()
+    num_actions = 20
+    logger.info("random seed %d", rand.seed(1))
+    u = torch.from_numpy(np.random.uniform(*bounds, (num_actions, env.nu)))
+    for i, xy in enumerate(XY):
+        xy = torch.from_numpy(xy).repeat(num_actions, 1)
+        nxt = torch.from_numpy(env.true_dynamics(xy.numpy(), u.numpy()))
+
+
+        nxp = dynamics.predict(xy, u, xy, u)
+
+        diff = nxt - nxp
+
+        if relative:
+            actual_delta = torch.norm(nxt - xy, dim=1)
+            valid = actual_delta > 0
+            diff = diff[valid]
+            actual_delta = actual_delta[valid]
+            if torch.any(valid):
+                Z[i] = (torch.norm(diff, dim=1) / actual_delta).mean()
+            else:
+                Z[i] = 0
+        else:
+            Z[i] = (torch.norm(diff, dim=1)).mean()
+
+    # normalize to per action
+    Z = Z.reshape(X.shape)
+    logger.info("Error min %f max %f median %f std %f", Z.min(), Z.max(), np.median(Z), Z.std())
+    return XY, Z
 
 
 def evaluate_ctrl(env, ctrl, trials, trial_length):
@@ -299,7 +306,7 @@ class PolynomialInvariantTransform(invariant.DirectLinearDynamicsTransform):
     def _record_metrics(self, writer, batch_mse_loss, batch_cov_loss):
         super()._record_metrics(writer, batch_mse_loss, batch_cov_loss)
 
-        cs = torch.nn.functional.cosine_similarity(self.params, self.true_params, dim=0).item()
+        cs = cosine_similarity(self.params, self.true_params, dim=0).item()
         dist = torch.norm(self.params - self.true_params).item()
 
         logger.info("step %d cos dist %f dist %f", self.step, cs, dist)
@@ -364,14 +371,28 @@ def evaluate_invariant(name='', trials=5, trial_length=50):
     # mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds,
     #                                name='{}_linear'.format(invariant_tsf.name))
     # pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=70, batch_N=500)
-    u_min, u_max = get_control_bounds()
+
+    # evaluate prior accuracy
+    XY, prior_error_offline = evaluate_prior(env, pm, ds, relative=True)
+    fig, ax = plt.subplots()
+
+    # CS = ax.contourf(XY[:, 0], XY[:, 1], Z, cmap='plasma', vmin=0, vmax=expected_max_error)
+    CS = ax.tripcolor(XY[:, 0], XY[:, 1], prior_error_offline, cmap='plasma', vmin=0, vmax=1.)
+    CBI = fig.colorbar(CS)
+    CBI.ax.set_ylabel('local model relative error')
+    ax.set_ylabel('y')
+    ax.set_xlabel('x')
+    ax.set_title('linearized prior model error')
 
     # create online controller with this prior (and transformed data)
-    ctrl = online_controller.OnlineLQR(pm, ds=ds, max_timestep=trial_length, R=3, horizon=10, lqr_iter=3,
-                                       init_gamma=0.1, u_min=u_min, u_max=u_max)
+    # u_min, u_max = get_control_bounds()
+    # ctrl = online_controller.OnlineLQR(pm, ds=ds, max_timestep=trial_length, R=3, horizon=10, lqr_iter=3,
+    #                                    init_gamma=0.1, u_min=u_min, u_max=u_max)
+    #
+    # # TODO analyze error
+    # xy, emp_error, prior_error, total_cost = evaluate_ctrl(env, ctrl, trials, trial_length)
 
-    # TODO analyze error
-    xy, emp_error, prior_error, total_cost = evaluate_ctrl(env, ctrl, trials, trial_length)
+    plt.show()
 
 
 if __name__ == "__main__":
