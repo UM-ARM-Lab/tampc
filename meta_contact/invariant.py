@@ -39,7 +39,7 @@ class InvariantTransform(LearnableParameterizedModel):
         self.train_on_continuous_data = train_on_continuous_data
         self.nz = nz
         # update name with parameteres
-        self.name = '{}_{}'.format(self.nz, self.name)
+        self.name = '{}_{}_{}'.format(self.name, self.nz, self.config)
 
     @abc.abstractmethod
     def xu_to_z(self, state, action):

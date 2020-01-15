@@ -365,10 +365,10 @@ def evaluate_invariant(name='', trials=5, trial_length=50):
     ds.update_preprocessor(preprocessor)
 
     # train global prior dynamics model on the same datasource
-    pm = prior.LSQPrior.from_data(ds)
-    # mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds,
-    #                                name='{}_linear'.format(invariant_tsf.name))
-    # pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=70, batch_N=500)
+    # pm = prior.LSQPrior.from_data(ds)
+    mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds,
+                                   name='{}_linear'.format(invariant_tsf.name))
+    pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=70, batch_N=500)
 
     # evaluate prior accuracy
     XY, prior_error_offline = evaluate_prior(env, pm, ds, relative=False)

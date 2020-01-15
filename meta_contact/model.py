@@ -181,6 +181,7 @@ class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
 
         DynamicsModel.__init__(self, ds)
         LearnableParameterizedModel.__init__(self, cfg.ROOT_DIR, **kwargs)
+        self.name = "{}_{}".format(self.name, ds.config)
 
         self.writer = SummaryWriter(flush_secs=20, comment=os.path.basename(self.name))
 
