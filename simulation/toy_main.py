@@ -366,9 +366,10 @@ def evaluate_invariant(name='', trials=5, trial_length=50):
     invariant_tsf = transforms[use_tsf]
 
     if invariant_tsf:
+        training_epochs = 10 if use_tsf is UseTransform.POLYNOMIAL_TRANSFORM else 40
         # either load or learn the transform
         if not invariant_tsf.load(invariant_tsf.get_last_checkpoint()):
-            invariant_tsf.learn_model(10, 5)
+            invariant_tsf.learn_model(training_epochs, 5)
 
         # wrap the transform as a data preprocessor
         preprocessor = invariant.InvariantPreprocessor(invariant_tsf)
