@@ -147,7 +147,8 @@ class InvariantTransform(LearnableParameterizedModel):
         Calculate information about the neighbour of each data point needed for training
         """
         # load and save this information since it's expensive to calculate
-        name = "neighbour_info_{}_{}_{}.pkl".format(self.ds.N, self.too_far_for_neighbour, self.config)
+        name = "neighbour_info_{}_{}_continuous_{}_{}.pkl".format(self.ds.N, self.too_far_for_neighbour,
+                                                                  int(self.train_on_continuous_data), self.config)
         fullname = os.path.join(cfg.DATA_DIR, name)
         if os.path.exists(fullname):
             with open(fullname, 'rb') as f:
