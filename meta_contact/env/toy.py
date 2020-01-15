@@ -289,6 +289,7 @@ class PolynomialWorld(ToyEnv):
         u = np.random.rand(self.nu).reshape(1, -1)
         self.poly.fit(u)
         # self.true_params = np.array([3, 0, 0.6, 0, -0.8])
+        # TODO try a non-convex polynomial to see if that makes a difference
         self.true_params = np.array([0, 0, 0.1, 0, 0.1])
         super().__init__(*args, **kwargs)
 

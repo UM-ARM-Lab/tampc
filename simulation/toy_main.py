@@ -190,7 +190,7 @@ def evaluate_prior(env, pm, ds, relative=True):
     Z = np.zeros(XY.shape[0])
 
     # we can evaluate just prior dynamics by mixing with N=0 (no weight for empirical data)
-    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, N=0)
+    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, N=0, sigreg=1e-10)
 
     bounds = get_control_bounds()
     num_actions = 20
@@ -371,13 +371,13 @@ def evaluate_invariant(name='', trials=5, trial_length=50):
     # pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=70, batch_N=500)
 
     # evaluate prior accuracy
-    XY, prior_error_offline = evaluate_prior(env, pm, ds, relative=True)
+    XY, prior_error_offline = evaluate_prior(env, pm, ds, relative=False)
     fig, ax = plt.subplots()
 
     # CS = ax.contourf(XY[:, 0], XY[:, 1], Z, cmap='plasma', vmin=0, vmax=expected_max_error)
-    CS = ax.tripcolor(XY[:, 0], XY[:, 1], prior_error_offline, cmap='plasma', vmin=0, vmax=1.)
+    CS = ax.tripcolor(XY[:, 0], XY[:, 1], prior_error_offline, cmap='plasma')
     CBI = fig.colorbar(CS)
-    CBI.ax.set_ylabel('local model relative error')
+    CBI.ax.set_ylabel('local model error')
     ax.set_ylabel('y')
     ax.set_xlabel('x')
     ax.set_title('linearized prior model error')
