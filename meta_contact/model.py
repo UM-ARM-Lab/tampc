@@ -221,14 +221,23 @@ class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
                 logger.debug("Epoch %d loss %f vloss %f", epoch, loss.mean().item(), vloss.mean().item())
         # save after training
         self.save(last=True)
+        self._evaluate_against_least_squares()
 
+    def load(self, filename):
+        if super(NetworkModelWrapper, self).load(filename):
+            self._evaluate_against_least_squares()
+            return True
+        return False
+
+    def _evaluate_against_least_squares(self):
         # compare prediction accuracy against least squares
-        XU, Y = self.XU.numpy(), self.Y.numpy()
-        params, res, rank, _ = np.linalg.lstsq(XU, Y)
-        XU, Y = self.XUv.numpy(), self.Yv.numpy()
-        Yhat = XU @ params
+        XU, Y, _ = self.ds.training_set()
+        params, res, rank, _ = np.linalg.lstsq(XU.numpy(), Y.numpy())
+        XU, Y, _ = self.ds.validation_set()
+        Y = Y.numpy()
+        Yhat = XU.numpy() @ params
         E = np.linalg.norm((Yhat - Y), axis=1)
-        Yhatn = self.user.sample(self.XUv).detach().numpy()
+        Yhatn = self.user.sample(XU).detach().numpy()
         En = np.linalg.norm((Yhatn - Y), axis=1)
         logger.info("Least squares error %f network error %f", E.mean(), En.mean())
 
