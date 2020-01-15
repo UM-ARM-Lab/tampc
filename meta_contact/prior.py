@@ -15,10 +15,14 @@ def xux_from_dataset(ds):
     XU, Y, _ = ds.training_set()
     if ds.config.expanded_input:
         XU = XU[:, :ds.config.nx + ds.config.nu]
-    if ds.config.predict_difference:
-        XUX = torch.cat((XU, XU[:, :ds.config.nx] + Y), dim=1)
-    else:
+    # if the output is not in state space (such as if xu is transformed), then just treat them as XUY
+    if not ds.config.y_in_x_space:
         XUX = torch.cat((XU, Y), dim=1)
+    else:
+        if ds.config.predict_difference:
+            XUX = torch.cat((XU, XU[:, :ds.config.nx] + Y), dim=1)
+        else:
+            XUX = torch.cat((XU, Y), dim=1)
     return XUX
 
 
@@ -100,7 +104,7 @@ class NNPrior(OnlineDynamicsPrior):
         #     raise RuntimeError("Network must be predicting residuals")
         # create (pytorch) network, load from checkpoint if given, otherwise train for some iterations
         if checkpoint and mw.load(checkpoint):
-            logger.info("loaded checkpoint %s", checkpoint)
+            pass
         else:
             mw.learn_model(train_epochs, batch_N=batch_N)
 

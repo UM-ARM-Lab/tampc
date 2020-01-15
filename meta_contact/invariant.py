@@ -368,9 +368,12 @@ class InvariantPreprocessor(preprocess.Preprocess):
         config.nx = self.model_input_dim
         config.nu = 0
         config.ny = self.model_output_dim  # either ny or nz
-        # if we're predicting dx with z, then that's not predicting differences; if we're predicting dz then we are
-        # TODO how to handle the difference in original data's predict differences?
-        config.predict_difference = not self.tsf.supports_only_direct_z_to_dx()
+        # if we're predicting z to dx then our y will not be in z space
+        if self.tsf.supports_only_direct_z_to_dx():
+            config.y_in_x_space = False
+        # if we're predicting z to dz then definitely will be predicting difference, otherwise don't change
+        else:
+            config.predict_difference = True
 
     def transform_x(self, XU):
         X, U = torch.split(XU, self.tsf.config.nx, dim=1)
