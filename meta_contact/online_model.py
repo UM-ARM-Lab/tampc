@@ -5,7 +5,7 @@ from arm_pytorch_utilities.trajectory import invert_psd
 from meta_contact import prior
 
 
-class OnlineDynamics(object):
+class OnlineDynamicsModel(object):
     """ Moving average estimate of locally linear dynamics from https://arxiv.org/pdf/1509.06841.pdf
 
     Note gamma here is (1-gamma) described in the paper, so high gamma forgets quicker.

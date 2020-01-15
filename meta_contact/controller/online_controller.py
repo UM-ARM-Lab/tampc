@@ -1,7 +1,7 @@
 import abc
 from meta_contact.controller.controller import Controller
 from meta_contact import cost
-from meta_contact import online_dynamics
+from meta_contact import online_model
 import logging
 import numpy as np
 from arm_pytorch_utilities.policy.lin_gauss import LinearGaussianPolicy
@@ -23,7 +23,7 @@ class OnlineController(Controller):
         self.nu = ds.config.nu
         self.u_min, self.u_max = math_utils.get_bounds(u_min, u_max)
 
-        self.dynamics = online_dynamics.OnlineDynamics(init_gamma, prior, ds)
+        self.dynamics = online_model.OnlineDynamicsModel(init_gamma, prior, ds)
 
         # Init objects
         if np.isscalar(Q):

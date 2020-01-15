@@ -10,7 +10,7 @@ from arm_pytorch_utilities.model import make
 from meta_contact import cfg
 from meta_contact import invariant
 from meta_contact import model
-from meta_contact import online_dynamics
+from meta_contact import online_model
 from meta_contact import prior
 from meta_contact.controller import controller
 from meta_contact.controller import online_controller
@@ -190,7 +190,7 @@ def evaluate_prior(env, pm, ds, relative=True):
     Z = np.zeros(XY.shape[0])
 
     # we can evaluate just prior dynamics by mixing with N=0 (no weight for empirical data)
-    dynamics = online_dynamics.OnlineDynamics(0.1, pm, ds, N=0)
+    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, N=0)
 
     bounds = get_control_bounds()
     num_actions = 20
@@ -199,7 +199,6 @@ def evaluate_prior(env, pm, ds, relative=True):
     for i, xy in enumerate(XY):
         xy = torch.from_numpy(xy).repeat(num_actions, 1)
         nxt = torch.from_numpy(env.true_dynamics(xy.numpy(), u.numpy()))
-
 
         nxp = dynamics.predict(xy, u, xy, u)
 
