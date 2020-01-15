@@ -137,7 +137,8 @@ class NNPrior(OnlineDynamicsPrior):
         return nn_Phi, mu0, 1, 1
 
     def _predict(self, *args):
-        return self.dyn_net.predict(*args, already_transformed=True)
+        # should use private method because everything is already transformed
+        return self.dyn_net._batch_apply_model(*args)
 
     def get_batch_params(self, nx, nu, xu, pxu, xux):
         # feed pxu and xu to network (full contextual network)

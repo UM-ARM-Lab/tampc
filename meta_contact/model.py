@@ -160,6 +160,17 @@ class DynamicsModel(abc.ABC):
             x = x.view(*orig_shape[:-1], -1)
         return x
 
+    def _batch_apply_model(self, xu):
+        orig_shape = xu.shape
+        if len(orig_shape) > 2:
+            xu = xu.view(-1, orig_shape[-1])
+
+        dxb = self._apply_model(xu)
+
+        if len(orig_shape) > 2:
+            dxb = dxb.view(*orig_shape[:-1], -1)
+        return dxb
+
     @abc.abstractmethod
     def _apply_model(self, xu):
         """
