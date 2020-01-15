@@ -1,22 +1,21 @@
-import pybullet as p
-import torch
-import math
-import numpy as np
 import logging
+import math
+
 import matplotlib.pyplot as plt
-from arm_pytorch_utilities import preprocess
+import numpy as np
+import pybullet as p
 import sklearn.preprocessing as skpre
-
-from meta_contact import cfg
+import torch
+from arm_pytorch_utilities import preprocess
 from arm_pytorch_utilities import rand, load_data
-
+from arm_pytorch_utilities.model import make
+from meta_contact import cfg
+from meta_contact import model
+from meta_contact import prior
 from meta_contact.controller import controller
 from meta_contact.controller import global_controller
 from meta_contact.controller import online_controller
 from meta_contact.env import block_push
-from meta_contact import prior
-from meta_contact import model
-from arm_pytorch_utilities.model import make
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
@@ -142,14 +141,12 @@ def test_local_dynamics(level=0):
 
     m = model.DeterministicUser(make.make_sequential_network(config))
     mw = model.NetworkModelWrapper(m, ds, name='contextual')
-    checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/contextual.1800.tar'
-    # checkpoint = None
-    pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=200)
+    pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=200)
     # pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
     u_min, u_max = get_control_bounds()
-    ctrl = online_controller.OnlineController(pm, ds=ds, max_timestep=num_frames, R=5, horizon=20, lqr_iter=3,
-                                              init_gamma=0.1, u_min=u_min, u_max=u_max)
+    ctrl = online_controller.OnlineLQR(pm, ds=ds, max_timestep=num_frames, R=5, horizon=20, lqr_iter=3,
+                                       init_gamma=0.1, u_min=u_min, u_max=u_max)
 
     sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=True, save=False)
 
@@ -186,11 +183,7 @@ def test_global_qr_cost_optimal_controller(controller, level=0, **kwargs):
         model.DeterministicUser(
             make.make_sequential_network(config, activation_factory=torch.nn.LeakyReLU, h_units=(32, 32))), ds)
 
-    checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/.200.tar'
-    # checkpoint = None
-    if checkpoint and pm.load(checkpoint):
-        logger.info("loaded checkpoint %s", checkpoint)
-    else:
+    if not pm.load(pm.get_last_checkpoint()):
         pm.learn_model(200, batch_N=10000)
 
     pm.freeze()

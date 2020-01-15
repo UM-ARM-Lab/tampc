@@ -1,12 +1,11 @@
-from arm_pytorch_utilities import preprocess, load_data
-import sklearn.preprocessing as skpre
-import numpy as np
-import matplotlib.pyplot as plt
-from meta_contact.env import block_push as exp
-from meta_contact import model, util
-from arm_pytorch_utilities.model import make
-
 import logging
+
+import matplotlib.pyplot as plt
+import sklearn.preprocessing as skpre
+from arm_pytorch_utilities import preprocess, load_data
+from arm_pytorch_utilities.model import make
+from meta_contact import model, util
+from meta_contact.env import block_push as exp
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO,
@@ -20,27 +19,16 @@ if __name__ == "__main__":
     # ds = exp.PushDataset(data_dir='pushing', preprocessor=preprocessor)
     # compare on trajectory
     config = load_data.DataConfig(predict_difference=True)
-    ds = exp.PushDataSource(data_dir='pushing/touching.mat', preprocessor=preprocessor, validation_ratio=0.2,
-                            config=config)
+    ds = exp.PushDataSource(exp.PushAgainstWallStickyEnv(), data_dir='pushing/touching.mat', preprocessor=preprocessor,
+                            validation_ratio=0.2, config=config)
 
     # m = model.MDNUser(make.make_sequential_network(config, make.make_mdn_end_block(num_components=3)))
     m = model.DeterministicUser(make.make_sequential_network(config))
     mw = model.NetworkModelWrapper(m, ds, name='weird')
     # learn prior model on data
 
-    checkpoint = None
-    # checkpoint = '/home/zhsh/catkin_ws/src/meta_contact/checkpoints/mdn_compare_standardized_not_affine.3315.tar'
-    # checkpoint = '/home/zhsh/catkin_ws/src/meta_contact/checkpoints/mdn_compare_standardized.4845.tar'
-    # checkpoint = '/home/zhsh/catkin_ws/src/meta_contact/checkpoints/mdn.5100.tar'
-    # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn_quasistatic_vanilla.2800.tar'
-    # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn_quasistatic.2800.tar'
-    # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn_quasistatic_lookahead.2800.tar'
-    # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/mdn.1200.tar'
-    # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/dummy.2000.tar'
     # load data if we already have some, otherwise train from scratch
-    if checkpoint and mw.load(checkpoint):
-        logger.info("loaded checkpoint %s", checkpoint)
-    else:
+    if not mw.load(mw.get_last_checkpoint()):
         mw.learn_model(50)
 
     # TODO use the model for roll outs instead of just 1 step prediction

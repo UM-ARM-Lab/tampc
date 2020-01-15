@@ -105,8 +105,7 @@ def show_prior_accuracy(expected_max_error=1., relative=True):
     # pm = prior.GMMPrior.from_data(ds)
     mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds,
                                    name='linear')
-    checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/linear.1150.tar'
-    pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=50, batch_N=500)
+    pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=50, batch_N=500)
 
     XY, Z = evaluate_prior(env, pm, ds, relative)
 
@@ -145,10 +144,7 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
     # pm = prior.GMMPrior.from_data(ds)
     mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds,
                                    name='linear')
-    # checkpoint = '/Users/johnsonzhong/Research/meta_contact/checkpoints/linear.1470.tar'
-    checkpoint = '/home/zhsh/catkin_ws/src/meta_contact/checkpoints/linear.630.tar'
-    checkpoint = None
-    pm = prior.NNPrior.from_data(mw, checkpoint=checkpoint, train_epochs=70, batch_N=500)
+    pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=70, batch_N=500)
     u_min, u_max = get_control_bounds()
     ctrl = online_controller.OnlineLQR(pm, ds=ds, max_timestep=trial_length, R=3, horizon=10, lqr_iter=3,
                                        init_gamma=0.1, u_min=u_min, u_max=u_max)
