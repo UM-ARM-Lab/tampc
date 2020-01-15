@@ -259,7 +259,7 @@ class InvariantTransform(LearnableParameterizedModel):
         batch_mse_loss = None
         self._evaluate_no_transform(writer)
         for epoch in range(max_epoch):
-            logger.info("Start epoch %d", epoch)
+            logger.debug("Start epoch %d", epoch)
             # evaluate on validation at the start of epochs
             self._evaluate_validation_set(writer)
             if save_checkpoint_every_n_epochs and epoch % save_checkpoint_every_n_epochs == 0:

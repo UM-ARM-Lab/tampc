@@ -303,7 +303,7 @@ class PolynomialInvariantTransform(invariant.DirectLinearDynamicsTransform):
         cs = cosine_similarity(self.params, self.true_params, dim=0).item()
         dist = torch.norm(self.params - self.true_params).item()
 
-        logger.info("step %d cos dist %f dist %f", self.step, cs, dist)
+        logger.debug("step %d cos dist %f dist %f", self.step, cs, dist)
 
         writer.add_scalar('cosine_similiarty', cs, self.step)
         writer.add_scalar('param_diff', dist, self.step)
