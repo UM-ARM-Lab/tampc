@@ -20,6 +20,7 @@ class OnlineDynamics(object):
         self.prior = online_prior
         self.sigreg = sigreg  # Covariance regularization (adds sigreg*eye(N))
         sigma, mu = prior.gaussian_params_from_dataset(ds)
+        self.ds = ds
 
         self.nx = ds.config.nx
         self.nu = ds.config.nu
@@ -98,15 +99,32 @@ class OnlineDynamics(object):
                                                  Phi, mu0, m, n0)
         return _batch_conditioned_dynamics(self.nx, self.nu, sigma, mu, self.sigreg)
 
+    def _apply_transform(self, x, u):
+        xu = torch.cat((x, u), dim=1)
+        xu = self.ds.preprocessor.transform_x(xu)
+        x = xu[:, :self.nx]
+        u = xu[:, self.nx:]
+        return x, u
+
     def predict(self, px, pu, cx, cu):
         """
         Predict next state; will return with the same dimensions as cx
         :return: B x N x nx or N x nx next states
         """
-        # TODO wrap transform and inverse transform around these calls
+        # transform if necessary (ensure dynamics is evaluated only in transformed space)
+        if self.ds.preprocessor:
+            cx, cu = self._apply_transform(cx, cu)
+            px, pu = self._apply_transform(px, pu)
+
         params = self._get_batch_dynamics(px, pu, cx, cu)
+        y = _batch_evaluate_dynamics(cx, cu, *params)
+
+        if self.ds.preprocessor:
+            y = self.ds.preprocessor.invert_transform(y, cx)
+
         # TODO have some advance_state method here similar to DynamicsModel to handle different data formats
-        next_state = _batch_evaluate_dynamics(cx, cu, *params)
+        next_state = y
+
         return next_state
 
 
