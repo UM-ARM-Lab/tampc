@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from arm_pytorch_utilities import linalg
 from arm_pytorch_utilities.trajectory import invert_psd
+from meta_contact import model
 from meta_contact import prior
 
 
@@ -12,7 +13,6 @@ class OnlineDynamicsModel(object):
 
     All dynamics public API takes input and returns output in original xu space,
     while internally (functions starting with underscore) they all operate in transformed space.
-    TODO save and apply transforms here
     """
 
     def __init__(self, gamma, online_prior: prior.OnlineDynamicsPrior, ds, N=1, sigreg=1e-5):
@@ -21,6 +21,7 @@ class OnlineDynamicsModel(object):
         self.sigreg = sigreg  # Covariance regularization (adds sigreg*eye(N))
         sigma, mu = prior.gaussian_params_from_dataset(ds)
         self.ds = ds
+        self.advance = model.advance_state(ds.config, use_np=False)
 
         self.nx = ds.config.nx
         self.nu = ds.config.nu
@@ -111,6 +112,7 @@ class OnlineDynamicsModel(object):
         Predict next state; will return with the same dimensions as cx
         :return: B x N x nx or N x nx next states
         """
+        ocx = cx  # original state
         # transform if necessary (ensure dynamics is evaluated only in transformed space)
         if self.ds.preprocessor:
             cx, cu = self._apply_transform(cx, cu)
@@ -120,10 +122,9 @@ class OnlineDynamicsModel(object):
         y = _batch_evaluate_dynamics(cx, cu, *params)
 
         if self.ds.preprocessor:
-            y = self.ds.preprocessor.invert_transform(y, cx)
+            y = self.ds.preprocessor.invert_transform(y, ocx)
 
-        # TODO have some advance_state method here similar to DynamicsModel to handle different data formats
-        next_state = y
+        next_state = self.advance(ocx, y)
 
         return next_state
 
