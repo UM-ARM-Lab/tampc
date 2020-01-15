@@ -333,9 +333,16 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
+class UseTransform:
+    NO_TRANSFORM = 0
+    POLYNOMIAL_TRANSFORM = 1
+    NETWORK_TRANSFORM = 2
+
+
 def evaluate_invariant(name='', trials=5, trial_length=50):
     env = get_env(myenv.Mode.DIRECT)
     seed = 1
+    use_tsf = UseTransform.POLYNOMIAL_TRANSFORM
 
     preprocessor = None
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
@@ -345,25 +352,35 @@ def evaluate_invariant(name='', trials=5, trial_length=50):
     logger.info("initial random seed %d", rand.seed(seed))
 
     # create the invariant transform
-    invariant_tsf = PolynomialInvariantTransform(ds, env.nx, torch.from_numpy(env.true_params),
-                                                 too_far_for_neighbour=1., train_on_continuous_data=True,
-                                                 name='{}_s{}'.format(name, seed))
-    # invariant_tsf = invariant.NetworkInvariantTransform(ds, 2, too_far_for_neighbour=0.3,
-    #                                                     name='{}_s{}'.format(name, seed))
+    base_name = '{}_s{}'.format(name, seed)
+    transforms = {UseTransform.NO_TRANSFORM: None,
+                  UseTransform.POLYNOMIAL_TRANSFORM: PolynomialInvariantTransform(ds, env.nx,
+                                                                                  torch.from_numpy(env.true_params),
+                                                                                  too_far_for_neighbour=1.,
+                                                                                  train_on_continuous_data=True,
+                                                                                  name=base_name),
+                  UseTransform.NETWORK_TRANSFORM: invariant.NetworkInvariantTransform(ds, 2, too_far_for_neighbour=0.3,
+                                                                                      name=base_name)}
+    transform_names = {UseTransform.NO_TRANSFORM: 'none', UseTransform.POLYNOMIAL_TRANSFORM: 'poly',
+                       UseTransform.NETWORK_TRANSFORM: 'net'}
+    invariant_tsf = transforms[use_tsf]
 
-    # either load or learn the transform
-    if not invariant_tsf.load(invariant_tsf.get_last_checkpoint()):
-        invariant_tsf.learn_model(10, 5)
+    if invariant_tsf:
+        # either load or learn the transform
+        if not invariant_tsf.load(invariant_tsf.get_last_checkpoint()):
+            invariant_tsf.learn_model(10, 5)
 
-    # wrap the transform as a data preprocessor
-    preprocessor = invariant.InvariantPreprocessor(invariant_tsf)
-    # update the datasource to use transformed data
-    ds.update_preprocessor(preprocessor)
+        # wrap the transform as a data preprocessor
+        preprocessor = invariant.InvariantPreprocessor(invariant_tsf)
+        # update the datasource to use transformed data
+        ds.update_preprocessor(preprocessor)
+
+    prior_name = '{}_prior'.format(transform_names[use_tsf])
 
     # train global prior dynamics model on the same datasource
     # pm = prior.LSQPrior.from_data(ds)
     mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(ds.config)), ds,
-                                   name='{}_linear'.format(invariant_tsf.name))
+                                   name=prior_name)
     pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=70, batch_N=500)
 
     # evaluate prior accuracy
