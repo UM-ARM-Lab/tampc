@@ -67,20 +67,26 @@ def advance_state(config: load_data.DataConfig, use_np=True):
                 x = xu[:, :config.nx]
                 return x + dx
         else:
-            # directly move the pusher
             def advance(xu, dxb):
-                x = xu[:, :config.nx]
-                u = xu[:, config.nx:config.nx + config.nu]
-                return x + cat((u, dxb))
+                raise NotImplementedError(
+                    "When not predicting full state the config's parameters are not"
+                    " currently sufficiently to figure out which dims to predict")
+                # TODO not general; specific to the case where the first nu states are controlled directly
+                # x = xu[:, :config.nx]
+                # u = xu[:, config.nx:config.nx + config.nu]
+                # return x + cat((u, dxb))
     else:
         if config.predict_all_dims:
             def advance(xu, xup):
                 return xup
         else:
             def advance(xu, xb):
+                raise NotImplementedError(
+                    "When not predicting full state the config's parameters are not"
+                    " currently sufficiently to figure out which dims to predict")
                 # TODO not general; specific to the case where the first nu states are controlled directly
-                u = xu[:, config.nx:config.nx + config.nu]
-                return cat((xu[:, :config.nu] + u, xb))
+                # u = xu[:, config.nx:config.nx + config.nu]
+                # return cat((xu[:, :config.nu] + u, xb))
 
     return advance
 
@@ -123,10 +129,10 @@ class DynamicsModel(abc.ABC):
     while internally (functions starting with underscore) they all operate in transformed space.
     """
 
-    def __init__(self, dataset, use_np=False):
-        self.dataset = dataset
+    def __init__(self, ds, use_np=False):
+        self.ds = ds
         # TODO check correctness of advance state function when we have have a transform (data is not xux' or xudx)
-        self.advance = advance_state(dataset.config, use_np=use_np)
+        self.advance = advance_state(ds.config, use_np=use_np)
 
     def predict(self, xu, already_transformed=False):
         """
@@ -140,9 +146,9 @@ class DynamicsModel(abc.ABC):
             # reduce all batch dimensions down to the first one
             xu = xu.view(-1, orig_shape[-1])
 
-        if self.dataset.preprocessor and not already_transformed:
-            dxb = self._apply_model(self.dataset.preprocessor.transform_x(xu))
-            dxb = self.dataset.preprocessor.invert_transform(dxb, xu)  # TODO should probably give just x
+        if self.ds.preprocessor and not already_transformed:
+            dxb = self._apply_model(self.ds.preprocessor.transform_x(xu))
+            dxb = self.ds.preprocessor.invert_transform(dxb, xu)  # TODO should probably give just x
         else:
             dxb = self._apply_model(xu)
 
@@ -169,11 +175,11 @@ class DynamicsModel(abc.ABC):
 
 
 class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
-    def __init__(self, model_user: ModelUser, dataset, **kwargs):
+    def __init__(self, model_user: ModelUser, ds, **kwargs):
         self.user = model_user
         self.model = model_user.model
 
-        DynamicsModel.__init__(self, dataset)
+        DynamicsModel.__init__(self, ds)
         LearnableParameterizedModel.__init__(self, cfg.ROOT_DIR, **kwargs)
 
         self.writer = SummaryWriter(flush_secs=20, comment=os.path.basename(self.name))
@@ -183,8 +189,8 @@ class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
         self.writer.add_scalar('loss/validation', vloss, self.step)
 
     def learn_model(self, max_epoch, batch_N=500):
-        self.XU, self.Y, self.labels = self.dataset.training_set()
-        self.XUv, self.Yv, self.labelsv = self.dataset.validation_set()
+        self.XU, self.Y, self.labels = self.ds.training_set()
+        self.XUv, self.Yv, self.labelsv = self.ds.validation_set()
         ds_train = load_data.SimpleDataset(self.XU, self.Y, self.labels)
         train_loader = torch.utils.data.DataLoader(ds_train, batch_size=batch_N, shuffle=True)
 
@@ -255,6 +261,6 @@ class LinearModelTorch(DynamicsModel):
         dxb = xu[:, :self.nx] @ self.A.transpose(0, 1) + xu[:, self.nx:] @ self.B.transpose(0, 1)
         # dxb = self.A @ xu[:, :self.nx] + self.B @ xu[:, self.nx:]
         # strip x,y of the pusher, which we add directly;
-        if not self.dataset.config.predict_all_dims:
+        if not self.ds.config.predict_all_dims:
             dxb = dxb[:, self.nu:]
         return dxb

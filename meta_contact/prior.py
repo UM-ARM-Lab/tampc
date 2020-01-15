@@ -110,7 +110,7 @@ class NNPrior(OnlineDynamicsPrior):
         self.dyn_net = mw
         self.dyn_net.freeze()
         self.mix_prior_strength = mix_strength
-        self.full_context = mw.dataset.config.expanded_input
+        self.full_context = mw.ds.config.expanded_input
 
     def get_params(self, nx, nu, xu, pxu, xux):
         # feed pxu and xu to network (full contextual network)
