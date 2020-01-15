@@ -206,7 +206,7 @@ def evaluate_prior(env, pm, ds, relative=True):
 
         if relative:
             actual_delta = torch.norm(nxt - xy, dim=1)
-            valid = actual_delta > 0
+            valid = actual_delta > 1e-10
             diff = diff[valid]
             actual_delta = actual_delta[valid]
             if torch.any(valid):
@@ -217,7 +217,6 @@ def evaluate_prior(env, pm, ds, relative=True):
             Z[i] = (torch.norm(diff, dim=1)).mean()
 
     # normalize to per action
-    Z = Z.reshape(X.shape)
     logger.info("Error min %f max %f median %f std %f", Z.min(), Z.max(), np.median(Z), Z.std())
     return XY, Z
 
