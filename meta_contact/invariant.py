@@ -365,6 +365,7 @@ class InvariantPreprocessor(preprocess.Preprocess):
         assert self.model_output_dim is config.ny if self.tsf.supports_only_direct_z_to_dx() else self.tsf.nz
         # this is not just tsf.nz because the tsf could have an additional structure such as z*u as output
         # TODO for our current transform we go from xu->z instead of x->z, u->v and we can treat this as nu = 0
+        config.n_input = self.model_input_dim
         config.nx = self.model_input_dim
         config.nu = 0
         config.ny = self.model_output_dim  # either ny or nz
