@@ -188,6 +188,24 @@ def evaluate_prior(env, pm, ds, relative=True):
     # we can evaluate just prior dynamics by mixing with N=0 (no weight for empirical data)
     dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, N=0, sigreg=1e-10)
 
+    if isinstance(pm, prior.NNPrior):
+        # evaluate linearization by comparing error from applying model directly vs applying linearized model
+        xuv, yv, _ = ds.validation_set()
+        if ds.config.predict_difference:
+            yv = yv + xuv[:, :ds.config.nx]
+        # full model prediction
+        yhat1 = pm.dyn_net.predict(xuv, already_transformed=True)
+
+        # linearized prediction
+        # these xuv are after transformation
+        xv = xuv[:, :ds.config.nx]
+        uv = xuv[:, ds.config.nx:]
+        yhat2 = dynamics.predict(xv, uv, xv, uv, already_transformed=True)
+
+        e1 = torch.norm((yhat1 - yv), dim=1)
+        e2 = torch.norm((yhat2 - yv), dim=1)
+        logger.info("Full model MSE %f linearized model MSE %f", e1.mean(), e2.mean())
+
     bounds = get_control_bounds()
     num_actions = 20
     logger.info("random seed %d", rand.seed(1))
