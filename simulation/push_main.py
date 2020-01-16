@@ -109,7 +109,7 @@ def get_data_dir(level=0):
     return 'pushing/touching{}.mat'.format(level)
 
 
-def get_easy_env(mode=p.GUI, level=0):
+def get_easy_env(mode=p.GUI, level=0, log_video=False):
     init_block_pos = [0, 0]
     init_block_yaw = 0
     # init_pusher = [-0.095, 0]
@@ -120,7 +120,7 @@ def get_easy_env(mode=p.GUI, level=0):
     # env = interactive_block_pushing.PushAgainstWallEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher,
     #                                                    init_block=init_block_pos, init_yaw=init_block_yaw,
     #                                                    environment_level=level)
-    env = block_push.PushAgainstWallStickyEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher, log_video=True,
+    env = block_push.PushAgainstWallStickyEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher, log_video=log_video,
                                               init_block=init_block_pos, init_yaw=init_block_yaw,
                                               environment_level=level)
     return env
@@ -144,7 +144,7 @@ def constrain_state(state):
 
 def test_local_dynamics(level=0):
     num_frames = 70
-    env = get_easy_env(p.GUI, level=level)
+    env = get_easy_env(p.DIRECT, level=level)
     # TODO preprocessor in online dynamics not yet supported
     preprocessor = None
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
@@ -168,13 +168,45 @@ def test_local_dynamics(level=0):
                                        compare_to_goal=env.compare_to_goal,
                                        constrain_state=constrain_state, mpc_opts={'init_cov_diag': 0.002})  # use seed 7
 
-    sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=True, save=False)
+    # expensive evaluation
+    evaluate_controller(env, ctrl)
 
-    seed = rand.seed()
-    sim.run(seed)
-    logger.info("last run cost %f", sim.last_run_cost)
-    plt.ioff()
-    plt.show()
+    # sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=True, save=False)
+    # seed = rand.seed()
+    # sim.run(seed)
+    # logger.info("last run cost %f", sim.last_run_cost)
+    # plt.ioff()
+    # plt.show()
+
+
+def evaluate_controller(env, ctrl, start_seed=0, tasks=10, tries=10):
+    """Fixed set of benchmark tasks to do control over, with the total reward for each task collected and reported"""
+    num_frames = 100
+    sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=False, save=False)
+
+    seed = rand.seed(start_seed)
+    logger.info("evaluation seed %d tasks %d tries %d", seed, tasks, tries)
+
+    total_costs = np.zeros((tasks, tries))
+    for t in range(tasks):
+        task_seed = rand.seed()
+        # configure init and goal for task
+        init_block_pos, init_block_yaw, init_pusher = random_touching_start()
+        goal_pos = np.random.uniform(-0.6, 0.6, 2)
+        env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher, goal=goal_pos)
+        logger.info("task %d init block %s goal %s", task_seed, init_block_pos, goal_pos)
+
+        for i in range(tries):
+            try_seed = rand.seed()
+            sim.run(try_seed)
+            logger.info("task %d try %d run cost %f", task_seed, try_seed, sim.last_run_cost)
+            total_costs[t, i] = sim.last_run_cost
+
+    # summarize stats
+    for t in range(tasks):
+        logger.info("task %d cost: %f std %f", t, np.mean(total_costs[t]), np.std(total_costs[t]))
+    logger.info("total cost: %f std %f", np.mean(total_costs), np.std(total_costs))
+    return total_costs
 
 
 def test_global_linear_dynamics(level=0):
