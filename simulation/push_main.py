@@ -6,7 +6,7 @@ import numpy as np
 import pybullet as p
 import sklearn.preprocessing as skpre
 import torch
-from arm_pytorch_utilities import preprocess
+from arm_pytorch_utilities import preprocess, math_utils
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.model import make
 from meta_contact import cfg
@@ -46,13 +46,9 @@ def get_control_bounds():
 
 
 def collect_touching_freespace_data(trials=20, trial_length=40, level=0):
-    # use random controller (with varying push direction)
-    push_mag = 0.03
-    # ctrl = controller.RandomController(push_mag, .02, 1)
-    u_min, u_max = get_control_bounds()
-    ctrl = controller.FullRandomController(2, u_min, u_max)
-
     env = get_easy_env(p.DIRECT, level)
+    u_min, u_max = get_control_bounds()
+    ctrl = controller.FullRandomController(env.nu, u_min, u_max)
     # use mode p.GUI to see what the trials look like
     save_dir = 'pushing/touching{}'.format(level)
     sim = block_push.InteractivePush(env, ctrl, num_frames=trial_length, plot=False, save=True,
@@ -75,7 +71,7 @@ def collect_touching_freespace_data(trials=20, trial_length=40, level=0):
         # start at fixed location
         init_block_pos, init_block_yaw, init_pusher = random_touching_start()
         env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
-        ctrl = controller.FullRandomController(2, u_min, u_max)
+        ctrl = controller.FullRandomController(env.nu, u_min, u_max)
         sim.ctrl = ctrl
         sim.run(seed)
 
@@ -129,15 +125,44 @@ def get_easy_env(mode=p.GUI, level=0):
     return env
 
 
+def compare_to_goal_np(state, goal):
+    if len(goal.shape) == 1:
+        goal = goal.reshape(1, -1)
+    dyaw = math_utils.angular_diff_batch(state[:, 2], goal[:, 2])
+    dpos = state[:, :2] - goal[:, :2]
+    dalong = state[:, 3] - goal[:, 3]
+    diff = np.column_stack((dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1)))
+    return diff
+
+
+def compare_to_goal(state, goal):
+    if len(goal.shape) == 1:
+        goal = goal.view(1, -1)
+    dyaw = math_utils.angular_diff_batch(state[:, 2], goal[:, 2])
+    dpos = state[:, :2] - goal[:, :2]
+    dalong = state[:, 3] - goal[:, 3]
+    diff = torch.cat((dpos, dyaw.view(-1, 1), dalong.view(-1, 1)), dim=1)
+    return diff
+
+
+def constrain_state(state):
+    # yaw gets normalized
+    state[:, 2] = math_utils.angle_normalize(state[:, 2])
+    # along gets constrained
+    state[:, 3] = math_utils.clip(state[:, 3], -torch.tensor(block_push.MAX_ALONG, dtype=torch.double), torch.tensor(block_push.MAX_ALONG, dtype=torch.double))
+    return state
+
+
 def test_local_dynamics(level=0):
     num_frames = 70
     env = get_easy_env(p.GUI, level=level)
     # TODO preprocessor in online dynamics not yet supported
     preprocessor = None
-    config = load_data.DataConfig(predict_difference=False, predict_all_dims=True, expanded_input=True)
-    # config = load_data.DataConfig(predict_difference=True, predict_all_dims=True)
+    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds = block_push.PushDataSource(env, data_dir=get_data_dir(level), preprocessor=preprocessor,
                                    validation_ratio=0.1, config=config)
+
+    # TODO add in invariant transform here
 
     m = model.DeterministicUser(make.make_sequential_network(config))
     mw = model.NetworkModelWrapper(m, ds, name='contextual')
@@ -145,8 +170,14 @@ def test_local_dynamics(level=0):
     # pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
     u_min, u_max = get_control_bounds()
-    ctrl = online_controller.OnlineLQR(pm, ds=ds, max_timestep=num_frames, R=5, horizon=20, lqr_iter=3,
-                                       init_gamma=0.1, u_min=u_min, u_max=u_max)
+    # ctrl = online_controller.OnlineLQR(pm, ds=ds, max_timestep=num_frames, R=5, horizon=20, lqr_iter=3,
+    #                                    init_gamma=0.1, u_min=u_min, u_max=u_max)
+
+    Q = torch.diag(torch.tensor([1, 1, 0, 0.01], dtype=torch.double))
+    R = 1
+    ctrl = online_controller.OnlineCEM(pm, ds, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
+                                       compare_to_goal=compare_to_goal_np,
+                                       constrain_state=constrain_state, mpc_opts={'init_cov_diag': 0.002})  # use seed 7
 
     sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=True, save=False)
 
@@ -192,7 +223,7 @@ def test_global_qr_cost_optimal_controller(controller, level=0, **kwargs):
     u_min, u_max = get_control_bounds()
     u_min = torch.tensor(u_min, dtype=torch.double)
     u_max = torch.tensor(u_max, dtype=torch.double)
-    ctrl = controller(pm, ds, Q=Q, u_min=u_min, u_max=u_max, **kwargs)
+    ctrl = controller(pm, ds, Q=Q, u_min=u_min, u_max=u_max, compare_to_goal=compare_to_goal, **kwargs)
     sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=True, save=False)
 
     seed = rand.seed()
@@ -203,13 +234,13 @@ def test_global_qr_cost_optimal_controller(controller, level=0, **kwargs):
 
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=100, trial_length=50, level=0)
-    ctrl = global_controller.GlobalCEMController
-    test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7, num_elite=50, level=0,
-                                           init_cov_diag=0.002)  # CEM options
+    # ctrl = global_controller.GlobalCEMController
+    # test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7, num_elite=50, level=0,
+    #                                        init_cov_diag=0.002)  # CEM options
     # ctrl = global_controller.GlobalMPPIController
     # test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7, level=0, lambda_=0.1,
     #                                        noise_sigma=torch.diag(
     #                                            torch.tensor([0.01, 0.01], dtype=torch.double)))  # MPPI options
     # test_global_linear_dynamics(level=0)
-    # test_local_dynamics(0)
+    test_local_dynamics(0)
     # sandbox()
