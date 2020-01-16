@@ -324,9 +324,20 @@ class PushAgainstWallEnv(MyPybulletEnv):
         # if rest == self.initRestFrames:
         #     logger.warning("Ran out of steps static")
 
+    @staticmethod
+    def compare_to_goal(state, goal):
+        if len(state.shape) == 1:
+            state = state.reshape(1, -1)
+        if len(goal.shape) == 1:
+            goal = goal.reshape(1, -1)
+        dyaw = math_utils.angular_diff_batch(state[:, 4], goal[:, 4])
+        dpos = state[:, :4] - goal[:, :4]
+        diff = np.column_stack((dpos, dyaw.reshape(-1, 1)))
+        return diff
+
     def evaluate_cost(self, state, action=None):
-        # TODO consider using different cost function for yaw (wrap) - for example take use a compare_to_goal func
-        diff = state - self.goal
+        diff = self.compare_to_goal(state, self.goal)
+        diff = diff.reshape(-1)
         cost = diff @ self.Q @ diff
         done = cost < 0.01
         if action is not None:
@@ -345,7 +356,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
         # get the net contact force between robot and block
         info = self._observe_contact()
-        self.state = self._obs()
+        self.state = np.array(self._obs())
         # track trajectory
         p.addUserDebugLine([old_state[0], old_state[1], z], [self.state[0], self.state[1], z], [1, 0, 0], 2)
         p.addUserDebugLine([old_state[2], old_state[3], z], [self.state[2], self.state[3], z], [0, 0, 1], 2)
@@ -401,6 +412,18 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
                                           along_face=init_pusher)
             self.initPusherPos = tuple(pos) + (0.05,)
 
+    @staticmethod
+    def compare_to_goal(state, goal):
+        if len(state.shape) == 1:
+            state = state.reshape(1, -1)
+        if len(goal.shape) == 1:
+            goal = goal.reshape(1, -1)
+        dyaw = math_utils.angular_diff_batch(state[:, 2], goal[:, 2])
+        dpos = state[:, :2] - goal[:, :2]
+        dalong = state[:, 3] - goal[:, 3]
+        diff = np.column_stack((dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1)))
+        return diff
+
     def _draw_goal(self):
         goalVisualWidth = 0.15 / 2
         goal = np.concatenate((self.goal[:2], (0.1,)))
@@ -440,7 +463,7 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
 
         # get the net contact force between robot and block
         info = self._observe_contact()
-        self.state = self._obs()
+        self.state = np.array(self._obs())
         # track trajectory
         p.addUserDebugLine([old_state[0], old_state[1], z], [self.state[0], self.state[1], z], [0, 0, 1], 2)
 

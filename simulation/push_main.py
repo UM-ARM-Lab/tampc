@@ -126,24 +126,11 @@ def get_easy_env(mode=p.GUI, level=0):
     return env
 
 
-def compare_to_goal_np(state, goal):
-    if len(goal.shape) == 1:
-        goal = goal.reshape(1, -1)
-    dyaw = math_utils.angular_diff_batch(state[:, 2], goal[:, 2])
-    dpos = state[:, :2] - goal[:, :2]
-    dalong = state[:, 3] - goal[:, 3]
-    diff = np.column_stack((dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1)))
-    return diff
+def compare_to_goal_factory(env):
+    def compare_to_goal(*args):
+        return torch.from_numpy(env.compare_to_goal(*args))
 
-
-def compare_to_goal(state, goal):
-    if len(goal.shape) == 1:
-        goal = goal.view(1, -1)
-    dyaw = math_utils.angular_diff_batch(state[:, 2], goal[:, 2])
-    dpos = state[:, :2] - goal[:, :2]
-    dalong = state[:, 3] - goal[:, 3]
-    diff = torch.cat((dpos, dyaw.view(-1, 1), dalong.view(-1, 1)), dim=1)
-    return diff
+    return compare_to_goal
 
 
 def constrain_state(state):
@@ -178,7 +165,7 @@ def test_local_dynamics(level=0):
     Q = torch.diag(torch.tensor([1, 1, 0, 0.01], dtype=torch.double))
     R = 1
     ctrl = online_controller.OnlineCEM(pm, ds, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
-                                       compare_to_goal=compare_to_goal_np,
+                                       compare_to_goal=env.compare_to_goal,
                                        constrain_state=constrain_state, mpc_opts={'init_cov_diag': 0.002})  # use seed 7
 
     sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=True, save=False)
@@ -226,7 +213,7 @@ def test_global_qr_cost_optimal_controller(controller, level=0, **kwargs):
     u_min, u_max = get_control_bounds()
     u_min = torch.tensor(u_min, dtype=torch.double)
     u_max = torch.tensor(u_max, dtype=torch.double)
-    ctrl = controller(pm, ds, Q=Q, u_min=u_min, u_max=u_max, compare_to_goal=compare_to_goal, **kwargs)
+    ctrl = controller(pm, ds, Q=Q, u_min=u_min, u_max=u_max, compare_to_goal=compare_to_goal_factory(env), **kwargs)
     sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=True, save=False)
 
     seed = rand.seed()
