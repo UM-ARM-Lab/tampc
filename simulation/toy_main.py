@@ -91,6 +91,7 @@ def show_prior_accuracy(expected_max_error=1., relative=True):
     :return:
     """
 
+    env = get_env(myenv.Mode.DIRECT)
     # plot a contour map over the state space - input space of how accurate the prior is
     # can't use preprocessor except for the neural network prior because their returned matrices are wrt transformed
     preprocessor = preprocess.PytorchPreprocessing(preprocess.MinMaxScaler())
@@ -98,7 +99,6 @@ def show_prior_accuracy(expected_max_error=1., relative=True):
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds = toy.ToyDataSource(data_dir=save_dir + '.mat', preprocessor=preprocessor, validation_ratio=0.1,
                            config=config)
-    env = get_env(myenv.Mode.DIRECT)
 
     # load prior
     # pm = prior.LSQPrior.from_data(ds)
@@ -109,16 +109,7 @@ def show_prior_accuracy(expected_max_error=1., relative=True):
 
     XY, Z = evaluate_prior(env, pm, ds, relative)
 
-    fig, ax = plt.subplots()
-
-    # CS = ax.contourf(XY[:, 0], XY[:, 1], Z, cmap='plasma', vmin=0, vmax=expected_max_error)
-    CS = ax.tripcolor(XY[:, 0], XY[:, 1], Z, cmap='plasma', vmin=0, vmax=expected_max_error)
-    CBI = fig.colorbar(CS)
-    CBI.ax.set_ylabel('local model relative error')
-    ax.set_ylabel('y')
-    ax.set_xlabel('x')
-    ax.set_title('linearized prior model error')
-    plt.show()
+    plot_prior_error(XY, Z, relative, expected_max_error)
 
 
 def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_error=0.5):
@@ -153,27 +144,7 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
 
     xy, emp_error, prior_error, costs = evaluate_ctrl(env, ctrl, trials, trial_length)
 
-    plt.ioff()
-
-    fig, ax = plt.subplots()
-    # CS = ax.tricontourf(xy[:, 0], xy[:, 1], emp_error, 10, cmap='plasma', vmin=0, vmax=expected_max_error)
-    CS = ax.tripcolor(xy[:, 0], xy[:, 1], emp_error, cmap='plasma', vmin=0, vmax=expected_max_error)
-    CBI = fig.colorbar(CS)
-    CBI.ax.set_ylabel('model error')
-    ax.set_ylabel('y')
-    ax.set_xlabel('x')
-    ax.set_title('empirical local model error')
-
-    fig2, ax2 = plt.subplots()
-    # CS2 = ax2.tricontourf(xy[:, 0], xy[:, 1], prior_error, 10, cmap='plasma', vmin=0, vmax=expected_max_error)
-    CS2 = ax2.tripcolor(xy[:, 0], xy[:, 1], prior_error, cmap='plasma', vmin=0, vmax=expected_max_error)
-    CBI2 = fig2.colorbar(CS2)
-    CBI2.ax.set_ylabel('model error')
-    ax2.set_ylabel('y')
-    ax2.set_xlabel('x')
-    ax2.set_title('prior linearized model error')
-
-    plt.show()
+    plot_empirical_and_prior_error(xy, emp_error, prior_error, expected_max_error)
 
 
 def evaluate_prior(env, pm, ds, relative=True):
@@ -295,6 +266,43 @@ def evaluate_ctrl(env, ctrl, trials, trial_length):
     emp_error = emp_error[:i]
     prior_error = prior_error[:i]
     return xy, emp_error, prior_error, costs
+
+
+def plot_prior_error(XY, prior_error, relative, expected_max_error=0.5):
+    fig, ax = plt.subplots()
+
+    # CS = ax.contourf(XY[:, 0], XY[:, 1], Z, cmap='plasma', vmin=0, vmax=expected_max_error)
+    CS = ax.tripcolor(XY[:, 0], XY[:, 1], prior_error, cmap='plasma', vmin=0, vmax=expected_max_error)
+    CBI = fig.colorbar(CS)
+    CBI.ax.set_ylabel('local model {}error'.format('relative ' if relative else ''))
+    ax.set_ylabel('y')
+    ax.set_xlabel('x')
+    ax.set_title('linearized prior model error')
+    plt.show()
+
+
+def plot_empirical_and_prior_error(xy, emp_error, prior_error, expected_max_error=0.5):
+    plt.ioff()
+
+    fig, ax = plt.subplots()
+    # CS = ax.tricontourf(xy[:, 0], xy[:, 1], emp_error, 10, cmap='plasma', vmin=0, vmax=expected_max_error)
+    CS = ax.tripcolor(xy[:, 0], xy[:, 1], emp_error, cmap='plasma', vmin=0, vmax=expected_max_error)
+    CBI = fig.colorbar(CS)
+    CBI.ax.set_ylabel('model error')
+    ax.set_ylabel('y')
+    ax.set_xlabel('x')
+    ax.set_title('empirical local model error')
+
+    fig2, ax2 = plt.subplots()
+    # CS2 = ax2.tricontourf(xy[:, 0], xy[:, 1], prior_error, 10, cmap='plasma', vmin=0, vmax=expected_max_error)
+    CS2 = ax2.tripcolor(xy[:, 0], xy[:, 1], prior_error, cmap='plasma', vmin=0, vmax=expected_max_error)
+    CBI2 = fig2.colorbar(CS2)
+    CBI2.ax.set_ylabel('model error')
+    ax2.set_ylabel('y')
+    ax2.set_xlabel('x')
+    ax2.set_title('prior linearized model error')
+
+    plt.show()
 
 
 class PolynomialInvariantTransform(invariant.DirectLinearDynamicsTransform):
@@ -432,14 +440,14 @@ def evaluate_invariant(name='', trials=5, trial_length=50):
     # TODO analyze error
     xy, emp_error, prior_error, costs = evaluate_ctrl(env, ctrl, trials, trial_length)
 
-    plt.show()
+    plot_empirical_and_prior_error(xy, emp_error, prior_error)
 
 
 if __name__ == "__main__":
     # test_env_control()
     # collect_data(500, 20, x_min=(-3, -3), x_max=(3, 3))
-    # show_prior_accuracy(relative=False)
-    compare_empirical_and_prior_error(20, 50)
+    # show_prior_accuracy(relative=True)
+    # compare_empirical_and_prior_error(20, 50)
     # for seed in range(5):
     #     learn_invariance(seed, "default", MAX_EPOCH=40, BATCH_SIZE=5)
-    # evaluate_invariant('default', 5, 50)
+    evaluate_invariant('default', 20, 50)
