@@ -156,7 +156,7 @@ def test_local_dynamics(level=0):
     # plt.show()
 
 
-def evaluate_controller(env, ctrl, start_seed=0, tasks=10, tries=10):
+def evaluate_controller(env, ctrl, tasks=10, tries=10, start_seed=0):
     """Fixed set of benchmark tasks to do control over, with the total reward for each task collected and reported"""
     num_frames = 100
     sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=False, save=False)
