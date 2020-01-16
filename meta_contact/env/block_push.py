@@ -489,7 +489,7 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
 
 class InteractivePush(simulation.Simulation):
     def __init__(self, env: PushAgainstWallEnv, controller, num_frames=1000, save_dir='pushing', observation_period=1,
-                 terminal_cost_multiplier=5, **kwargs):
+                 terminal_cost_multiplier=1, **kwargs):
 
         super(InteractivePush, self).__init__(save_dir=save_dir, num_frames=num_frames, config=cfg, **kwargs)
         self.mode = env.mode
@@ -500,7 +500,7 @@ class InteractivePush(simulation.Simulation):
 
         # keep track of last run's rewards
         self.terminal_cost_multiplier = terminal_cost_multiplier
-        self.last_run_cost = 0
+        self.last_run_cost = []
 
         # plotting
         self.fig = None
@@ -525,22 +525,24 @@ class InteractivePush(simulation.Simulation):
         return simulation.ReturnMeaning.SUCCESS
 
     def _run_experiment(self):
-        self.last_run_cost = 0
+        self.last_run_cost = []
         obs = self._reset_sim()
         for simTime in range(self.num_frames - 1):
             self.traj[simTime, :] = obs
             action = self.ctrl.command(obs)
             action = np.array(action).flatten()
             obs, rew, done, info = self.env.step(action)
+            cost = -rew
 
-            self.last_run_cost -= rew
+            self.last_run_cost.append(cost)
             self.u[simTime, :] = action
             self.traj[simTime + 1, :] = obs
             self.contactForce[simTime] = info['contact_force']
             self.contactCount[simTime] = info['contact_count']
 
         terminal_cost, done = self.env.evaluate_cost(self.traj[-1])
-        self.last_run_cost += terminal_cost * self.terminal_cost_multiplier
+        self.last_run_cost.append(terminal_cost * self.terminal_cost_multiplier)
+
         # confirm dynamics is as expected
         # if self.env.level == 0:
         #     xy = self.traj[:, :self.env.nu]

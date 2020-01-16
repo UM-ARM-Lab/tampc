@@ -16,6 +16,7 @@ from meta_contact.controller import controller
 from meta_contact.controller import global_controller
 from meta_contact.controller import online_controller
 from meta_contact.env import block_push
+from tensorboardX import SummaryWriter
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
@@ -145,8 +146,9 @@ def test_local_dynamics(level=0):
                                        compare_to_goal=env.compare_to_goal,
                                        constrain_state=constrain_state, mpc_opts={'init_cov_diag': 0.002})  # use seed 7
 
+    name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else pm.__class__.__name__
     # expensive evaluation
-    evaluate_controller(env, ctrl)
+    evaluate_controller(env, ctrl, name)
 
     # sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=True, save=False)
     # seed = rand.seed()
@@ -156,10 +158,13 @@ def test_local_dynamics(level=0):
     # plt.show()
 
 
-def evaluate_controller(env, ctrl, tasks=10, tries=10, start_seed=0):
+def evaluate_controller(env, ctrl, name, tasks=10, tries=10, start_seed=0):
     """Fixed set of benchmark tasks to do control over, with the total reward for each task collected and reported"""
     num_frames = 100
     sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=False, save=False)
+
+    name = "{}_{}".format(ctrl.__class__.__name__, name)
+    writer = SummaryWriter(flush_secs=20, comment=name)
 
     seed = rand.seed(start_seed)
     logger.info("evaluation seed %d tasks %d tries %d", seed, tasks, tries)
@@ -173,16 +178,26 @@ def evaluate_controller(env, ctrl, tasks=10, tries=10, start_seed=0):
         env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher, goal=goal_pos)
         logger.info("task %d init block %s goal %s", task_seed, init_block_pos, goal_pos)
 
+        task_costs = np.zeros((num_frames, tries))
+
         for i in range(tries):
             try_seed = rand.seed()
             sim.run(try_seed)
-            logger.info("task %d try %d run cost %f", task_seed, try_seed, sim.last_run_cost)
-            total_costs[t, i] = sim.last_run_cost
+            logger.info("task %d try %d run cost %f", task_seed, try_seed, sum(sim.last_run_cost))
+            total_costs[t, i] = sum(sim.last_run_cost)
+            task_costs[:, i] = sim.last_run_cost
+
+        for step, costs in enumerate(task_costs):
+            writer.add_histogram('ctrl_eval/task_{}'.format(task_seed), costs, step)
+
+        task_mean_cost = np.mean(total_costs[t])
+        writer.add_scalar('ctrl_eval/task_{}'.format(task_seed), task_mean_cost, 0)
+        logger.info("task %d cost: %f std %f", task_seed, task_mean_cost, np.std(total_costs[t]))
 
     # summarize stats
-    for t in range(tasks):
-        logger.info("task %d cost: %f std %f", t, np.mean(total_costs[t]), np.std(total_costs[t]))
-    logger.info("total cost: %f std %f", np.mean(total_costs), np.std(total_costs))
+    mean_cost = np.mean(total_costs)
+    logger.info("total cost: %f std %f", mean_cost, np.std(total_costs))
+    writer.add_scalar('ctrl_eval/total', mean_cost, 0)
     return total_costs
 
 
