@@ -146,10 +146,12 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
                                    name='linear')
     pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=70, batch_N=500)
     u_min, u_max = get_control_bounds()
-    ctrl = online_controller.OnlineLQR(pm, ds=ds, max_timestep=trial_length, R=3, horizon=10, lqr_iter=3,
-                                       init_gamma=0.1, u_min=u_min, u_max=u_max)
+    # ctrl = online_controller.OnlineLQR(pm, ds=ds, max_timestep=trial_length, R=3, horizon=10, lqr_iter=3,
+    #                                    init_gamma=0.1, u_min=u_min, u_max=u_max)
+    ctrl = online_controller.OnlineCEM(pm, ds, u_min=u_min, u_max=u_max,
+                                       mpc_opts={'init_cov_diag': 1.})
 
-    xy, emp_error, prior_error, total_cost = evaluate_ctrl(env, ctrl, trials, trial_length)
+    xy, emp_error, prior_error, costs = evaluate_ctrl(env, ctrl, trials, trial_length)
 
     plt.ioff()
 
@@ -177,8 +179,8 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
 def evaluate_prior(env, pm, ds, relative=True):
     # create grid over state-input space
     delta = 0.2
-    start = -3
-    end = 3.01
+    start = 1
+    end = 6.01
 
     x = y = np.arange(start, end, delta)
     X, Y = np.meshgrid(x, y)
@@ -242,14 +244,14 @@ def evaluate_ctrl(env, ctrl, trials, trial_length):
     u = np.zeros((N, env.nu))
     emp_error = np.zeros(N)
     prior_error = np.zeros_like(emp_error)
+    costs = np.zeros((trials, trial_length))
 
     logger.info("initial random seed %d", rand.seed(1))
     # randomly distribute data
     min_allowed_y = -2
     i = 0
-    total_cost = 0
     for t in range(trials):
-        seed = rand.seed()
+        task_seed = rand.seed()
         ctrl.reset()
         # randomize so that our prior is accurate in one mode but not the other
         init_state = np.random.uniform((-3, min_allowed_y), (3, 3))
@@ -257,13 +259,20 @@ def evaluate_ctrl(env, ctrl, trials, trial_length):
         env.set_task_config(init_state=init_state, goal=goal)
         ctrl.set_goal(goal)
 
-        rew = 0
         for j in range(trial_length):
             xy[i] = env.state
             action = ctrl.command(env.state)
             # track error
             action = np.array(action).flatten()
             obs, rew, done, info = env.step(action)
+            cost = -rew
+
+            # stepped too far out, just abort
+            if cost > 1e5:
+                costs[t, j] = float('inf')
+                break
+
+            costs[t, j] = cost
             if env.mode == myenv.Mode.GUI:
                 env.render()
 
@@ -273,18 +282,19 @@ def evaluate_ctrl(env, ctrl, trials, trial_length):
                 i += 1
 
             if done:
-                logger.info("Done %d in %d iterations with final cost %f", t, j, -rew)
                 break
 
-        # only add the final cost
-        total_cost += -rew
+        logger.info("task %d total iteration %d cost %f", task_seed, j, np.sum(costs[t]))
 
-    logger.info("Total cost %f", total_cost)
+    # filter out all the ones that didn't terminate
+    task_costs = np.sum(costs, axis=1)
+    terminated = np.isfinite(task_costs)
+    logger.info("total cost %f %d/%d terminated", np.sum(task_costs[terminated]), np.sum(terminated), trials)
     # strip off unused
     xy = xy[:i]
     emp_error = emp_error[:i]
     prior_error = prior_error[:i]
-    return xy, emp_error, prior_error, total_cost
+    return xy, emp_error, prior_error, costs
 
 
 class PolynomialInvariantTransform(invariant.DirectLinearDynamicsTransform):
@@ -403,24 +413,24 @@ def evaluate_invariant(name='', trials=5, trial_length=50):
     pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=70, batch_N=500)
 
     # evaluate prior accuracy
-    XY, prior_error_offline = evaluate_prior(env, pm, ds, relative=False)
-    fig, ax = plt.subplots()
-
-    # CS = ax.contourf(XY[:, 0], XY[:, 1], Z, cmap='plasma', vmin=0, vmax=expected_max_error)
-    CS = ax.tripcolor(XY[:, 0], XY[:, 1], prior_error_offline, cmap='plasma')
-    CBI = fig.colorbar(CS)
-    CBI.ax.set_ylabel('local model error')
-    ax.set_ylabel('y')
-    ax.set_xlabel('x')
-    ax.set_title('linearized prior model error')
+    # XY, prior_error_offline = evaluate_prior(env, pm, ds, relative=True)
+    # fig, ax = plt.subplots()
+    #
+    # # CS = ax.contourf(XY[:, 0], XY[:, 1], Z, cmap='plasma', vmin=0, vmax=expected_max_error)
+    # CS = ax.tripcolor(XY[:, 0], XY[:, 1], prior_error_offline, cmap='plasma')
+    # CBI = fig.colorbar(CS)
+    # CBI.ax.set_ylabel('local model error')
+    # ax.set_ylabel('y')
+    # ax.set_xlabel('x')
+    # ax.set_title('linearized prior model error')
 
     # create online controller with this prior (and transformed data)
-    # u_min, u_max = get_control_bounds()
-    # ctrl = online_controller.OnlineLQR(pm, ds=ds, max_timestep=trial_length, R=3, horizon=10, lqr_iter=3,
-    #                                    init_gamma=0.1, u_min=u_min, u_max=u_max)
-    #
-    # # TODO analyze error
-    # xy, emp_error, prior_error, total_cost = evaluate_ctrl(env, ctrl, trials, trial_length)
+    u_min, u_max = get_control_bounds()
+    ctrl = online_controller.OnlineLQR(pm, ds=ds, max_timestep=trial_length, R=3, horizon=10, lqr_iter=3,
+                                       init_gamma=0.1, u_min=u_min, u_max=u_max)
+
+    # TODO analyze error
+    xy, emp_error, prior_error, costs = evaluate_ctrl(env, ctrl, trials, trial_length)
 
     plt.show()
 
@@ -429,7 +439,7 @@ if __name__ == "__main__":
     # test_env_control()
     # collect_data(500, 20, x_min=(-3, -3), x_max=(3, 3))
     # show_prior_accuracy(relative=False)
-    # compare_empirical_and_prior_error(200, 50)
+    compare_empirical_and_prior_error(20, 50)
     # for seed in range(5):
     #     learn_invariance(seed, "default", MAX_EPOCH=40, BATCH_SIZE=5)
-    evaluate_invariant('default', 5, 50)
+    # evaluate_invariant('default', 5, 50)
