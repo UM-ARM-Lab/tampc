@@ -1,9 +1,9 @@
 import logging
 import math
+import pybullet as p
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pybullet as p
 import sklearn.preprocessing as skpre
 import torch
 from arm_pytorch_utilities import preprocess, math_utils
@@ -72,29 +72,6 @@ def collect_touching_freespace_data(trials=20, trial_length=40, level=0):
         # start at fixed location
         init_block_pos, init_block_yaw, init_pusher = random_touching_start()
         env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
-        ctrl = controller.FullRandomController(env.nu, u_min, u_max)
-        sim.ctrl = ctrl
-        sim.run(seed)
-
-    if sim.save:
-        load_data.merge_data_in_dir(cfg, save_dir, save_dir)
-    plt.ioff()
-    plt.show()
-
-
-def collect_local_data(trials=20, trial_length=40, level=0, init_seed=0):
-    # use random controller (with varying push direction)
-    u_min, u_max = get_control_bounds()
-    ctrl = controller.FullRandomController(2, u_min, u_max)
-
-    env = get_easy_env(p.DIRECT, level)
-    save_dir = 'pushing/local{}'.format(level)
-    sim = block_push.InteractivePush(env, ctrl, num_frames=trial_length, plot=False, save=True,
-                                     save_dir=save_dir)
-    rand.seed(init_seed)
-    # collect local data at a fixed initial condition
-    for _ in range(trials):
-        seed = rand.seed()
         ctrl = controller.FullRandomController(env.nu, u_min, u_max)
         sim.ctrl = ctrl
         sim.run(seed)
@@ -265,4 +242,3 @@ if __name__ == "__main__":
     #                                            torch.tensor([0.01, 0.01], dtype=torch.double)))  # MPPI options
     # test_global_linear_dynamics(level=0)
     test_local_dynamics(0)
-    # sandbox()
