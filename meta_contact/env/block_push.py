@@ -324,12 +324,13 @@ class PushAgainstWallEnv(MyPybulletEnv):
         # if rest == self.initRestFrames:
         #     logger.warning("Ran out of steps static")
 
-    def _evaluate_cost(self, action):
+    def evaluate_cost(self, state, action=None):
         # TODO consider using different cost function for yaw (wrap) - for example take use a compare_to_goal func
-        diff = self.state - self.goal
-        cost = diff.T.dot(self.Q).dot(diff)
+        diff = state - self.goal
+        cost = diff @ self.Q @ diff
         done = cost < 0.01
-        cost += action.T.dot(self.R).dot(action)
+        if action is not None:
+            cost += action @ self.R @ action
         return cost, done
 
     def step(self, action):
@@ -349,7 +350,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         p.addUserDebugLine([old_state[0], old_state[1], z], [self.state[0], self.state[1], z], [1, 0, 0], 2)
         p.addUserDebugLine([old_state[2], old_state[3], z], [self.state[2], self.state[3], z], [0, 0, 1], 2)
 
-        cost, done = self._evaluate_cost(action)
+        cost, done = self.evaluate_cost(self.state, action)
 
         return np.copy(self.state), -cost, done, info
 
@@ -443,7 +444,7 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         # track trajectory
         p.addUserDebugLine([old_state[0], old_state[1], z], [self.state[0], self.state[1], z], [0, 0, 1], 2)
 
-        cost, done = self._evaluate_cost(action)
+        cost, done = self.evaluate_cost(self.state, action)
 
         return np.copy(self.state), -cost, done, info
 
@@ -454,7 +455,7 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
 
 class InteractivePush(simulation.Simulation):
     def __init__(self, env: PushAgainstWallEnv, controller, num_frames=1000, save_dir='pushing', observation_period=1,
-                 **kwargs):
+                 terminal_cost_multiplier=5, **kwargs):
 
         super(InteractivePush, self).__init__(save_dir=save_dir, num_frames=num_frames, config=cfg, **kwargs)
         self.mode = env.mode
@@ -462,6 +463,10 @@ class InteractivePush(simulation.Simulation):
 
         self.env = env
         self.ctrl = controller
+
+        # keep track of last run's rewards
+        self.terminal_cost_multiplier = terminal_cost_multiplier
+        self.last_run_cost = 0
 
         # plotting
         self.fig = None
@@ -486,7 +491,7 @@ class InteractivePush(simulation.Simulation):
         return simulation.ReturnMeaning.SUCCESS
 
     def _run_experiment(self):
-
+        self.last_run_cost = 0
         obs = self._reset_sim()
         for simTime in range(self.num_frames - 1):
             self.traj[simTime, :] = obs
@@ -494,11 +499,14 @@ class InteractivePush(simulation.Simulation):
             action = np.array(action).flatten()
             obs, rew, done, info = self.env.step(action)
 
+            self.last_run_cost -= rew
             self.u[simTime, :] = action
             self.traj[simTime + 1, :] = obs
             self.contactForce[simTime] = info['contact_force']
             self.contactCount[simTime] = info['contact_count']
 
+        terminal_cost, done = self.env.evaluate_cost(self.traj[-1])
+        self.last_run_cost += terminal_cost * self.terminal_cost_multiplier
         # confirm dynamics is as expected
         # if self.env.level == 0:
         #     xy = self.traj[:, :self.env.nu]
