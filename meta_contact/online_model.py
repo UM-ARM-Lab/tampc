@@ -13,6 +13,9 @@ class OnlineDynamicsModel(object):
 
     All dynamics public API takes input and returns output in original xu space,
     while internally (functions starting with underscore) they all operate in transformed space.
+
+    Currently all the batch API takes torch tensors as input/output while all the single API takes numpy arrays
+    TODO change all API to take tensors as input and keep internal state as tensors
     """
 
     def __init__(self, gamma, online_prior: prior.OnlineDynamicsPrior, ds, N=1, sigreg=1e-5):
@@ -49,6 +52,9 @@ class OnlineDynamicsModel(object):
         if self.ds.preprocessor:
             cx, cu = self._apply_transform(cx, cu)
             px, pu = self._apply_transform(px, pu)
+            # TODO remove these when internal state is kept as tensors
+            cx, cu = _make_numpy(cx), _make_numpy(cu)
+            px, pu = _make_numpy(px), _make_numpy(pu)
 
         xu, pxu, xux = _concatenate_state_control(px, pu, cx, cu)
         Phi, mu0, m, n0 = self.prior.get_params(self.nx, self.nu, xu, pxu, xux)
@@ -62,13 +68,15 @@ class OnlineDynamicsModel(object):
         if self.ds.preprocessor:
             emp_y = self.ds.preprocessor.invert_transform(emp_y, ocx)
             prior_y = self.ds.preprocessor.invert_transform(prior_y, ocx)
+            # TODO remove these when internal state is kept as tensors
+            emp_y, prior_y = _make_numpy(emp_y), _make_numpy(prior_y)
 
         emp_x = self.advance(ocx, emp_y.reshape(1, -1))
         prior_x = self.advance(ocx, prior_y.reshape(1, -1))
 
         # compare against actual x'
-        self.emp_error = np.linalg.norm(emp_x - cx)
-        self.prior_error = np.linalg.norm(prior_x - cx)
+        self.emp_error = np.linalg.norm(emp_x - ocx)
+        self.prior_error = np.linalg.norm(prior_x - ocx)
         # TODO update gamma based on the relative error of these dynamics
         # rho = self.emp_error / self.prior_error
         # # high gamma means to trust empirical model (paper uses 1-rho, but this makes more sense)
@@ -82,8 +90,14 @@ class OnlineDynamicsModel(object):
         if self.ds.preprocessor:
             px, pu = self._apply_transform(px, pu)
             y = self.ds.preprocessor.transform_y(y)
+            # TODO remove these when internal state is kept as tensors
+            px = _make_numpy(px)
+            pu = _make_numpy(pu)
+            y = _make_numpy(y)
+            # reduce back to 1D
+            y = y.reshape(-1)
 
-        xux = np.r_[px, pu, y].astype(np.float32)
+        xux = np.concatenate((px, pu, y))
 
         gamma = self.gamma
         # Do a moving average update (equations 3,4)
@@ -122,10 +136,22 @@ class OnlineDynamicsModel(object):
         return _batch_conditioned_dynamics(self.nx, self.nu, sigma, mu, self.sigreg)
 
     def _apply_transform(self, x, u):
+        if x is None:
+            return x, u
+        oned = len(x.shape) is 1
+        if not torch.is_tensor(x):
+            x = torch.from_numpy(x)
+            u = torch.from_numpy(u)
+        if oned:
+            x = x.view(1, -1)
+            u = u.view(1, -1)
         xu = torch.cat((x, u), dim=1)
         xu = self.ds.preprocessor.transform_x(xu)
         x = xu[:, :self.nx]
         u = xu[:, self.nx:]
+        if oned:
+            x = x.view(-1)
+            u = u.view(-1)
         return x, u
 
     def predict(self, px, pu, cx, cu, already_transformed=False):
@@ -148,6 +174,12 @@ class OnlineDynamicsModel(object):
         next_state = self.advance(ocx, y)
 
         return next_state
+
+
+def _make_numpy(x):
+    if x is not None and torch.is_tensor(x):
+        x = x.numpy()
+    return x
 
 
 def _concatenate_state_control(px, pu, cx, cu):

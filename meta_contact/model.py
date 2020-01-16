@@ -127,6 +127,8 @@ class DynamicsModel(abc.ABC):
     """
     All public API takes input and returns output in original xu space,
     while internally (functions starting with underscore) they all operate in transformed space.
+
+    All API takes torch tensors as input.
     """
 
     def __init__(self, ds, use_np=False):

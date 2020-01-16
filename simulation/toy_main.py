@@ -442,7 +442,7 @@ if __name__ == "__main__":
     # test_env_control()
     # collect_data(500, 20, x_min=(-3, -3), x_max=(3, 3))
     # show_prior_accuracy(relative=True)
-    compare_empirical_and_prior_error(20, 50)
+    # compare_empirical_and_prior_error(20, 50)
     # for seed in range(5):
     #     learn_invariance(seed, "default", MAX_EPOCH=40, BATCH_SIZE=5)
-    # evaluate_invariant('default', 20, 50)
+    evaluate_invariant('default', 20, 50)
