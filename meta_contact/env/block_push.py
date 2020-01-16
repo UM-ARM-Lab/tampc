@@ -185,6 +185,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         if goal is not None:
             # ignore the pusher position
             self.goal = np.array(tuple(goal) + tuple(goal) + (0.1,))
+            self._draw_goal()
         if init_pusher is not None:
             self.initPusherPos = tuple(init_pusher) + (0.05,)
         if init_block is not None:
@@ -403,6 +404,7 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         if goal is not None:
             # ignore the pusher position
             self.goal = np.array(tuple(goal) + (0.1, 0))
+            self._draw_goal()
         if init_block is not None:
             self.initBlockPos = tuple(init_block) + (0.0325,)
         if init_yaw is not None:
