@@ -1,19 +1,15 @@
-import os
-import pybullet as p
-import time
-import torch
+import logging
 import math
+import os
+import time
 
 import numpy as np
-from matplotlib import pyplot as plt
-
-from meta_contact import cfg
+import pybullet as p
+from arm_pytorch_utilities import load_data as load_utils, math_utils
 from arm_pytorch_utilities.make_data import datasource
-from arm_pytorch_utilities import load_data as load_utils, string, math_utils
-from hybrid_sysid import simulation, load_data
-
-import logging
-
+from hybrid_sysid import simulation
+from matplotlib import pyplot as plt
+from meta_contact import cfg
 from meta_contact.env.myenv import MyPybulletEnv
 
 logger = logging.getLogger(__name__)
