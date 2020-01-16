@@ -26,11 +26,13 @@ def xux_from_dataset(ds):
     return XUX
 
 
-def gaussian_params_from_dataset(ds):
-    XUX = xux_from_dataset(ds)
-    mu = XUX.mean(0)
-    sigma = linalg.cov(XUX, rowvar=False)
-    assert sigma.shape[0] == XUX.shape[1]
+def gaussian_params_from_datasource(ds):
+    """Take what we're given in terms of XU,Y, and let the dynamics model handle how that translates to next state"""
+    XU, Y, _ = ds.training_set()
+    data = torch.cat((XU, Y), dim=1)
+    mu = data.mean(0)
+    sigma = linalg.cov(data, rowvar=False)
+    assert sigma.shape[0] == data.shape[1]
     return sigma.numpy(), mu.numpy()
 
 
@@ -167,6 +169,7 @@ class GMMPrior(OnlineDynamicsPrior):
 
     @classmethod
     def from_data(cls, ds, **kwargs):
+        # TODO remove need for xux (just take what the ds gives)
         XUX = xux_from_dataset(ds)
         prior = cls(**kwargs)
         prior.update_batch(XUX.numpy())
@@ -292,7 +295,7 @@ class GMMPrior(OnlineDynamicsPrior):
 class LSQPrior(OnlineDynamicsPrior):
     @classmethod
     def from_data(cls, ds, **kwargs):
-        sigma, mu = gaussian_params_from_dataset(ds)
+        sigma, mu = gaussian_params_from_datasource(ds)
         prior = cls(sigma, mu, **kwargs)
         return prior
 

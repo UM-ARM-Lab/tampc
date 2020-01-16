@@ -121,7 +121,7 @@ def show_prior_accuracy(expected_max_error=1., relative=True):
     plt.show()
 
 
-def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_error=1.):
+def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_error=0.5):
     """
     Compare the empirical linear model against the linearized prior model's accuracy through running
     an online controller on randomly sampled trials.
@@ -157,7 +157,7 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
 
     fig, ax = plt.subplots()
     # CS = ax.tricontourf(xy[:, 0], xy[:, 1], emp_error, 10, cmap='plasma', vmin=0, vmax=expected_max_error)
-    CS = ax.tripcolor(xy[:, 0], xy[:, 1], emp_error, cmap='plasma', vmin=0, vmax=expected_max_error / 2)
+    CS = ax.tripcolor(xy[:, 0], xy[:, 1], emp_error, cmap='plasma', vmin=0, vmax=expected_max_error)
     CBI = fig.colorbar(CS)
     CBI.ax.set_ylabel('model error')
     ax.set_ylabel('y')

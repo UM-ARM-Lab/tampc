@@ -19,7 +19,7 @@ class OnlineDynamicsModel(object):
         self.gamma = gamma
         self.prior = online_prior
         self.sigreg = sigreg  # Covariance regularization (adds sigreg*eye(N))
-        sigma, mu = prior.gaussian_params_from_dataset(ds)
+        sigma, mu = prior.gaussian_params_from_datasource(ds)
         self.ds = ds
         self.advance = model.advance_state(ds.config, use_np=False)
 
@@ -43,14 +43,28 @@ class OnlineDynamicsModel(object):
         if px is None:
             self.emp_error = self.prior_error = None
             return
+
+        ocx = cx.reshape(1, -1)  # original state
+        # transform if necessary (ensure dynamics is evaluated only in transformed space)
+        if self.ds.preprocessor:
+            cx, cu = self._apply_transform(cx, cu)
+            px, pu = self._apply_transform(px, pu)
+
         xu, pxu, xux = _concatenate_state_control(px, pu, cx, cu)
         Phi, mu0, m, n0 = self.prior.get_params(self.nx, self.nu, xu, pxu, xux)
         # evaluate the accuracy of empirical and prior dynamics on (xux')
         Fe, fe, _ = conditioned_dynamics(self.nx, self.nu, self.sigma, self.mu, sigreg=self.sigreg)
-        emp_x = evaluate_dynamics(px, pu, Fe, fe)
+        emp_y = evaluate_dynamics(px, pu, Fe, fe)
         # prior dynamics
         Fp, fp, _ = conditioned_dynamics(self.nx, self.nu, Phi / n0, mu0, sigreg=self.sigreg)
-        prior_x = evaluate_dynamics(px, pu, Fp, fp)
+        prior_y = evaluate_dynamics(px, pu, Fp, fp)
+
+        if self.ds.preprocessor:
+            emp_y = self.ds.preprocessor.invert_transform(emp_y, ocx)
+            prior_y = self.ds.preprocessor.invert_transform(prior_y, ocx)
+
+        emp_x = self.advance(ocx, emp_y.reshape(1, -1))
+        prior_x = self.advance(ocx, prior_y.reshape(1, -1))
 
         # compare against actual x'
         self.emp_error = np.linalg.norm(emp_x - cx)
@@ -62,7 +76,14 @@ class OnlineDynamicsModel(object):
 
     def update(self, px, pu, cx):
         """ Perform a moving average update on the current dynamics """
-        xux = np.r_[px, pu, cx].astype(np.float32)
+        # our internal dynamics could be on dx or x', so convert x' to whatever our model works with
+        y = cx - px if self.ds.config.predict_difference else cx
+        # convert xux to transformed coordinates
+        if self.ds.preprocessor:
+            px, pu = self._apply_transform(px, pu)
+            y = self.ds.preprocessor.transform_y(y)
+
+        xux = np.r_[px, pu, y].astype(np.float32)
 
         gamma = self.gamma
         # Do a moving average update (equations 3,4)
