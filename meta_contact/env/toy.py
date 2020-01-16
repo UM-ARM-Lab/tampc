@@ -1,15 +1,15 @@
 import abc
+
+import matplotlib.patches as mpatches
+import matplotlib.path as mpath
 import matplotlib.pyplot as plt
 import numpy as np
-import torch
-from sklearn.preprocessing import PolynomialFeatures
-import matplotlib.path as mpath
-import matplotlib.patches as mpatches
-from meta_contact.env import myenv
+from arm_pytorch_utilities import load_data as load_utils
+from arm_pytorch_utilities.make_data import datasource
 from hybrid_sysid import simulation
 from meta_contact import cfg
-from arm_pytorch_utilities.make_data import datasource
-from arm_pytorch_utilities import load_data as load_utils
+from meta_contact.env import myenv
+from sklearn.preprocessing import PolynomialFeatures
 
 
 class ToyLoader(load_utils.DataLoader):
@@ -71,7 +71,6 @@ class ToyEnv:
         """Simulate for T time steps with a controller"""
         # set at initialization time without a way to change it
         self.init_state, self.goal, self.last_state, self.state = None, None, None, None
-        self.set_task_config(goal, init_state)
         self.noise = process_noise
 
         self.xlim = xlim
@@ -89,6 +88,8 @@ class ToyEnv:
 
         self.f = None
         self.ax = None
+        self.goal_marker = None
+        self.set_task_config(goal, init_state)
         if self.mode == myenv.Mode.GUI:
             self.start_visualization()
 
@@ -96,6 +97,10 @@ class ToyEnv:
         """Change task configuration"""
         if goal is not None:
             self.goal = np.array(goal)
+            # remove old goal marker to render only the current one
+            if self.goal_marker:
+                self.goal_marker.remove()
+                self.goal_marker = None
         if init_state is not None:
             self.init_state = np.array(init_state)
             self.last_state = None
@@ -126,6 +131,7 @@ class ToyEnv:
         # full reset goes back to real initial conditions
         if full:
             if self.mode == myenv.Mode.GUI:
+                self.goal_marker = None
                 plt.close(self.f)
                 self.start_visualization()
         self.state = self.init_state
@@ -169,10 +175,11 @@ class ToyEnv:
             self.ax.arrow(self.last_state[0], self.last_state[1], diff[0] * 0.8, diff[1] * 0.8,
                           head_length=nd, head_width=nd)
 
-        if self.goal is not None:
-            self.ax.scatter(self.goal[0], self.goal[1], c='g')
-            self.f.canvas.draw()
-            plt.pause(0.00001)
+        if self.goal is not None and self.goal_marker is None:
+            self.goal_marker = self.ax.scatter(self.goal[0], self.goal[1], c='g')
+
+        self.f.canvas.draw()
+        plt.pause(0.00001)
 
     @abc.abstractmethod
     def true_dynamics(self, x, u):
