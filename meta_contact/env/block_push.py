@@ -1,10 +1,10 @@
 import logging
 import math
 import os
+import pybullet as p
 import time
 
 import numpy as np
-import pybullet as p
 from arm_pytorch_utilities import load_data as load_utils, math_utils
 from arm_pytorch_utilities.make_data import datasource
 from hybrid_sysid import simulation
@@ -168,6 +168,9 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.initPusherPos = None
         self.initBlockPos = None
         self.initBlockYaw = None
+
+        # debugging objects
+        self._goal_debug_lines = []
         self.set_task_config(goal, init_pusher, init_block, init_yaw)
 
         # quadratic cost
@@ -230,12 +233,23 @@ class PushAgainstWallEnv(MyPybulletEnv):
                                                    self.initPusherPos)
 
     def _draw_goal(self):
-        goalVisualWidth = 0.15 / 2
-        goal = np.concatenate((self.goal[2:4], (0.1,)))
-        p.addUserDebugLine(np.add(goal, [0, -goalVisualWidth, 0]), np.add(goal, [0, goalVisualWidth, 0]),
-                           [0, 1, 0], 2)
-        p.addUserDebugLine(np.add(goal, [-goalVisualWidth, 0, 0]), np.add(goal, [goalVisualWidth, 0, 0]),
-                           [0, 1, 0], 2)
+        # clear previous debug lines
+        for line in self._goal_debug_lines:
+            p.removeUserDebugItem(line)
+        self._goal_debug_lines = []
+
+        goal_visual_width = 0.15 / 2
+        goal = np.concatenate((self._get_goal_block_pos(), (0.1,)))
+
+        self._goal_debug_lines.append(
+            p.addUserDebugLine(np.add(goal, [0, -goal_visual_width, 0]), np.add(goal, [0, goal_visual_width, 0]),
+                               [0, 1, 0], 2))
+        self._goal_debug_lines.append(
+            p.addUserDebugLine(np.add(goal, [-goal_visual_width, 0, 0]), np.add(goal, [goal_visual_width, 0, 0]),
+                               [0, 1, 0], 2))
+
+    def _get_goal_block_pos(self):
+        return self.goal[2:4]
 
     def _move_pusher(self, end):
         if self.max_move_step is None:
@@ -426,13 +440,8 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         diff = np.column_stack((dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1)))
         return diff
 
-    def _draw_goal(self):
-        goalVisualWidth = 0.15 / 2
-        goal = np.concatenate((self.goal[:2], (0.1,)))
-        p.addUserDebugLine(np.add(goal, [0, -goalVisualWidth, 0]), np.add(goal, [0, goalVisualWidth, 0]),
-                           [0, 1, 0], 2)
-        p.addUserDebugLine(np.add(goal, [-goalVisualWidth, 0, 0]), np.add(goal, [goalVisualWidth, 0, 0]),
-                           [0, 1, 0], 2)
+    def _get_goal_block_pos(self):
+        return self.goal[:2]
 
     def _obs(self):
         xb, yb, yaw = self._observe_block()
