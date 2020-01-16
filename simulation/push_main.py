@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
                     datefmt='%m-%d %H:%M:%S')
+logging.getLogger('matplotlib.font_manager').disabled = True
 
 
 def random_touching_start(w=block_push.DIST_FOR_JUST_TOUCHING):
@@ -149,7 +150,8 @@ def constrain_state(state):
     # yaw gets normalized
     state[:, 2] = math_utils.angle_normalize(state[:, 2])
     # along gets constrained
-    state[:, 3] = math_utils.clip(state[:, 3], -torch.tensor(block_push.MAX_ALONG, dtype=torch.double), torch.tensor(block_push.MAX_ALONG, dtype=torch.double))
+    state[:, 3] = math_utils.clip(state[:, 3], -torch.tensor(block_push.MAX_ALONG, dtype=torch.double),
+                                  torch.tensor(block_push.MAX_ALONG, dtype=torch.double))
     return state
 
 
@@ -183,6 +185,7 @@ def test_local_dynamics(level=0):
 
     seed = rand.seed()
     sim.run(seed)
+    logger.info("last run cost %f", sim.last_run_cost)
     plt.ioff()
     plt.show()
 
