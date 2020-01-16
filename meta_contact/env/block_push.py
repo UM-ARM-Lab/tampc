@@ -466,6 +466,8 @@ class InteractivePush(simulation.Simulation):
         # plotting
         self.fig = None
         self.axes = None
+        self.fu = None
+        self.au = None
 
     def _configure_physics_engine(self):
         return simulation.ReturnMeaning.SUCCESS
@@ -534,11 +536,15 @@ class InteractivePush(simulation.Simulation):
         axis_name = self.env.state_names() + ['contact force (N)', 'contact count']
         state_dim = self.traj.shape[1] + 2
         assert state_dim == len(axis_name)
+        ctrl_dim = self.u.shape[1]
 
         self.fig, self.axes = plt.subplots(1, state_dim, figsize=(18, 5))
+        self.fu, self.au = plt.subplots(1, ctrl_dim)
 
         for i in range(state_dim):
             self.axes[i].set_xlabel(axis_name[i])
+        for i in range(ctrl_dim):
+            self.au[i].set_xlabel('$u_{}$'.format(i))
 
         plt.ion()
         plt.show()
@@ -553,6 +559,8 @@ class InteractivePush(simulation.Simulation):
         self.axes[self.traj.shape[1]].plot(self.contactForce)
         self.axes[self.traj.shape[1] + 1].step(self._compress_observation(self.time), self.contactCount)
         self.fig.canvas.draw()
+        for i in range(self.u.shape[1]):
+            self.au[i].plot(self.u[:, i])
         time.sleep(0.01)
 
     def _reset_sim(self):
