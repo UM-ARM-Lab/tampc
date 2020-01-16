@@ -1,14 +1,15 @@
 import abc
-from meta_contact.controller.controller import Controller
+import logging
+
+import numpy as np
+import torch
+from arm_pytorch_utilities import trajectory, math_utils
+from arm_pytorch_utilities.policy.lin_gauss import LinearGaussianPolicy
 from meta_contact import cost
 from meta_contact import online_model
-import logging
-import numpy as np
-from arm_pytorch_utilities.policy.lin_gauss import LinearGaussianPolicy
-from arm_pytorch_utilities import trajectory, math_utils
+from meta_contact.controller.controller import Controller
 from pytorch_cem import cem
 from pytorch_mppi import mppi
-import torch
 
 LOGGER = logging.getLogger(__name__)
 
@@ -16,14 +17,14 @@ LOGGER = logging.getLogger(__name__)
 class OnlineController(Controller):
     """Controller mixing locally linear model with prior model from https://arxiv.org/pdf/1509.06841.pdf"""
 
-    def __init__(self, prior, ds, init_gamma=0.1,
+    def __init__(self, online_dynamics: online_model.OnlineDynamicsModel, config,
                  compare_to_goal=np.subtract, u_min=None, u_max=None, Q=1, R=1):
         super().__init__(compare_to_goal)
-        self.nx = ds.config.nx
-        self.nu = ds.config.nu
+        self.nx = config.nx
+        self.nu = config.nu
         self.u_min, self.u_max = math_utils.get_bounds(u_min, u_max)
 
-        self.dynamics = online_model.OnlineDynamicsModel(init_gamma, prior, ds)
+        self.dynamics = online_dynamics
 
         # Init objects
         if np.isscalar(Q):
@@ -153,11 +154,10 @@ class OnlineMPPI(OnlineMPC):
 
 
 class OnlineLQR(OnlineController):
-    def __init__(self, prior, ds, max_timestep=100, horizon=15, lqr_iter=1, u_noise=0.1, **kwargs):
-        super().__init__(prior, ds, **kwargs)
+    def __init__(self, *args, max_timestep=100, horizon=15, lqr_iter=1, u_noise=0.1, **kwargs):
+        super().__init__(*args, **kwargs)
         self.H = horizon
         self.maxT = max_timestep
-        self.ds = ds
 
         self.u_noise = u_noise
 

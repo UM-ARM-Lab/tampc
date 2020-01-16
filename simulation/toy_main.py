@@ -1,3 +1,4 @@
+import copy
 import logging
 
 import matplotlib.pyplot as plt
@@ -137,9 +138,8 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
                                    name='linear')
     pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=70, batch_N=500)
     u_min, u_max = get_control_bounds()
-    # ctrl = online_controller.OnlineLQR(pm, ds=ds, max_timestep=trial_length, R=3, horizon=10, lqr_iter=3,
-    #                                    init_gamma=0.1, u_min=u_min, u_max=u_max)
-    ctrl = online_controller.OnlineCEM(pm, ds, u_min=u_min, u_max=u_max,
+    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds)
+    ctrl = online_controller.OnlineCEM(dynamics, config, u_min=u_min, u_max=u_max,
                                        mpc_opts={'init_cov_diag': 1.})
 
     xy, emp_error, prior_error, costs = evaluate_ctrl(env, ctrl, trials, trial_length)
@@ -384,6 +384,7 @@ def evaluate_invariant(name='', trials=5, trial_length=50):
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds = toy.ToyDataSource(data_dir=save_dir + '.mat', preprocessor=preprocessor, validation_ratio=0.1,
                            config=config)
+    untransformed_config = copy.deepcopy(config)
 
     logger.info("initial random seed %d", rand.seed(seed))
 
@@ -421,23 +422,17 @@ def evaluate_invariant(name='', trials=5, trial_length=50):
     pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=70, batch_N=500)
 
     # evaluate prior accuracy
-    # XY, prior_error_offline = evaluate_prior(env, pm, ds, relative=True)
-    # fig, ax = plt.subplots()
-    #
-    # # CS = ax.contourf(XY[:, 0], XY[:, 1], Z, cmap='plasma', vmin=0, vmax=expected_max_error)
-    # CS = ax.tripcolor(XY[:, 0], XY[:, 1], prior_error_offline, cmap='plasma')
-    # CBI = fig.colorbar(CS)
-    # CBI.ax.set_ylabel('local model error')
-    # ax.set_ylabel('y')
-    # ax.set_xlabel('x')
-    # ax.set_title('linearized prior model error')
+    # relative = True
+    # XY, prior_error_offline = evaluate_prior(env, pm, ds, relative=relative)
+    # plot_prior_error(XY, prior_error_offline, relative)
 
     # create online controller with this prior (and transformed data)
     u_min, u_max = get_control_bounds()
-    ctrl = online_controller.OnlineLQR(pm, ds=ds, max_timestep=trial_length, R=3, horizon=10, lqr_iter=3,
-                                       init_gamma=0.1, u_min=u_min, u_max=u_max)
+    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds)
+    ctrl = online_controller.OnlineCEM(dynamics, untransformed_config, u_min=u_min, u_max=u_max,
+                                       mpc_opts={'init_cov_diag': 1.})
 
-    # TODO analyze error
+    # evaluate controller performance
     xy, emp_error, prior_error, costs = evaluate_ctrl(env, ctrl, trials, trial_length)
 
     plot_empirical_and_prior_error(xy, emp_error, prior_error)
@@ -447,7 +442,7 @@ if __name__ == "__main__":
     # test_env_control()
     # collect_data(500, 20, x_min=(-3, -3), x_max=(3, 3))
     # show_prior_accuracy(relative=True)
-    # compare_empirical_and_prior_error(20, 50)
+    compare_empirical_and_prior_error(20, 50)
     # for seed in range(5):
     #     learn_invariance(seed, "default", MAX_EPOCH=40, BATCH_SIZE=5)
-    evaluate_invariant('default', 20, 50)
+    # evaluate_invariant('default', 20, 50)
