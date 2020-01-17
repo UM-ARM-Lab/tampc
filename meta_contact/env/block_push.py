@@ -192,7 +192,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         if init_pusher is not None:
             self.initPusherPos = tuple(init_pusher) + (0.05,)
         if init_block is not None:
-            self.initBlockPos = tuple(init_block) + (0.0325,)
+            self.initBlockPos = tuple(init_block) + (-0.02,)
         if init_yaw is not None:
             self.initBlockYaw = init_yaw
 
@@ -385,6 +385,14 @@ class PushAgainstWallEnv(MyPybulletEnv):
         p.resetBasePositionAndOrientation(self.pusherId, self.initPusherPos, [0, 0, 0, 1])
         p.resetBasePositionAndOrientation(self.blockId, self.initBlockPos,
                                           p.getQuaternionFromEuler([0, 0, self.initBlockYaw]))
+        # set robot init config
+        if self.pusherConstraint:
+            p.removeConstraint(self.pusherConstraint)
+        self.pusherConstraint = p.createConstraint(self.pusherId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
+                                                   self.initPusherPos)
+        # start at rest
+        for _ in range(self.initRestFrames):
+            p.stepSimulation()
         self.state = self._obs()
         return np.copy(self.state)
 
@@ -420,7 +428,7 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
             self.goal = np.array(tuple(goal) + (0.1, 0))
             self._draw_goal()
         if init_block is not None:
-            self.initBlockPos = tuple(init_block) + (0.0325,)
+            self.initBlockPos = tuple(init_block) + (-0.02,)
         if init_yaw is not None:
             self.initBlockYaw = init_yaw
         if init_pusher is not None:
