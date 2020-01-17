@@ -176,7 +176,7 @@ class WorldBodyFrameTransform(invariant.InvariantTransform):
         return dx
 
     def parameters(self):
-        return []
+        return [torch.zeros(1)]
 
     def _model_state_dict(self):
         return None
@@ -188,8 +188,16 @@ class WorldBodyFrameTransform(invariant.InvariantTransform):
         pass
 
 
+class UseTransform:
+    NO_TRANSFORM = 0
+    COORDINATE_TRANSFORM = 1
+
+
 def test_local_dynamics(level=0):
     num_frames = 70
+    seed = 1
+    use_tsf = UseTransform.COORDINATE_TRANSFORM
+
     env = get_easy_env(p.GUI, level=level)
     # TODO preprocessor in online dynamics not yet supported
     preprocessor = None
@@ -198,15 +206,35 @@ def test_local_dynamics(level=0):
                                    validation_ratio=0.1, config=config)
     untransformed_config = copy.deepcopy(config)
 
-    # TODO add in invariant transform here
+    logger.info("initial random seed %d", rand.seed(seed))
 
-    m = model.DeterministicUser(make.make_sequential_network(config))
-    mw = model.NetworkModelWrapper(m, ds, name='contextual')
+    # add in invariant transform here
+    base_name = 'push_s{}'.format(seed)
+    transforms = {UseTransform.NO_TRANSFORM: None,
+                  UseTransform.COORDINATE_TRANSFORM: WorldBodyFrameTransform(ds, name=base_name)}
+    transform_names = {UseTransform.NO_TRANSFORM: 'none', UseTransform.COORDINATE_TRANSFORM: 'coord'}
+    invariant_tsf = transforms[use_tsf]
+
+    if invariant_tsf:
+        training_epochs = 40
+        # either load or learn the transform
+        if use_tsf is not UseTransform.COORDINATE_TRANSFORM and not invariant_tsf.load(
+                invariant_tsf.get_last_checkpoint()):
+            invariant_tsf.learn_model(training_epochs, 5)
+
+        # wrap the transform as a data preprocessor
+        preprocessor = invariant.InvariantPreprocessor(invariant_tsf)
+        # update the datasource to use transformed data
+        ds.update_preprocessor(preprocessor)
+
+    prior_name = '{}_prior'.format(transform_names[use_tsf])
+
+    mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds, name=prior_name)
     pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=200)
     # pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
     u_min, u_max = get_control_bounds()
-    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, sigreg=1e-10)
+    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, untransformed_config, sigreg=1e-10)
     Q = torch.diag(torch.tensor([1, 1, 0, 0.01], dtype=torch.double))
     R = 1
 

@@ -18,13 +18,14 @@ class OnlineDynamicsModel(object):
     TODO change all API to take tensors as input and keep internal state as tensors
     """
 
-    def __init__(self, gamma, online_prior: prior.OnlineDynamicsPrior, ds, N=1, sigreg=1e-5):
+    def __init__(self, gamma, online_prior: prior.OnlineDynamicsPrior, ds, untransformed_config, N=1, sigreg=1e-5):
         self.gamma = gamma
         self.prior = online_prior
         self.sigreg = sigreg  # Covariance regularization (adds sigreg*eye(N))
         sigma, mu = prior.gaussian_params_from_datasource(ds)
         self.ds = ds
-        self.advance = model.advance_state(ds.config, use_np=False)
+        self.untransformed_config = untransformed_config
+        self.advance = model.advance_state(untransformed_config, use_np=False)
 
         self.nx = ds.config.nx
         self.nu = ds.config.nu
@@ -47,37 +48,34 @@ class OnlineDynamicsModel(object):
             self.emp_error = self.prior_error = None
             return
 
-        opx = px.reshape(1, -1)  # original state
-        ocx = cx.reshape(1, -1)  # original state
+        opx = torch.from_numpy(px.reshape(1, -1))  # original state
+        ocx = torch.from_numpy(cx.reshape(1, -1))  # original state
         # transform if necessary (ensure dynamics is evaluated only in transformed space)
         if self.ds.preprocessor:
             cx, cu = self._apply_transform(cx, cu)
             px, pu = self._apply_transform(px, pu)
-            # TODO remove these when internal state is kept as tensors
-            cx, cu = _make_numpy(cx), _make_numpy(cu)
-            px, pu = _make_numpy(px), _make_numpy(pu)
+           
+        xu, pxu, xux = _cat_xu(px, pu, cx, cu)
+        Phi, mu0, m, n0 = self.prior.get_batch_params(self.nx, self.nu, xu, pxu, xux)
 
-        xu, pxu, xux = _concatenate_state_control(px, pu, cx, cu)
-        Phi, mu0, m, n0 = self.prior.get_params(self.nx, self.nu, xu, pxu, xux)
-        # evaluate the accuracy of empirical and prior dynamics on (xux')
-        Fe, fe, _ = conditioned_dynamics(self.nx, self.nu, self.sigma, self.mu, sigreg=self.sigreg)
-        emp_y = evaluate_dynamics(px, pu, Fe, fe)
-        # prior dynamics
-        Fp, fp, _ = conditioned_dynamics(self.nx, self.nu, Phi / n0, mu0, sigreg=self.sigreg)
-        prior_y = evaluate_dynamics(px, pu, Fp, fp)
+        # mix prior and empirical distribution
+        Fe, fe, _ = _batch_conditioned_dynamics(self.nx, self.nu, torch.from_numpy(self.sigma).unsqueeze(0),
+                                                torch.from_numpy(self.mu).unsqueeze(0), self.sigreg)
+        Fp, fp, _ = _batch_conditioned_dynamics(self.nx, self.nu, Phi / n0, mu0, sigreg=self.sigreg)
+
+        emp_y = _batch_evaluate_dynamics(px, pu, Fe, fe)
+        prior_y = _batch_evaluate_dynamics(px, pu, Fp, fp)
 
         if self.ds.preprocessor:
             emp_y = self.ds.preprocessor.invert_transform(emp_y, ocx)
             prior_y = self.ds.preprocessor.invert_transform(prior_y, ocx)
-            # TODO remove these when internal state is kept as tensors
-            emp_y, prior_y = _make_numpy(emp_y), _make_numpy(prior_y)
 
-        emp_x = self.advance(opx, emp_y.reshape(1, -1))
-        prior_x = self.advance(opx, prior_y.reshape(1, -1))
+        emp_x = self.advance(opx, emp_y)
+        prior_x = self.advance(opx, prior_y)
 
         # compare against actual x'
-        self.emp_error = np.linalg.norm(emp_x - ocx)
-        self.prior_error = np.linalg.norm(prior_x - ocx)
+        self.emp_error = np.linalg.norm((emp_x - ocx).numpy())
+        self.prior_error = np.linalg.norm((prior_x - ocx).numpy())
         # TODO update gamma based on the relative error of these dynamics
         # rho = self.emp_error / self.prior_error
         # # high gamma means to trust empirical model (paper uses 1-rho, but this makes more sense)
@@ -86,17 +84,21 @@ class OnlineDynamicsModel(object):
     def update(self, px, pu, cx):
         """ Perform a moving average update on the current dynamics """
         # our internal dynamics could be on dx or x', so convert x' to whatever our model works with
-        y = cx - px if self.ds.config.predict_difference else cx
+        y = cx - px if self.untransformed_config.predict_difference else cx
         # convert xux to transformed coordinates
         if self.ds.preprocessor:
-            px, pu = self._apply_transform(px, pu)
-            y = self.ds.preprocessor.transform_y(y)
+            x = torch.from_numpy(px).view(1, -1)
+            u = torch.from_numpy(pu).view(1, -1)
+            y = torch.from_numpy(y).view(1, -1)
+            xu = torch.cat((x, u), dim=1)
+            xu, y, _ = self.ds.preprocessor._transform_impl(xu, y, None)
+            x = xu[:, :self.nx].view(-1)
+            u = xu[:, self.nx:].view(-1)
+            y = y.view(-1)
             # TODO remove these when internal state is kept as tensors
-            px = _make_numpy(px)
-            pu = _make_numpy(pu)
+            px = _make_numpy(x)
+            pu = _make_numpy(u)
             y = _make_numpy(y)
-            # reduce back to 1D
-            y = y.reshape(-1)
 
         xux = np.concatenate((px, pu, y))
 
@@ -126,9 +128,7 @@ class OnlineDynamicsModel(object):
         The semantics depends on the data source the prior was trained on and that this was initialized on
         """
         # prior parameters
-        xu = torch.cat((cx, cu), 1)
-        pxu = torch.cat((px, pu), 1) if px is not None else None
-        xux = torch.cat((px, pu, cx), 1) if px is not None else None
+        xu, pxu, xux = _cat_xu(px, pu, cx, cu)
         Phi, mu0, m, n0 = self.prior.get_batch_params(self.nx, self.nu, xu, pxu, xux)
 
         # mix prior and empirical distribution
@@ -150,9 +150,6 @@ class OnlineDynamicsModel(object):
         xu = self.ds.preprocessor.transform_x(xu)
         x = xu[:, :self.nx]
         u = xu[:, self.nx:]
-        if oned:
-            x = x.view(-1)
-            u = u.view(-1)
         return x, u
 
     def predict(self, px, pu, cx, cu, already_transformed=False):
@@ -191,6 +188,13 @@ def _concatenate_state_control(px, pu, cx, cu):
     return xu, pxu, xux
 
 
+def _cat_xu(px, pu, cx, cu):
+    xu = torch.cat((cx, cu), 1)
+    pxu = torch.cat((px, pu), 1) if px is not None else None
+    xux = torch.cat((px, pu, cx), 1) if px is not None else None
+    return xu, pxu, xux
+
+
 def conditioned_dynamics(nx, nu, sigma, mu, sigreg=1e-5):
     it = slice(nx + nu)
     ip = slice(nx + nu, nx + nu + nx)
@@ -207,8 +211,9 @@ def conditioned_dynamics(nx, nu, sigma, mu, sigreg=1e-5):
 
 
 def _batch_conditioned_dynamics(nx, nu, sigma, mu, sigreg=1e-5):
+    # TODO assume we want to calculate everything to the right of xu (can't handle pxu)
     it = slice(nx + nu)
-    ip = slice(nx + nu, nx + nu + nx)
+    ip = slice(nx + nu, None)
     # guarantee symmetric positive definite with regularization
     sigma[:, it, it] += sigreg * torch.eye(nx + nu, dtype=sigma.dtype, device=sigma.device)
     u = torch.cholesky(sigma[:, it, it])

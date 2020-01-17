@@ -428,7 +428,7 @@ def evaluate_invariant(name='', trials=5, trial_length=50):
 
     # create online controller with this prior (and transformed data)
     u_min, u_max = get_control_bounds()
-    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds)
+    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, untransformed_config)
     ctrl = online_controller.OnlineCEM(dynamics, untransformed_config, u_min=u_min, u_max=u_max,
                                        mpc_opts={'init_cov_diag': 1.})
 
