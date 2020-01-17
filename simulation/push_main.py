@@ -10,7 +10,7 @@ import torch
 from arm_pytorch_utilities import preprocess, math_utils
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.model import make
-from meta_contact import cfg
+from meta_contact import cfg, invariant
 from meta_contact import model
 from meta_contact import online_model
 from meta_contact import prior
@@ -122,9 +122,75 @@ def constrain_state(state):
     return state
 
 
+class WorldBodyFrameTransform(invariant.InvariantTransform):
+    """
+    Specific to StickyEnv formulation! (expects the states to be block pose and pusher along)
+
+    Transforms world frame coordinates to input required for body frame dynamics
+    (along, d_along, and push magnitude) = z_i and predicts (dx, dy, dtheta) of block in previous block frame = z_o
+    separate latent space for input and output (z_i, z_o)
+    this is actually h and h^{-1} combined into 1, h(x,u) = z_i, learned dynamics hat{f}(z_i) = z_o, h^{-1}(z_o) = dx
+    """
+
+    def __init__(self, ds, **kwargs):
+        # need along, d_along, and push magnitude; don't need block position or yaw
+        self.nzo = 4
+        super().__init__(ds, 3, **kwargs)
+        self.name = 'coord_{}'.format(self.name)
+
+    @staticmethod
+    def supports_only_direct_zi_to_dx():
+        # converts z to dx in body frame, then needs to bring back to world frame
+        return False
+
+    def xu_to_zi(self, state, action):
+        if len(state.shape) < 2:
+            state = state.reshape(1, -1)
+            action = action.reshape(1, -1)
+
+        # TODO might be able to remove push magnitude (and just directly multiply by that)
+        # (along, d_along, push magnitude)
+        z = torch.from_numpy(np.column_stack((state[:, -1], action)))
+        return z
+
+    def dx_to_zo(self, x, dx):
+        N = dx.shape[0]
+        z_o = torch.zeros((N, self.nzo), dtype=dx.dtype, device=dx.device)
+        # convert world frame to body frame
+        z_o[:, :2] = math_utils.batch_rotate_wrt_origin(dx[:, :2], -x[:, 2])
+        # second last element is dyaw, which also gets passed along directly
+        z_o[:, 2] = dx[:, 2]
+        # last element is d_along, which gets passed along directly
+        z_o[:, 3] = dx[:, 3]
+        return z_o
+
+    def zo_to_dx(self, x, z_o):
+        N = z_o.shape[0]
+        dx = torch.zeros((N, 4), dtype=z_o.dtype, device=z_o.device)
+        # convert (dx, dy) from body frame back to world frame
+        dx[:, :2] = math_utils.batch_rotate_wrt_origin(z_o[:, :2], x[:, 2])
+        # second last element is dyaw, which also gets passed along directly
+        dx[:, 2] = z_o[:, 2]
+        # last element is d_along, which gets passed along directly
+        dx[:, 3] = z_o[:, 3]
+        return dx
+
+    def parameters(self):
+        return []
+
+    def _model_state_dict(self):
+        return None
+
+    def _load_model_state_dict(self, saved_state_dict):
+        pass
+
+    def learn_model(self, max_epoch, batch_N=500):
+        pass
+
+
 def test_local_dynamics(level=0):
     num_frames = 70
-    env = get_easy_env(p.DIRECT, level=level)
+    env = get_easy_env(p.GUI, level=level)
     # TODO preprocessor in online dynamics not yet supported
     preprocessor = None
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
