@@ -66,9 +66,10 @@ class InvariantTransform(LearnableParameterizedModel):
         """
 
     @abc.abstractmethod
-    def dx_to_zo(self, dx):
+    def dx_to_zo(self, x, dx):
         """
         Transform differences in observation state to output latent state for training
+        :param x:
         :param dx:
         :return:
         """
@@ -221,7 +222,7 @@ class InvariantTransform(LearnableParameterizedModel):
         if tsf is TransformToUse.LATENT_SPACE:
             z = self.xu_to_zi(x, u)
             # TODO can't actually train dx->dz together with xu->z? (can probably do dual gradient descent/alternate)
-            y = self.dx_to_zo(y)
+            y = self.dx_to_zo(x, y)
         elif tsf is TransformToUse.REDUCE_TO_INPUT:
             z = u
         elif tsf is TransformToUse.NO_TRANSFORM:
@@ -310,7 +311,7 @@ class DirectLinearDynamicsTransform(InvariantTransform):
     def zo_to_dx(self, x, z_o):
         return z_o
 
-    def dx_to_zo(self, dx):
+    def dx_to_zo(self, x, dx):
         return dx
 
 
@@ -375,16 +376,20 @@ class InvariantPreprocessor(preprocess.Preprocess):
         else:
             config.predict_difference = True
 
-    def transform_x(self, XU):
+    def _transform_impl(self, XU, Y, labels):
+        # these transforms potentially require x to transform y and back, so can't just use them separately
         X = XU[:, :self.tsf.config.nx]
         U = XU[:, self.tsf.config.nx:]
-        return self.tsf.xu_to_zi(X, U)
+        z_i = self.tsf.xu_to_zi(X, U)
+        # no transformation needed our output is already zo
+        z_o = Y if self.tsf.supports_only_direct_zi_to_dx() else self.tsf.dx_to_zo(X, Y)
+        return z_i, z_o, labels
+
+    def transform_x(self, XU):
+        pass
 
     def transform_y(self, Y):
-        # no transformation needed our output is already dx
-        if self.tsf.supports_only_direct_zi_to_dx():
-            return Y
-        return self.tsf.dx_to_zo(Y)
+        pass
 
     def invert_transform(self, Y, X=None):
         """Invert transformation on Y"""
@@ -398,5 +403,5 @@ class InvariantPreprocessor(preprocess.Preprocess):
         x, u = torch.split(XU[0].view(1, -1), self.tsf.config.nx, dim=1)
         z = self.tsf.xu_to_zi(x, u)
         self.model_input_dim = z.shape[1]
-        dz = self.tsf.dx_to_zo(Y[0].view(1, -1))
+        dz = self.tsf.dx_to_zo(x, Y[0].view(1, -1))
         self.model_output_dim = dz.shape[1]
