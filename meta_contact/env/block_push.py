@@ -48,7 +48,7 @@ def pusher_pos_for_touching(block_pos, block_yaw, from_center=DIST_FOR_JUST_TOUC
         dxy = (along_face, -from_center)
 
     # rotate by yaw to match (around origin since these are differences)
-    dxy = math_utils.rotate_wrt_origin(dxy, -block_yaw)
+    dxy = math_utils.rotate_wrt_origin(dxy, block_yaw)
     pusher_pos = np.add(block_pos, dxy)
     return pusher_pos
 
@@ -64,7 +64,7 @@ def pusher_pos_along_face(block_pos, block_yaw, pusher_pos, face=BlockFace.LEFT)
     """
     dxy = np.subtract(pusher_pos, block_pos)
     # rotate back by yaw to get wrt origin
-    dxy = math_utils.rotate_wrt_origin(dxy, block_yaw)
+    dxy = math_utils.rotate_wrt_origin(dxy, -block_yaw)
     if face == BlockFace.RIGHT:
         from_center, along_face = dxy
     elif face == BlockFace.TOP:
