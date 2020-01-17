@@ -47,6 +47,7 @@ class OnlineDynamicsModel(object):
             self.emp_error = self.prior_error = None
             return
 
+        opx = px.reshape(1, -1)  # original state
         ocx = cx.reshape(1, -1)  # original state
         # transform if necessary (ensure dynamics is evaluated only in transformed space)
         if self.ds.preprocessor:
@@ -71,8 +72,8 @@ class OnlineDynamicsModel(object):
             # TODO remove these when internal state is kept as tensors
             emp_y, prior_y = _make_numpy(emp_y), _make_numpy(prior_y)
 
-        emp_x = self.advance(ocx, emp_y.reshape(1, -1))
-        prior_x = self.advance(ocx, prior_y.reshape(1, -1))
+        emp_x = self.advance(opx, emp_y.reshape(1, -1))
+        prior_x = self.advance(opx, prior_y.reshape(1, -1))
 
         # compare against actual x'
         self.emp_error = np.linalg.norm(emp_x - ocx)
