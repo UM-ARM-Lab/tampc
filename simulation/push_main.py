@@ -240,7 +240,12 @@ def test_local_dynamics(level=0):
 
     ctrl = online_controller.OnlineCEM(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
                                        compare_to_goal=env.compare_to_goal,
-                                       constrain_state=constrain_state, mpc_opts={'init_cov_diag': 0.002})
+                                       constrain_state=constrain_state, mpc_opts={'init_cov_diag': 0.001})
+    # ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
+    #                                     compare_to_goal=env.compare_to_goal,
+    #                                     constrain_state=constrain_state,
+    #                                     mpc_opts={'num_samples': 10000,
+    #                                               'noise_sigma': torch.eye(env.nu, dtype=torch.double) * 0.001})
 
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else pm.__class__.__name__
     # expensive evaluation
