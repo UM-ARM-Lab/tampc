@@ -315,7 +315,7 @@ class PolynomialInvariantTransform(invariant.DirectLinearDynamicsTransform):
         super().__init__(ds, 1, **kwargs)
         self.name = 'poly_{}'.format(self.name)
 
-    def xu_to_z(self, state, action):
+    def xu_to_zi(self, state, action):
         poly_out = self.poly.transform(state)
         z = torch.from_numpy(poly_out) @ self.params
 

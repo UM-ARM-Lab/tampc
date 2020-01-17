@@ -42,9 +42,9 @@ class InvariantTransform(LearnableParameterizedModel):
         self.name = '{}_{}_{}'.format(self.name, self.nz, self.config)
 
     @abc.abstractmethod
-    def xu_to_z(self, state, action):
+    def xu_to_zi(self, state, action):
         """
-        Transform state and action down to underlying latent input of dynamics.
+        Transform state and action down to underlying latent input of dynamics. h(x,u) = z_i
         This transform should be invariant to certain variations in state action, such as
         translation and rotation.
 
@@ -53,30 +53,29 @@ class InvariantTransform(LearnableParameterizedModel):
         body frame.
         :param state: N x nx
         :param action: N x nu
-        :return: z, N x nz latent space
+        :return: z_i, N x nz input latent space
         """
 
     @abc.abstractmethod
-    def dz_to_dx(self, x, dz):
+    def zo_to_dx(self, x, z_o):
         """
-        Reverse transform from difference in latent space back to difference in observation space at a given
-        observation state
-        :param x:
-        :param dz:
+        Reverse transform output latent space back to difference in observation space at a given observation state
+        :param x: state at which to perform the h^{-1}(z_o)
+        :param z_o: output latent state from learned dynamics z_o = bar{f}(z_i)
         :return:
         """
 
     @abc.abstractmethod
-    def dx_to_dz(self, dx):
+    def dx_to_zo(self, dx):
         """
-        Transform differences in observation state to latent state for training
+        Transform differences in observation state to output latent state for training
         :param dx:
         :return:
         """
 
     @staticmethod
     @abc.abstractmethod
-    def supports_only_direct_z_to_dx():
+    def supports_only_direct_zi_to_dx():
         """
         Whether this transformation only supports direct linear dynamics from z to dx, or if it
         supports dynamics in z to dz, then a nonlinear transform from dz to dx.
@@ -220,9 +219,9 @@ class InvariantTransform(LearnableParameterizedModel):
         y = Y[neighbours]
 
         if tsf is TransformToUse.LATENT_SPACE:
-            z = self.xu_to_z(x, u)
+            z = self.xu_to_zi(x, u)
             # TODO can't actually train dx->dz together with xu->z? (can probably do dual gradient descent/alternate)
-            y = self.dx_to_dz(y)
+            y = self.dx_to_zo(y)
         elif tsf is TransformToUse.REDUCE_TO_INPUT:
             z = u
         elif tsf is TransformToUse.NO_TRANSFORM:
@@ -305,13 +304,13 @@ class DirectLinearDynamicsTransform(InvariantTransform):
     """
 
     @staticmethod
-    def supports_only_direct_z_to_dx():
+    def supports_only_direct_zi_to_dx():
         return True
 
-    def dz_to_dx(self, x, dz):
-        return dz
+    def zo_to_dx(self, x, z_o):
+        return z_o
 
-    def dx_to_dz(self, dx):
+    def dx_to_zo(self, dx):
         return dx
 
 
@@ -325,7 +324,7 @@ class NetworkInvariantTransform(DirectLinearDynamicsTransform):
         self.user = model.DeterministicUser(make.make_sequential_network(config, **model_opts))
         super().__init__(ds, nz, **kwargs)
 
-    def xu_to_z(self, state, action):
+    def xu_to_zi(self, state, action):
         xu = torch.cat((state, action), dim=1)
         z = self.user.sample(xu)
 
@@ -362,7 +361,7 @@ class InvariantPreprocessor(preprocess.Preprocess):
         if self.model_output_dim is None:
             raise RuntimeError("Fit the preprocessor for it to know what the proper output dim is")
         # enforce our transform's proclaimed support
-        assert self.model_output_dim is config.ny if self.tsf.supports_only_direct_z_to_dx() else self.tsf.nz
+        assert self.model_output_dim is config.ny if self.tsf.supports_only_direct_zi_to_dx() else self.tsf.nz
         # this is not just tsf.nz because the tsf could have an additional structure such as z*u as output
         # TODO for our current transform we go from xu->z instead of x->z, u->v and we can treat this as nu = 0
         config.n_input = self.model_input_dim
@@ -370,7 +369,7 @@ class InvariantPreprocessor(preprocess.Preprocess):
         config.nu = 0
         config.ny = self.model_output_dim  # either ny or nz
         # if we're predicting z to dx then our y will not be in z space
-        if self.tsf.supports_only_direct_z_to_dx():
+        if self.tsf.supports_only_direct_zi_to_dx():
             config.y_in_x_space = False
         # if we're predicting z to dz then definitely will be predicting difference, otherwise don't change
         else:
@@ -379,25 +378,25 @@ class InvariantPreprocessor(preprocess.Preprocess):
     def transform_x(self, XU):
         X = XU[:, :self.tsf.config.nx]
         U = XU[:, self.tsf.config.nx:]
-        return self.tsf.xu_to_z(X, U)
+        return self.tsf.xu_to_zi(X, U)
 
     def transform_y(self, Y):
         # no transformation needed our output is already dx
-        if self.tsf.supports_only_direct_z_to_dx():
+        if self.tsf.supports_only_direct_zi_to_dx():
             return Y
-        return self.tsf.dx_to_dz(Y)
+        return self.tsf.dx_to_zo(Y)
 
     def invert_transform(self, Y, X=None):
         """Invert transformation on Y"""
         # no transformation needed our output is already dx
-        if self.tsf.supports_only_direct_z_to_dx():
+        if self.tsf.supports_only_direct_zi_to_dx():
             return Y
-        return self.tsf.dz_to_dx(X, Y)
+        return self.tsf.zo_to_dx(X, Y)
 
     def _fit_impl(self, XU, Y, labels):
         """Figure out what the transform outputs"""
         x, u = torch.split(XU[0].view(1, -1), self.tsf.config.nx, dim=1)
-        z = self.tsf.xu_to_z(x, u)
+        z = self.tsf.xu_to_zi(x, u)
         self.model_input_dim = z.shape[1]
-        dz = self.tsf.dx_to_dz(Y[0].view(1, -1))
+        dz = self.tsf.dx_to_zo(Y[0].view(1, -1))
         self.model_output_dim = dz.shape[1]
