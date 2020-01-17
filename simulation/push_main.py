@@ -1,9 +1,10 @@
+import copy
 import logging
 import math
-import pybullet as p
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pybullet as p
 import sklearn.preprocessing as skpre
 import torch
 from arm_pytorch_utilities import preprocess, math_utils
@@ -11,6 +12,7 @@ from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.model import make
 from meta_contact import cfg
 from meta_contact import model
+from meta_contact import online_model
 from meta_contact import prior
 from meta_contact.controller import controller
 from meta_contact.controller import global_controller
@@ -128,6 +130,7 @@ def test_local_dynamics(level=0):
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds = block_push.PushDataSource(env, data_dir=get_data_dir(level), preprocessor=preprocessor,
                                    validation_ratio=0.1, config=config)
+    untransformed_config = copy.deepcopy(config)
 
     # TODO add in invariant transform here
 
@@ -137,14 +140,13 @@ def test_local_dynamics(level=0):
     # pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
     u_min, u_max = get_control_bounds()
-    # ctrl = online_controller.OnlineLQR(pm, ds=ds, max_timestep=num_frames, R=5, horizon=20, lqr_iter=3,
-    #                                    init_gamma=0.1, u_min=u_min, u_max=u_max)
-
+    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, sigreg=1e-10)
     Q = torch.diag(torch.tensor([1, 1, 0, 0.01], dtype=torch.double))
     R = 1
-    ctrl = online_controller.OnlineCEM(pm, ds, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
+
+    ctrl = online_controller.OnlineCEM(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
                                        compare_to_goal=env.compare_to_goal,
-                                       constrain_state=constrain_state, mpc_opts={'init_cov_diag': 0.002})  # use seed 7
+                                       constrain_state=constrain_state, mpc_opts={'init_cov_diag': 0.002})
 
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else pm.__class__.__name__
     # expensive evaluation
