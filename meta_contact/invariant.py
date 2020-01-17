@@ -361,8 +361,6 @@ class InvariantPreprocessor(preprocess.Preprocess):
     def update_data_config(self, config: load_data.DataConfig):
         if self.model_output_dim is None:
             raise RuntimeError("Fit the preprocessor for it to know what the proper output dim is")
-        # enforce our transform's proclaimed support
-        assert self.model_output_dim is config.ny if self.tsf.supports_only_direct_zi_to_dx() else self.tsf.nz
         # this is not just tsf.nz because the tsf could have an additional structure such as z*u as output
         # TODO for our current transform we go from xu->z instead of x->z, u->v and we can treat this as nu = 0
         config.n_input = self.model_input_dim
@@ -379,14 +377,16 @@ class InvariantPreprocessor(preprocess.Preprocess):
     def _transform_impl(self, XU, Y, labels):
         # these transforms potentially require x to transform y and back, so can't just use them separately
         X = XU[:, :self.tsf.config.nx]
-        U = XU[:, self.tsf.config.nx:]
-        z_i = self.tsf.xu_to_zi(X, U)
+        z_i = self.transform_x(XU)
         # no transformation needed our output is already zo
         z_o = Y if self.tsf.supports_only_direct_zi_to_dx() else self.tsf.dx_to_zo(X, Y)
         return z_i, z_o, labels
 
     def transform_x(self, XU):
-        pass
+        X = XU[:, :self.tsf.config.nx]
+        U = XU[:, self.tsf.config.nx:]
+        z_i = self.tsf.xu_to_zi(X, U)
+        return z_i
 
     def transform_y(self, Y):
         pass
