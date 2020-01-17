@@ -57,6 +57,7 @@ def mix_prior(dX, dU, nnF, nnf, xu, sigma_x=None, strength=1.0, dyn_init_sig=Non
     Provide a covariance/bias term for mixing NN with least squares model.
     """
     it = slice(dX + dU)
+    ny = nnF.shape[0]
 
     if use_least_squares:
         sigX = dyn_init_sig[it, it]
@@ -74,7 +75,7 @@ def mix_prior(dX, dU, nnF, nnf, xu, sigma_x=None, strength=1.0, dyn_init_sig=Non
     else:
         # \bar{Sigma}, ignoring lower right
         nn_Phi = np.r_[np.c_[sigX, sigXK],
-                       np.c_[sigXK.T, np.zeros((dX, dX))]]  # Lower right square is unused
+                       np.c_[sigXK.T, np.zeros((ny, ny))]]  # Lower right square is unused
         nn_mu = None  # Unused
 
     return nn_Phi, nn_mu
@@ -84,14 +85,14 @@ def batch_mix_prior(nx, nu, nnF, strength=1.0):
     """
     Mix prior but with batch nnF and expect pytorch tensor instead of np
     """
-    N = nnF.shape[0]
+    N, ny, nxnu = nnF.shape
     # \bar{Sigma}_xu,xu from section V.B, strength is alpha
-    sigX = torch.eye(nx + nu, dtype=nnF.dtype).repeat(N, 1, 1) * strength
+    sigX = torch.eye(nxnu, dtype=nnF.dtype).repeat(N, 1, 1) * strength
     # lower left corner, nnF.T is df/dxu
     sigXK = sigX @ nnF.transpose(1, 2)
     # \bar{Sigma}, ignoring lower right
     top = torch.cat((sigX, sigXK), dim=2)
-    bot = torch.cat((sigXK.transpose(1, 2), torch.zeros((N, nx, nx), dtype=nnF.dtype)), dim=2)
+    bot = torch.cat((sigXK.transpose(1, 2), torch.zeros((N, ny, ny), dtype=nnF.dtype)), dim=2)
     nn_Phi = torch.cat((top, bot), dim=1)
     nn_mu = None  # Unused
 
