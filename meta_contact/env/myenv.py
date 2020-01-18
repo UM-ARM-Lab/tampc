@@ -43,6 +43,7 @@ class MyPybulletEnv:
         if self.realtime:
             p.setRealTimeSimulation(True)
         else:
+            p.setRealTimeSimulation(False)
             p.setTimeStep(self.sim_step_s)
 
     def seed(self, randseed=None):
