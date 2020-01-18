@@ -234,9 +234,13 @@ def verify_coordinate_transform():
     dx_inverted = tsf.zo_to_dx(px, z_o_1)
     assert torch.allclose(dx, dx_inverted)
     # same push with yaw, should result in the same z_i and the dx should give the same z_o but different dx
+
     # TODO fit linear model in z space; should get the same parameters
-    z_os = torch.zeros_like(dxes)
-    for i, yaw_shift in enumerate(np.linspace(0.1, 3.1, N)):
+    N = 16
+    dxes = torch.zeros((N, env.ny))
+    z_os = torch.zeros((N, env.ny))
+    # for i, yaw_shift in enumerate(np.linspace(0, math.pi*2, 4)):
+    for i, yaw_shift in enumerate(np.linspace(0, math.pi * 2, N)):
         env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw + yaw_shift, init_pusher=along)
         px = env.reset()
         cx, _, _, _ = env.step(action)
@@ -247,14 +251,16 @@ def verify_coordinate_transform():
         assert torch.allclose(z_i, z_i_2, atol=tol / 10)
         z_o_2 = tsf.dx_to_zo(px, dx)
         z_os[i] = z_o_2
+        dxes[i] = dx
         dx_inverted_2 = tsf.zo_to_dx(px, z_o_2)
         assert torch.allclose(dx, dx_inverted_2)
-        # actual dx dy should be different since we have yaw
-        assert not torch.allclose(dx_inverted, dx_inverted_2, atol=tol)
     # change in body frame should be exactly the same
     logger.info(z_os)
-    logger.info(z_os.std(0))
-    assert torch.allclose(z_o_2, z_o_1, atol=tol)
+    # relative standard deviation
+    logger.info(z_os.std(0) / torch.abs(z_os.mean(0)))
+    assert torch.allclose(z_os.std(0), torch.zeros(4), atol=tol)
+    # actual dx should be different since we have yaw
+    assert not torch.allclose(dxes.std(0), torch.zeros(4), atol=tol)
 
 
 class UseTransform:
