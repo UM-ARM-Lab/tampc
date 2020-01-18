@@ -1,10 +1,10 @@
 import copy
 import logging
 import math
+import pybullet as p
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pybullet as p
 import sklearn.preprocessing as skpre
 import torch
 from arm_pytorch_utilities import preprocess, math_utils
@@ -154,6 +154,9 @@ class WorldBodyFrameTransform(invariant.InvariantTransform):
         return z
 
     def dx_to_zo(self, x, dx):
+        if len(x.shape) == 1:
+            x = x.view(1, -1)
+            dx = dx.view(1, -1)
         N = dx.shape[0]
         z_o = torch.zeros((N, self.nzo), dtype=dx.dtype, device=dx.device)
         # convert world frame to body frame
@@ -165,6 +168,9 @@ class WorldBodyFrameTransform(invariant.InvariantTransform):
         return z_o
 
     def zo_to_dx(self, x, z_o):
+        if len(x.shape) == 1:
+            x = x.view(1, -1)
+            z_o = z_o.view(1, -1)
         N = z_o.shape[0]
         dx = torch.zeros((N, 4), dtype=z_o.dtype, device=z_o.device)
         # convert (dx, dy) from body frame back to world frame
@@ -188,6 +194,55 @@ class WorldBodyFrameTransform(invariant.InvariantTransform):
         pass
 
 
+def verify_coordinate_transform():
+    def get_dx(px, cx):
+        dpos = cx[:2] - px[:2]
+        dyaw = math_utils.angular_diff(cx[2], px[2])
+        dalong = cx[3] - px[3]
+        dx = torch.from_numpy(np.r_[dpos, dyaw, dalong])
+        return dx
+
+    env = get_easy_env(p.GUI)
+    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
+    ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config)
+
+    tsf = WorldBodyFrameTransform(ds)
+
+    along = block_push.MAX_ALONG / 1.5
+    init_block_pos = [0, 0]
+    init_block_yaw = 0
+    env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=along)
+    action = np.array([0, 0.02])
+    # push with no yaw
+    px = env.reset()
+    cx, _, _, _ = env.step(action)
+    # get actual difference dx
+    dx = get_dx(px, cx)
+    # get input in latent space
+    px = torch.from_numpy(px)
+    z_i = tsf.xu_to_zi(px, action)
+    # try inverting the transforms
+    z_o_direct = tsf.dx_to_zo(px, dx)
+    dx_inverted = tsf.zo_to_dx(px, z_o_direct)
+    assert torch.allclose(dx, dx_inverted)
+    # same push with yaw, should result in the same z_i and the dx should give the same z_o but different dx
+    # TODO fit linear model in z space; should get the same parameters
+    env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw + 0.1, init_pusher=along)
+    px = env.reset()
+    cx, _, _, _ = env.step(action)
+    dx = get_dx(px, cx)
+    px = torch.from_numpy(px)
+    z_i_2 = tsf.xu_to_zi(px, action)
+    assert torch.allclose(z_i, z_i_2)
+    z_o_2 = tsf.dx_to_zo(px, dx)
+    # change in body frame should be exactly the same
+    assert torch.allclose(z_o_2, z_o_direct)
+    dx_inverted_2 = tsf.zo_to_dx(px, z_o_direct)
+    assert torch.allclose(dx, dx_inverted_2)
+    # actual dx dy should be different since we have yaw
+    assert not torch.allclose(dx_inverted, dx_inverted_2)
+
+
 class UseTransform:
     NO_TRANSFORM = 0
     COORDINATE_TRANSFORM = 1
@@ -196,9 +251,9 @@ class UseTransform:
 def test_local_dynamics(level=0):
     num_frames = 70
     seed = 1
-    use_tsf = UseTransform.COORDINATE_TRANSFORM
+    use_tsf = UseTransform.NO_TRANSFORM
 
-    env = get_easy_env(p.GUI, level=level)
+    env = get_easy_env(p.DIRECT, level=level)
     # TODO preprocessor in online dynamics not yet supported
     preprocessor = None
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
@@ -230,7 +285,7 @@ def test_local_dynamics(level=0):
     prior_name = '{}_prior'.format(transform_names[use_tsf])
 
     mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds, name=prior_name)
-    pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=200)
+    pm = prior.NNPrior.from_data(mw, checkpoint=None, train_epochs=200)
     # pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
     u_min, u_max = get_control_bounds()
@@ -240,7 +295,7 @@ def test_local_dynamics(level=0):
 
     ctrl = online_controller.OnlineCEM(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
                                        compare_to_goal=env.compare_to_goal,
-                                       constrain_state=constrain_state, mpc_opts={'init_cov_diag': 0.001})
+                                       constrain_state=constrain_state, mpc_opts={'init_cov_diag': 0.002})
     # ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
     #                                     compare_to_goal=env.compare_to_goal,
     #                                     constrain_state=constrain_state,
@@ -357,4 +412,5 @@ if __name__ == "__main__":
     #                                        noise_sigma=torch.diag(
     #                                            torch.tensor([0.01, 0.01], dtype=torch.double)))  # MPPI options
     # test_global_linear_dynamics(level=0)
-    test_local_dynamics(0)
+    # test_local_dynamics(0)
+    verify_coordinate_transform()

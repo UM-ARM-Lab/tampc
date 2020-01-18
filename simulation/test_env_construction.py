@@ -5,11 +5,13 @@ import time
 from meta_contact.env import block_push
 from meta_contact.controller import controller
 from arm_pytorch_utilities import rand
+from matplotlib import pyplot as plt
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
                     datefmt='%m-%d %H:%M:%S')
+logging.getLogger('matplotlib.font_manager').disabled = True
 
 
 def test_pusher_placement_inverse():
@@ -56,16 +58,18 @@ def test_env_control():
 
 def test_friction():
     init_block_pos = [0, 0]
-    init_block_yaw = 0
+    init_block_yaw = 2
     face = block_push.BlockFace.LEFT
-    along_face = block_push.MAX_ALONG
+    along_face = block_push.MAX_ALONG * -0.5
     env = block_push.PushAgainstWallStickyEnv(mode=p.GUI, init_pusher=along_face, face=face,
                                               init_block=init_block_pos, init_yaw=init_block_yaw)
     num_frames = 50
     ctrl = controller.PreDeterminedController([(0.0, 0.02) for _ in range(num_frames)])
-    sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=False, save=False)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=True, save=False)
     seed = rand.seed()
     sim.run(seed)
+    plt.ioff()
+    plt.show()
 
 
 if __name__ == "__main__":
