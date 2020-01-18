@@ -473,6 +473,17 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         # logger.debug("along %f dalong %f", along, d_along)
         pos = pusher_pos_for_touching(old_state[:2], old_state[2], from_center=from_center, face=self.face,
                                       along_face=along)
+        # debug dpos
+        old_pos = self._observe_pusher()
+        dpos = np.subtract(pos, old_pos[:2])
+        dpos_norm = np.linalg.norm(dpos)
+        logger.info("yaw %f dpos_norm %f", old_state[2], dpos_norm)
+        # assert abs(dpos_norm - d_into) < 1e-6
+        dpos_in_block_frame = math_utils.rotate_wrt_origin(dpos, -old_state[2])
+        logger.info("yaw %f dpos_norm %s", old_state[2], dpos_in_block_frame)
+        # assert abs(dpos_in_block_frame[1]) < 1e-6
+        # assert abs(dpos_in_block_frame[0]-d_into) < 1e-6
+
         # set end effector pose
         z = self.initPusherPos[2]
         eePos = np.concatenate((pos, (z,)))

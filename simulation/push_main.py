@@ -1,15 +1,17 @@
 import copy
 import logging
 import math
-import pybullet as p
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pybullet as p
 import sklearn.preprocessing as skpre
 import torch
 from arm_pytorch_utilities import preprocess, math_utils
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.model import make
+from tensorboardX import SummaryWriter
+
 from meta_contact import cfg, invariant
 from meta_contact import model
 from meta_contact import online_model
@@ -18,7 +20,6 @@ from meta_contact.controller import controller
 from meta_contact.controller import global_controller
 from meta_contact.controller import online_controller
 from meta_contact.env import block_push
-from tensorboardX import SummaryWriter
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
@@ -202,6 +203,8 @@ def verify_coordinate_transform():
         dx = torch.from_numpy(np.r_[dpos, dyaw, dalong])
         return dx
 
+    # comparison tolerance
+    tol = 2e-4
     env = get_easy_env(p.GUI)
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config)
@@ -213,34 +216,45 @@ def verify_coordinate_transform():
     init_block_yaw = 0
     env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=along)
     action = np.array([0, 0.02])
-    # push with no yaw
-    px = env.reset()
-    cx, _, _, _ = env.step(action)
-    # get actual difference dx
-    dx = get_dx(px, cx)
+    # push with original yaw (try this N times to confirm that all pushes are consistent)
+    N = 10
+    dxes = torch.zeros((N, env.ny))
+    for i in range(N):
+        px = env.reset()
+        cx, _, _, _ = env.step(action)
+        # get actual difference dx
+        dx = get_dx(px, cx)
+        dxes[i] = dx
+    assert torch.allclose(dxes.std(0), torch.zeros(env.ny))
     # get input in latent space
     px = torch.from_numpy(px)
     z_i = tsf.xu_to_zi(px, action)
     # try inverting the transforms
-    z_o_direct = tsf.dx_to_zo(px, dx)
-    dx_inverted = tsf.zo_to_dx(px, z_o_direct)
+    z_o_1 = tsf.dx_to_zo(px, dx)
+    dx_inverted = tsf.zo_to_dx(px, z_o_1)
     assert torch.allclose(dx, dx_inverted)
     # same push with yaw, should result in the same z_i and the dx should give the same z_o but different dx
     # TODO fit linear model in z space; should get the same parameters
-    env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw + 0.1, init_pusher=along)
-    px = env.reset()
-    cx, _, _, _ = env.step(action)
-    dx = get_dx(px, cx)
-    px = torch.from_numpy(px)
-    z_i_2 = tsf.xu_to_zi(px, action)
-    assert torch.allclose(z_i, z_i_2)
-    z_o_2 = tsf.dx_to_zo(px, dx)
+    z_os = torch.zeros_like(dxes)
+    for i, yaw_shift in enumerate(np.linspace(0.1, 3.1, N)):
+        env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw + yaw_shift, init_pusher=along)
+        px = env.reset()
+        cx, _, _, _ = env.step(action)
+        # get actual difference dx
+        dx = get_dx(px, cx)
+        px = torch.from_numpy(px)
+        z_i_2 = tsf.xu_to_zi(px, action)
+        assert torch.allclose(z_i, z_i_2, atol=tol / 10)
+        z_o_2 = tsf.dx_to_zo(px, dx)
+        z_os[i] = z_o_2
+        dx_inverted_2 = tsf.zo_to_dx(px, z_o_2)
+        assert torch.allclose(dx, dx_inverted_2)
+        # actual dx dy should be different since we have yaw
+        assert not torch.allclose(dx_inverted, dx_inverted_2, atol=tol)
     # change in body frame should be exactly the same
-    assert torch.allclose(z_o_2, z_o_direct)
-    dx_inverted_2 = tsf.zo_to_dx(px, z_o_direct)
-    assert torch.allclose(dx, dx_inverted_2)
-    # actual dx dy should be different since we have yaw
-    assert not torch.allclose(dx_inverted, dx_inverted_2)
+    logger.info(z_os)
+    logger.info(z_os.std(0))
+    assert torch.allclose(z_o_2, z_o_1, atol=tol)
 
 
 class UseTransform:
