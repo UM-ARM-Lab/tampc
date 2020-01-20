@@ -45,22 +45,20 @@ def test_pusher_placement_inverse():
 
 
 from arm_pytorch_utilities import math_utils
-import torch
 
 
 def get_dx(px, cx):
     dpos = cx[:2] - px[:2]
     dyaw = math_utils.angular_diff(cx[2], px[2])
-    dx = torch.from_numpy(np.r_[dpos, dyaw])
+    dx = np.r_[dpos, dyaw]
     return dx
 
 
 def dx_to_dz(px, dx):
-    dz = torch.zeros_like(dx)
+    dz = np.zeros_like(dx)
     # dyaw is the same
     dz[2] = dx[2]
-    # dz[:2] = math_utils.rotate_wrt_origin(dx[:2], px[2])
-    dz[:2] = math_utils.batch_rotate_wrt_origin(dx[:2].view(1, -1), -px[2].view(1, -1))
+    dz[:2] = math_utils.rotate_wrt_origin(dx[:2], px[2])
     return dz
 
 
@@ -94,7 +92,7 @@ def test_simulator_friction_isometry():
         yb = blockPose[0][1]
         roll, pitch, yaw = p.getEulerFromQuaternion(blockPose[1])
         return np.array((xb, yb, yaw))
-   
+
     def _static_environment():
         v, va = p.getBaseVelocity(blockId)
         if (np.linalg.norm(v) > STATIC_VELOCITY_THRESHOLD) or (
@@ -112,8 +110,8 @@ def test_simulator_friction_isometry():
         p.stepSimulation()
 
     N = 300
-    yaws = torch.zeros(N)
-    z_os = torch.zeros((N, 3))
+    yaws = np.zeros(N)
+    z_os = np.zeros((N, 3))
     for simTime in range(N):
         # observe difference from pushing
         px = _observe_block(blockId)
@@ -127,12 +125,12 @@ def test_simulator_friction_isometry():
         # difference in world frame
         dx = get_dx(px, cx)
         # TODO compute difference in block frame block frame
-        dz = dx_to_dz(torch.from_numpy(px), dx)
+        dz = dx_to_dz(px, dx)
         z_os[simTime] = dz
         logger.info("dx %s dz %s", dx, dz)
         time.sleep(0.1)
-    logger.info(z_os.std(0) / torch.abs(z_os.mean(0)))
-    plt.scatter(yaws.numpy(), z_os[:, 2].numpy())
+    logger.info(z_os.std(0) / np.abs(np.mean(z_os, 0)))
+    plt.scatter(yaws, z_os[:, 2])
     plt.xlabel('yaw')
     plt.ylabel('dyaw')
     plt.show()
