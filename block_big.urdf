@@ -6,8 +6,8 @@
 <robot name="block_big" xmlns:xacro="http://www.ros.org/wiki/xacro">
   <link name="base_link">
     <contact>
-      <lateral_friction value="0.8"/>
-      <spinning_friction value=".07"/>
+      <lateral_friction value="1.0"/>
+      <spinning_friction value=".1"/>
     </contact>
     <inertial>
       <origin rpy="0 0 0" xyz="0 0 0"/>
