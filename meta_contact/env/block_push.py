@@ -1,14 +1,15 @@
 import logging
 import math
 import os
-import pybullet as p
 import time
 
 import numpy as np
+import pybullet as p
 from arm_pytorch_utilities import load_data as load_utils, math_utils
 from arm_pytorch_utilities.make_data import datasource
 from hybrid_sysid import simulation
 from matplotlib import pyplot as plt
+
 from meta_contact import cfg
 from meta_contact.env.myenv import MyPybulletEnv
 
@@ -179,8 +180,9 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
         self._setup_experiment()
         # start at rest
-        for _ in range(self.initRestFrames):
-            p.stepSimulation()
+        while not self._static_environment():
+            for _ in range(30):
+                p.stepSimulation()
         self.state = self._obs()
 
     def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
@@ -296,7 +298,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
             info['contact_count'] = len(contactInfo)
         return info
 
-    STATIC_VELOCITY_THRESHOLD = 1e-3
+    STATIC_VELOCITY_THRESHOLD = 5e-5
     REACH_COMMAND_THRESHOLD = 1e-4
 
     def _static_environment(self):
@@ -324,20 +326,16 @@ class PushAgainstWallEnv(MyPybulletEnv):
         p.addUserDebugLine(eePos, np.add(eePos, [0, 0, 0.01]), [1, 1, 0], 4)
         # handle trying to go into wall (if we don't succeed)
         # we use a force insufficient for going into the wall
-        rest = 1
-        while not self._reached_command(eePos) and rest < self.initRestFrames:
-            p.stepSimulation()
-            rest += 1
+        while not self._reached_command(eePos):
+            for _ in range(50):
+                p.stepSimulation()
         # if rest == self.initRestFrames:
         #     logger.warning("Ran out of steps push")
 
         # wait until simulation becomes static
-        rest = 1
-        while not self._static_environment() and rest < self.initRestFrames:
-            p.stepSimulation()
-            rest += 1
-        # if rest == self.initRestFrames:
-        #     logger.warning("Ran out of steps static")
+        while not self._static_environment():
+            for _ in range(50):
+                p.stepSimulation()
 
     @staticmethod
     def compare_to_goal(state, goal):
@@ -475,12 +473,16 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
                                       along_face=along)
         # debug dpos
         old_pos = self._observe_pusher()
-        dpos = np.subtract(pos, old_pos[:2])
-        dpos_norm = np.linalg.norm(dpos)
-        logger.info("yaw %f dpos_norm %f", old_state[2], dpos_norm)
+        # try manually calculate where to push (doesn't seem to have an impact)
+        # dpos = math_utils.rotate_wrt_origin((d_into, d_along), old_state[2])
+        # pos = np.add(old_pos[:2], dpos)
+
+        # dpos = np.subtract(pos, old_pos[:2])
+        # dpos_norm = np.linalg.norm(dpos)
+        # logger.info("yaw %f dpos_norm %f", old_state[2], dpos_norm)
         # assert abs(dpos_norm - d_into) < 1e-6
-        dpos_in_block_frame = math_utils.rotate_wrt_origin(dpos, -old_state[2])
-        logger.info("yaw %f dpos_norm %s", old_state[2], dpos_in_block_frame)
+        # dpos_in_block_frame = math_utils.rotate_wrt_origin(dpos, -old_state[2])
+        # logger.info("yaw %f dpos_norm %s", old_state[2], dpos_in_block_frame)
         # assert abs(dpos_in_block_frame[1]) < 1e-6
         # assert abs(dpos_in_block_frame[0]-d_into) < 1e-6
 
