@@ -175,6 +175,13 @@ class PushAgainstWallEnv(MyPybulletEnv):
                 p.stepSimulation()
         self.state = self._obs()
 
+    @staticmethod
+    def get_control_bounds():
+        # depends on the environment; these are the limits for StickyEnv
+        u_min = np.array([-0.03, 0.03])
+        u_max = np.array([0.03, 0.03])
+        return u_min, u_max
+
     def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
         """Change task configuration"""
         if goal is not None:
@@ -409,6 +416,13 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         assert self.Q.shape[0] == self.nx
         assert self.R.shape[0] == self.nu
 
+    @staticmethod
+    def get_control_bounds():
+        # depends on the environment; these are the limits for StickyEnv
+        u_min = np.array([-0.02, 0])
+        u_max = np.array([0.02, 0.03])
+        return u_min, u_max
+
     def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
         """Change task configuration"""
         if goal is not None:
@@ -512,6 +526,13 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         # initial config
         self.along = init_pusher
         super().__init__(init_pusher=init_pusher, face=BlockFace.LEFT, **kwargs)
+
+    @staticmethod
+    def get_control_bounds():
+        # depends on the environment; these are the limits for StickyEnv
+        u_min = np.array([-0.02, 0, -PushWithForceDirectlyEnv.MAX_PUSH_ANGLE])
+        u_max = np.array([0.02, 0.5, PushWithForceDirectlyEnv.MAX_PUSH_ANGLE])
+        return u_min, u_max
 
     def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
         """Change task configuration"""
