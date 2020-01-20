@@ -1,15 +1,14 @@
 import logging
 import math
 import os
+import pybullet as p
 import time
 
 import numpy as np
-import pybullet as p
 from arm_pytorch_utilities import load_data as load_utils, math_utils
 from arm_pytorch_utilities.make_data import datasource
 from hybrid_sysid import simulation
 from matplotlib import pyplot as plt
-
 from meta_contact import cfg
 from meta_contact.env.myenv import MyPybulletEnv
 
@@ -141,15 +140,6 @@ class PushLoader(load_utils.DataLoader):
         # du = np.linalg.norm(nxy[:-1] - xy[1:], axis=1)
 
         return xu, y, cc
-
-
-class PushDataSource(datasource.FileDataSource):
-    def __init__(self, env, data_dir='pushing', **kwargs):
-        if isinstance(env, PushAgainstWallEnv) or isinstance(env, PushAgainstWallStickyEnv):
-            loader = PushLoader
-        else:
-            raise RuntimeError("Unrecognized data source for env {}".format(env))
-        super().__init__(loader, data_dir, **kwargs)
 
 
 class PushAgainstWallEnv(MyPybulletEnv):
@@ -508,6 +498,102 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         return ['x block (m)', 'y block (m)', 'block rotation (rads)', 'pusher along face (m)']
 
 
+class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
+    """
+    Pusher in this env is abstracted and always sticks to the block; control is how much to slide along the side of the
+    block, the magnitude of force to push with, and the angle to push wrt the block
+    """
+    nu = 3
+    nx = 4
+    ny = 4
+    MAX_PUSH_ANGLE = math.pi / 4  # 45 degree on either side of normal
+
+    def __init__(self, init_pusher=0, **kwargs):
+        # initial config
+        self.along = init_pusher
+        super().__init__(init_pusher=init_pusher, face=BlockFace.LEFT, **kwargs)
+
+    def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
+        """Change task configuration"""
+        if goal is not None:
+            # ignore the pusher position
+            self.goal = np.array(tuple(goal) + (0.1, 0))
+            self._draw_goal()
+        if init_block is not None:
+            self.initBlockPos = tuple(init_block) + (-0.02,)
+        if init_yaw is not None:
+            self.initBlockYaw = init_yaw
+        if init_pusher is not None:
+            pos = pusher_pos_for_touching(self.initBlockPos[:2], self.initBlockYaw, face=self.face,
+                                          along_face=init_pusher)
+            self.along = init_pusher
+            self.initPusherPos = tuple(pos) + (0.05,)
+
+    def _setup_experiment(self):
+        super()._setup_experiment()
+        # disable collision since we're applying a force directly on the block (pusher is for visualization for now)
+        p.setCollisionFilterPair(self.pusherId, self.blockId, -1, -1, 0)
+
+    def _obs(self):
+        xb, yb, yaw = self._observe_block()
+        return np.array((xb, yb, yaw, self.along))
+
+    def _keep_pusher_adjacent(self):
+        state = self._obs()
+        pos = pusher_pos_for_touching(state[:2], state[2], from_center=DIST_FOR_JUST_TOUCHING, face=self.face,
+                                      along_face=self.along)
+        z = self.initPusherPos[2]
+        eePos = np.concatenate((pos, (z,)))
+        self._move_pusher(eePos)
+
+    def step(self, action):
+        # TODO consider normalizing control to 0 and 1
+        old_state = self._obs()
+        # first action is difference in along
+        d_along = action[0]
+        # TODO consider having u as fn and ft
+        # second action is push magnitude
+        f_mag = max(0, action[1])
+        # third option is push angle (0 being perpendicular to face)
+        f_dir = np.clip(action[2], -self.MAX_PUSH_ANGLE, self.MAX_PUSH_ANGLE)
+
+        # execute action
+        ft = math.sin(f_dir) * f_mag
+        fn = math.cos(f_dir) * f_mag
+        # apply force on the left face of the block at along
+        p.applyExternalForce(self.blockId, -1, [fn, ft, 0], [-MAX_ALONG, self.along, 0], p.LINK_FRAME)
+        p.stepSimulation()
+        while not self._static_environment():
+            for _ in range(20):
+                # also move the pusher along visually
+                self._keep_pusher_adjacent()
+                for _ in range(5):
+                    p.stepSimulation()
+
+        # apply the sliding along side after the push settles down
+        self.along = np.clip(old_state[3] + d_along, -MAX_ALONG, MAX_ALONG)
+        self._keep_pusher_adjacent()
+
+        while not self._static_environment():
+            for _ in range(20):
+                p.stepSimulation()
+
+        # get the net contact force between robot and block
+        info = self._observe_contact()
+        self.state = np.array(self._obs())
+        # track trajectory
+        z = self.initPusherPos[2]
+        p.addUserDebugLine([old_state[0], old_state[1], z], [self.state[0], self.state[1], z], [0, 0, 1], 2)
+
+        cost, done = self.evaluate_cost(self.state, action)
+
+        return np.copy(self.state), -cost, done, info
+
+    @staticmethod
+    def state_names():
+        return ['x block (m)', 'y block (m)', 'block rotation (rads)', 'pusher along face (m)']
+
+
 class InteractivePush(simulation.Simulation):
     def __init__(self, env: PushAgainstWallEnv, controller, num_frames=1000, save_dir='pushing', observation_period=1,
                  terminal_cost_multiplier=1, **kwargs):
@@ -630,3 +716,15 @@ class InteractivePush(simulation.Simulation):
 
     def _reset_sim(self):
         return self.env.reset()
+
+
+class PushDataSource(datasource.FileDataSource):
+    loader_map = {PushAgainstWallEnv: PushLoader,
+                  PushAgainstWallStickyEnv: PushLoader,
+                  PushWithForceDirectlyEnv: PushLoader}
+
+    def __init__(self, env, data_dir='pushing', **kwargs):
+        loader = self.loader_map.get(type(env), None)
+        if not loader:
+            raise RuntimeError("Unrecognized data source for env {}".format(env))
+        super().__init__(loader, data_dir, **kwargs)
