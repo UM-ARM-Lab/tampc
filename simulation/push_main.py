@@ -34,13 +34,13 @@ def random_touching_start(env, w=block_push.DIST_FOR_JUST_TOUCHING):
     # choose which face we will be next to
     env_type = type(env)
     if env_type == block_push.PushAgainstWallEnv:
-        along_face = (np.random.random() - 0.5) * 2 * w  # each face has 1 fixed value and 1 free value
+        along_face = (np.random.random() - 0.5) * 2
         face = np.random.randint(0, 4)
         init_pusher = block_push.pusher_pos_for_touching(init_block_pos, init_block_yaw, from_center=w,
                                                          face=face,
                                                          along_face=along_face)
     elif env_type == block_push.PushAgainstWallStickyEnv or env_type == block_push.PushWithForceDirectlyEnv:
-        init_pusher = np.random.uniform(-block_push.MAX_ALONG, block_push.MAX_ALONG)
+        init_pusher = np.random.uniform(-1, 1)
     else:
         raise RuntimeError("Unrecognized env type")
     return init_block_pos, init_block_yaw, init_pusher
@@ -114,41 +114,22 @@ def constrain_state(state):
     # yaw gets normalized
     state[:, 2] = math_utils.angle_normalize(state[:, 2])
     # along gets constrained
-    state[:, 3] = math_utils.clip(state[:, 3], -torch.tensor(block_push.MAX_ALONG, dtype=torch.double),
-                                  torch.tensor(block_push.MAX_ALONG, dtype=torch.double))
+    state[:, 3] = math_utils.clip(state[:, 3], -torch.tensor(-1, dtype=torch.double),
+                                  torch.tensor(1, dtype=torch.double))
     return state
 
 
-class WorldBodyFrameTransform(invariant.InvariantTransform):
-    """
-    Specific to StickyEnv formulation! (expects the states to be block pose and pusher along)
-
-    Transforms world frame coordinates to input required for body frame dynamics
-    (along, d_along, and push magnitude) = z_i and predicts (dx, dy, dtheta) of block in previous block frame = z_o
-    separate latent space for input and output (z_i, z_o)
-    this is actually h and h^{-1} combined into 1, h(x,u) = z_i, learned dynamics hat{f}(z_i) = z_o, h^{-1}(z_o) = dx
-    """
-
-    def __init__(self, ds, **kwargs):
-        # need along, d_along, and push magnitude; don't need block position or yaw
-        self.nzo = 4
-        super().__init__(ds, 3, **kwargs)
-        self.name = 'coord_{}'.format(self.name)
-
+class HandDesignedCoordTransform(invariant.InvariantTransform):
     @staticmethod
     def supports_only_direct_zi_to_dx():
         # converts z to dx in body frame, then needs to bring back to world frame
         return False
 
-    def xu_to_zi(self, state, action):
-        if len(state.shape) < 2:
-            state = state.reshape(1, -1)
-            action = action.reshape(1, -1)
-
-        # TODO might be able to remove push magnitude (and just directly multiply by that)
-        # (along, d_along, push magnitude)
-        z = torch.from_numpy(np.column_stack((state[:, -1], action)))
-        return z
+    def __init__(self, ds, nz, **kwargs):
+        # z_o is dx, dy, dyaw in body frame and d_along
+        self.nzo = 4
+        super().__init__(ds, nz, **kwargs)
+        self.name = 'coord_{}'.format(self.name)
 
     def dx_to_zo(self, x, dx):
         if len(x.shape) == 1:
@@ -191,6 +172,55 @@ class WorldBodyFrameTransform(invariant.InvariantTransform):
         pass
 
 
+class WorldBodyFrameTransformForStickyEnv(HandDesignedCoordTransform):
+    """
+    Specific to StickyEnv formulation! (expects the states to be block pose and pusher along)
+
+    Transforms world frame coordinates to input required for body frame dynamics
+    (along, d_along, and push magnitude) = z_i and predicts (dx, dy, dtheta) of block in previous block frame = z_o
+    separate latent space for input and output (z_i, z_o)
+    this is actually h and h^{-1} combined into 1, h(x,u) = z_i, learned dynamics hat{f}(z_i) = z_o, h^{-1}(z_o) = dx
+    """
+
+    def __init__(self, ds, **kwargs):
+        # need along, d_along, and push magnitude; don't need block position or yaw
+        super().__init__(ds, 3, **kwargs)
+
+    def xu_to_zi(self, state, action):
+        if len(state.shape) < 2:
+            state = state.reshape(1, -1)
+            action = action.reshape(1, -1)
+
+        # TODO might be able to remove push magnitude (and just directly multiply by that)
+        # (along, d_along, push magnitude)
+        z = torch.from_numpy(np.column_stack((state[:, -1], action)))
+        return z
+
+
+class WorldBodyFrameTransformForDirectPush(HandDesignedCoordTransform):
+    def __init__(self, ds, **kwargs):
+        # need along, d_along, push magnitude, and push direction; don't need block position or yaw
+        super().__init__(ds, 4, **kwargs)
+
+    def xu_to_zi(self, state, action):
+        if len(state.shape) < 2:
+            state = state.reshape(1, -1)
+            action = action.reshape(1, -1)
+
+        # (along, d_along, push magnitude, push direction)
+        z = torch.from_numpy(np.column_stack((state[:, -1], action)))
+        return z
+
+
+def coord_tsf_factory(env, *args, **kwargs):
+    tsfs = {block_push.PushAgainstWallStickyEnv: WorldBodyFrameTransformForStickyEnv,
+            block_push.PushWithForceDirectlyEnv: WorldBodyFrameTransformForDirectPush}
+    tsf_type = tsfs.get(type(env), None)
+    if tsf_type is None:
+        raise RuntimeError("No tsf specified for env type {}".format(type(env)))
+    return tsf_type(*args, **kwargs)
+
+
 def verify_coordinate_transform():
     def get_dx(px, cx):
         dpos = cx[:2] - px[:2]
@@ -205,9 +235,9 @@ def verify_coordinate_transform():
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config)
 
-    tsf = WorldBodyFrameTransform(ds)
+    tsf = coord_tsf_factory(env, ds)
 
-    along = block_push.MAX_ALONG / 1.5
+    along = 0.7
     init_block_pos = [0, 0]
     init_block_yaw = 0
     env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=along)
@@ -282,7 +312,7 @@ def test_local_dynamics(level=0):
     # add in invariant transform here
     base_name = 'push_s{}'.format(seed)
     transforms = {UseTransform.NO_TRANSFORM: None,
-                  UseTransform.COORDINATE_TRANSFORM: WorldBodyFrameTransform(ds, name=base_name)}
+                  UseTransform.COORDINATE_TRANSFORM: coord_tsf_factory(env, ds, name=base_name)}
     transform_names = {UseTransform.NO_TRANSFORM: 'none', UseTransform.COORDINATE_TRANSFORM: 'coord'}
     invariant_tsf = transforms[use_tsf]
 
