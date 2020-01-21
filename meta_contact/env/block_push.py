@@ -23,8 +23,8 @@ class BlockFace:
 
 
 # TODO This is specific to this pusher and block; how to generalize this?
-DIST_FOR_JUST_TOUCHING = 0.096 - 0.00001
-MAX_ALONG = 0.075
+DIST_FOR_JUST_TOUCHING = 0.096 - 0.00001 + 0.2
+MAX_ALONG = 0.075 + 0.2
 
 
 def pusher_pos_for_touching(block_pos, block_yaw, from_center=DIST_FOR_JUST_TOUCHING, face=BlockFace.LEFT,
@@ -521,6 +521,8 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
     nx = 4
     ny = 4
     MAX_PUSH_ANGLE = math.pi / 4  # 45 degree on either side of normal
+    MAX_SLIDE = 0.08
+    MAX_FORCE = 500
 
     def __init__(self, init_pusher=0, **kwargs):
         # initial config
@@ -529,9 +531,9 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
 
     @staticmethod
     def get_control_bounds():
-        # depends on the environment; these are the limits for StickyEnv
-        u_min = np.array([-0.02, 0, -PushWithForceDirectlyEnv.MAX_PUSH_ANGLE])
-        u_max = np.array([0.02, 0.5, PushWithForceDirectlyEnv.MAX_PUSH_ANGLE])
+        # depends on the env to perform normalization
+        u_min = np.array([-1, 0, -1])
+        u_max = np.array([1, 1, 1])
         return u_min, u_max
 
     def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
@@ -568,15 +570,15 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         self._move_pusher(eePos)
 
     def step(self, action):
-        # TODO consider normalizing control to 0 and 1
         old_state = self._obs()
+        # normalize action such that the input can be within a fixed range
         # first action is difference in along
-        d_along = action[0]
+        d_along = action[0] * self.MAX_SLIDE
         # TODO consider having u as fn and ft
         # second action is push magnitude
-        f_mag = max(0, action[1])
+        f_mag = max(0, action[1] * self.MAX_FORCE)
         # third option is push angle (0 being perpendicular to face)
-        f_dir = np.clip(action[2], -self.MAX_PUSH_ANGLE, self.MAX_PUSH_ANGLE)
+        f_dir = np.clip(action[2], -1, 1) * self.MAX_PUSH_ANGLE
 
         # execute action
         ft = math.sin(f_dir) * f_mag
