@@ -58,7 +58,7 @@ def dx_to_dz(px, dx):
     dz = np.zeros_like(dx)
     # dyaw is the same
     dz[2] = dx[2]
-    dz[:2] = math_utils.rotate_wrt_origin(dx[:2], px[2])
+    dz[:2] = math_utils.rotate_wrt_origin(dx[:2], -px[2])
     return dz
 
 
@@ -66,7 +66,6 @@ def test_simulator_friction_isometry():
     import os
     from meta_contact import cfg
     import pybullet_data
-    import datetime
 
     init_block_pos = [0.0, 0.0]
     init_block_yaw = -0.
@@ -82,8 +81,6 @@ def test_simulator_friction_isometry():
     p.resetDebugVisualizerCamera(cameraDistance=0.5, cameraYaw=0, cameraPitch=-85,
                                  cameraTargetPosition=[0, 0, 1])
 
-    p.startStateLogging(p.STATE_LOGGING_VIDEO_MP4,
-                        "{}.mp4".format(datetime.datetime.now().strftime('%Y_%m_%d_%H_%M_%S')))
     STATIC_VELOCITY_THRESHOLD = 1e-6
 
     def _observe_block(blockId):
@@ -109,7 +106,7 @@ def test_simulator_friction_isometry():
     for _ in range(100):
         p.stepSimulation()
 
-    N = 300
+    N = 100
     yaws = np.zeros(N)
     z_os = np.zeros((N, 3))
     for simTime in range(N):
@@ -117,6 +114,7 @@ def test_simulator_friction_isometry():
         px = _observe_block(blockId)
         yaws[simTime] = px[2]
         p.applyExternalForce(blockId, -1, [F, F, 0], [-MAX_ALONG, MAX_ALONG, 0.025], p.LINK_FRAME)
+        # p.applyExternalTorque(blockId, -1, [0, 0, 100], p.LINK_FRAME)
         p.stepSimulation()
         while not _static_environment():
             for _ in range(100):
@@ -124,15 +122,28 @@ def test_simulator_friction_isometry():
         cx = _observe_block(blockId)
         # difference in world frame
         dx = get_dx(px, cx)
-        # TODO compute difference in block frame block frame
+        # difference in block frame
         dz = dx_to_dz(px, dx)
         z_os[simTime] = dz
         logger.info("dx %s dz %s", dx, dz)
         time.sleep(0.1)
     logger.info(z_os.std(0) / np.abs(np.mean(z_os, 0)))
-    plt.scatter(yaws, z_os[:, 2])
-    plt.xlabel('yaw')
+    plt.subplot(3, 1, 1)
+    v = z_os[:, 2]
+    plt.scatter(yaws, v)
     plt.ylabel('dyaw')
+    plt.ylim(np.min(v), np.max(v))
+    plt.subplot(3, 1, 2)
+    v = z_os[:, 0]
+    plt.scatter(yaws, v)
+    plt.ylabel('dx_body')
+    plt.ylim(np.min(v), np.max(v))
+    plt.subplot(3, 1, 3)
+    v = z_os[:, 1]
+    plt.scatter(yaws, v)
+    plt.xlabel('yaw')
+    plt.ylabel('dy_body')
+    plt.ylim(np.min(v), np.max(v))
     plt.show()
 
 
