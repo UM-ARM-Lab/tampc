@@ -17,3 +17,4 @@ checkpoints
 .env/
 .DS_Store
 env37
+MUJOCO_LOG.TXT
