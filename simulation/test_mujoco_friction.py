@@ -39,7 +39,9 @@ MODEL_XML = """
             <geom mass="1" size="0.15 0.15 0.05" type="box"/>
 			<camera euler="0 0 0" fovy="40" name="rgb" pos="0 0 2.5"></camera>
         </body>
-       <geom name='floor' pos='0 0 0' size='0 0 .125' type='plane' material="MatPlane" condim='3'/>
+        <body name="floor" pos="0 0 -0.5">
+           <geom name='arena' mass='1' size='0.5 0.5' material="MatPlane" type='cylinder' />
+        </body>
     </worldbody>
     <actuator>
         <motor gear="1.0" joint="rot1"/>
