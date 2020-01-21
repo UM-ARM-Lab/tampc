@@ -404,6 +404,8 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
     nu = 2
     nx = 4
     ny = 4
+    MAX_SLIDE = 0.3
+    MAX_INTO = 0.01
 
     def __init__(self, init_pusher=0, face=BlockFace.LEFT, **kwargs):
         # initial config
@@ -418,9 +420,8 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
 
     @staticmethod
     def get_control_bounds():
-        # depends on the environment; these are the limits for StickyEnv
-        u_min = np.array([-0.02, 0])
-        u_max = np.array([0.02, 0.03])
+        u_min = np.array([-1, 0])
+        u_max = np.array([1, 1])
         return u_min, u_max
 
     def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
@@ -459,22 +460,21 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         along, from_center = pusher_pos_along_face((xb, yb), yaw, (x, y), self.face)
         # debugging to make sure we're quasi-static and adjacent to the block
         # logger.debug("dist between pusher and block %f", from_center - DIST_FOR_JUST_TOUCHING)
-        return xb, yb, yaw, along
+        return xb, yb, yaw, along / MAX_ALONG
 
     def step(self, action):
-        # TODO consider normalizing control to 0 and 1
         old_state = self._obs()
         # first action is difference in along
-        d_along = action[0]
+        d_along = action[0] * self.MAX_SLIDE
         # second action is how much to go into the perpendicular face (>= 0)
-        d_into = max(0, action[1])
+        d_into = max(0, action[1]) * self.MAX_INTO
 
         from_center = DIST_FOR_JUST_TOUCHING - d_into
         # restrict sliding of pusher along the face (never to slide off)
-        along = np.clip(old_state[3] + d_along, -MAX_ALONG, MAX_ALONG)
+        along = np.clip(old_state[3] + d_along, -1, 1)
         # logger.debug("along %f dalong %f", along, d_along)
         pos = pusher_pos_for_touching(old_state[:2], old_state[2], from_center=from_center, face=self.face,
-                                      along_face=along)
+                                      along_face=along * MAX_ALONG)
         # debug dpos
         old_pos = self._observe_pusher()
         # try manually calculate where to push (doesn't seem to have an impact)
