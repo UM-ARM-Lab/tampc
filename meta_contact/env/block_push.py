@@ -521,7 +521,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
     nx = 4
     ny = 4
     MAX_PUSH_ANGLE = math.pi / 4  # 45 degree on either side of normal
-    MAX_SLIDE = 0.08
+    MAX_SLIDE = 0.3  # can slide at most 30/200 = 15% of the face in 1 move
     MAX_FORCE = 500
 
     def __init__(self, init_pusher=0, **kwargs):
@@ -564,7 +564,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
     def _keep_pusher_adjacent(self):
         state = self._obs()
         pos = pusher_pos_for_touching(state[:2], state[2], from_center=DIST_FOR_JUST_TOUCHING, face=self.face,
-                                      along_face=self.along)
+                                      along_face=self.along * MAX_ALONG)
         z = self.initPusherPos[2]
         eePos = np.concatenate((pos, (z,)))
         self._move_pusher(eePos)
@@ -584,7 +584,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         ft = math.sin(f_dir) * f_mag
         fn = math.cos(f_dir) * f_mag
         # apply force on the left face of the block at along
-        p.applyExternalForce(self.blockId, -1, [fn, ft, 0], [-MAX_ALONG, self.along, 0], p.LINK_FRAME)
+        p.applyExternalForce(self.blockId, -1, [fn, ft, 0], [-MAX_ALONG, self.along * MAX_ALONG, 0], p.LINK_FRAME)
         p.stepSimulation()
         while not self._static_environment():
             for _ in range(20):
@@ -594,7 +594,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
                     p.stepSimulation()
 
         # apply the sliding along side after the push settles down
-        self.along = np.clip(old_state[3] + d_along, -MAX_ALONG, MAX_ALONG)
+        self.along = np.clip(old_state[3] + d_along, -1, 1)
         self._keep_pusher_adjacent()
 
         while not self._static_environment():
