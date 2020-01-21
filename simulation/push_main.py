@@ -91,15 +91,15 @@ def get_easy_env(mode=p.GUI, level=0, log_video=False):
     # env = interactive_block_pushing.PushAgainstWallEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher,
     #                                                    init_block=init_block_pos, init_yaw=init_block_yaw,
     #                                                    environment_level=level)
-    # env_dir = 'no_restriction'
+    # env_dir = 'pushing/no_restriction'
     # env = block_push.PushAgainstWallStickyEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher, log_video=log_video,
     #                                           init_block=init_block_pos, init_yaw=init_block_yaw,
     #                                           environment_level=level)
-    # env_dir = 'sticky'
+    # env_dir = 'pushing/sticky'
     env = block_push.PushWithForceDirectlyEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher, log_video=log_video,
                                               init_block=init_block_pos, init_yaw=init_block_yaw,
                                               environment_level=level)
-    env_dir = 'direct_force'
+    env_dir = 'pushing/direct_force'
     return env
 
 
