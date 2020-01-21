@@ -27,18 +27,22 @@ logging.basicConfig(level=logging.DEBUG,
 logging.getLogger('matplotlib.font_manager').disabled = True
 
 
-def random_touching_start(w=block_push.DIST_FOR_JUST_TOUCHING):
+def random_touching_start(env, w=block_push.DIST_FOR_JUST_TOUCHING):
     init_block_pos = (np.random.random((2,)) - 0.5)
     init_block_yaw = (np.random.random() - 0.5) * 2 * math.pi
     # randomly initialize pusher adjacent to block
     # choose which face we will be next to
-    along_face = (np.random.random() - 0.5) * 2 * w  # each face has 1 fixed value and 1 free value
-    face = np.random.randint(0, 4)
-    # for sticky environment, only have to give how far along the face
-    init_pusher = np.random.uniform(-block_push.MAX_ALONG, block_push.MAX_ALONG)
-    # init_pusher = interactive_block_pushing.pusher_pos_for_touching(init_block_pos, init_block_yaw, from_center=w,
-    #                                                                 face=face,
-    #                                                                 along_face=along_face)
+    env_type = type(env)
+    if env_type == block_push.PushAgainstWallEnv:
+        along_face = (np.random.random() - 0.5) * 2 * w  # each face has 1 fixed value and 1 free value
+        face = np.random.randint(0, 4)
+        init_pusher = block_push.pusher_pos_for_touching(init_block_pos, init_block_yaw, from_center=w,
+                                                         face=face,
+                                                         along_face=along_face)
+    elif env_type == block_push.PushAgainstWallStickyEnv or env_type == block_push.PushWithForceDirectlyEnv:
+        init_pusher = np.random.uniform(-block_push.MAX_ALONG, block_push.MAX_ALONG)
+    else:
+        raise RuntimeError("Unrecognized env type")
     return init_block_pos, init_block_yaw, init_pusher
 
 
@@ -59,7 +63,7 @@ def collect_touching_freespace_data(trials=20, trial_length=40, level=0):
     for _ in range(trials):
         seed = rand.seed()
         # start at fixed location
-        init_block_pos, init_block_yaw, init_pusher = random_touching_start()
+        init_block_pos, init_block_yaw, init_pusher = random_touching_start(env)
         env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
         ctrl = controller.FullRandomController(env.nu, u_min, u_max)
         sim.ctrl = ctrl
@@ -341,7 +345,7 @@ def evaluate_controller(env, ctrl, name, tasks=10, tries=10, start_seed=0):
     for t in range(tasks):
         task_seed = rand.seed()
         # configure init and goal for task
-        init_block_pos, init_block_yaw, init_pusher = random_touching_start()
+        init_block_pos, init_block_yaw, init_pusher = random_touching_start(env)
         goal_pos = np.random.uniform(-0.6, 0.6, 2)
         env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher, goal=goal_pos)
         logger.info("task %d init block %s goal %s", task_seed, init_block_pos, goal_pos)
