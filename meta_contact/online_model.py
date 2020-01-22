@@ -51,10 +51,12 @@ class OnlineDynamicsModel(object):
         opx = torch.from_numpy(px.reshape(1, -1))  # original state
         ocx = torch.from_numpy(cx.reshape(1, -1))  # original state
         # transform if necessary (ensure dynamics is evaluated only in transformed space)
+        cx, cu = self._make_2d_tensor(cx, cu)
+        px, pu = self._make_2d_tensor(px, pu)
         if self.ds.preprocessor:
             cx, cu = self._apply_transform(cx, cu)
             px, pu = self._apply_transform(px, pu)
-           
+
         xu, pxu, xux = _cat_xu(px, pu, cx, cu)
         Phi, mu0, m, n0 = self.prior.get_batch_params(self.nx, self.nu, xu, pxu, xux)
 
@@ -136,7 +138,7 @@ class OnlineDynamicsModel(object):
                                                  Phi, mu0, m, n0)
         return _batch_conditioned_dynamics(self.nx, self.nu, sigma, mu, self.sigreg)
 
-    def _apply_transform(self, x, u):
+    def _make_2d_tensor(self, x, u):
         if x is None:
             return x, u
         oned = len(x.shape) is 1
@@ -146,6 +148,11 @@ class OnlineDynamicsModel(object):
         if oned:
             x = x.view(1, -1)
             u = u.view(1, -1)
+        return x, u
+
+    def _apply_transform(self, x, u):
+        if x is None:
+            return x, u
         xu = torch.cat((x, u), dim=1)
         xu = self.ds.preprocessor.transform_x(xu)
         x = xu[:, :self.nx]
@@ -158,6 +165,8 @@ class OnlineDynamicsModel(object):
         :return: B x N x nx or N x nx next states
         """
         ocx = cx  # original state
+        cx, cu = self._make_2d_tensor(cx, cu)
+        px, pu = self._make_2d_tensor(px, pu)
         # transform if necessary (ensure dynamics is evaluated only in transformed space)
         if self.ds.preprocessor and not already_transformed:
             cx, cu = self._apply_transform(cx, cu)
