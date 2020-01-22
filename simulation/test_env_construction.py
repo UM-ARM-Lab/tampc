@@ -1,4 +1,5 @@
 import logging
+import math
 import pybullet as p
 import time
 
@@ -100,7 +101,11 @@ def test_simulator_friction_isometry():
     p.setGravity(0, 0, -10)
     # p.changeDynamics(blockId, -1, lateralFriction=0.1)
     p.changeDynamics(planeId, -1, lateralFriction=0.5, spinningFriction=0.3, rollingFriction=0.1)
-    F = 200
+    f_mag = 1000
+    f_dir = np.pi / 4
+    ft = math.sin(f_dir) * f_mag
+    fn = math.cos(f_dir) * f_mag
+
     MAX_ALONG = 0.075 + 0.2
 
     for _ in range(100):
@@ -113,7 +118,7 @@ def test_simulator_friction_isometry():
         # observe difference from pushing
         px = _observe_block(blockId)
         yaws[simTime] = px[2]
-        p.applyExternalForce(blockId, -1, [F, F, 0], [-MAX_ALONG, MAX_ALONG, 0.025], p.LINK_FRAME)
+        p.applyExternalForce(blockId, -1, [fn, ft, 0], [-MAX_ALONG, MAX_ALONG, 0.025], p.LINK_FRAME)
         # p.applyExternalTorque(blockId, -1, [0, 0, 100], p.LINK_FRAME)
         p.stepSimulation()
         while not _static_environment():
