@@ -5,9 +5,8 @@ import pybullet as p
 
 import matplotlib.pyplot as plt
 import numpy as np
-import sklearn.preprocessing as skpre
 import torch
-from arm_pytorch_utilities import preprocess, math_utils
+from arm_pytorch_utilities import math_utils
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.model import make
 from meta_contact import cfg, invariant
@@ -16,7 +15,6 @@ from meta_contact import online_model
 from meta_contact import prior
 from meta_contact.controller import controller
 from meta_contact.controller import global_controller
-from meta_contact.controller import online_controller
 from meta_contact.env import block_push
 from tensorboardX import SummaryWriter
 
@@ -295,17 +293,18 @@ class UseTransform:
     COORDINATE_TRANSFORM = 1
 
 
-def test_local_dynamics(level=0):
+def test_dynamics(level=0):
     seed = 1
     use_tsf = UseTransform.COORDINATE_TRANSFORM
+    plot_model_error = False
     d = 'cuda:0'
-
     env = get_easy_env(p.GUI, level=level)
+
     # TODO preprocessor in online dynamics not yet supported
     preprocessor = None
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds = block_push.PushDataSource(env, data_dir=get_data_dir(level), preprocessor=preprocessor,
-                                   validation_ratio=0.1, config=config)
+                                   validation_ratio=0.1, config=config, device=d)
     untransformed_config = copy.deepcopy(config)
 
     logger.info("initial random seed %d", rand.seed(seed))
@@ -333,29 +332,55 @@ def test_local_dynamics(level=0):
 
     mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
                                    name=prior_name)
-    pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=500)
+
+    pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=400)
     # pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
+
+    # plot model prediction
+    if plot_model_error:
+        XU, Y, _ = ds.validation_set()
+        Y = Y.cpu().numpy()
+        Yhatn = mw.user.sample(XU).cpu().detach().numpy()
+        E = Yhatn - Y
+        # relative error (compared to the mean magnitude)
+        Er = E / np.mean(np.abs(Y), axis=0)
+        for i in range(config.ny):
+            plt.subplot(4, 2, 2 * i + 1)
+            plt.plot(Y[:, i])
+            plt.ylabel("$y_{}$".format(i))
+            plt.subplot(4, 2, 2 * i + 2)
+            plt.plot(Er[:, i])
+            # plt.plot(E[:, i])
+            plt.ylabel("$e_{}$".format(i))
+        plt.show()
+
     u_min, u_max = env.get_control_bounds()
     dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, untransformed_config, sigreg=1e-10)
     Q = torch.diag(torch.tensor([10, 10, 0, 0.01], dtype=torch.double))
     R = 0.01
 
-    ctrl = online_controller.OnlineCEM(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
-                                       compare_to_goal=env.compare_to_goal,
-                                       constrain_state=constrain_state,
-                                       device=d,
-                                       mpc_opts={'init_cov_diag': 1.0, 'num_samples': 1000,
-                                                 'num_elite': 30})
-    # m = torch.tensor([0, 0.5, 0], dtype=torch.double, device=d)
+    # ctrl = online_controller.OnlineCEM(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
+    #                                    compare_to_goal=env.compare_to_goal,
+    #                                    constrain_state=constrain_state,
+    #                                    device=d,
+    #                                    mpc_opts={'init_cov_diag': 1.0, 'num_samples': 10000,
+    #                                              'num_elite': 30})
+    m = torch.tensor([0, 0.5, 0], dtype=torch.double, device=d)
     # ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
     #                                     compare_to_goal=env.compare_to_goal,
     #                                     constrain_state=constrain_state,
     #                                     device=d,
-    #                                     mpc_opts={'num_samples': 1000,
+    #                                     mpc_opts={'num_samples': 10000,
     #                                               'noise_sigma': torch.eye(env.nu, dtype=torch.double, device=d) * 1,
     #                                               'noise_mu': m,
+    #                                               'lambda_': 1e-2,
+    #                                               'horizon': 20,
     #                                               'u_init': m})
+    ctrl = global_controller.GlobalMPPIController(mw, untransformed_config, Q=Q, R=R, u_min=u_min, u_max=u_max,
+                                                  num_samples=10000,
+                                                  horizon=20, device=d, lambda_=1e-2, noise_mu=m,
+                                                  compare_to_goal=env.compare_to_goal)
 
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else pm.__class__.__name__
     # expensive evaluation
@@ -412,60 +437,7 @@ def evaluate_controller(env, ctrl, name, tasks=10, tries=10, start_seed=0):
     return total_costs
 
 
-def test_global_linear_dynamics(level=0):
-    env = get_easy_env(p.GUI, level)
-    config = load_data.DataConfig(predict_difference=False, predict_all_dims=True)
-    ds = block_push.PushDataSource(env, data_dir=get_data_dir(level), validation_ratio=0.01, config=config)
-
-    u_min, u_max = env.get_control_bounds()
-    ctrl = global_controller.GlobalLQRController(ds, R=100, u_min=u_min, u_max=u_max)
-    sim = block_push.InteractivePush(env, ctrl, num_frames=50, plot=True, save=False)
-
-    seed = rand.seed()
-    sim.run(seed)
-    plt.ioff()
-    plt.show()
-
-
-def test_global_qr_cost_optimal_controller(controller, level=0, **kwargs):
-    env = get_easy_env(p.GUI, level=level)
-    preprocessor = preprocess.SklearnPreprocessing(skpre.MinMaxScaler())
-    preprocessor = None
-    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True)
-    ds = block_push.PushDataSource(env, data_dir=get_data_dir(level), validation_ratio=0.1,
-                                   config=config, preprocessor=preprocessor)
-    pml = model.LinearModelTorch(ds)
-    pm = model.NetworkModelWrapper(
-        model.DeterministicUser(
-            make.make_sequential_network(config, activation_factory=torch.nn.LeakyReLU, h_units=(32, 32))), ds)
-
-    if not pm.load(pm.get_last_checkpoint()):
-        pm.learn_model(200, batch_N=10000)
-
-    pm.freeze()
-
-    Q = torch.diag(torch.tensor([1, 1, 0, 0.01], dtype=torch.double))
-    u_min, u_max = env.get_control_bounds()
-    u_min = torch.tensor(u_min, dtype=torch.double)
-    u_max = torch.tensor(u_max, dtype=torch.double)
-    ctrl = controller(pm, ds, Q=Q, u_min=u_min, u_max=u_max, compare_to_goal=compare_to_goal_factory(env), **kwargs)
-    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=True, save=False)
-
-    seed = rand.seed()
-    sim.run(seed)
-    plt.ioff()
-    plt.show()
-
-
 if __name__ == "__main__":
-    # collect_touching_freespace_data(trials=100, trial_length=50, level=0)
-    # ctrl = global_controller.GlobalCEMController
-    # test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7, num_elite=50, level=0,
-    #                                        init_cov_diag=0.002)  # CEM options
-    # ctrl = global_controller.GlobalMPPIController
-    # test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7, level=0, lambda_=0.1,
-    #                                        noise_sigma=torch.diag(
-    #                                            torch.tensor([0.01, 0.01], dtype=torch.double)))  # MPPI options
-    # test_global_linear_dynamics(level=0)
-    test_local_dynamics(0)
+    # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
+    test_dynamics(0)
     # verify_coordinate_transform()
