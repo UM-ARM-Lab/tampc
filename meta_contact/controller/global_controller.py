@@ -1,16 +1,16 @@
-import numpy as np
-from meta_contact.controller.controller import Controller
-from meta_contact import model
-from pytorch_mppi import mppi
-from pytorch_cem import cem
-from arm_pytorch_utilities import linalg
-from arm_pytorch_utilities import math_utils
-import torch
 import abc
-
 import logging
 
+import numpy as np
+import torch
+from arm_pytorch_utilities import linalg
+from arm_pytorch_utilities import math_utils
+from arm_pytorch_utilities import tensor_utils
 from arm_pytorch_utilities.trajectory import dlqr
+from meta_contact import model
+from meta_contact.controller.controller import Controller
+from pytorch_cem import cem
+from pytorch_mppi import mppi
 
 logger = logging.getLogger(__name__)
 
@@ -66,24 +66,25 @@ class GlobalLQRController(Controller):
 
 
 class QRCostOptimalController(Controller):
-    def __init__(self, ds, Q=1, R=1, compare_to_goal=torch.sub, u_min=None, u_max=None):
+    def __init__(self, config, Q=1, R=1, compare_to_goal=torch.sub, u_min=None, u_max=None, device='cpu'):
         super().__init__(compare_to_goal)
 
-        self.nu = ds.config.nu
-        self.nx = ds.config.nx
-        self.u_min, self.u_max = math_utils.get_bounds(u_min, u_max)
+        self.nu = config.nu
+        self.nx = config.nx
         self.dtype = torch.double
+        self.d = device
+        self.u_min, self.u_max = tensor_utils.ensure_tensor(self.d, self.dtype, *math_utils.get_bounds(u_min, u_max))
 
         if torch.is_tensor(Q):
-            self.Q = Q
+            self.Q = Q.to(device=self.d)
             assert self.Q.shape[0] == self.nx
         else:
-            self.Q = np.eye(self.nx, dtype=self.dtype) * Q
+            self.Q = np.eye(self.nx, dtype=self.dtype, device=self.d) * Q
         if torch.is_tensor(R):
-            self.R = R
+            self.R = R.to(device=self.d)
             assert self.R.shape[0] == self.nu
         else:
-            self.R = torch.eye(self.nu, dtype=self.dtype) * R
+            self.R = torch.eye(self.nu, dtype=self.dtype, device=self.d) * R
 
     def _running_cost(self, state, action):
         diff = self.compare_to_goal(state, torch.tensor(self.goal, dtype=state.dtype, device=state.device))
@@ -96,33 +97,36 @@ class QRCostOptimalController(Controller):
 
     def command(self, obs):
         # use learn_mpc's Cross Entropy
-        u = self._mpc_command(torch.tensor(obs))
+        u = self._mpc_command(tensor_utils.ensure_tensor(self.d, self.dtype, obs))
         if self.u_max is not None:
             u = math_utils.clip(u, self.u_min, self.u_max)
         return u
 
 
 class GlobalCEMController(QRCostOptimalController):
-    def __init__(self, dynamics, ds, Q=1, R=1, u_min=None, u_max=None, compare_to_goal=torch.sub, **kwargs):
-        super().__init__(ds, Q=Q, R=R, compare_to_goal=compare_to_goal, u_min=u_min, u_max=u_max)
-        self.mpc = cem.CEM(dynamics, self._running_cost, self.nx, self.nu, u_min=u_min, u_max=u_max, **kwargs)
+    def __init__(self, dynamics, ds, Q=1, R=1, u_min=None, u_max=None, compare_to_goal=torch.sub, device='cpu',
+                 **kwargs):
+        super().__init__(ds, Q=Q, R=R, compare_to_goal=compare_to_goal, u_min=u_min, u_max=u_max, device=device)
+        self.mpc = cem.CEM(dynamics, self._running_cost, self.nx, self.nu, u_min=self.u_min, u_max=self.u_max,
+                           device=self.d, **kwargs)
 
     def _mpc_command(self, obs):
         return self.mpc.command(obs)
 
 
 class GlobalMPPIController(QRCostOptimalController):
-    def __init__(self, dynamics, ds, Q=1, R=1, u_min=None, u_max=None, compare_to_goal=torch.sub, **kwargs):
-        super().__init__(ds, Q=Q, R=R, compare_to_goal=compare_to_goal, u_min=u_min, u_max=u_max)
+    def __init__(self, dynamics, ds, Q=1, R=1, u_min=None, u_max=None, compare_to_goal=torch.sub, device='cpu',
+                 **kwargs):
+        super().__init__(ds, Q=Q, R=R, compare_to_goal=compare_to_goal, u_min=u_min, u_max=u_max, device=device)
         # if not given we give it a default value
         noise_sigma = kwargs.pop('noise_sigma', None)
         if noise_sigma is None:
             if torch.is_tensor(self.u_max):
                 noise_sigma = torch.diag(self.u_max)
             else:
-                noise_mult = self.u_max or 1
+                noise_mult = self.u_max if self.u_max is not None else 1
                 noise_sigma = torch.eye(self.nu, dtype=self.dtype) * noise_mult
-        self.mpc = mppi.MPPI(dynamics, self._running_cost, self.nx, noise_sigma=noise_sigma, **kwargs)
+        self.mpc = mppi.MPPI(dynamics, self._running_cost, self.nx, noise_sigma=noise_sigma, device=self.d, **kwargs)
 
     def _mpc_command(self, obs):
         return self.mpc.command(obs)
