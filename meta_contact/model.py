@@ -247,12 +247,12 @@ class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
     def _evaluate_against_least_squares(self):
         # compare prediction accuracy against least squares
         XU, Y, _ = self.ds.training_set()
-        params, res, rank, _ = np.linalg.lstsq(XU.numpy(), Y.numpy())
+        params, res, rank, _ = np.linalg.lstsq(XU.cpu().numpy(), Y.cpu().numpy())
         XU, Y, _ = self.ds.validation_set()
-        Y = Y.numpy()
-        Yhat = XU.numpy() @ params
+        Y = Y.cpu().numpy()
+        Yhat = XU.cpu().numpy() @ params
         E = np.linalg.norm((Yhat - Y), axis=1)
-        Yhatn = self.user.sample(XU).detach().numpy()
+        Yhatn = self.user.sample(XU).cpu().detach().numpy()
         En = np.linalg.norm((Yhatn - Y), axis=1)
         logger.info("Least squares error %f network error %f", E.mean(), En.mean())
 

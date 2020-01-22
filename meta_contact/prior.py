@@ -33,7 +33,7 @@ def gaussian_params_from_datasource(ds):
     mu = data.mean(0)
     sigma = linalg.cov(data, rowvar=False)
     assert sigma.shape[0] == data.shape[1]
-    return sigma.numpy(), mu.numpy()
+    return sigma.cpu().numpy(), mu.cpu().numpy()
 
 
 class OnlineDynamicsPrior:
@@ -87,12 +87,12 @@ def batch_mix_prior(nx, nu, nnF, strength=1.0):
     """
     N, ny, nxnu = nnF.shape
     # \bar{Sigma}_xu,xu from section V.B, strength is alpha
-    sigX = torch.eye(nxnu, dtype=nnF.dtype).repeat(N, 1, 1) * strength
+    sigX = torch.eye(nxnu, dtype=nnF.dtype, device=nnF.device).repeat(N, 1, 1) * strength
     # lower left corner, nnF.T is df/dxu
     sigXK = sigX @ nnF.transpose(1, 2)
     # \bar{Sigma}, ignoring lower right
     top = torch.cat((sigX, sigXK), dim=2)
-    bot = torch.cat((sigXK.transpose(1, 2), torch.zeros((N, ny, ny), dtype=nnF.dtype)), dim=2)
+    bot = torch.cat((sigXK.transpose(1, 2), torch.zeros((N, ny, ny), dtype=nnF.dtype, device=nnF.device)), dim=2)
     nn_Phi = torch.cat((top, bot), dim=1)
     nn_mu = None  # Unused
 

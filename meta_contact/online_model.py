@@ -32,6 +32,8 @@ class OnlineDynamicsModel(object):
         self.empsig_N = N
         self.emp_error = None
         self.prior_error = None
+        # device the prior model is on
+        self.d = None
 
         self.prior_trust_coefficient = 0.1  # the lower it is the more we trust the prior; 0 means only ever use prior
         # TODO can track only mu and xxt, generate sigma when asking for dynamics?
@@ -48,8 +50,8 @@ class OnlineDynamicsModel(object):
             self.emp_error = self.prior_error = None
             return
 
-        opx = torch.from_numpy(px.reshape(1, -1))  # original state
-        ocx = torch.from_numpy(cx.reshape(1, -1))  # original state
+        opx = torch.from_numpy(px.reshape(1, -1)).to(device=self.d)  # original state
+        ocx = torch.from_numpy(cx.reshape(1, -1)).to(device=self.d)  # original state
         # transform if necessary (ensure dynamics is evaluated only in transformed space)
         cx, cu = self._make_2d_tensor(cx, cu)
         px, pu = self._make_2d_tensor(px, pu)
@@ -61,8 +63,9 @@ class OnlineDynamicsModel(object):
         Phi, mu0, m, n0 = self.prior.get_batch_params(self.nx, self.nu, xu, pxu, xux)
 
         # mix prior and empirical distribution
-        Fe, fe, _ = _batch_conditioned_dynamics(self.nx, self.nu, torch.from_numpy(self.sigma).unsqueeze(0),
-                                                torch.from_numpy(self.mu).unsqueeze(0), self.sigreg)
+        Fe, fe, _ = _batch_conditioned_dynamics(self.nx, self.nu,
+                                                torch.from_numpy(self.sigma).to(device=self.d).unsqueeze(0),
+                                                torch.from_numpy(self.mu).to(device=self.d).unsqueeze(0), self.sigreg)
         Fp, fp, _ = _batch_conditioned_dynamics(self.nx, self.nu, Phi / n0, mu0, sigreg=self.sigreg)
 
         emp_y = _batch_evaluate_dynamics(px, pu, Fe, fe)
@@ -76,8 +79,8 @@ class OnlineDynamicsModel(object):
         prior_x = self.advance(opx, prior_y)
 
         # compare against actual x'
-        self.emp_error = np.linalg.norm((emp_x - ocx).numpy())
-        self.prior_error = np.linalg.norm((prior_x - ocx).numpy())
+        self.emp_error = np.linalg.norm((emp_x - ocx).cpu().numpy())
+        self.prior_error = np.linalg.norm((prior_x - ocx).cpu().numpy())
         # TODO update gamma based on the relative error of these dynamics
         # rho = self.emp_error / self.prior_error
         # # high gamma means to trust empirical model (paper uses 1-rho, but this makes more sense)
@@ -129,12 +132,15 @@ class OnlineDynamicsModel(object):
         Compute F, f - the linear dynamics where either dx or next_x = F*[curx, curu] + f
         The semantics depends on the data source the prior was trained on and that this was initialized on
         """
+        # TODO remove hack for getting prior model device
+        self.d = cx.device
         # prior parameters
         xu, pxu, xux = _cat_xu(px, pu, cx, cu)
         Phi, mu0, m, n0 = self.prior.get_batch_params(self.nx, self.nu, xu, pxu, xux)
 
         # mix prior and empirical distribution
-        sigma, mu = prior.batch_mix_distribution(torch.from_numpy(self.sigma), torch.from_numpy(self.mu), self.empsig_N,
+        sigma, mu = prior.batch_mix_distribution(torch.from_numpy(self.sigma).to(device=cx.device),
+                                                 torch.from_numpy(self.mu).to(device=cx.device), self.empsig_N,
                                                  Phi, mu0, m, n0)
         return _batch_conditioned_dynamics(self.nx, self.nu, sigma, mu, self.sigreg)
 
@@ -143,8 +149,8 @@ class OnlineDynamicsModel(object):
             return x, u
         oned = len(x.shape) is 1
         if not torch.is_tensor(x):
-            x = torch.from_numpy(x)
-            u = torch.from_numpy(u)
+            x = torch.from_numpy(x).to(device=self.d)
+            u = torch.from_numpy(u).to(device=self.d)
         if oned:
             x = x.view(1, -1)
             u = u.view(1, -1)
