@@ -83,30 +83,18 @@ class PushLoader(load_utils.DataLoader):
     def __init__(self, *args, file_cfg=cfg, **kwargs):
         super().__init__(file_cfg, *args, **kwargs)
 
-    def _process_file_raw_data(self, d):
-        x = d['X']
-        u = d['U'][:-1]
+    def _apply_masks(self, d, x, y):
+        """Handle common logic regardless of x and y"""
         cc = d['contact'][1:]
-
-        # separate option deciding whether to predict output of pusher positions or not
-        state_col_offset = 0 if self.config.predict_all_dims else 2
-        if self.config.predict_difference:
-            dpos = x[1:, state_col_offset:-1] - x[:-1, state_col_offset:-1]
-            dyaw = math_utils.angular_diff_batch(x[1:, -1], x[:-1, -1])
-            y = np.concatenate((dpos, dyaw.reshape(-1, 1)), axis=1)
-        else:
-            y = x[1:, state_col_offset:]
+        u = d['U'][:-1]
+        # potentially many trajectories, get rid of buffer state in between
+        mask = d['mask']
 
         x = x[:-1]
         xu = np.column_stack((x, u))
 
-        # xy = xu[:, 2:4]
-        # nxy = xy + y[:, :-1]
-        # du = np.linalg.norm(nxy[:-1] - xy[1:], axis=1)
-
-        # potentially many trajectories, get rid of buffer state in between
-        mask = d['mask']
-        # pack expanded pxu into input if config allows (has to be done before masks); otherwise would use cross-file data)
+        # pack expanded pxu into input if config allows (has to be done before masks)
+        # otherwise would use cross-file data)
         if self.config.expanded_input:
             # move y down 1 row (first element can't be used)
             # (xu, pxu)
@@ -120,25 +108,48 @@ class PushLoader(load_utils.DataLoader):
 
         mask = mask.reshape(-1) != 0
 
-        # xy = xu[:, :2]
-        # nxy = xy + u[:, :xy.shape[1]]
-        # du = np.linalg.norm(nxy[:-1] - xy[1:], axis=1)
-        # dd = du[mask[:-1]]
-
-        # _, res_before, _, _ = np.linalg.lstsq(xu, y)
-
         xu = xu[mask]
         cc = cc[mask]
         y = y[mask]
 
-        # test that we achieve low residuals (proxy for correct masking - no inter-trajectory relationship)
-        # _, res, _, _ = np.linalg.lstsq(xu, y)
-
         self.config.load_data_info(x, u, y, xu)
+        return xu, y, cc
 
-        # xy = xu[:, 2:4]
-        # nxy = xy + y[:, 2:4]
-        # du = np.linalg.norm(nxy[:-1] - xy[1:], axis=1)
+    def _process_file_raw_data(self, d):
+        x = d['X']
+
+        # separate option deciding whether to predict output of pusher positions or not
+        state_col_offset = 0 if self.config.predict_all_dims else 2
+        if self.config.predict_difference:
+            dpos = x[1:, state_col_offset:-1] - x[:-1, state_col_offset:-1]
+            dyaw = math_utils.angular_diff_batch(x[1:, -1], x[:-1, -1])
+            y = np.concatenate((dpos, dyaw.reshape(-1, 1)), axis=1)
+        else:
+            y = x[1:, state_col_offset:]
+
+        xu, y, cc = self._apply_masks(d, x, y)
+
+        return xu, y, cc
+
+
+class PushLoaderRestricted(PushLoader):
+    """
+    When the environment restricts the pusher to be next to the block, so that our state is
+    xb, yb, yaw, along
+    """
+
+    def _process_file_raw_data(self, d):
+        x = d['X']
+
+        if self.config.predict_difference:
+            dpos = x[1:, :2] - x[:-1, :2]
+            dyaw = math_utils.angular_diff_batch(x[1:, 2], x[:-1, 2])
+            dalong = x[1:, 3] - x[:-1, 3]
+            y = np.concatenate((dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1)), axis=1)
+        else:
+            raise RuntimeError("Too hard to predict discontinuous normalized angles; use predict difference")
+
+        xu, y, cc = self._apply_masks(d, x, y)
 
         return xu, y, cc
 
@@ -752,8 +763,8 @@ class InteractivePush(simulation.Simulation):
 
 class PushDataSource(datasource.FileDataSource):
     loader_map = {PushAgainstWallEnv: PushLoader,
-                  PushAgainstWallStickyEnv: PushLoader,
-                  PushWithForceDirectlyEnv: PushLoader}
+                  PushAgainstWallStickyEnv: PushLoaderRestricted,
+                  PushWithForceDirectlyEnv: PushLoaderRestricted}
 
     def __init__(self, env, data_dir='pushing', **kwargs):
         loader = self.loader_map.get(type(env), None)
