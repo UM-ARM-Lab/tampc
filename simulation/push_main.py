@@ -1,10 +1,10 @@
 import copy
 import logging
 import math
-import pybullet as p
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pybullet as p
 import sklearn.preprocessing as skpre
 import torch
 from arm_pytorch_utilities import preprocess, math_utils
@@ -241,7 +241,7 @@ def verify_coordinate_transform():
     init_block_pos = [0, 0]
     init_block_yaw = 0
     env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=along)
-    action = np.array([0, 0.02])
+    action = np.array([0, 0.4, 0])
     # push with original yaw (try this N times to confirm that all pushes are consistent)
     N = 10
     dxes = torch.zeros((N, env.ny))
@@ -295,11 +295,10 @@ class UseTransform:
 
 
 def test_local_dynamics(level=0):
-    num_frames = 70
     seed = 1
-    use_tsf = UseTransform.NO_TRANSFORM
+    use_tsf = UseTransform.COORDINATE_TRANSFORM
 
-    env = get_easy_env(p.DIRECT, level=level)
+    env = get_easy_env(p.GUI, level=level)
     # TODO preprocessor in online dynamics not yet supported
     preprocessor = None
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
@@ -331,33 +330,37 @@ def test_local_dynamics(level=0):
     prior_name = '{}_prior'.format(transform_names[use_tsf])
 
     mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds, name=prior_name)
-    pm = prior.NNPrior.from_data(mw, checkpoint=None, train_epochs=200)
+    pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=200)
     # pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
     u_min, u_max = env.get_control_bounds()
     dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, untransformed_config, sigreg=1e-10)
-    Q = torch.diag(torch.tensor([1, 1, 0, 0.01], dtype=torch.double))
-    R = 1
+    Q = torch.diag(torch.tensor([10, 10, 0, 0.01], dtype=torch.double))
+    R = 0.01
 
-    ctrl = online_controller.OnlineCEM(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
-                                       compare_to_goal=env.compare_to_goal,
-                                       constrain_state=constrain_state, mpc_opts={'init_cov_diag': 0.002})
-    # ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
-    #                                     compare_to_goal=env.compare_to_goal,
-    #                                     constrain_state=constrain_state,
-    #                                     mpc_opts={'num_samples': 10000,
-    #                                               'noise_sigma': torch.eye(env.nu, dtype=torch.double) * 0.001})
+    d = 'cpu'
+    # ctrl = online_controller.OnlineCEM(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
+    #                                    compare_to_goal=env.compare_to_goal,
+    #                                    constrain_state=constrain_state, mpc_opts={'init_cov_diag': 1.0})
+    m = torch.tensor([0, 0.5, 0], dtype=torch.double, device=d)
+    ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
+                                        compare_to_goal=env.compare_to_goal,
+                                        constrain_state=constrain_state,
+                                        mpc_opts={'num_samples': 1000,
+                                                  'noise_sigma': torch.eye(env.nu, dtype=torch.double, device=d) * 1,
+                                                  'noise_mu': m,
+                                                  'u_init': m})
 
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else pm.__class__.__name__
     # expensive evaluation
-    evaluate_controller(env, ctrl, name)
+    # evaluate_controller(env, ctrl, name)
 
-    # sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=True, save=False)
-    # seed = rand.seed()
-    # sim.run(seed)
-    # logger.info("last run cost %f", sim.last_run_cost)
-    # plt.ioff()
-    # plt.show()
+    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=True, save=False)
+    seed = rand.seed()
+    sim.run(seed)
+    logger.info("last run cost %f", np.sum(sim.last_run_cost))
+    plt.ioff()
+    plt.show()
 
 
 def evaluate_controller(env, ctrl, name, tasks=10, tries=10, start_seed=0):
@@ -449,7 +452,7 @@ def test_global_qr_cost_optimal_controller(controller, level=0, **kwargs):
 
 
 if __name__ == "__main__":
-    collect_touching_freespace_data(trials=100, trial_length=50, level=0)
+    # collect_touching_freespace_data(trials=100, trial_length=50, level=0)
     # ctrl = global_controller.GlobalCEMController
     # test_global_qr_cost_optimal_controller(ctrl, num_samples=1000, horizon=7, num_elite=50, level=0,
     #                                        init_cov_diag=0.002)  # CEM options
@@ -458,5 +461,5 @@ if __name__ == "__main__":
     #                                        noise_sigma=torch.diag(
     #                                            torch.tensor([0.01, 0.01], dtype=torch.double)))  # MPPI options
     # test_global_linear_dynamics(level=0)
-    # test_local_dynamics(0)
+    test_local_dynamics(0)
     # verify_coordinate_transform()
