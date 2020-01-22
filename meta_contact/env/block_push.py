@@ -436,7 +436,7 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
             self.initBlockYaw = init_yaw
         if init_pusher is not None:
             pos = pusher_pos_for_touching(self.initBlockPos[:2], self.initBlockYaw, face=self.face,
-                                          along_face=init_pusher)
+                                          along_face=init_pusher * MAX_ALONG)
             self.initPusherPos = tuple(pos) + (0.05,)
 
     @staticmethod
@@ -548,7 +548,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
             self.initBlockYaw = init_yaw
         if init_pusher is not None:
             pos = pusher_pos_for_touching(self.initBlockPos[:2], self.initBlockYaw, face=self.face,
-                                          along_face=init_pusher)
+                                          along_face=init_pusher * MAX_ALONG)
             self.along = init_pusher
             self.initPusherPos = tuple(pos) + (0.05,)
 
