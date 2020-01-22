@@ -1,10 +1,10 @@
 import logging
 import math
 import os
-import pybullet as p
 import time
 
 import numpy as np
+import pybullet as p
 from arm_pytorch_utilities import load_data as load_utils, math_utils
 from arm_pytorch_utilities.make_data import datasource
 from hybrid_sysid import simulation
@@ -663,6 +663,7 @@ class InteractivePush(simulation.Simulation):
             action = np.array(action).flatten()
             obs, rew, done, info = self.env.step(action)
             cost = -rew
+            logger.debug("action %s cost %f done %d obs %s", action, cost, done, obs)
 
             self.last_run_cost.append(cost)
             self.u[simTime, :] = action

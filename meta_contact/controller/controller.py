@@ -86,7 +86,7 @@ class FullRandomController(Controller):
 
     def command(self, obs):
         u = np.random.uniform(low=self.u_min, high=self.u_max, size=self.nu)
-        logger.debug(u)
+        # logger.debug(obs)
         return u
 
 
