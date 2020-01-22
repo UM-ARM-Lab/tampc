@@ -390,8 +390,9 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.pusherConstraint = p.createConstraint(self.pusherId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
                                                    self.initPusherPos)
         # start at rest
-        for _ in range(self.initRestFrames):
-            p.stepSimulation()
+        while not self._static_environment():
+            for _ in range(50):
+                p.stepSimulation()
         self.state = self._obs()
         return np.copy(self.state)
 
@@ -529,7 +530,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
     ny = 4
     MAX_PUSH_ANGLE = math.pi / 4  # 45 degree on either side of normal
     MAX_SLIDE = 0.3  # can slide at most 30/200 = 15% of the face in 1 move
-    MAX_FORCE = 500
+    MAX_FORCE = 800
 
     def __init__(self, init_pusher=0, **kwargs):
         # initial config
