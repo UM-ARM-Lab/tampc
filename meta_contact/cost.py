@@ -1,5 +1,7 @@
 """ This file defines utility classes and functions for costs from GPS. """
 import numpy as np
+import torch
+from arm_pytorch_utilities import linalg
 
 RAMP_CONSTANT = 1
 RAMP_LINEAR = 2
@@ -351,5 +353,28 @@ class CostQROnline(object):
         luu = np.tile(self.R, (T, 1, 1))
         lxx = np.tile(self.Q, (T, 1, 1))
         lux = np.zeros((T, nu, nx))
+
+        return l, lx, lu, lxx, luu, lux
+
+
+class CostQROnlineTorch(CostQROnline):
+    def __call__(self, X, U):
+        X = self.compare_to_goal(X, self.eetgt)
+        l = 0.5 * (linalg.batch_quadratic_product(X, self.Q) + linalg.batch_quadratic_product(U, self.R))
+        return l
+
+    def eval(self, X, U, t, jac=None):
+        # Constants.
+        nx = X.shape[1]
+        nu = U.shape[1]
+        T = X.shape[0]
+
+        l = self.__call__(X, U)
+        X = self.compare_to_goal(X, self.eetgt)
+        lu = U @ self.R
+        lx = X @ self.Q
+        luu = self.R.repeat(T, 1, 1)
+        lxx = self.Q.repeat(T, 1, 1)
+        lux = torch.zeros((T, nu, nx), dtype=X.dtype, device=X.device)
 
         return l, lx, lu, lxx, luu, lux

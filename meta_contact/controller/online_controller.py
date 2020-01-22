@@ -99,11 +99,16 @@ class OnlineMPC(OnlineController):
     Online controller with a pytorch based MPC method (CEM, MPPI)
     """
 
-    def __init__(self, *args, constrain_state=noop_constrain, dtype=torch.double, **kwargs):
+    def __init__(self, *args, constrain_state=noop_constrain, device='cpu', dtype=torch.double, **kwargs):
         super().__init__(*args, **kwargs)
         self.constrain_state = constrain_state
         self.mpc = None
         self.dtype = dtype
+        self.d = device
+        # replace np cost with pytorch version of cost for convenience
+        self.Q = torch.from_numpy(self.Q).to(dtype=self.dtype, device=self.d)
+        self.R = torch.from_numpy(self.R).to(dtype=self.dtype, device=self.d)
+        self.cost = cost.CostQROnlineTorch(self.goal, self.Q, self.R, self.compare_to_goal)
 
     def apply_dynamics(self, state, u):
         if state.dim() is 1 or u.dim() is 1:
@@ -117,14 +122,18 @@ class OnlineMPC(OnlineController):
         next_state = self.constrain_state(next_state)
         return next_state
 
-    def get_running_cost(self, state, u):
-        return torch.from_numpy(self.cost(state.numpy(), u.numpy()))
+    def set_goal(self, goal):
+        goal = torch.tensor(goal, dtype=self.dtype, device=self.d)
+        super().set_goal(goal)
+
+    def _get_running_cost(self, state, u):
+        return self.cost(state, u)
 
     def update_policy(self, t, x):
         pass
 
     def compute_action(self, x):
-        return self.mpc.command(torch.from_numpy(x)).numpy()
+        return self.mpc.command(torch.from_numpy(x).to(device=self.d)).cpu().numpy()
 
 
 class OnlineCEM(OnlineMPC):
@@ -132,9 +141,9 @@ class OnlineCEM(OnlineMPC):
         super().__init__(*args, **kwargs)
         if mpc_opts is None:
             mpc_opts = {}
-        self.mpc = cem.CEM(self.apply_dynamics, self.get_running_cost, self.nx, self.nu,
-                           u_min=torch.tensor(self.u_min, dtype=self.dtype),
-                           u_max=torch.tensor(self.u_max, dtype=self.dtype),
+        self.mpc = cem.CEM(self.apply_dynamics, self._get_running_cost, self.nx, self.nu,
+                           u_min=torch.tensor(self.u_min, dtype=self.dtype, device=self.d),
+                           u_max=torch.tensor(self.u_max, dtype=self.dtype, device=self.d), device=self.d,
                            **mpc_opts)
 
 
@@ -146,11 +155,12 @@ class OnlineMPPI(OnlineMPC):
         noise_sigma = mpc_opts.pop('noise_sigma', None)
         if noise_sigma is None:
             if torch.is_tensor(self.u_max):
-                noise_sigma = torch.diag(self.u_max)
+                noise_sigma = torch.diag(self.u_max).to(dtype=self.dtype, device=self.d)
             else:
                 noise_mult = self.u_max or 1
-                noise_sigma = torch.eye(self.nu, dtype=self.dtype) * noise_mult
-        self.mpc = mppi.MPPI(self.apply_dynamics, self.get_running_cost, self.nx, noise_sigma=noise_sigma, **mpc_opts)
+                noise_sigma = torch.eye(self.nu, dtype=self.dtype, device=self.d) * noise_mult
+        self.mpc = mppi.MPPI(self.apply_dynamics, self._get_running_cost, self.nx, noise_sigma=noise_sigma,
+                             device=self.d, **mpc_opts)
 
 
 class OnlineLQR(OnlineController):

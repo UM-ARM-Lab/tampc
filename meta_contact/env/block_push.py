@@ -1,10 +1,11 @@
 import logging
 import math
 import os
+import pybullet as p
 import time
 
 import numpy as np
-import pybullet as p
+import torch
 from arm_pytorch_utilities import load_data as load_utils, math_utils
 from arm_pytorch_utilities.make_data import datasource
 from hybrid_sysid import simulation
@@ -342,7 +343,10 @@ class PushAgainstWallEnv(MyPybulletEnv):
             goal = goal.reshape(1, -1)
         dyaw = math_utils.angular_diff_batch(state[:, 4], goal[:, 4])
         dpos = state[:, :4] - goal[:, :4]
-        diff = np.column_stack((dpos, dyaw.reshape(-1, 1)))
+        if torch.tensor(state):
+            diff = torch.cat((dpos, dyaw.view(-1, 1)), dim=1)
+        else:
+            diff = np.column_stack((dpos, dyaw.reshape(-1, 1)))
         return diff
 
     def evaluate_cost(self, state, action=None):
@@ -448,7 +452,10 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         dyaw = math_utils.angular_diff_batch(state[:, 2], goal[:, 2])
         dpos = state[:, :2] - goal[:, :2]
         dalong = state[:, 3] - goal[:, 3]
-        diff = np.column_stack((dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1)))
+        if torch.is_tensor(state):
+            diff = torch.cat((dpos, dyaw.view(-1, 1), dalong.view(-1, 1)), dim=1)
+        else:
+            diff = np.column_stack((dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1)))
         return diff
 
     def _get_goal_block_pos(self):
@@ -660,7 +667,7 @@ class InteractivePush(simulation.Simulation):
         for simTime in range(self.num_frames - 1):
             self.traj[simTime, :] = obs
             action = self.ctrl.command(obs)
-            action = np.array(action).flatten()
+            action = np.array(action.cpu()).flatten()
             obs, rew, done, info = self.env.step(action)
             cost = -rew
             logger.debug("action %s cost %f done %d obs %s", action, cost, done, obs)
