@@ -1,10 +1,10 @@
 import copy
 import logging
 import math
+import pybullet as p
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pybullet as p
 import sklearn.preprocessing as skpre
 import torch
 from arm_pytorch_utilities import preprocess, math_utils
@@ -114,8 +114,8 @@ def constrain_state(state):
     # yaw gets normalized
     state[:, 2] = math_utils.angle_normalize(state[:, 2])
     # along gets constrained
-    state[:, 3] = math_utils.clip(state[:, 3], -torch.tensor(-1, dtype=torch.double),
-                                  torch.tensor(1, dtype=torch.double))
+    state[:, 3] = math_utils.clip(state[:, 3], -torch.tensor(-1, dtype=torch.double, device=state.device),
+                                  torch.tensor(1, dtype=torch.double, device=state.device))
     return state
 
 
@@ -208,7 +208,8 @@ class WorldBodyFrameTransformForDirectPush(HandDesignedCoordTransform):
             action = action.reshape(1, -1)
 
         # (along, d_along, push magnitude, push direction)
-        z = torch.from_numpy(np.column_stack((state[:, -1], action)))
+        # z = torch.from_numpy(np.column_stack((state[:, -1], action)))
+        z = torch.cat((state[:, -1].view(-1, 1), action), dim=1)
         return z
 
 
@@ -297,6 +298,7 @@ class UseTransform:
 def test_local_dynamics(level=0):
     seed = 1
     use_tsf = UseTransform.COORDINATE_TRANSFORM
+    d = 'cuda:0'
 
     env = get_easy_env(p.GUI, level=level)
     # TODO preprocessor in online dynamics not yet supported
@@ -329,8 +331,9 @@ def test_local_dynamics(level=0):
 
     prior_name = '{}_prior'.format(transform_names[use_tsf])
 
-    mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config)), ds, name=prior_name)
-    pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=200)
+    mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
+                                   name=prior_name)
+    pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=500)
     # pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
     u_min, u_max = env.get_control_bounds()
@@ -338,18 +341,21 @@ def test_local_dynamics(level=0):
     Q = torch.diag(torch.tensor([10, 10, 0, 0.01], dtype=torch.double))
     R = 0.01
 
-    d = 'cpu'
-    # ctrl = online_controller.OnlineCEM(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
-    #                                    compare_to_goal=env.compare_to_goal,
-    #                                    constrain_state=constrain_state, mpc_opts={'init_cov_diag': 1.0})
-    m = torch.tensor([0, 0.5, 0], dtype=torch.double, device=d)
-    ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
-                                        compare_to_goal=env.compare_to_goal,
-                                        constrain_state=constrain_state,
-                                        mpc_opts={'num_samples': 1000,
-                                                  'noise_sigma': torch.eye(env.nu, dtype=torch.double, device=d) * 1,
-                                                  'noise_mu': m,
-                                                  'u_init': m})
+    ctrl = online_controller.OnlineCEM(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
+                                       compare_to_goal=env.compare_to_goal,
+                                       constrain_state=constrain_state,
+                                       device=d,
+                                       mpc_opts={'init_cov_diag': 1.0, 'num_samples': 1000,
+                                                 'num_elite': 30})
+    # m = torch.tensor([0, 0.5, 0], dtype=torch.double, device=d)
+    # ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
+    #                                     compare_to_goal=env.compare_to_goal,
+    #                                     constrain_state=constrain_state,
+    #                                     device=d,
+    #                                     mpc_opts={'num_samples': 1000,
+    #                                               'noise_sigma': torch.eye(env.nu, dtype=torch.double, device=d) * 1,
+    #                                               'noise_mu': m,
+    #                                               'u_init': m})
 
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else pm.__class__.__name__
     # expensive evaluation
