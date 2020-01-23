@@ -17,3 +17,6 @@ Scripts are located in `simulation`.
 (Also install `tensorboard`) To start the tensorboard server, 
 
 `tensorboard --logdir simulation/runs`
+
+## Remove empty runs
+`python clean_empty_runs.py`
