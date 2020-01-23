@@ -429,8 +429,8 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         super().__init__(init_pusher=init_pusher, **kwargs)
 
         # quadratic cost
-        self.Q = np.diag([1, 1, 0, 0.001])
-        self.R = np.diag([1 for _ in range(self.nu)])
+        self.Q = np.diag([10, 10, 0, 0.01])
+        self.R = np.diag([0.01 for _ in range(self.nu)])
         assert self.Q.shape[0] == self.nx
         assert self.R.shape[0] == self.nu
 
