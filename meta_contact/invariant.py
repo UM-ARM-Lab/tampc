@@ -351,11 +351,15 @@ class InvariantPreprocessor(preprocess.Preprocess):
     the processed data source will be in the latent space.
     """
 
-    def __init__(self, tsf: InvariantTransform, **kwargs):
+    def __init__(self, tsf: InvariantTransform, minmax_scale=True, **kwargs):
         self.tsf = tsf
         self.tsf.freeze()
         self.model_input_dim = None
         self.model_output_dim = None
+        # do our own minmax scaling
+        self.minmax_scale = minmax_scale
+        self.scaler_y = preprocess.MinMaxScaler()
+        self.scaler_x = preprocess.MinMaxScaler()
         super(InvariantPreprocessor, self).__init__(**kwargs)
 
     def update_data_config(self, config: load_data.DataConfig):
@@ -380,12 +384,16 @@ class InvariantPreprocessor(preprocess.Preprocess):
         z_i = self.transform_x(XU)
         # no transformation needed our output is already zo
         z_o = Y if self.tsf.supports_only_direct_zi_to_dx() else self.tsf.dx_to_zo(X, Y)
+        if self.minmax_scale:
+            z_o = self.scaler_y.transform(z_o)
         return z_i, z_o, labels
 
     def transform_x(self, XU):
         X = XU[:, :self.tsf.config.nx]
         U = XU[:, self.tsf.config.nx:]
         z_i = self.tsf.xu_to_zi(X, U)
+        if self.minmax_scale:
+            z_i = self.scaler_x.transform(z_i)
         return z_i
 
     def transform_y(self, Y):
@@ -393,6 +401,8 @@ class InvariantPreprocessor(preprocess.Preprocess):
 
     def invert_transform(self, Y, X=None):
         """Invert transformation on Y"""
+        if self.minmax_scale:
+            Y = self.scaler_y.inverse_transform(Y)
         # no transformation needed our output is already dx
         if self.tsf.supports_only_direct_zi_to_dx():
             return Y
@@ -400,8 +410,11 @@ class InvariantPreprocessor(preprocess.Preprocess):
 
     def _fit_impl(self, XU, Y, labels):
         """Figure out what the transform outputs"""
-        x, u = torch.split(XU[0].view(1, -1), self.tsf.config.nx, dim=1)
-        z = self.tsf.xu_to_zi(x, u)
-        self.model_input_dim = z.shape[1]
-        dz = self.tsf.dx_to_zo(x, Y[0].view(1, -1))
-        self.model_output_dim = dz.shape[1]
+        x, u = torch.split(XU, self.tsf.config.nx, dim=1)
+        zi = self.tsf.xu_to_zi(x, u)
+        self.model_input_dim = zi.shape[1]
+        zo = self.tsf.dx_to_zo(x, Y)
+        self.model_output_dim = zo.shape[1]
+        if self.minmax_scale:
+            self.scaler_x.fit(zi)
+            self.scaler_y.fit(zo)
