@@ -1,10 +1,10 @@
 import copy
 import logging
 import math
+import pybullet as p
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pybullet as p
 import torch
 from arm_pytorch_utilities import math_utils
 from arm_pytorch_utilities import preprocess
@@ -15,6 +15,7 @@ from meta_contact import model
 from meta_contact import online_model
 from meta_contact import prior
 from meta_contact.controller import controller
+from meta_contact.controller import online_controller
 from meta_contact.controller import global_controller
 from meta_contact.env import block_push
 from tensorboardX import SummaryWriter
@@ -86,7 +87,7 @@ def get_easy_env(mode=p.GUI, level=0, log_video=False):
     init_pusher = 0
     # goal_pos = [1.1, 0.5]
     # goal_pos = [0.8, 0.2]
-    goal_pos = [0.5, 0.5]
+    goal_pos = [-0.3, 0.3]
     # env = interactive_block_pushing.PushAgainstWallEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher,
     #                                                    init_block=init_block_pos, init_yaw=init_block_yaw,
     #                                                    environment_level=level)
@@ -297,7 +298,8 @@ class UseTransform:
 def test_dynamics(level=0):
     seed = 1
     use_tsf = UseTransform.COORDINATE_TRANSFORM
-    plot_model_error = True
+    plot_model_error = False
+    test_model_rollouts = True
     d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     env = get_easy_env(p.GUI, level=level)
 
@@ -338,6 +340,29 @@ def test_dynamics(level=0):
     # pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
 
+    # test that the model predictions are relatively symmetric for positive and negative along
+    if test_model_rollouts and isinstance(env, block_push.PushAgainstWallStickyEnv):
+        N = 5
+        x_top = torch.tensor([0, 0, 0, 1], dtype=torch.double, device=d).repeat(N, 1)
+        x_bot = torch.tensor([0, 0, 0, -1], dtype=torch.double, device=d).repeat(N, 1)
+        # push straight
+        u = torch.tensor([0, 1, 0], dtype=torch.double, device=d)
+        # do rollouts
+        for i in range(N - 1):
+            x_top[i + 1] = mw.predict(torch.cat((x_top[i], u)).view(1, -1))
+            x_bot[i + 1] = mw.predict(torch.cat((x_bot[i], u)).view(1, -1))
+        # check sign of the last states
+        x = x_top[N - 1]
+        assert x[0] > 0
+        assert x[1] < 0  # y decreased from pushing above it
+        assert x[2] < 0  # yaw decreased (rotated ccw)
+        assert abs(x[3] - x_top[0, 3]) < 0.1  # along hasn't changed much
+        x = x_bot[N - 1]
+        assert x[0] > 0
+        assert x[1] > 0  # y increased from pushing below it
+        assert x[2] > 0  # yaw increased (rotated cw)
+        assert abs(x[3] - x_bot[0, 3]) < 0.1  # along hasn't changed much
+
     # plot model prediction
     if plot_model_error:
         XU, Y, _ = ds.validation_set()
@@ -376,7 +401,7 @@ def test_dynamics(level=0):
     #                                               'noise_sigma': torch.eye(env.nu, dtype=torch.double, device=d) * 1,
     #                                               'noise_mu': m,
     #                                               'lambda_': 1e-2,
-    #                                               'horizon': 20,
+    #                                               'horizon': 30,
     #                                               'u_init': m})
     ctrl = global_controller.GlobalMPPIController(mw, untransformed_config, Q=Q, R=R, u_min=u_min, u_max=u_max,
                                                   num_samples=10000,
@@ -387,7 +412,7 @@ def test_dynamics(level=0):
     # expensive evaluation
     # evaluate_controller(env, ctrl, name)
 
-    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=True, save=False)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=150, plot=True, save=False)
     seed = rand.seed()
     sim.run(seed)
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
@@ -430,6 +455,8 @@ def evaluate_controller(env, ctrl, name, tasks=10, tries=10, start_seed=0):
         task_mean_cost = np.mean(total_costs[t])
         writer.add_scalar('ctrl_eval/task_{}'.format(task_seed), task_mean_cost, 0)
         logger.info("task %d cost: %f std %f", task_seed, task_mean_cost, np.std(total_costs[t]))
+        # clear trajectories of this task
+        env.clear_debug_trajectories()
 
     # summarize stats
     mean_cost = np.mean(total_costs)
