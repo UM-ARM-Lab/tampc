@@ -1,11 +1,11 @@
 import abc
+import logging
+import pybullet as p
 import random
 import time
 from datetime import datetime
 
-import pybullet as p
 import pybullet_data
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,8 @@ class MyPybulletEnv:
 
         self.physics_client = p.connect(mode)  # p.GUI for GUI or p.DIRECT for non-graphical version
 
+        # disable useless menus on the left and right
+        p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
         if self.log_video:
             p.startStateLogging(p.STATE_LOGGING_VIDEO_MP4,
                                 "{}_{}.mp4".format(datetime.now().strftime('%Y_%m_%d_%H_%M_%S'), self.randseed))
