@@ -198,7 +198,7 @@ class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
         LearnableParameterizedModel.__init__(self, cfg.ROOT_DIR, **kwargs)
         self.name = "{}_{}".format(self.name, ds.config)
 
-        self.writer = SummaryWriter(flush_secs=20, comment=os.path.basename(self.name))
+        self.writer = None
 
     def _accumulate_stats(self, loss, vloss):
         self.writer.add_scalar('loss/training', loss, self.step)
@@ -213,6 +213,8 @@ class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
         save_checkpoint_every_n_epochs = max(max_epoch // 20, 5)
 
         for epoch in range(0, max_epoch):  # loop over the dataset multiple times
+            if self.writer is None:
+                self.writer = SummaryWriter(flush_secs=20, comment=os.path.basename(self.name))
             if save_checkpoint_every_n_epochs and epoch % save_checkpoint_every_n_epochs == 0:
                 self.save()
 
