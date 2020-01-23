@@ -1,10 +1,10 @@
 import logging
 import math
 import os
+import pybullet as p
 import time
 
 import numpy as np
-import pybullet as p
 import torch
 from arm_pytorch_utilities import load_data as load_utils, math_utils
 from arm_pytorch_utilities.make_data import datasource
@@ -174,6 +174,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
         # debugging objects
         self._goal_debug_lines = []
+        self._traj_debug_lines = []
         self.set_task_config(goal, init_pusher, init_block, init_yaw)
 
         # quadratic cost
@@ -242,6 +243,11 @@ class PushAgainstWallEnv(MyPybulletEnv):
         # set robot init config
         self.pusherConstraint = p.createConstraint(self.pusherId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
                                                    self.initPusherPos)
+
+    def clear_debug_trajectories(self):
+        for line in self._traj_debug_lines:
+            p.removeUserDebugItem(line)
+        self._traj_debug_lines = []
 
     def _draw_goal(self):
         # clear previous debug lines
@@ -332,7 +338,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
     def _move_and_wait(self, eePos):
         # execute the action
         self._move_pusher(eePos)
-        p.addUserDebugLine(eePos, np.add(eePos, [0, 0, 0.01]), [1, 1, 0], 4)
+        self._traj_debug_lines.append(p.addUserDebugLine(eePos, np.add(eePos, [0, 0, 0.01]), [1, 1, 0], 4))
         # handle trying to go into wall (if we don't succeed)
         # we use a force insufficient for going into the wall
         while not self._reached_command(eePos):
@@ -379,16 +385,21 @@ class PushAgainstWallEnv(MyPybulletEnv):
         # execute the action
         self._move_and_wait(eePos)
 
+        cost, done, info = self._observe_finished_action(old_state, action)
+
+        return np.copy(self.state), -cost, done, info
+
+    def _observe_finished_action(self, old_state, action):
         # get the net contact force between robot and block
         info = self._observe_contact()
         self.state = np.array(self._obs())
         # track trajectory
-        p.addUserDebugLine([old_state[0], old_state[1], z], [self.state[0], self.state[1], z], [1, 0, 0], 2)
-        p.addUserDebugLine([old_state[2], old_state[3], z], [self.state[2], self.state[3], z], [0, 0, 1], 2)
+        z = self.initPusherPos[2]
+        self._traj_debug_lines.append(
+            p.addUserDebugLine([old_state[0], old_state[1], z], [self.state[0], self.state[1], z], [0, 0, 1], 2))
 
         cost, done = self.evaluate_cost(self.state, action)
-
-        return np.copy(self.state), -cost, done, info
+        return cost, done, info
 
     def reset(self):
         # reset robot to nominal pose
@@ -516,13 +527,7 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         # execute the action
         self._move_and_wait(eePos)
 
-        # get the net contact force between robot and block
-        info = self._observe_contact()
-        self.state = np.array(self._obs())
-        # track trajectory
-        p.addUserDebugLine([old_state[0], old_state[1], z], [self.state[0], self.state[1], z], [0, 0, 1], 2)
-
-        cost, done = self.evaluate_cost(self.state, action)
+        cost, done, info = self._observe_finished_action(old_state, action)
 
         return np.copy(self.state), -cost, done, info
 
@@ -620,14 +625,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
             for _ in range(20):
                 p.stepSimulation()
 
-        # get the net contact force between robot and block
-        info = self._observe_contact()
-        self.state = np.array(self._obs())
-        # track trajectory
-        z = self.initPusherPos[2]
-        p.addUserDebugLine([old_state[0], old_state[1], z], [self.state[0], self.state[1], z], [0, 0, 1], 2)
-
-        cost, done = self.evaluate_cost(self.state, action)
+        cost, done, info = self._observe_finished_action(old_state, action)
 
         return np.copy(self.state), -cost, done, info
 
