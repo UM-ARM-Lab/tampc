@@ -1,12 +1,13 @@
 import copy
 import logging
 import math
-import pybullet as p
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pybullet as p
 import torch
 from arm_pytorch_utilities import math_utils
+from arm_pytorch_utilities import preprocess
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.model import make
 from meta_contact import cfg, invariant
@@ -296,15 +297,12 @@ class UseTransform:
 def test_dynamics(level=0):
     seed = 1
     use_tsf = UseTransform.COORDINATE_TRANSFORM
-    plot_model_error = False
-    d = 'cuda:0'
+    plot_model_error = True
+    d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     env = get_easy_env(p.GUI, level=level)
 
-    # TODO preprocessor in online dynamics not yet supported
-    preprocessor = None
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-    ds = block_push.PushDataSource(env, data_dir=get_data_dir(level), preprocessor=preprocessor,
-                                   validation_ratio=0.1, config=config, device=d)
+    ds = block_push.PushDataSource(env, data_dir=get_data_dir(level), validation_ratio=0.1, config=config, device=d)
     untransformed_config = copy.deepcopy(config)
 
     logger.info("initial random seed %d", rand.seed(seed))
@@ -325,15 +323,18 @@ def test_dynamics(level=0):
 
         # wrap the transform as a data preprocessor
         preprocessor = invariant.InvariantPreprocessor(invariant_tsf)
-        # update the datasource to use transformed data
-        ds.update_preprocessor(preprocessor)
+    else:
+        # use minmax scaling if we're not using an invariant transform (baseline)
+        preprocessor = preprocess.PytorchPreprocessing(preprocess.MinMaxScaler())
+    # update the datasource to use transformed data
+    ds.update_preprocessor(preprocessor)
 
     prior_name = '{}_prior'.format(transform_names[use_tsf])
 
     mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
                                    name=prior_name)
 
-    pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=400)
+    pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=600)
     # pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
 
