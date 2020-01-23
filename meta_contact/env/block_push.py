@@ -402,7 +402,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         cost, done = self.evaluate_cost(self.state, action)
 
         # print information to GUI
-        self._debug_text = p.addUserDebugText('{0:.3f}'.format(cost), [0, 0, 0.1], textColorRGB=[0.5, 0.1, 0.1],
+        self._debug_text = p.addUserDebugText('{0:.3f}'.format(cost), [1, 1, 0.1], textColorRGB=[0.5, 0.1, 0.1],
                                               textSize=2,
                                               replaceItemUniqueId=self._debug_text)
 
@@ -683,6 +683,9 @@ class InteractivePush(simulation.Simulation):
         obs = self._reset_sim()
         for simTime in range(self.num_frames - 1):
             self.traj[simTime, :] = obs
+
+            start = time.perf_counter()
+
             action = self.ctrl.command(obs)
             # sanitize action
             if torch.is_tensor(action):
@@ -690,7 +693,8 @@ class InteractivePush(simulation.Simulation):
             action = np.array(action).flatten()
             obs, rew, done, info = self.env.step(action)
             cost = -rew
-            logger.debug("action %s cost %f done %d obs %s", action, cost, done, obs)
+            logger.debug("cost %.2f took %.3fs done %d action %-20s obs %s", cost, time.perf_counter() - start, done,
+                         np.round(action, 2), obs)
 
             self.last_run_cost.append(cost)
             self.u[simTime, :] = action
