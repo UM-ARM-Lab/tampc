@@ -175,6 +175,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         # debugging objects
         self._goal_debug_lines = []
         self._traj_debug_lines = []
+        self._debug_text = -1
         self.set_task_config(goal, init_pusher, init_block, init_yaw)
 
         # quadratic cost
@@ -399,6 +400,12 @@ class PushAgainstWallEnv(MyPybulletEnv):
             p.addUserDebugLine([old_state[0], old_state[1], z], [self.state[0], self.state[1], z], [0, 0, 1], 2))
 
         cost, done = self.evaluate_cost(self.state, action)
+
+        # print information to GUI
+        self._debug_text = p.addUserDebugText('{0:.3f}'.format(cost), [0, 0, 0.1], textColorRGB=[0.5, 0.1, 0.1],
+                                              textSize=2,
+                                              replaceItemUniqueId=self._debug_text)
+
         return cost, done, info
 
     def reset(self):
