@@ -115,7 +115,7 @@ class GlobalCEMController(QRCostOptimalController):
 
 
 class GlobalMPPIController(QRCostOptimalController):
-    def __init__(self, dynamics, ds, Q=1, R=1, u_min=None, u_max=None, compare_to_goal=torch.sub, device='cpu',
+    def __init__(self, dynamics, ds, Q=1, R=1, u_min=None, u_max=None, use_bounds=True, compare_to_goal=torch.sub, device='cpu',
                  **kwargs):
         super().__init__(ds, Q=Q, R=R, compare_to_goal=compare_to_goal, u_min=u_min, u_max=u_max, device=device)
         # if not given we give it a default value
@@ -126,7 +126,14 @@ class GlobalMPPIController(QRCostOptimalController):
             else:
                 noise_mult = self.u_max if self.u_max is not None else 1
                 noise_sigma = torch.eye(self.nu, dtype=self.dtype) * noise_mult
-        self.mpc = mppi.MPPI(dynamics, self._running_cost, self.nx, noise_sigma=noise_sigma, device=self.d, **kwargs)
+        # there's interesting behaviour for MPPI if we don't pass in bounds - it'll be optimistic and try to exploit
+        # regions in the dynamics where we don't know the effects of control
+        if use_bounds:
+            u_min, u_max = self.u_min, self.u_max
+        else:
+            u_min, u_max = None, None
+        self.mpc = mppi.MPPI(dynamics, self._running_cost, self.nx, u_min=u_min, u_max=u_max,
+                             noise_sigma=noise_sigma, device=self.d, **kwargs)
 
     def _mpc_command(self, obs):
         return self.mpc.command(obs)

@@ -3,7 +3,7 @@ import logging
 
 import numpy as np
 import torch
-from arm_pytorch_utilities import trajectory, math_utils
+from arm_pytorch_utilities import trajectory, math_utils, tensor_utils
 from arm_pytorch_utilities.policy.lin_gauss import LinearGaussianPolicy
 from meta_contact import cost
 from meta_contact import online_model
@@ -109,6 +109,8 @@ class OnlineMPC(OnlineController):
         self.Q = torch.from_numpy(self.Q).to(dtype=self.dtype, device=self.d)
         self.R = torch.from_numpy(self.R).to(dtype=self.dtype, device=self.d)
         self.cost = cost.CostQROnlineTorch(self.goal, self.Q, self.R, self.compare_to_goal)
+        # pytorch version of bounds
+        self.u_min_t, self.u_max_t = tensor_utils.ensure_tensor(self.d, self.dtype, self.u_min, self.u_max)
 
     def apply_dynamics(self, state, u):
         if state.dim() is 1 or u.dim() is 1:
@@ -133,6 +135,7 @@ class OnlineMPC(OnlineController):
         pass
 
     def compute_action(self, x):
+        # TODO what is this madness - choose consistent data type at each abstraction level
         return self.mpc.command(torch.from_numpy(x).to(device=self.d)).cpu().numpy()
 
 
@@ -142,13 +145,12 @@ class OnlineCEM(OnlineMPC):
         if mpc_opts is None:
             mpc_opts = {}
         self.mpc = cem.CEM(self.apply_dynamics, self._get_running_cost, self.nx, self.nu,
-                           u_min=torch.tensor(self.u_min, dtype=self.dtype, device=self.d),
-                           u_max=torch.tensor(self.u_max, dtype=self.dtype, device=self.d), device=self.d,
+                           u_min=self.u_min_t, u_max=self.u_max_t, device=self.d,
                            **mpc_opts)
 
 
 class OnlineMPPI(OnlineMPC):
-    def __init__(self, *args, mpc_opts=None, **kwargs):
+    def __init__(self, *args, use_bounds=True, mpc_opts=None, **kwargs):
         super().__init__(*args, **kwargs)
         if mpc_opts is None:
             mpc_opts = {}
@@ -159,8 +161,13 @@ class OnlineMPPI(OnlineMPC):
             else:
                 noise_mult = self.u_max or 1
                 noise_sigma = torch.eye(self.nu, dtype=self.dtype, device=self.d) * noise_mult
+        # sometimes MPPI could benefit from not having bounds
+        if use_bounds:
+            u_min, u_max = self.u_min_t, self.u_max_t
+        else:
+            u_min, u_max = None, None
         self.mpc = mppi.MPPI(self.apply_dynamics, self._get_running_cost, self.nx, noise_sigma=noise_sigma,
-                             device=self.d, **mpc_opts)
+                             u_min=u_min, u_max=u_max, device=self.d, **mpc_opts)
 
 
 class OnlineLQR(OnlineController):

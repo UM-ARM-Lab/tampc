@@ -1,15 +1,17 @@
 import copy
 import logging
 import math
-import pybullet as p
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pybullet as p
 import torch
 from arm_pytorch_utilities import math_utils
 from arm_pytorch_utilities import preprocess
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.model import make
+from tensorboardX import SummaryWriter
+
 from meta_contact import cfg, invariant
 from meta_contact import model
 from meta_contact import online_model
@@ -18,7 +20,6 @@ from meta_contact.controller import controller
 from meta_contact.controller import online_controller
 from meta_contact.controller import global_controller
 from meta_contact.env import block_push
-from tensorboardX import SummaryWriter
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
@@ -85,9 +86,7 @@ def get_easy_env(mode=p.GUI, level=0, log_video=False):
     init_block_yaw = 0
     # init_pusher = [-0.095, 0]
     init_pusher = 0
-    # goal_pos = [1.1, 0.5]
-    # goal_pos = [0.8, 0.2]
-    goal_pos = [-0.3, 0.3]
+    goal_pos = [-0, 0.5]
     # env = interactive_block_pushing.PushAgainstWallEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher,
     #                                                    init_block=init_block_pos, init_yaw=init_block_yaw,
     #                                                    environment_level=level)
@@ -393,19 +392,21 @@ def test_dynamics(level=0):
     #                                    mpc_opts={'init_cov_diag': 1.0, 'num_samples': 10000,
     #                                              'num_elite': 30})
     m = torch.tensor([0, 0.5, 0], dtype=torch.double, device=d)
+    sigma = torch.diag(torch.ones(env.nu, dtype=torch.double, device=d) * 0.5)
     # ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
     #                                     compare_to_goal=env.compare_to_goal,
     #                                     constrain_state=constrain_state,
     #                                     device=d,
     #                                     mpc_opts={'num_samples': 10000,
-    #                                               'noise_sigma': torch.eye(env.nu, dtype=torch.double, device=d) * 1,
+    #                                               'noise_sigma': sigma,
     #                                               'noise_mu': m,
     #                                               'lambda_': 1e-2,
-    #                                               'horizon': 30,
+    #                                               'horizon': 50,
     #                                               'u_init': m})
-    ctrl = global_controller.GlobalMPPIController(mw, untransformed_config, Q=Q, R=R, u_min=u_min, u_max=u_max,
+    ctrl = global_controller.GlobalMPPIController(mw, untransformed_config, Q=Q, R=R,
+                                                  u_min=u_min, u_max=u_max,
                                                   num_samples=10000,
-                                                  horizon=20, device=d, lambda_=1e-2, noise_mu=m,
+                                                  horizon=50, device=d, lambda_=1e-2, noise_mu=m, noise_sigma=sigma,
                                                   compare_to_goal=env.compare_to_goal)
 
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else pm.__class__.__name__
