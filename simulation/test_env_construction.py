@@ -79,8 +79,10 @@ def test_simulator_friction_isometry():
     blockId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "block_big.urdf"), tuple(init_block_pos) + (-0.02,),
                          p.getQuaternionFromEuler([0, 0, init_block_yaw]))
     planeId = p.loadURDF("plane.urdf", [0, 0, -0.05], useFixedBase=True)
+    p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
     p.resetDebugVisualizerCamera(cameraDistance=0.5, cameraYaw=0, cameraPitch=-85,
                                  cameraTargetPosition=[0, 0, 1])
+    p.startStateLogging(p.STATE_LOGGING_VIDEO_MP4, "test_invariant.mp4")
 
     STATIC_VELOCITY_THRESHOLD = 1e-6
 
@@ -111,15 +113,15 @@ def test_simulator_friction_isometry():
     for _ in range(100):
         p.stepSimulation()
 
-    N = 100
+    N = 300
     yaws = np.zeros(N)
     z_os = np.zeros((N, 3))
     for simTime in range(N):
         # observe difference from pushing
         px = _observe_block(blockId)
         yaws[simTime] = px[2]
-        p.applyExternalForce(blockId, -1, [fn, ft, 0], [-MAX_ALONG, MAX_ALONG, 0.025], p.LINK_FRAME)
-        # p.applyExternalTorque(blockId, -1, [0, 0, 100], p.LINK_FRAME)
+        # p.applyExternalForce(blockId, -1, [fn, ft, 0], [-MAX_ALONG, MAX_ALONG, 0.025], p.LINK_FRAME)
+        p.applyExternalTorque(blockId, -1, [0, 0, 150], p.LINK_FRAME)
         p.stepSimulation()
         while not _static_environment():
             for _ in range(100):
