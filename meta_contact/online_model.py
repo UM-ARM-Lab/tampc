@@ -4,6 +4,9 @@ from arm_pytorch_utilities import linalg
 from arm_pytorch_utilities.trajectory import invert_psd
 from meta_contact import model
 from meta_contact import prior
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class OnlineDynamicsModel(object):
@@ -231,7 +234,16 @@ def _batch_conditioned_dynamics(nx, nu, sigma, mu, sigreg=1e-5):
     ip = slice(nx + nu, None)
     # guarantee symmetric positive definite with regularization
     sigma[:, it, it] += sigreg * torch.eye(nx + nu, dtype=sigma.dtype, device=sigma.device)
-    u = torch.cholesky(sigma[:, it, it])
+
+    # sometimes fails for no good reason on the GPU; try a couple of times
+    for t in range(3):
+        try:
+            u = torch.cholesky(sigma[:, it, it])
+            # if we succeeded just exit for loop
+            break
+        except RuntimeError as e:
+            logger.warning(e)
+
     # equivalent to inv * sigma
     # Solve normal equations to get dynamics. (equation 2)
     Fm = torch.cholesky_solve(sigma[:, it, ip], u).transpose(-1, -2)
