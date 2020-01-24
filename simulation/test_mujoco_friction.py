@@ -14,6 +14,7 @@ import math
 import numpy as np
 from matplotlib import pyplot as plt
 from mujoco_py import load_model_from_xml, MjSim, MjViewer
+from arm_pytorch_utilities import math_utils
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
@@ -42,6 +43,8 @@ MODEL_XML = """
         <body name="floor" pos="0 0 -0.5">
            <geom name='arena' mass='1' size='0.5 0.5' material="MatPlane" type='cylinder' />
         </body>
+       <geom name='floor' pos='0 0 0' size='0 0 .125' type='plane' material="MatPlane" condim='3'/>
+
     </worldbody>
     <actuator>
         <motor gear="1.0" joint="rot1"/>
@@ -76,13 +79,13 @@ def dx_to_dz(px, dx):
     dz = np.zeros_like(dx)
     # dyaw is the same
     dz[2] = dx[2]
-    dz[:2] = rotate_wrt_origin(dx[:2], px[2])
+    dz[:2] = rotate_wrt_origin(dx[:2], -px[2])
     return dz
 
 
 def _observe_block():
     x, y, yaw, z = sim.data.qpos
-    return np.array((x, y, yaw))
+    return np.array((x, y, math_utils.angle_normalize(yaw)))
 
 
 STATIC_VELOCITY_THRESHOLD = 1e-6
@@ -104,10 +107,14 @@ t = 0
 for _ in range(40):
     sim.step()
 
-N = 1000
+N = 1500
 yaws = np.zeros(N)
 z_os = np.zeros((N, 3))
 
+while not _static_environment():
+    for _ in range(50):
+        sim.step()
+        viewer.render()
 for simTime in range(N):
     px = _observe_block()
     yaws[simTime] = px[2]
@@ -128,7 +135,21 @@ for simTime in range(N):
     logger.info("dx %s dz %s", dx, dz)
 
 logger.info(z_os.std(0) / np.abs(np.mean(z_os, 0)))
-plt.scatter(yaws, z_os[:, 2])
-plt.xlabel('yaw')
+
+plt.subplot(3, 1, 1)
+v = z_os[:, 2]
+plt.scatter(yaws, v)
 plt.ylabel('dyaw')
+plt.ylim(np.min(v), np.max(v))
+plt.subplot(3, 1, 2)
+v = z_os[:, 0]
+plt.scatter(yaws, v)
+plt.ylabel('dx_body')
+plt.ylim(np.min(v), np.max(v))
+plt.subplot(3, 1, 3)
+v = z_os[:, 1]
+plt.scatter(yaws, v)
+plt.xlabel('yaw')
+plt.ylabel('dy_body')
+plt.ylim(np.min(v), np.max(v))
 plt.show()
