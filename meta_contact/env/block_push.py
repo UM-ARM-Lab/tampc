@@ -173,7 +173,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.initBlockYaw = None
 
         # debugging objects
-        self._goal_debug_lines = []
+        self._goal_debug_lines = [-1, -1]
         self._traj_debug_lines = []
         self._debug_text = -1
         self.set_task_config(goal, init_pusher, init_block, init_yaw)
@@ -251,20 +251,16 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self._traj_debug_lines = []
 
     def _draw_goal(self):
-        # clear previous debug lines
-        for line in self._goal_debug_lines:
-            p.removeUserDebugItem(line)
-        self._goal_debug_lines = []
-
         goal_visual_width = 0.15 / 2
         goal = np.concatenate((self._get_goal_block_pos(), (0.1,)))
 
-        self._goal_debug_lines.append(
-            p.addUserDebugLine(np.add(goal, [0, -goal_visual_width, 0]), np.add(goal, [0, goal_visual_width, 0]),
-                               [0, 1, 0], 2))
-        self._goal_debug_lines.append(
-            p.addUserDebugLine(np.add(goal, [-goal_visual_width, 0, 0]), np.add(goal, [goal_visual_width, 0, 0]),
-                               [0, 1, 0], 2))
+        # replace previous debug lines
+        self._goal_debug_lines[0] = p.addUserDebugLine(np.add(goal, [0, -goal_visual_width, 0]),
+                                                       np.add(goal, [0, goal_visual_width, 0]),
+                                                       [0, 1, 0], 2, replaceItemUniqueId=self._goal_debug_lines[0])
+        self._goal_debug_lines[1] = p.addUserDebugLine(np.add(goal, [-goal_visual_width, 0, 0]),
+                                                       np.add(goal, [goal_visual_width, 0, 0]),
+                                                       [0, 1, 0], 2, replaceItemUniqueId=self._goal_debug_lines[1])
 
     def _get_goal_block_pos(self):
         return self.goal[2:4]
