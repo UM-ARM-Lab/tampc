@@ -191,7 +191,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self._block_debug_lines = [-1, -1]
         self._traj_debug_lines = []
         self._debug_text = -1
-        self._user_debug_text = -1
+        self._user_debug_text = {}
         self._camera_pos = None
         self.set_task_config(goal, init_pusher, init_block, init_yaw)
 
@@ -437,12 +437,16 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
         return cost, done, info
 
-    def draw_user_text(self, text):
-        self._user_debug_text = self._draw_text(text, self._user_debug_text, 1)
+    def draw_user_text(self, text, location_index=1, left_offset=1):
+        if location_index is 0:
+            raise RuntimeError("Can't use same location index (0) as cost")
+        self._user_debug_text[location_index] = self._draw_text(text, self._user_debug_text.get(location_index, -1),
+                                                                location_index, left_offset)
 
-    def _draw_text(self, text, text_id, location_index):
+    def _draw_text(self, text, text_id, location_index, left_offset=1):
         move_down = location_index * 0.15
-        return p.addUserDebugText(str(text), [self._camera_pos[0] + 1, self._camera_pos[1] + 1 - move_down, 0.1],
+        return p.addUserDebugText(str(text),
+                                  [self._camera_pos[0] + left_offset, self._camera_pos[1] + 1 - move_down, 0.1],
                                   textColorRGB=[0.5, 0.1, 0.1],
                                   textSize=2,
                                   replaceItemUniqueId=text_id)
