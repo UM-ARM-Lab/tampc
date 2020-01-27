@@ -192,6 +192,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self._traj_debug_lines = []
         self._debug_text = -1
         self._user_debug_text = -1
+        self._camera_pos = None
         self.set_task_config(goal, init_pusher, init_block, init_yaw)
 
         # quadratic cost
@@ -263,8 +264,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
             self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [1.5, 0.5, wall_z],
                                          p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
 
-        p.resetDebugVisualizerCamera(cameraDistance=0.5, cameraYaw=0, cameraPitch=-85,
-                                     cameraTargetPosition=[0, 0, 1])
+        self.set_camera_position([0, 0])
         self._draw_goal()
         _draw_debug_2d_pose(self._block_debug_lines, self._get_block_pose(self._obs()))
 
@@ -274,6 +274,11 @@ class PushAgainstWallEnv(MyPybulletEnv):
         # set robot init config
         self.pusherConstraint = p.createConstraint(self.pusherId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
                                                    self.initPusherPos)
+
+    def set_camera_position(self, camera_pos):
+        self._camera_pos = camera_pos
+        p.resetDebugVisualizerCamera(cameraDistance=0.5, cameraYaw=0, cameraPitch=-85,
+                                     cameraTargetPosition=[camera_pos[0], camera_pos[1], 1])
 
     def clear_debug_trajectories(self):
         for line in self._traj_debug_lines:
@@ -437,7 +442,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
     def _draw_text(self, text, text_id, location_index):
         move_down = location_index * 0.15
-        return p.addUserDebugText(str(text), [1, 1 - move_down, 0.1], textColorRGB=[0.5, 0.1, 0.1],
+        return p.addUserDebugText(str(text), [self._camera_pos[0] + 1, self._camera_pos[1] + 1 - move_down, 0.1],
+                                  textColorRGB=[0.5, 0.1, 0.1],
                                   textSize=2,
                                   replaceItemUniqueId=text_id)
 
