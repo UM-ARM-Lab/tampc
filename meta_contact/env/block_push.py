@@ -191,6 +191,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self._block_debug_lines = [-1, -1]
         self._traj_debug_lines = []
         self._debug_text = -1
+        self._user_debug_text = -1
         self.set_task_config(goal, init_pusher, init_block, init_yaw)
 
         # quadratic cost
@@ -427,12 +428,18 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
         cost, done = self.evaluate_cost(self.state, action)
 
-        # print information to GUI
-        self._debug_text = p.addUserDebugText('{0:.3f}'.format(cost), [1, 1, 0.1], textColorRGB=[0.5, 0.1, 0.1],
-                                              textSize=2,
-                                              replaceItemUniqueId=self._debug_text)
+        self._debug_text = self._draw_text('{0:.3f}'.format(cost), self._debug_text, 0)
 
         return cost, done, info
+
+    def draw_user_text(self, text):
+        self._user_debug_text = self._draw_text(text, self._user_debug_text, 1)
+
+    def _draw_text(self, text, text_id, location_index):
+        move_down = location_index * 0.15
+        return p.addUserDebugText(str(text), [1, 1 - move_down, 0.1], textColorRGB=[0.5, 0.1, 0.1],
+                                  textSize=2,
+                                  replaceItemUniqueId=text_id)
 
     def reset(self):
         # reset robot to nominal pose

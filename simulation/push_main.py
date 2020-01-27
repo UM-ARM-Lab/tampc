@@ -441,6 +441,7 @@ def evaluate_controller(env, ctrl, name, tasks=10, tries=10, start_seed=0):
         init_block_pos, init_block_yaw, init_pusher = random_touching_start(env)
         goal_pos = np.random.uniform(-0.6, 0.6, 2)
         env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher, goal=goal_pos)
+        env.draw_user_text('task {}'.format(task_seed))
         logger.info("task %d init block %s goal %s", task_seed, init_block_pos, goal_pos)
 
         task_costs = np.zeros((num_frames, tries))

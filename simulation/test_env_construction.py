@@ -167,31 +167,17 @@ def test_env_control():
     sim.run(seed)
 
 
-def test_friction():
-    init_block_pos = [0, 0]
-    init_block_yaw = 2
-    face = block_push.BlockFace.LEFT
-    along_face = block_push.MAX_ALONG * -0.5
-    env = block_push.PushAgainstWallStickyEnv(mode=p.GUI, init_pusher=along_face, face=face,
-                                              init_block=init_block_pos, init_yaw=init_block_yaw)
-    num_frames = 50
-    ctrl = controller.PreDeterminedController([(0.0, 0.02) for _ in range(num_frames)])
-    sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=True, save=False)
-    seed = rand.seed()
-    sim.run(seed)
-    plt.ioff()
-    plt.show()
-
-
 def test_direct_push():
     init_block_pos = [0, 0]
     init_block_yaw = 0
-    along_face = block_push.MAX_ALONG * 0.5
+    along_face = 1.0
     env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=along_face,
                                               init_block=init_block_pos, init_yaw=init_block_yaw)
+    env.draw_user_text('test u-turn')
     num_frames = 50
     ctrl = controller.PreDeterminedController([(0.0, 1, 0) for _ in range(num_frames)])
 
+    # TODO record how many steps of pushing to make a u-turn (yaw > pi or > -pi)
     sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=True, save=False)
     seed = rand.seed()
     sim.run(seed)
@@ -202,7 +188,5 @@ def test_direct_push():
 if __name__ == "__main__":
     # test_pusher_placement_inverse()
     # test_env_control()
-    # test_friction()
-    test_simulator_friction_isometry()
-    # test_direct_push()
-    # TODO test pushing in one direction (diagonal to face); check friction cone; what angle do we start sliding
+    # test_simulator_friction_isometry()
+    test_direct_push()
