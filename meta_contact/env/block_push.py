@@ -79,6 +79,16 @@ def pusher_pos_along_face(block_pos, block_yaw, pusher_pos, face=BlockFace.LEFT)
     return along_face, from_center
 
 
+def _draw_debug_2d_pose(line_unique_ids, location, color=(0, 0, 0), length=0.15 / 2):
+    # replace previous debug lines
+    line_unique_ids[0] = p.addUserDebugLine(np.add(location, [0, -length * 0.2, 0]),
+                                            np.add(location, [0, length * 0.2, 0]),
+                                            color, 2, replaceItemUniqueId=line_unique_ids[0])
+    line_unique_ids[1] = p.addUserDebugLine(np.add(location, [0, 0, 0]),
+                                            np.add(location, [length, 0, 0]),
+                                            color, 2, replaceItemUniqueId=line_unique_ids[1])
+
+
 class PushLoader(load_utils.DataLoader):
     def __init__(self, *args, file_cfg=cfg, **kwargs):
         super().__init__(file_cfg, *args, **kwargs)
@@ -251,16 +261,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self._traj_debug_lines = []
 
     def _draw_goal(self):
-        goal_visual_width = 0.15 / 2
-        goal = np.concatenate((self._get_goal_block_pos(), (0.1,)))
-
-        # replace previous debug lines
-        self._goal_debug_lines[0] = p.addUserDebugLine(np.add(goal, [0, -goal_visual_width * 0.2, 0]),
-                                                       np.add(goal, [0, goal_visual_width * 0.2, 0]),
-                                                       [0, 0, 0], 2, replaceItemUniqueId=self._goal_debug_lines[0])
-        self._goal_debug_lines[1] = p.addUserDebugLine(np.add(goal, [0, 0, 0]),
-                                                       np.add(goal, [goal_visual_width, 0, 0]),
-                                                       [0, 0, 0], 2, replaceItemUniqueId=self._goal_debug_lines[1])
+        _draw_debug_2d_pose(self._goal_debug_lines, np.concatenate((self._get_goal_block_pos(), (0.1,))))
 
     def _get_goal_block_pos(self):
         return self.goal[2:4]
