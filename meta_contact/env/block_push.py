@@ -79,13 +79,16 @@ def pusher_pos_along_face(block_pos, block_yaw, pusher_pos, face=BlockFace.LEFT)
     return along_face, from_center
 
 
-def _draw_debug_2d_pose(line_unique_ids, location, color=(0, 0, 0), length=0.15 / 2):
+def _draw_debug_2d_pose(line_unique_ids, pose, color=(0, 0, 0), length=0.15 / 2, height=0.05):
+    location = (pose[0], pose[1], height)
+    side_lines = math_utils.rotate_wrt_origin((0, length * 0.2), pose[2])
+    pointer = math_utils.rotate_wrt_origin((length, 0), pose[2])
     # replace previous debug lines
-    line_unique_ids[0] = p.addUserDebugLine(np.add(location, [0, -length * 0.2, 0]),
-                                            np.add(location, [0, length * 0.2, 0]),
+    line_unique_ids[0] = p.addUserDebugLine(np.add(location, [side_lines[0], side_lines[1], 0]),
+                                            np.add(location, [-side_lines[0], -side_lines[1], 0]),
                                             color, 2, replaceItemUniqueId=line_unique_ids[0])
     line_unique_ids[1] = p.addUserDebugLine(np.add(location, [0, 0, 0]),
-                                            np.add(location, [length, 0, 0]),
+                                            np.add(location, [pointer[0], pointer[1], 0]),
                                             color, 2, replaceItemUniqueId=line_unique_ids[1])
 
 
@@ -262,14 +265,14 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self._traj_debug_lines = []
 
     def _draw_goal(self):
-        _draw_debug_2d_pose(self._goal_debug_lines, np.concatenate((self._get_goal_block_pos(), (0.1,))))
+        _draw_debug_2d_pose(self._goal_debug_lines, self._get_goal_block_pose())
 
-    def _get_goal_block_pos(self):
-        return self.goal[2:4]
+    def _get_goal_block_pose(self):
+        return self.goal[2:5]
 
     @staticmethod
-    def _get_block_pos(state):
-        return state[2:4]
+    def _get_block_pose(state):
+        return state[2:5]
 
     def _move_pusher(self, end):
         if self.max_move_step is None:
@@ -398,11 +401,10 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.state = np.array(self._obs())
         # track trajectory
         z = self.initPusherPos[2]
-        prev_block = self._get_block_pos(old_state)
-        new_block = self._get_block_pos(self.state)
-        new_block = (new_block[0], new_block[1], z)
+        prev_block = self._get_block_pose(old_state)
+        new_block = self._get_block_pose(self.state)
         self._traj_debug_lines.append(
-            p.addUserDebugLine([prev_block[0], prev_block[1], z], new_block, [0, 0, 1], 2))
+            p.addUserDebugLine([prev_block[0], prev_block[1], z], (new_block[0], new_block[1], z), [0, 0, 1], 2))
 
         # render current pose
         _draw_debug_2d_pose(self._block_debug_lines, new_block)
@@ -496,12 +498,12 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
             diff = np.column_stack((dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1)))
         return diff
 
-    def _get_goal_block_pos(self):
-        return self.goal[:2]
+    def _get_goal_block_pose(self):
+        return self.goal[:3]
 
     @staticmethod
-    def _get_block_pos(state):
-        return state[:2]
+    def _get_block_pose(state):
+        return state[:3]
 
     def _obs(self):
         xb, yb, yaw = self._observe_block()
