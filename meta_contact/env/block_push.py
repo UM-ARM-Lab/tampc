@@ -25,8 +25,8 @@ class BlockFace:
 
 # TODO This is specific to this pusher and block; how to generalize this?
 DIST_FOR_JUST_TOUCHING = 0.096 - 0.00001 + 0.2
-MAX_ALONG = 0.075 + 0.2
-BLOCK_HEIGHT = 0.05
+_MAX_ALONG = 0.075 + 0.2
+_BLOCK_HEIGHT = 0.05
 
 
 def pusher_pos_for_touching(block_pos, block_yaw, from_center=DIST_FOR_JUST_TOUCHING, face=BlockFace.LEFT,
@@ -80,7 +80,7 @@ def pusher_pos_along_face(block_pos, block_yaw, pusher_pos, face=BlockFace.LEFT)
     return along_face, from_center
 
 
-def _draw_debug_2d_pose(line_unique_ids, pose, color=(0, 0, 0), length=0.15 / 2, height=BLOCK_HEIGHT):
+def _draw_debug_2d_pose(line_unique_ids, pose, color=(0, 0, 0), length=0.15 / 2, height=_BLOCK_HEIGHT):
     location = (pose[0], pose[1], height)
     side_lines = math_utils.rotate_wrt_origin((0, length * 0.2), pose[2])
     pointer = math_utils.rotate_wrt_origin((length, 0), pose[2])
@@ -418,7 +418,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
         prev_block = self._get_block_pose(old_state)
         new_block = self._get_block_pose(self.state)
         self._traj_debug_lines.append(
-            p.addUserDebugLine([prev_block[0], prev_block[1], BLOCK_HEIGHT], (new_block[0], new_block[1], BLOCK_HEIGHT),
+            p.addUserDebugLine([prev_block[0], prev_block[1], _BLOCK_HEIGHT],
+                               (new_block[0], new_block[1], _BLOCK_HEIGHT),
                                [0, 0, 1], 2))
 
         # render current pose
@@ -489,7 +490,7 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
 
     def _set_init_pusher(self, init_pusher):
         pos = pusher_pos_for_touching(self.initBlockPos[:2], self.initBlockYaw, face=self.face,
-                                      along_face=init_pusher * MAX_ALONG)
+                                      along_face=init_pusher * _MAX_ALONG)
         super()._set_init_pusher(pos)
 
     @staticmethod
@@ -520,7 +521,7 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         along, from_center = pusher_pos_along_face((xb, yb), yaw, (x, y), self.face)
         # debugging to make sure we're quasi-static and adjacent to the block
         # logger.debug("dist between pusher and block %f", from_center - DIST_FOR_JUST_TOUCHING)
-        return xb, yb, yaw, along / MAX_ALONG
+        return xb, yb, yaw, along / _MAX_ALONG
 
     def step(self, action):
         old_state = self._obs()
@@ -534,7 +535,7 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         along = np.clip(old_state[3] + d_along, -1, 1)
         # logger.debug("along %f dalong %f", along, d_along)
         pos = pusher_pos_for_touching(old_state[:2], old_state[2], from_center=from_center, face=self.face,
-                                      along_face=along * MAX_ALONG)
+                                      along_face=along * _MAX_ALONG)
         # set end effector pose
         z = self.initPusherPos[2]
         eePos = np.concatenate((pos, (z,)))
@@ -591,7 +592,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
     def _keep_pusher_adjacent(self):
         state = self._obs()
         pos = pusher_pos_for_touching(state[:2], state[2], from_center=DIST_FOR_JUST_TOUCHING, face=self.face,
-                                      along_face=self.along * MAX_ALONG)
+                                      along_face=self.along * _MAX_ALONG)
         z = self.initPusherPos[2]
         eePos = np.concatenate((pos, (z,)))
         self._move_pusher(eePos)
@@ -611,7 +612,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         ft = math.sin(f_dir) * f_mag
         fn = math.cos(f_dir) * f_mag
         # apply force on the left face of the block at along
-        p.applyExternalForce(self.blockId, -1, [fn, ft, 0], [-MAX_ALONG, self.along * MAX_ALONG, 0], p.LINK_FRAME)
+        p.applyExternalForce(self.blockId, -1, [fn, ft, 0], [-_MAX_ALONG, self.along * _MAX_ALONG, 0], p.LINK_FRAME)
         p.stepSimulation()
         while not self._static_environment():
             for _ in range(20):
