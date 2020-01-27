@@ -255,12 +255,12 @@ class PushAgainstWallEnv(MyPybulletEnv):
         goal = np.concatenate((self._get_goal_block_pos(), (0.1,)))
 
         # replace previous debug lines
-        self._goal_debug_lines[0] = p.addUserDebugLine(np.add(goal, [0, -goal_visual_width, 0]),
-                                                       np.add(goal, [0, goal_visual_width, 0]),
-                                                       [0, 1, 0], 2, replaceItemUniqueId=self._goal_debug_lines[0])
-        self._goal_debug_lines[1] = p.addUserDebugLine(np.add(goal, [-goal_visual_width, 0, 0]),
+        self._goal_debug_lines[0] = p.addUserDebugLine(np.add(goal, [0, -goal_visual_width * 0.2, 0]),
+                                                       np.add(goal, [0, goal_visual_width * 0.2, 0]),
+                                                       [0, 0, 0], 2, replaceItemUniqueId=self._goal_debug_lines[0])
+        self._goal_debug_lines[1] = p.addUserDebugLine(np.add(goal, [0, 0, 0]),
                                                        np.add(goal, [goal_visual_width, 0, 0]),
-                                                       [0, 1, 0], 2, replaceItemUniqueId=self._goal_debug_lines[1])
+                                                       [0, 0, 0], 2, replaceItemUniqueId=self._goal_debug_lines[1])
 
     def _get_goal_block_pos(self):
         return self.goal[2:4]
