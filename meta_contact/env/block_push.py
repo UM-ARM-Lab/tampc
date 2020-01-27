@@ -211,17 +211,29 @@ class PushAgainstWallEnv(MyPybulletEnv):
         return u_min, u_max
 
     def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
-        """Change task configuration"""
+        """Change task configuration; assumes only goal position is specified #TOOD relax assumption"""
         if goal is not None:
-            # ignore the pusher position
-            self.goal = np.array(tuple(goal) + tuple(goal) + (0.0,))
+            self._set_goal(goal)
             self._draw_goal()
-        if init_pusher is not None:
-            self.initPusherPos = tuple(init_pusher) + (0.05,)
         if init_block is not None:
-            self.initBlockPos = tuple(init_block) + (-0.02,)
+            self._set_init_block_pos(init_block)
         if init_yaw is not None:
-            self.initBlockYaw = init_yaw
+            self._set_init_block_yaw(init_yaw)
+        if init_pusher is not None:
+            self._set_init_pusher(init_pusher)
+
+    def _set_goal(self, goal):
+        # ignore the pusher position
+        self.goal = np.array(tuple(goal) + tuple(goal) + (0.0,))
+
+    def _set_init_pusher(self, init_pusher):
+        self.initPusherPos = tuple(init_pusher) + (0.05,)
+
+    def _set_init_block_pos(self, init_block_pos):
+        self.initBlockPos = tuple(init_block_pos) + (-0.02,)
+
+    def _set_init_block_yaw(self, init_yaw):
+        self.initBlockYaw = init_yaw
 
     def _setup_experiment(self):
         # add plane to push on (slightly below the base of the robot)
@@ -468,20 +480,14 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         u_max = np.array([1, 1])
         return u_min, u_max
 
-    def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
-        """Change task configuration"""
-        if goal is not None:
-            # ignore the pusher position
-            self.goal = np.array(tuple(goal) + (0.0, 0))
-            self._draw_goal()
-        if init_block is not None:
-            self.initBlockPos = tuple(init_block) + (-0.02,)
-        if init_yaw is not None:
-            self.initBlockYaw = init_yaw
-        if init_pusher is not None:
-            pos = pusher_pos_for_touching(self.initBlockPos[:2], self.initBlockYaw, face=self.face,
-                                          along_face=init_pusher * MAX_ALONG)
-            self.initPusherPos = tuple(pos) + (0.05,)
+    def _set_goal(self, goal):
+        # ignore the pusher position
+        self.goal = np.array(tuple(goal) + (0.0, 0))
+
+    def _set_init_pusher(self, init_pusher):
+        pos = pusher_pos_for_touching(self.initBlockPos[:2], self.initBlockYaw, face=self.face,
+                                      along_face=init_pusher * MAX_ALONG)
+        super()._set_init_pusher(pos)
 
     @staticmethod
     def compare_to_goal(state, goal):
@@ -526,21 +532,6 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         # logger.debug("along %f dalong %f", along, d_along)
         pos = pusher_pos_for_touching(old_state[:2], old_state[2], from_center=from_center, face=self.face,
                                       along_face=along * MAX_ALONG)
-        # debug dpos
-        old_pos = self._observe_pusher()
-        # try manually calculate where to push (doesn't seem to have an impact)
-        # dpos = math_utils.rotate_wrt_origin((d_into, d_along), old_state[2])
-        # pos = np.add(old_pos[:2], dpos)
-
-        # dpos = np.subtract(pos, old_pos[:2])
-        # dpos_norm = np.linalg.norm(dpos)
-        # logger.info("yaw %f dpos_norm %f", old_state[2], dpos_norm)
-        # assert abs(dpos_norm - d_into) < 1e-6
-        # dpos_in_block_frame = math_utils.rotate_wrt_origin(dpos, -old_state[2])
-        # logger.info("yaw %f dpos_norm %s", old_state[2], dpos_in_block_frame)
-        # assert abs(dpos_in_block_frame[1]) < 1e-6
-        # assert abs(dpos_in_block_frame[0]-d_into) < 1e-6
-
         # set end effector pose
         z = self.initPusherPos[2]
         eePos = np.concatenate((pos, (z,)))
@@ -581,21 +572,9 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         u_max = np.array([1, 1, 1])
         return u_min, u_max
 
-    def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
-        """Change task configuration"""
-        if goal is not None:
-            # ignore the pusher position
-            self.goal = np.array(tuple(goal) + (0.0, 0))
-            self._draw_goal()
-        if init_block is not None:
-            self.initBlockPos = tuple(init_block) + (-0.02,)
-        if init_yaw is not None:
-            self.initBlockYaw = init_yaw
-        if init_pusher is not None:
-            pos = pusher_pos_for_touching(self.initBlockPos[:2], self.initBlockYaw, face=self.face,
-                                          along_face=init_pusher * MAX_ALONG)
-            self.along = init_pusher
-            self.initPusherPos = tuple(pos) + (0.05,)
+    def _set_init_pusher(self, init_pusher):
+        self.along = init_pusher
+        super()._set_init_pusher(init_pusher)
 
     def _setup_experiment(self):
         super()._setup_experiment()
