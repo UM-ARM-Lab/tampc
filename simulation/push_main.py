@@ -410,19 +410,22 @@ def test_dynamics(level=0):
 
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else pm.__class__.__name__
     # expensive evaluation
-    # evaluate_controller(env, ctrl, name)
+    evaluate_controller(env, ctrl, name, translation=(4, 4))
 
-    sim = block_push.InteractivePush(env, ctrl, num_frames=150, plot=True, save=False, stop_when_done=True)
-    seed = rand.seed()
-    sim.run(seed)
-    logger.info("last run cost %f", np.sum(sim.last_run_cost))
-    plt.ioff()
-    plt.show()
+    # sim = block_push.InteractivePush(env, ctrl, num_frames=150, plot=True, save=False, stop_when_done=True)
+    # seed = rand.seed()
+    # sim.run(seed)
+    # logger.info("last run cost %f", np.sum(sim.last_run_cost))
+    # plt.ioff()
+    # plt.show()
 
 
-def evaluate_controller(env, ctrl, name, tasks=10, tries=10, start_seed=0):
+def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controller.Controller, name, tasks=10, tries=10,
+                        start_seed=0,
+                        translation=(0, 0)):
     """Fixed set of benchmark tasks to do control over, with the total reward for each task collected and reported"""
     num_frames = 150
+    env.set_camera_position(translation)
     sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=False, save=False)
 
     name = "{}_{}".format(ctrl.__class__.__name__, name)
@@ -439,7 +442,8 @@ def evaluate_controller(env, ctrl, name, tasks=10, tries=10, start_seed=0):
         task_seed = tasks[t]
         # configure init and goal for task
         init_block_pos, init_block_yaw, init_pusher = random_touching_start(env)
-        goal_pos = np.random.uniform(-0.6, 0.6, 2)
+        init_block_pos = np.add(init_block_pos, translation)
+        goal_pos = np.add(np.random.uniform(-0.6, 0.6, 2), translation)
         env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher, goal=goal_pos)
         env.draw_user_text('task {}'.format(task_seed))
         logger.info("task %d init block %s goal %s", task_seed, init_block_pos, goal_pos)
