@@ -26,6 +26,7 @@ class BlockFace:
 # TODO This is specific to this pusher and block; how to generalize this?
 DIST_FOR_JUST_TOUCHING = 0.096 - 0.00001 + 0.2
 MAX_ALONG = 0.075 + 0.2
+BLOCK_HEIGHT = 0.05
 
 
 def pusher_pos_for_touching(block_pos, block_yaw, from_center=DIST_FOR_JUST_TOUCHING, face=BlockFace.LEFT,
@@ -79,7 +80,7 @@ def pusher_pos_along_face(block_pos, block_yaw, pusher_pos, face=BlockFace.LEFT)
     return along_face, from_center
 
 
-def _draw_debug_2d_pose(line_unique_ids, pose, color=(0, 0, 0), length=0.15 / 2, height=0.05):
+def _draw_debug_2d_pose(line_unique_ids, pose, color=(0, 0, 0), length=0.15 / 2, height=BLOCK_HEIGHT):
     location = (pose[0], pose[1], height)
     side_lines = math_utils.rotate_wrt_origin((0, length * 0.2), pose[2])
     pointer = math_utils.rotate_wrt_origin((length, 0), pose[2])
@@ -227,37 +228,38 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.goal = np.array(tuple(goal) + tuple(goal) + (0.0,))
 
     def _set_init_pusher(self, init_pusher):
-        self.initPusherPos = tuple(init_pusher) + (0.05,)
+        self.initPusherPos = tuple(init_pusher) + (0.10,)
 
     def _set_init_block_pos(self, init_block_pos):
-        self.initBlockPos = tuple(init_block_pos) + (-0.02,)
+        self.initBlockPos = tuple(init_block_pos) + (0.03,)
 
     def _set_init_block_yaw(self, init_yaw):
         self.initBlockYaw = init_yaw
 
     def _setup_experiment(self):
         # add plane to push on (slightly below the base of the robot)
-        self.planeId = p.loadURDF("plane.urdf", [0, 0, -0.05], useFixedBase=True)
+        self.planeId = p.loadURDF("plane.urdf", [0, 0, 0], useFixedBase=True)
         self.pusherId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "pusher.urdf"), self.initPusherPos)
         self.blockId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "block_big.urdf"), self.initBlockPos,
                                   p.getQuaternionFromEuler([0, 0, self.initBlockYaw]))
 
         self.walls = []
+        wall_z = 0.05
         if self.level == 0:
             pass
         elif self.level == 1:
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0, -0.32, .0],
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0, -0.32, wall_z],
                                          p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True))
         elif self.level == 2:
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-1, 0.5, .0],
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-1, 0.5, wall_z],
                                          p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0, -0.32, .0],
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0, -0.32, wall_z],
                                          p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True))
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.75, 2, .0],
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.75, 2, wall_z],
                                          p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0, 2, .0],
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0, 2, wall_z],
                                          p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True))
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [1.5, 0.5, .0],
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [1.5, 0.5, wall_z],
                                          p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
 
         p.resetDebugVisualizerCamera(cameraDistance=0.5, cameraYaw=0, cameraPitch=-85,
@@ -412,11 +414,11 @@ class PushAgainstWallEnv(MyPybulletEnv):
         info = self._observe_contact()
         self.state = np.array(self._obs())
         # track trajectory
-        z = self.initPusherPos[2]
         prev_block = self._get_block_pose(old_state)
         new_block = self._get_block_pose(self.state)
         self._traj_debug_lines.append(
-            p.addUserDebugLine([prev_block[0], prev_block[1], z], (new_block[0], new_block[1], z), [0, 0, 1], 2))
+            p.addUserDebugLine([prev_block[0], prev_block[1], BLOCK_HEIGHT], (new_block[0], new_block[1], BLOCK_HEIGHT),
+                               [0, 0, 1], 2))
 
         # render current pose
         _draw_debug_2d_pose(self._block_debug_lines, new_block)
