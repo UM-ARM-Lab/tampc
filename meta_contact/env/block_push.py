@@ -184,6 +184,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
         # debugging objects
         self._goal_debug_lines = [-1, -1]
+        self._block_debug_lines = [-1, -1]
         self._traj_debug_lines = []
         self._debug_text = -1
         self.set_task_config(goal, init_pusher, init_block, init_yaw)
@@ -397,11 +398,14 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.state = np.array(self._obs())
         # track trajectory
         z = self.initPusherPos[2]
-
         prev_block = self._get_block_pos(old_state)
         new_block = self._get_block_pos(self.state)
+        new_block = (new_block[0], new_block[1], z)
         self._traj_debug_lines.append(
-            p.addUserDebugLine([prev_block[0], prev_block[1], z], [new_block[0], new_block[1], z], [0, 0, 1], 2))
+            p.addUserDebugLine([prev_block[0], prev_block[1], z], new_block, [0, 0, 1], 2))
+
+        # render current pose
+        _draw_debug_2d_pose(self._block_debug_lines, new_block)
 
         cost, done = self.evaluate_cost(self.state, action)
 
