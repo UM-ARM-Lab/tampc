@@ -391,7 +391,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         diff = self.compare_to_goal(state, self.goal)
         diff = diff.reshape(-1)
         cost = diff @ self.Q @ diff
-        done = cost < 0.01
+        done = cost < 0.04
         if action is not None:
             cost += action @ self.R @ action
         return cost, done
@@ -639,11 +639,12 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
 
 class InteractivePush(simulation.Simulation):
     def __init__(self, env: PushAgainstWallEnv, controller, num_frames=1000, save_dir='pushing', observation_period=1,
-                 terminal_cost_multiplier=1, **kwargs):
+                 terminal_cost_multiplier=1, stop_when_done=True, **kwargs):
 
         super(InteractivePush, self).__init__(save_dir=save_dir, num_frames=num_frames, config=cfg, **kwargs)
         self.mode = env.mode
         self.observation_period = observation_period
+        self.stop_when_done = stop_when_done
 
         self.env = env
         self.ctrl = controller
@@ -674,6 +675,10 @@ class InteractivePush(simulation.Simulation):
         self.contactCount = np.zeros_like(self.contactForce)
         return simulation.ReturnMeaning.SUCCESS
 
+    def _truncate_data(self, frame):
+        self.traj, self.u, self.time, self.contactForce, self.contactCount = (data[:frame] for data in (
+            self.traj, self.u, self.time, self.contactForce, self.contactCount))
+
     def _run_experiment(self):
         self.last_run_cost = []
         obs = self._reset_sim()
@@ -698,6 +703,11 @@ class InteractivePush(simulation.Simulation):
             self.contactForce[simTime] = info['contact_force']
             self.contactCount[simTime] = info['contact_count']
 
+            if done and self.stop_when_done:
+                logger.debug("done and stopping at step %d", simTime)
+                self._truncate_data(simTime + 2)
+                break
+
         terminal_cost, done = self.env.evaluate_cost(self.traj[-1])
         self.last_run_cost.append(terminal_cost * self.terminal_cost_multiplier)
 
@@ -718,6 +728,7 @@ class InteractivePush(simulation.Simulation):
         self.traj = self._compress_observation(self.traj)
         self.contactForce = self._compress_observation(self.contactForce)
         self.contactCount = self._compress_observation(self.contactCount)
+        assert len(self.last_run_cost) == self.u.shape[0]
 
         return simulation.ReturnMeaning.SUCCESS
 

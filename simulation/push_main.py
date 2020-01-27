@@ -84,7 +84,6 @@ def get_easy_env(mode=p.GUI, level=0, log_video=False):
     global env_dir
     init_block_pos = [0, 0]
     init_block_yaw = 0
-    # init_pusher = [-0.095, 0]
     init_pusher = 0
     goal_pos = [-0.3, 0.3]
     # env = interactive_block_pushing.PushAgainstWallEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher,
@@ -413,7 +412,7 @@ def test_dynamics(level=0):
     # expensive evaluation
     # evaluate_controller(env, ctrl, name)
 
-    sim = block_push.InteractivePush(env, ctrl, num_frames=150, plot=True, save=False)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=150, plot=True, save=False, stop_when_done=True)
     seed = rand.seed()
     sim.run(seed)
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
@@ -451,7 +450,7 @@ def evaluate_controller(env, ctrl, name, tasks=10, tries=10, start_seed=0):
             sim.run(try_seed)
             logger.info("task %d try %d run cost %f", task_seed, try_seed, sum(sim.last_run_cost))
             total_costs[t, i] = sum(sim.last_run_cost)
-            task_costs[:, i] = sim.last_run_cost
+            task_costs[:len(sim.last_run_cost), i] = sim.last_run_cost
 
         for step, costs in enumerate(task_costs):
             writer.add_histogram('ctrl_eval/task_{}'.format(task_seed), costs, step)
