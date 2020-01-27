@@ -86,7 +86,7 @@ def get_easy_env(mode=p.GUI, level=0, log_video=False):
     init_block_yaw = 0
     # init_pusher = [-0.095, 0]
     init_pusher = 0
-    goal_pos = [-0, 0.5]
+    goal_pos = [-0.3, 0.3]
     # env = interactive_block_pushing.PushAgainstWallEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher,
     #                                                    init_block=init_block_pos, init_yaw=init_block_yaw,
     #                                                    environment_level=level)
@@ -423,7 +423,7 @@ def test_dynamics(level=0):
 
 def evaluate_controller(env, ctrl, name, tasks=10, tries=10, start_seed=0):
     """Fixed set of benchmark tasks to do control over, with the total reward for each task collected and reported"""
-    num_frames = 100
+    num_frames = 150
     sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=False, save=False)
 
     name = "{}_{}".format(ctrl.__class__.__name__, name)
@@ -432,9 +432,12 @@ def evaluate_controller(env, ctrl, name, tasks=10, tries=10, start_seed=0):
     seed = rand.seed(start_seed)
     logger.info("evaluation seed %d tasks %d tries %d", seed, tasks, tries)
 
-    total_costs = np.zeros((tasks, tries))
-    for t in range(tasks):
-        task_seed = rand.seed()
+    if type(tasks) is int:
+        tasks = [rand.seed() for _ in range(tasks)]
+
+    total_costs = np.zeros((len(tasks), tries))
+    for t in range(len(tasks)):
+        task_seed = tasks[t]
         # configure init and goal for task
         init_block_pos, init_block_yaw, init_pusher = random_touching_start(env)
         goal_pos = np.random.uniform(-0.6, 0.6, 2)
@@ -461,6 +464,7 @@ def evaluate_controller(env, ctrl, name, tasks=10, tries=10, start_seed=0):
 
     # summarize stats
     mean_cost = np.mean(total_costs)
+    logger.info(total_costs)
     logger.info("total cost: %f std %f", mean_cost, np.std(total_costs))
     writer.add_scalar('ctrl_eval/total', mean_cost, 0)
     return total_costs
