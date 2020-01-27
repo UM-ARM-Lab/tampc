@@ -265,6 +265,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         p.resetDebugVisualizerCamera(cameraDistance=0.5, cameraYaw=0, cameraPitch=-85,
                                      cameraTargetPosition=[0, 0, 1])
         self._draw_goal()
+        _draw_debug_2d_pose(self._block_debug_lines, self._get_block_pose(self._obs()))
 
         # set gravity
         p.setGravity(0, 0, -10)
