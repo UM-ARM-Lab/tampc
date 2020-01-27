@@ -266,6 +266,10 @@ class PushAgainstWallEnv(MyPybulletEnv):
     def _get_goal_block_pos(self):
         return self.goal[2:4]
 
+    @staticmethod
+    def _get_block_pos(state):
+        return state[2:4]
+
     def _move_pusher(self, end):
         if self.max_move_step is None:
             p.changeConstraint(self.pusherConstraint, end, maxForce=200)
@@ -393,8 +397,11 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.state = np.array(self._obs())
         # track trajectory
         z = self.initPusherPos[2]
+
+        prev_block = self._get_block_pos(old_state)
+        new_block = self._get_block_pos(self.state)
         self._traj_debug_lines.append(
-            p.addUserDebugLine([old_state[0], old_state[1], z], [self.state[0], self.state[1], z], [0, 0, 1], 2))
+            p.addUserDebugLine([prev_block[0], prev_block[1], z], [new_block[0], new_block[1], z], [0, 0, 1], 2))
 
         cost, done = self.evaluate_cost(self.state, action)
 
@@ -487,6 +494,10 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
 
     def _get_goal_block_pos(self):
         return self.goal[:2]
+
+    @staticmethod
+    def _get_block_pos(state):
+        return state[:2]
 
     def _obs(self):
         xb, yb, yaw = self._observe_block()
