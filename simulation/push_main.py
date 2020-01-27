@@ -426,9 +426,11 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     """Fixed set of benchmark tasks to do control over, with the total reward for each task collected and reported"""
     num_frames = 150
     env.set_camera_position(translation)
+    env.draw_user_text('center {}'.format(translation), 2)
     sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=False, save=False)
 
     name = "{}_{}".format(ctrl.__class__.__name__, name)
+    env.draw_user_text(name, 14, left_offset=-1.5)
     writer = SummaryWriter(flush_secs=20, comment=name)
 
     seed = rand.seed(start_seed)
@@ -445,7 +447,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
         init_block_pos = np.add(init_block_pos, translation)
         goal_pos = np.add(np.random.uniform(-0.6, 0.6, 2), translation)
         env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher, goal=goal_pos)
-        env.draw_user_text('task {}'.format(task_seed))
+        env.draw_user_text('task {}'.format(task_seed), 1)
         logger.info("task %d init block %s goal %s", task_seed, init_block_pos, goal_pos)
 
         task_costs = np.zeros((num_frames, tries))
