@@ -214,7 +214,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         """Change task configuration"""
         if goal is not None:
             # ignore the pusher position
-            self.goal = np.array(tuple(goal) + tuple(goal) + (0.1,))
+            self.goal = np.array(tuple(goal) + tuple(goal) + (0.0,))
             self._draw_goal()
         if init_pusher is not None:
             self.initPusherPos = tuple(init_pusher) + (0.05,)
@@ -472,7 +472,7 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         """Change task configuration"""
         if goal is not None:
             # ignore the pusher position
-            self.goal = np.array(tuple(goal) + (0.1, 0))
+            self.goal = np.array(tuple(goal) + (0.0, 0))
             self._draw_goal()
         if init_block is not None:
             self.initBlockPos = tuple(init_block) + (-0.02,)
@@ -585,7 +585,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         """Change task configuration"""
         if goal is not None:
             # ignore the pusher position
-            self.goal = np.array(tuple(goal) + (0.1, 0))
+            self.goal = np.array(tuple(goal) + (0.0, 0))
             self._draw_goal()
         if init_block is not None:
             self.initBlockPos = tuple(init_block) + (-0.02,)
