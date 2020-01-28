@@ -188,6 +188,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
         # debugging objects
         self._goal_debug_lines = [-1, -1]
+        self._init_block_debug_lines = [-1, -1]
         self._block_debug_lines = [-1, -1]
         self._traj_debug_lines = []
         self._debug_text = -1
@@ -269,7 +270,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
         self.set_camera_position([0, 0])
         self._draw_goal()
-        _draw_debug_2d_pose(self._block_debug_lines, self.get_block_pose(self._obs()))
+        _draw_debug_2d_pose(self._init_block_debug_lines, self.get_block_pose(self._obs()), color=(0, 1, 0))
 
         # set gravity
         p.setGravity(0, 0, -10)
@@ -469,6 +470,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
             for _ in range(50):
                 p.stepSimulation()
         self.state = self._obs()
+        _draw_debug_2d_pose(self._init_block_debug_lines, self.get_block_pose(self._obs()), color=(0, 1, 0))
         return np.copy(self.state)
 
     @staticmethod
