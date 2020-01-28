@@ -266,7 +266,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
         self.set_camera_position([0, 0])
         self._draw_goal()
-        _draw_debug_2d_pose(self._block_debug_lines, self._get_block_pose(self._obs()))
+        _draw_debug_2d_pose(self._block_debug_lines, self.get_block_pose(self._obs()))
 
         # set gravity
         p.setGravity(0, 0, -10)
@@ -292,7 +292,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         return self.goal[2:5]
 
     @staticmethod
-    def _get_block_pose(state):
+    def get_block_pose(state):
         return state[2:5]
 
     def _move_pusher(self, end):
@@ -421,8 +421,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
         info = self._observe_contact()
         self.state = np.array(self._obs())
         # track trajectory
-        prev_block = self._get_block_pose(old_state)
-        new_block = self._get_block_pose(self.state)
+        prev_block = self.get_block_pose(old_state)
+        new_block = self.get_block_pose(self.state)
         self._traj_debug_lines.append(
             p.addUserDebugLine([prev_block[0], prev_block[1], _BLOCK_HEIGHT],
                                (new_block[0], new_block[1], _BLOCK_HEIGHT),
@@ -529,7 +529,7 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         return self.goal[:3]
 
     @staticmethod
-    def _get_block_pose(state):
+    def get_block_pose(state):
         return state[:3]
 
     def _obs(self):
