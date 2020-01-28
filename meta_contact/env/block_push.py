@@ -656,12 +656,11 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
 
 
 class InteractivePush(simulation.Simulation):
-    def __init__(self, env: PushAgainstWallEnv, controller, num_frames=1000, save_dir='pushing', observation_period=1,
+    def __init__(self, env: PushAgainstWallEnv, controller, num_frames=1000, save_dir='pushing',
                  terminal_cost_multiplier=1, stop_when_done=True, **kwargs):
 
         super(InteractivePush, self).__init__(save_dir=save_dir, num_frames=num_frames, config=cfg, **kwargs)
         self.mode = env.mode
-        self.observation_period = observation_period
         self.stop_when_done = stop_when_done
 
         self.env = env
@@ -741,17 +740,9 @@ class InteractivePush(simulation.Simulation):
         # contact force mask - get rid of trash in the beginning
         # self.contactForce[:300] = 0
 
-        # compress observations
-        self.u = self._compress_observation(self.u)
-        self.traj = self._compress_observation(self.traj)
-        self.contactForce = self._compress_observation(self.contactForce)
-        self.contactCount = self._compress_observation(self.contactCount)
         assert len(self.last_run_cost) == self.u.shape[0]
 
         return simulation.ReturnMeaning.SUCCESS
-
-    def _compress_observation(self, obs):
-        return obs[::self.observation_period]
 
     def _export_data_dict(self):
         # output (1 step prediction; only need block state)
