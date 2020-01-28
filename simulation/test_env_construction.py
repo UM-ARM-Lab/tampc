@@ -134,6 +134,11 @@ def test_simulator_friction_isometry():
         z_os[simTime] = dz
         logger.info("dx %s dz %s", dx, dz)
         time.sleep(0.1)
+    plot_and_analyze_body_frame_invariance(yaws, z_os)
+
+
+def plot_and_analyze_body_frame_invariance(yaws, z_os):
+    logger.info("std / abs(mean) of each body frame dimension (should be ~0)")
     logger.info(z_os.std(0) / np.abs(np.mean(z_os, 0)))
     plt.subplot(3, 1, 1)
     v = z_os[:, 2]
@@ -167,26 +172,71 @@ def test_env_control():
     sim.run(seed)
 
 
-def test_direct_push():
+def tune_direct_push():
+    # determine number of pushes to reach a fixed distance and make a u-turn
+    max_N = 200  # definitely won't take this many steps
     init_block_pos = [0, 0]
     init_block_yaw = 0
-    along_face = 1.0
-    env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=along_face,
+    env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=0,
                                               init_block=init_block_pos, init_yaw=init_block_yaw)
-    env.draw_user_text('test u-turn')
-    num_frames = 50
-    ctrl = controller.PreDeterminedController([(0.0, 1, 0) for _ in range(num_frames)])
+    env.draw_user_text('test 1-meter dash')
+    ctrl = controller.PreDeterminedController([(0.0, 1, 0) for _ in range(max_N)])
+    # record how many steps of pushing to reach 1m
+    obs = env.reset()
+    step = 0
+    while True:
+        action = ctrl.command(obs)
+        obs, _, _, _ = env.step(action)
+        block_pose = env.get_block_pose(obs)
+        step += 1
+        if block_pose[0] > 1:
+            break
 
-    # TODO record how many steps of pushing to make a u-turn (yaw > pi or > -pi)
-    sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=True, save=False)
-    seed = rand.seed()
-    sim.run(seed)
-    plt.ioff()
-    plt.show()
+    logger.info("took %d steps to get to %f", step, block_pose[0])
+
+    along_face = 1.0
+    env.set_task_config(init_pusher=along_face)
+    env.draw_user_text('test u-turn')
+    ctrl = controller.PreDeterminedController([(0.0, 1, 0) for _ in range(max_N)])
+    # record how many steps of pushing to make a u-turn (yaw > pi or > -pi)
+    px = env.reset()
+    step = 0
+    u_turn_step = None
+    yaws = np.zeros(max_N)
+    z_os = np.zeros((max_N, 3))
+    xs = np.zeros((max_N, env.nx))
+    while True:
+        block_pose = env.get_block_pose(px)
+        yaws[step] = block_pose[2]
+        xs[step] = px
+
+        action = ctrl.command(px)
+        cx, _, _, _ = env.step(action)
+        block_pose = env.get_block_pose(cx)
+        dx = get_dx(px, cx)
+        dz = dx_to_dz(px, dx)
+        z_os[step] = dz
+
+        px = cx
+        step += 1
+        if u_turn_step is None and block_pose[2] > 0:
+            u_turn_step = step
+        # stop after making a full turn
+        if step > 10 and 0 > block_pose[2] > -0.2:
+            yaws = yaws[:step]
+            z_os = z_os[:step]
+            xs = xs[:step]
+            break
+
+    # turning clockwise so y will be negative
+    turning_radius = -np.min(xs[:, 1])
+    logger.info("took %d steps to to u-turn, %d steps for full turn %f turn radius", u_turn_step, step, turning_radius)
+    # analyze how rotationally invariant the dynamics is
+    plot_and_analyze_body_frame_invariance(yaws, z_os)
 
 
 if __name__ == "__main__":
     # test_pusher_placement_inverse()
     # test_env_control()
     # test_simulator_friction_isometry()
-    test_direct_push()
+    tune_direct_push()
