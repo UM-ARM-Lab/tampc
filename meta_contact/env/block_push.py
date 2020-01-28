@@ -174,7 +174,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
     ny = 3
 
     def __init__(self, goal=(1.0, 0.), init_pusher=(-0.25, 0), init_block=(0., 0.), init_yaw=0.,
-                 environment_level=0, max_move_step=0.001, **kwargs):
+                 environment_level=0, max_move_step=None, **kwargs):
         super().__init__(**kwargs)
         self.initRestFrames = 50
         self.max_move_step = max_move_step
