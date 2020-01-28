@@ -24,9 +24,9 @@ class BlockFace:
 
 
 # TODO This is specific to this pusher and block; how to generalize this?
-DIST_FOR_JUST_TOUCHING = 0.096 - 0.00001 + 0.2
-_MAX_ALONG = 0.075 + 0.2
+_MAX_ALONG = 0.075 + 0.1  # half length of block
 _BLOCK_HEIGHT = 0.05
+DIST_FOR_JUST_TOUCHING = _MAX_ALONG + 0.021 - 0.00001
 
 
 def pusher_pos_for_touching(block_pos, block_yaw, from_center=DIST_FOR_JUST_TOUCHING, face=BlockFace.LEFT,
@@ -244,6 +244,9 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.pusherId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "pusher.urdf"), self.initPusherPos)
         self.blockId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "block_big.urdf"), self.initBlockPos,
                                   p.getQuaternionFromEuler([0, 0, self.initBlockYaw]))
+
+        # adjust dynamics for better stability
+        p.changeDynamics(self.planeId, -1, lateralFriction=0.1, spinningFriction=0.1, rollingFriction=0.1)
 
         self.walls = []
         wall_z = 0.05
@@ -579,7 +582,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
     ny = 4
     MAX_PUSH_ANGLE = math.pi / 4  # 45 degree on either side of normal
     MAX_SLIDE = 0.3  # can slide at most 30/200 = 15% of the face in 1 move
-    MAX_FORCE = 800
+    MAX_FORCE = 400
 
     def __init__(self, init_pusher=0, **kwargs):
         # initial config

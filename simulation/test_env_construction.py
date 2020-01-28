@@ -179,6 +179,7 @@ def tune_direct_push():
     init_block_yaw = 0
     env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=0,
                                               init_block=init_block_pos, init_yaw=init_block_yaw)
+
     env.draw_user_text('test 1-meter dash')
     ctrl = controller.PreDeterminedController([(0.0, 1, 0) for _ in range(max_N)])
     # record how many steps of pushing to reach 1m
@@ -222,7 +223,7 @@ def tune_direct_push():
         if u_turn_step is None and block_pose[2] > 0:
             u_turn_step = step
         # stop after making a full turn
-        if step > 10 and 0 > block_pose[2] > -0.2:
+        if step > 10 and 0 > block_pose[2] > -0.3:
             yaws = yaws[:step]
             z_os = z_os[:step]
             xs = xs[:step]

@@ -6,7 +6,7 @@
 <robot name="block_big" xmlns:xacro="http://www.ros.org/wiki/xacro">
   <link name="base_link">
     <contact>
-      <lateral_friction value="0.9"/>
+      <lateral_friction value="0.8"/>
       <spinning_friction value=".1"/>
       <rolling_friction value=".1"/>
     </contact>
@@ -18,7 +18,7 @@
     <visual>
       <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
       <geometry>
-        <box size="0.55 0.55 0.05"/>
+        <box size="0.35 0.35 0.05"/>
       </geometry>
       <material name="blockmat">
         <color rgba="0.1 0.7 0.1 0.8"/>
@@ -27,7 +27,7 @@
     <collision>
       <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
       <geometry>
-        <box size="0.55 0.55 0.05"/>
+        <box size="0.35 0.35 0.05"/>
       </geometry>
     </collision>
   </link>
