@@ -333,7 +333,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_ada
     mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
                                    name=prior_name)
 
-    pm = prior.NNPrior.from_data(mw, checkpoint=None, train_epochs=600)
+    pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=600)
     # pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
 
@@ -383,29 +383,24 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_ada
     Q = torch.diag(torch.tensor([10, 10, 0, 0.01], dtype=torch.double))
     R = 0.01
     # tune this so that we figure out to make u-turns
-    horizon = 35
-    lambda_ = 1e-2
-    num_samples = 10000
-
-    m = torch.tensor([0, 0.5, 0], dtype=torch.double, device=d)
-    sigma = torch.diag(torch.ones(env.nu, dtype=torch.double, device=d) * 0.5)
+    mpc_opts = {
+        'num_samples': 10000,
+        'noise_sigma': torch.diag(torch.ones(env.nu, dtype=torch.double, device=d) * 0.5),
+        'noise_mu': torch.tensor([0, 0.5, 0], dtype=torch.double, device=d),
+        'lambda_': 1e-2,
+        'horizon': 35,
+        'u_init': torch.tensor([0, 0.5, 0], dtype=torch.double, device=d),
+    }
     if online_adapt:
         ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
                                             compare_to_goal=env.compare_to_goal,
                                             constrain_state=constrain_state,
-                                            device=d,
-                                            mpc_opts={'num_samples': num_samples,
-                                                      'noise_sigma': sigma,
-                                                      'noise_mu': m,
-                                                      'lambda_': lambda_,
-                                                      'horizon': horizon,
-                                                      'u_init': m})
+                                            device=d, mpc_opts=mpc_opts)
     else:
-        ctrl = global_controller.GlobalMPPIController(mw, untransformed_config, Q=Q, R=R,
-                                                      u_min=u_min, u_max=u_max,
-                                                      num_samples=num_samples,
-                                                      horizon=horizon, device=d, lambda_=lambda_, noise_mu=m,
-                                                      noise_sigma=sigma, compare_to_goal=env.compare_to_goal)
+        ctrl = global_controller.GlobalMPPIController(mw, untransformed_config, Q=Q, R=R, u_min=u_min, u_max=u_max,
+                                                      compare_to_goal=env.compare_to_goal,
+                                                      device=d,
+                                                      mpc_opts=mpc_opts)
 
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else pm.__class__.__name__
     # expensive evaluation

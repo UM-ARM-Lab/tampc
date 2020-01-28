@@ -66,7 +66,7 @@ class GlobalLQRController(Controller):
 
 
 class QRCostOptimalController(Controller):
-    def __init__(self, config, Q=1, R=1, compare_to_goal=torch.sub, u_min=None, u_max=None, device='cpu'):
+    def __init__(self, dynamics, config, Q=1, R=1, compare_to_goal=torch.sub, u_min=None, u_max=None, device='cpu'):
         super().__init__(compare_to_goal)
 
         self.nu = config.nu
@@ -74,6 +74,7 @@ class QRCostOptimalController(Controller):
         self.dtype = torch.double
         self.d = device
         self.u_min, self.u_max = tensor_utils.ensure_tensor(self.d, self.dtype, *math_utils.get_bounds(u_min, u_max))
+        self.dynamics = dynamics
 
         if torch.is_tensor(Q):
             self.Q = Q.to(device=self.d)
@@ -104,22 +105,24 @@ class QRCostOptimalController(Controller):
 
 
 class GlobalCEMController(QRCostOptimalController):
-    def __init__(self, dynamics, ds, Q=1, R=1, u_min=None, u_max=None, compare_to_goal=torch.sub, device='cpu',
-                 **kwargs):
-        super().__init__(ds, Q=Q, R=R, compare_to_goal=compare_to_goal, u_min=u_min, u_max=u_max, device=device)
-        self.mpc = cem.CEM(dynamics, self._running_cost, self.nx, self.nu, u_min=self.u_min, u_max=self.u_max,
-                           device=self.d, **kwargs)
+    def __init__(self, *args, mpc_opts=None, **kwargs):
+        if mpc_opts is None:
+            mpc_opts = {}
+        super().__init__(*args, **kwargs)
+        self.mpc = cem.CEM(self.dynamics, self._running_cost, self.nx, self.nu, u_min=self.u_min, u_max=self.u_max,
+                           device=self.d, **mpc_opts)
 
     def _mpc_command(self, obs):
         return self.mpc.command(obs)
 
 
 class GlobalMPPIController(QRCostOptimalController):
-    def __init__(self, dynamics, ds, Q=1, R=1, u_min=None, u_max=None, use_bounds=True, compare_to_goal=torch.sub, device='cpu',
-                 **kwargs):
-        super().__init__(ds, Q=Q, R=R, compare_to_goal=compare_to_goal, u_min=u_min, u_max=u_max, device=device)
+    def __init__(self, *args, use_bounds=True, mpc_opts=None, **kwargs):
+        if mpc_opts is None:
+            mpc_opts = {}
+        super().__init__(*args, **kwargs)
         # if not given we give it a default value
-        noise_sigma = kwargs.pop('noise_sigma', None)
+        noise_sigma = mpc_opts.pop('noise_sigma', None)
         if noise_sigma is None:
             if torch.is_tensor(self.u_max):
                 noise_sigma = torch.diag(self.u_max)
@@ -132,8 +135,8 @@ class GlobalMPPIController(QRCostOptimalController):
             u_min, u_max = self.u_min, self.u_max
         else:
             u_min, u_max = None, None
-        self.mpc = mppi.MPPI(dynamics, self._running_cost, self.nx, u_min=u_min, u_max=u_max,
-                             noise_sigma=noise_sigma, device=self.d, **kwargs)
+        self.mpc = mppi.MPPI(self.dynamics, self._running_cost, self.nx, u_min=u_min, u_max=u_max,
+                             noise_sigma=noise_sigma, device=self.d, **mpc_opts)
 
     def _mpc_command(self, obs):
         return self.mpc.command(obs)
