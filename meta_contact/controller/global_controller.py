@@ -75,6 +75,8 @@ class QRCostOptimalController(Controller):
         self.d = device
         self.u_min, self.u_max = tensor_utils.ensure_tensor(self.d, self.dtype, *math_utils.get_bounds(u_min, u_max))
         self.dynamics = dynamics
+        self.prediction_error = []
+        self.prev_predicted_x = None
 
         if torch.is_tensor(Q):
             self.Q = Q.to(device=self.d)
@@ -96,11 +98,22 @@ class QRCostOptimalController(Controller):
     def _mpc_command(self, obs):
         pass
 
+    def reset(self):
+        logger.info(self.prediction_error)
+        self.prediction_error = []
+        self.prev_predicted_x = None
+
     def command(self, obs):
-        # use learn_mpc's Cross Entropy
+        if self.prev_predicted_x is not None:
+            diff = self.compare_to_goal(obs, self.prev_predicted_x)
+            cost = linalg.batch_quadratic_product(diff, self.Q)
+            self.prediction_error.append(cost)
+
         u = self._mpc_command(tensor_utils.ensure_tensor(self.d, self.dtype, obs))
         if self.u_max is not None:
             u = math_utils.clip(u, self.u_min, self.u_max)
+
+        self.prev_predicted_x = self.dynamics(obs, u)
         return u
 
 
@@ -139,6 +152,7 @@ class GlobalMPPIController(QRCostOptimalController):
                              noise_sigma=noise_sigma, device=self.d, **mpc_opts)
 
     def reset(self):
+        super(GlobalMPPIController, self).reset()
         self.mpc.reset()
 
     def _mpc_command(self, obs):
