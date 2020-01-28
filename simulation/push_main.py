@@ -438,6 +438,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
         tasks = [rand.seed() for _ in range(tasks)]
 
     total_costs = np.zeros((len(tasks), tries))
+    successes = np.zeros_like(total_costs)
     for t in range(len(tasks)):
         task_seed = tasks[t]
         # configure init and goal for task
@@ -456,6 +457,8 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
             logger.info("task %d try %d run cost %f", task_seed, try_seed, sum(sim.last_run_cost))
             total_costs[t, i] = sum(sim.last_run_cost)
             task_costs[:len(sim.last_run_cost), i] = sim.last_run_cost
+            if task_costs[-1,i] == 0:
+                successes[t,i] = 1
 
         for step, costs in enumerate(task_costs):
             writer.add_histogram('ctrl_eval/task_{}'.format(task_seed), costs, step)
@@ -471,6 +474,9 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     logger.info(total_costs)
     logger.info("total cost: %f std %f", mean_cost, np.std(total_costs))
     writer.add_scalar('ctrl_eval/total', mean_cost, 0)
+    for t in range(len(tasks)):
+        logger.info("task %d success %d/%d", tasks[t], np.sum(successes[t]), tries)
+    logger.info("total success: %d/%d", np.sum(successes), successes.size)
     return total_costs
 
 
