@@ -435,6 +435,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
         tasks = [rand.seed() for _ in range(tasks)]
 
     total_costs = np.zeros((len(tasks), tries))
+    lowest_costs = np.zeros_like(total_costs)
     successes = np.zeros_like(total_costs)
     for t in range(len(tasks)):
         task_seed = tasks[t]
@@ -453,6 +454,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
             sim.run(try_seed)
             logger.info("task %d try %d run cost %f", task_seed, try_seed, sum(sim.last_run_cost))
             total_costs[t, i] = sum(sim.last_run_cost)
+            lowest_costs[t, i] = min(sim.last_run_cost)
             task_costs[:len(sim.last_run_cost), i] = sim.last_run_cost
             if task_costs[-1, i] == 0:
                 successes[t, i] = 1
@@ -468,10 +470,12 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
         env.clear_debug_trajectories()
 
     # summarize stats
-    mean_cost = np.mean(total_costs)
     logger.info(total_costs)
+    mean_cost = np.mean(total_costs)
     logger.info("total cost: %f std %f", mean_cost, np.std(total_costs))
-    writer.add_scalar('ctrl_eval/total', mean_cost, 0)
+
+    logger.info("lowest costs per task and try")
+    logger.info(lowest_costs)
     for t in range(len(tasks)):
         logger.info("task %d success %d/%d", tasks[t], np.sum(successes[t]), tries)
     logger.info("total success: %d/%d", np.sum(successes), successes.size)
