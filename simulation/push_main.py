@@ -456,6 +456,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
             task_costs[:len(sim.last_run_cost), i] = sim.last_run_cost
             if task_costs[-1, i] == 0:
                 successes[t, i] = 1
+            ctrl.reset()
 
         for step, costs in enumerate(task_costs):
             writer.add_histogram('ctrl_eval/task_{}'.format(task_seed), costs, step)

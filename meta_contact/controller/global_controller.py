@@ -138,5 +138,8 @@ class GlobalMPPIController(QRCostOptimalController):
         self.mpc = mppi.MPPI(self.dynamics, self._running_cost, self.nx, u_min=u_min, u_max=u_max,
                              noise_sigma=noise_sigma, device=self.d, **mpc_opts)
 
+    def reset(self):
+        self.mpc.reset()
+
     def _mpc_command(self, obs):
         return self.mpc.command(obs)

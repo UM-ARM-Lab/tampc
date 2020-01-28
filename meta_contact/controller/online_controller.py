@@ -169,6 +169,10 @@ class OnlineMPPI(OnlineMPC):
         self.mpc = mppi.MPPI(self.apply_dynamics, self._get_running_cost, self.nx, noise_sigma=noise_sigma,
                              u_min=u_min, u_max=u_max, device=self.d, **mpc_opts)
 
+    def reset(self):
+        super(OnlineMPPI, self).reset()
+        self.mpc.reset()
+
 
 class OnlineLQR(OnlineController):
     def __init__(self, *args, max_timestep=100, horizon=15, lqr_iter=1, u_noise=0.1, **kwargs):

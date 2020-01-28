@@ -16,6 +16,9 @@ class Controller(abc.ABC):
         self.goal = None
         self.compare_to_goal = compare_to_goal
 
+    def reset(self):
+        """Clear any controller state to be reused in another trial"""
+
     def get_goal(self):
         return self.goal
 
