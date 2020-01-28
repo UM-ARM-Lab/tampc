@@ -293,7 +293,7 @@ class UseTransform:
     COORDINATE_TRANSFORM = 1
 
 
-def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM):
+def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True):
     seed = 1
     plot_model_error = False
     test_model_rollouts = True
@@ -389,21 +389,23 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM):
 
     m = torch.tensor([0, 0.5, 0], dtype=torch.double, device=d)
     sigma = torch.diag(torch.ones(env.nu, dtype=torch.double, device=d) * 0.5)
-    ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
-                                        compare_to_goal=env.compare_to_goal,
-                                        constrain_state=constrain_state,
-                                        device=d,
-                                        mpc_opts={'num_samples': num_samples,
-                                                  'noise_sigma': sigma,
-                                                  'noise_mu': m,
-                                                  'lambda_': lambda_,
-                                                  'horizon': horizon,
-                                                  'u_init': m})
-    # ctrl = global_controller.GlobalMPPIController(mw, untransformed_config, Q=Q, R=R,
-    #                                               u_min=u_min, u_max=u_max,
-    #                                               num_samples=num_samples,
-    #                                               horizon=horizon, device=d, lambda_=lambda_, noise_mu=m,
-    #                                               noise_sigma=sigma, compare_to_goal=env.compare_to_goal)
+    if online_adapt:
+        ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
+                                            compare_to_goal=env.compare_to_goal,
+                                            constrain_state=constrain_state,
+                                            device=d,
+                                            mpc_opts={'num_samples': num_samples,
+                                                      'noise_sigma': sigma,
+                                                      'noise_mu': m,
+                                                      'lambda_': lambda_,
+                                                      'horizon': horizon,
+                                                      'u_init': m})
+    else:
+        ctrl = global_controller.GlobalMPPIController(mw, untransformed_config, Q=Q, R=R,
+                                                      u_min=u_min, u_max=u_max,
+                                                      num_samples=num_samples,
+                                                      horizon=horizon, device=d, lambda_=lambda_, noise_mu=m,
+                                                      noise_sigma=sigma, compare_to_goal=env.compare_to_goal)
 
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else pm.__class__.__name__
     # expensive evaluation
@@ -457,8 +459,8 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
             logger.info("task %d try %d run cost %f", task_seed, try_seed, sum(sim.last_run_cost))
             total_costs[t, i] = sum(sim.last_run_cost)
             task_costs[:len(sim.last_run_cost), i] = sim.last_run_cost
-            if task_costs[-1,i] == 0:
-                successes[t,i] = 1
+            if task_costs[-1, i] == 0:
+                successes[t, i] = 1
 
         for step, costs in enumerate(task_costs):
             writer.add_histogram('ctrl_eval/task_{}'.format(task_seed), costs, step)
@@ -483,5 +485,5 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
     # test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM)
-    test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM)
+    test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
     # verify_coordinate_transform()
