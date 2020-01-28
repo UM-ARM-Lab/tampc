@@ -7,6 +7,7 @@ import torch
 from arm_pytorch_utilities import load_data
 from arm_pytorch_utilities.model.common import LearnableParameterizedModel
 from arm_pytorch_utilities.model.mdn import MixtureDensityNetwork
+from arm_pytorch_utilities.make_data import datasource
 from meta_contact import cfg
 from tensorboardX import SummaryWriter
 
@@ -20,6 +21,10 @@ class ModelUser(abc.ABC):
         self.model = model
 
     @abc.abstractmethod
+    def compute_validation_loss(self, XUv, Yv, ds: datasource.FileDataSource):
+        """Compute the validation loss in not-preprocessed space (allows for comparison across preprocessors)"""
+
+    @abc.abstractmethod
     def compute_loss(self, XU, Y):
         """Compute the training loss on this batch"""
 
@@ -29,6 +34,9 @@ class ModelUser(abc.ABC):
 
 
 class MDNUser(ModelUser):
+    def compute_validation_loss(self, XUv, Yv, ds):
+        return self.compute_loss(XUv, Yv)
+
     def compute_loss(self, XU, Y):
         pi, normal = self.model(XU)
         # compute losses
@@ -43,10 +51,21 @@ class MDNUser(ModelUser):
 
 
 class DeterministicUser(ModelUser):
-    def compute_loss(self, XU, Y):
-        Yhat = self.model(XU)
+    def compute_validation_loss(self, XUv, Yv, ds):
+        if not ds.preprocessor:
+            return self.compute_loss(XUv, Yv)
+        Yhat = self.sample(XUv)
+        XUv_orig, Yv_orig, _ = ds.unprocessed_validation_set()
+        # compare in original space
+        Yhat_orig = ds.preprocessor.invert_transform(Yhat, XUv_orig)
+        return self._compute_error(Yv_orig, Yhat_orig)
+
+    def _compute_error(self, Y, Yhat):
         E = (Y - Yhat).norm(2, dim=1)
         return E
+
+    def compute_loss(self, XU, Y):
+        return self._compute_error(Y, self.model(XU))
 
     def sample(self, xu):
         y = self.model(xu)
@@ -228,7 +247,7 @@ class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
 
                 # validation and other analysis
                 with torch.no_grad():
-                    vloss = self.user.compute_loss(self.XUv, self.Yv)
+                    vloss = self.user.compute_validation_loss(self.XUv, self.Yv, self.ds)
                     self._accumulate_stats(loss.mean(), vloss.mean())
 
                 loss.mean().backward()
