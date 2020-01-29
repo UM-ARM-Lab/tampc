@@ -104,16 +104,17 @@ class QRCostOptimalController(Controller):
         self.prev_predicted_x = None
 
     def command(self, obs):
+        obs = tensor_utils.ensure_tensor(self.d, self.dtype, obs)
         if self.prev_predicted_x is not None:
             diff = self.compare_to_goal(obs, self.prev_predicted_x)
             cost = linalg.batch_quadratic_product(diff, self.Q)
             self.prediction_error.append(cost)
 
-        u = self._mpc_command(tensor_utils.ensure_tensor(self.d, self.dtype, obs))
+        u = self._mpc_command(obs)
         if self.u_max is not None:
             u = math_utils.clip(u, self.u_min, self.u_max)
 
-        self.prev_predicted_x = self.dynamics(obs, u)
+        self.prev_predicted_x = self.dynamics(obs.view(1,-1), u.view(1,-1))
         return u
 
 
