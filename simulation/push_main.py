@@ -440,6 +440,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     lowest_costs = np.zeros_like(total_costs)
     successes = np.zeros_like(total_costs)
     for t in range(len(tasks)):
+        env.draw_user_text('success {}/{}'.format(int(np.sum(successes[t])), tries), 3)
         task_seed = tasks[t]
         # configure init and goal for task
         init_block_pos, init_block_yaw, init_pusher = random_touching_start(env)
