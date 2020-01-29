@@ -1,6 +1,7 @@
 import copy
 import logging
 import math
+import typing
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -22,7 +23,7 @@ from meta_contact.controller import global_controller
 from meta_contact.env import block_push
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG,
+logging.basicConfig(level=logging.INFO,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
                     datefmt='%m-%d %H:%M:%S')
 logging.getLogger('matplotlib.font_manager').disabled = True
@@ -404,7 +405,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_ada
 
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else pm.__class__.__name__
     # expensive evaluation
-    evaluate_controller(env, ctrl, name, translation=(4, 4))
+    evaluate_controller(env, ctrl, name, translation=(4, 4), tasks=[885440])
     env.close()
 
     # sim = block_push.InteractivePush(env, ctrl, num_frames=150, plot=True, save=False, stop_when_done=True)
@@ -415,7 +416,8 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_ada
     # plt.show()
 
 
-def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controller.Controller, name, tasks=10, tries=10,
+def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controller.Controller, name,
+                        tasks: typing.Union[list, int] = 10, tries=10,
                         start_seed=0,
                         translation=(0, 0)):
     """Fixed set of benchmark tasks to do control over, with the total reward for each task collected and reported"""
@@ -470,20 +472,25 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
         env.clear_debug_trajectories()
 
     # summarize stats
+    logger.info("accumulated cost")
     logger.info(total_costs)
-    mean_cost = np.mean(total_costs)
-    logger.info("total cost: %f std %f", mean_cost, np.std(total_costs))
-
     logger.info("lowest costs per task and try")
     logger.info(lowest_costs)
+
+    for t in range(len(tasks)):
+        logger.info("task %d total cost %f (%f)", tasks[t], np.mean(total_costs[t]), np.std(total_costs[t]))
+    for t in range(len(tasks)):
+        logger.info("task %d lowest cost %f (%f)", tasks[t], np.mean(lowest_costs[t]), np.std(lowest_costs[t]))
     for t in range(len(tasks)):
         logger.info("task %d success %d/%d", tasks[t], np.sum(successes[t]), tries)
+    logger.info("total cost: %f (%f)", np.mean(total_costs), np.std(total_costs))
+    logger.info("lowest cost: %f (%f)", np.mean(lowest_costs), np.std(lowest_costs))
     logger.info("total success: %d/%d", np.sum(successes), successes.size)
     return total_costs
 
 
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
-    # test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM)
     test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
+    test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=False)
     # verify_coordinate_transform()
