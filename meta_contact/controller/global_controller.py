@@ -77,6 +77,7 @@ class QRCostOptimalController(Controller):
         self.dynamics = dynamics
         self.prediction_error = []
         self.prev_predicted_x = None
+        self.prev_x = None
 
         if torch.is_tensor(Q):
             self.Q = Q.to(device=self.d)
@@ -100,21 +101,25 @@ class QRCostOptimalController(Controller):
 
     def reset(self):
         logger.info(self.prediction_error)
+        logger.info("median relative error %f", np.median(self.prediction_error))
         self.prediction_error = []
         self.prev_predicted_x = None
 
     def command(self, obs):
         obs = tensor_utils.ensure_tensor(self.d, self.dtype, obs)
         if self.prev_predicted_x is not None:
-            diff = self.compare_to_goal(obs, self.prev_predicted_x)
-            cost = linalg.batch_quadratic_product(diff, self.Q)
-            self.prediction_error.append(cost)
+            diff_predicted = self.compare_to_goal(obs, self.prev_predicted_x)
+            diff_actual = self.compare_to_goal(obs, self.prev_x)
+            relative_residual = diff_predicted / diff_actual
+            # ignore along since it can be 0
+            self.prediction_error.append(relative_residual[:,:3].abs().mean().item())
 
         u = self._mpc_command(obs)
         if self.u_max is not None:
             u = math_utils.clip(u, self.u_min, self.u_max)
 
         self.prev_predicted_x = self.dynamics(obs.view(1,-1), u.view(1,-1))
+        self.prev_x = obs
         return u
 
 
