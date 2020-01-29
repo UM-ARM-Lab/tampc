@@ -478,11 +478,8 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     logger.info(lowest_costs)
 
     for t in range(len(tasks)):
-        logger.info("task %d total cost %f (%f)", tasks[t], np.mean(total_costs[t]), np.std(total_costs[t]))
-    for t in range(len(tasks)):
-        logger.info("task %d lowest cost %f (%f)", tasks[t], np.mean(lowest_costs[t]), np.std(lowest_costs[t]))
-    for t in range(len(tasks)):
-        logger.info("task %d success %d/%d", tasks[t], np.sum(successes[t]), tries)
+        logger.info("task %d success %d/%d t cost %.2f (%.2f) l cost %.2f (%.2f)", tasks[t], np.sum(successes[t]),
+                    tries, np.mean(total_costs[t]), np.std(total_costs[t]), np.mean(lowest_costs), np.std(lowest_costs))
     logger.info("total cost: %f (%f)", np.mean(total_costs), np.std(total_costs))
     logger.info("lowest cost: %f (%f)", np.mean(lowest_costs), np.std(lowest_costs))
     logger.info("total success: %d/%d", np.sum(successes), successes.size)
