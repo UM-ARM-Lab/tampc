@@ -431,10 +431,11 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     writer = SummaryWriter(flush_secs=20, comment=name)
 
     seed = rand.seed(start_seed)
-    logger.info("evaluation seed %d tasks %d tries %d", seed, tasks, tries)
 
     if type(tasks) is int:
         tasks = [rand.seed() for _ in range(tasks)]
+
+    logger.info("evaluation seed %d tasks %s tries %d", seed, tasks, tries)
 
     total_costs = np.zeros((len(tasks), tries))
     lowest_costs = np.zeros_like(total_costs)
@@ -442,6 +443,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     for t in range(len(tasks)):
         env.draw_user_text('success {}/{}'.format(int(np.sum(successes[t])), tries), 3)
         task_seed = tasks[t]
+        rand.seed(task_seed)
         # configure init and goal for task
         init_block_pos, init_block_yaw, init_pusher = random_touching_start(env)
         init_block_pos = np.add(init_block_pos, translation)
