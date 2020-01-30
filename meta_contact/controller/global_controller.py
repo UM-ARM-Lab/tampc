@@ -23,12 +23,8 @@ class GlobalLQRController(Controller):
         self.nx = ds.config.nx
         self.u_min, self.u_max = math_utils.get_bounds(u_min, u_max)
 
-        if np.isscalar(Q):
-            self.Q = np.eye(self.nx) * Q
-        else:
-            self.Q = Q
-            assert self.Q.shape[0] == self.nx
-        self.R = np.diag([R for _ in range(self.nu)])
+        self.Q = tensor_utils.ensure_diagonal(Q, self.nx).cpu().numpy()
+        self.R = tensor_utils.ensure_diagonal(R, self.nu).cpu().numpy()
 
         self.A, self.B, self.K = None, None, None
         self.update_model(ds)
@@ -79,16 +75,8 @@ class QRCostOptimalController(Controller):
         self.prev_predicted_x = None
         self.prev_x = None
 
-        if torch.is_tensor(Q):
-            self.Q = Q.to(device=self.d)
-            assert self.Q.shape[0] == self.nx
-        else:
-            self.Q = np.eye(self.nx, dtype=self.dtype, device=self.d) * Q
-        if torch.is_tensor(R):
-            self.R = R.to(device=self.d)
-            assert self.R.shape[0] == self.nu
-        else:
-            self.R = torch.eye(self.nu, dtype=self.dtype, device=self.d) * R
+        self.Q = tensor_utils.ensure_diagonal(Q, self.nx).to(device=self.d, dtype=self.dtype)
+        self.R = tensor_utils.ensure_diagonal(R, self.nu).to(device=self.d, dtype=self.dtype)
 
     def _running_cost(self, state, action):
         diff = self.compare_to_goal(state, torch.tensor(self.goal, dtype=state.dtype, device=state.device))
@@ -113,13 +101,13 @@ class QRCostOptimalController(Controller):
             diff_actual = self.compare_to_goal(obs, self.prev_x)
             relative_residual = diff_predicted / diff_actual
             # ignore along since it can be 0
-            self.prediction_error.append(relative_residual[:,:3].abs())
+            self.prediction_error.append(relative_residual[:, :3].abs())
 
         u = self._mpc_command(obs)
         if self.u_max is not None:
             u = math_utils.clip(u, self.u_min, self.u_max)
 
-        self.prev_predicted_x = self.dynamics(obs.view(1,-1), u.view(1,-1))
+        self.prev_predicted_x = self.dynamics(obs.view(1, -1), u.view(1, -1))
         self.prev_x = obs
         return u
 

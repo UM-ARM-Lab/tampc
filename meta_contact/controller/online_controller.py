@@ -27,14 +27,8 @@ class OnlineController(Controller):
         self.dynamics = online_dynamics
 
         # Init objects
-        if np.isscalar(Q):
-            self.Q = np.eye(self.nx) * Q
-        else:
-            self.Q = Q
-            assert self.Q.shape[0] == self.nx
-
-        self.weight_u = np.ones(self.nu) * R
-        self.R = np.diag(self.weight_u)
+        self.Q = tensor_utils.ensure_diagonal(Q, self.nx).cpu().numpy()
+        self.R = tensor_utils.ensure_diagonal(R, self.nu).cpu().numpy()
         self.cost = cost.CostQROnline(self.goal, self.Q, self.R, self.compare_to_goal)
 
         self.prevx = None
@@ -106,8 +100,8 @@ class OnlineMPC(OnlineController):
         self.dtype = dtype
         self.d = device
         # replace np cost with pytorch version of cost for convenience
-        self.Q = torch.from_numpy(self.Q).to(dtype=self.dtype, device=self.d)
-        self.R = torch.from_numpy(self.R).to(dtype=self.dtype, device=self.d)
+        self.Q = tensor_utils.ensure_diagonal(self.Q, self.nx).to(dtype=self.dtype, device=self.d)
+        self.R = tensor_utils.ensure_diagonal(self.R, self.nu).to(dtype=self.dtype, device=self.d)
         self.cost = cost.CostQROnlineTorch(self.goal, self.Q, self.R, self.compare_to_goal)
         # pytorch version of bounds
         self.u_min_t, self.u_max_t = tensor_utils.ensure_tensor(self.d, self.dtype, self.u_min, self.u_max)
