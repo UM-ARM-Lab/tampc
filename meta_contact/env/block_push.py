@@ -784,7 +784,7 @@ class InteractivePush(simulation.Simulation):
         for i in range(self.traj.shape[1]):
             self.axes[i].plot(self.traj[:, i])
         self.axes[self.traj.shape[1]].plot(self.contactForce)
-        self.axes[self.traj.shape[1] + 1].step(self._compress_observation(self.time), self.contactCount)
+        self.axes[self.traj.shape[1] + 1].step(self.time, self.contactCount)
         self.fig.canvas.draw()
         for i in range(self.u.shape[1]):
             self.au[i].plot(self.u[:, i])
