@@ -322,10 +322,12 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
             invariant_tsf.learn_model(training_epochs, 5)
 
         # wrap the transform as a data preprocessor
-        preprocessor = invariant.InvariantPreprocessor(invariant_tsf)
+        preprocessor = preprocess.Compose(
+            [invariant.InvariantTransformer(invariant_tsf),
+             preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
     else:
         # use minmax scaling if we're not using an invariant transform (baseline)
-        preprocessor = preprocess.PytorchPreprocessing(preprocess.MinMaxScaler())
+        preprocessor = preprocess.PytorchTransformer(preprocess.MinMaxScaler())
     # update the datasource to use transformed data
     ds.update_preprocessor(preprocessor)
 
@@ -404,7 +406,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
 
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else pm.__class__.__name__
     # expensive evaluation
-    evaluate_controller(env, ctrl, name, translation=(4, 4), tasks=[885440])
+    evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440])
     env.close()
 
     # sim = block_push.InteractivePush(env, ctrl, num_frames=150, plot=True, save=False, stop_when_done=True)
@@ -491,6 +493,6 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
 
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
-    test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
-    test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=False)
+    # test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
+    test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=False, relearn_dynamics=True)
     # verify_coordinate_transform()

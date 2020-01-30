@@ -409,7 +409,7 @@ def evaluate_invariant(name='', trials=5, trial_length=50):
             invariant_tsf.learn_model(training_epochs, 5)
 
         # wrap the transform as a data preprocessor
-        preprocessor = invariant.InvariantPreprocessor(invariant_tsf)
+        preprocessor = invariant.InvariantTransformer(invariant_tsf)
         # update the datasource to use transformed data
         ds.update_preprocessor(preprocessor)
 

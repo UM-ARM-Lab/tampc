@@ -345,22 +345,18 @@ class NetworkInvariantTransform(DirectLinearDynamicsTransform):
         self.user.model.load_state_dict(saved_state_dict)
 
 
-class InvariantPreprocessor(preprocess.Preprocess):
+class InvariantTransformer(preprocess.Transformer):
     """
     Use an invariant transform to transform the data when needed, such that the dynamics model learned using
     the processed data source will be in the latent space.
     """
 
-    def __init__(self, tsf: InvariantTransform, minmax_scale=True, **kwargs):
+    def __init__(self, tsf: InvariantTransform):
         self.tsf = tsf
         self.tsf.freeze()
         self.model_input_dim = None
         self.model_output_dim = None
-        # do our own minmax scaling
-        self.minmax_scale = minmax_scale
-        self.scaler_y = preprocess.MinMaxScaler()
-        self.scaler_x = preprocess.MinMaxScaler()
-        super(InvariantPreprocessor, self).__init__(**kwargs)
+        super(InvariantTransformer, self).__init__()
 
     def update_data_config(self, config: load_data.DataConfig):
         if self.model_output_dim is None:
@@ -378,31 +374,25 @@ class InvariantPreprocessor(preprocess.Preprocess):
         else:
             config.predict_difference = True
 
-    def _transform_impl(self, XU, Y, labels):
+    def transform(self, XU, Y, labels=None):
         # these transforms potentially require x to transform y and back, so can't just use them separately
         X = XU[:, :self.tsf.config.nx]
         z_i = self.transform_x(XU)
         # no transformation needed our output is already zo
         z_o = Y if self.tsf.supports_only_direct_zi_to_dx() else self.tsf.dx_to_zo(X, Y)
-        if self.minmax_scale:
-            z_o = self.scaler_y.transform(z_o)
         return z_i, z_o, labels
 
     def transform_x(self, XU):
         X = XU[:, :self.tsf.config.nx]
         U = XU[:, self.tsf.config.nx:]
         z_i = self.tsf.xu_to_zi(X, U)
-        if self.minmax_scale:
-            z_i = self.scaler_x.transform(z_i)
         return z_i
 
     def transform_y(self, Y):
-        pass
+        raise RuntimeError("Should not attempt to transform Y directly; instead must be done with both X and Y")
 
     def invert_transform(self, Y, X=None):
         """Invert transformation on Y"""
-        if self.minmax_scale:
-            Y = self.scaler_y.inverse_transform(Y)
         # no transformation needed our output is already dx
         if self.tsf.supports_only_direct_zi_to_dx():
             return Y
@@ -415,6 +405,3 @@ class InvariantPreprocessor(preprocess.Preprocess):
         self.model_input_dim = zi.shape[1]
         zo = self.tsf.dx_to_zo(x, Y)
         self.model_output_dim = zo.shape[1]
-        if self.minmax_scale:
-            self.scaler_x.fit(zi)
-            self.scaler_y.fit(zo)
