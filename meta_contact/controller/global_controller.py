@@ -100,8 +100,9 @@ class QRCostOptimalController(Controller):
         pass
 
     def reset(self):
-        logger.info(self.prediction_error)
-        logger.info("median relative error %f", np.median(self.prediction_error))
+        error = torch.cat(self.prediction_error)
+        median, _ = error.median(0)
+        logger.info("median relative error %s", median)
         self.prediction_error = []
         self.prev_predicted_x = None
 
@@ -112,7 +113,7 @@ class QRCostOptimalController(Controller):
             diff_actual = self.compare_to_goal(obs, self.prev_x)
             relative_residual = diff_predicted / diff_actual
             # ignore along since it can be 0
-            self.prediction_error.append(relative_residual[:,:3].abs().mean().item())
+            self.prediction_error.append(relative_residual[:,:3].abs())
 
         u = self._mpc_command(obs)
         if self.u_max is not None:
