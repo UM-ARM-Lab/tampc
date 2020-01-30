@@ -99,7 +99,7 @@ class OnlineDynamicsModel(object):
             u = torch.from_numpy(pu).view(1, -1)
             y = torch.from_numpy(y).view(1, -1)
             xu = torch.cat((x, u), dim=1)
-            xu, y, _ = self.ds.preprocessor._transform_impl(xu.to(device=self.d), y.to(device=self.d), None)
+            xu, y, _ = self.ds.preprocessor.tsf.transform(xu.to(device=self.d), y.to(device=self.d))
             x = xu[:, :self.nx].view(-1)
             u = xu[:, self.nx:].view(-1)
             y = y.view(-1)
