@@ -49,7 +49,7 @@ class PendulumDataset(datasource.DataSource):
         XU = XU[:-1]  # make same size as Y
 
         self.N = XU.shape[0]
-        self.config.load_data_info(XU[:, :2], XU[:, 2:], Y, XU)
+        self.config.load_data_info(XU[:, :2], XU[:, 2:], Y)
 
         if self.preprocessor:
             self.preprocessor.tsf.fit(XU, Y)
@@ -82,14 +82,6 @@ def compare_to_goal_np(state, goal):
     dtheta_dt = state[:, 1] - goal[:, 1]
     diff = np.column_stack((dtheta.reshape(-1, 1), dtheta_dt.reshape(-1, 1)))
     return diff
-
-
-# def running_cost(state, action):
-#     theta = state[:, 0]
-#     theta_dt = state[:, 1]
-#     action = action[:, 0]
-#     cost = angle_normalize(theta) ** 2 + 0.1 * theta_dt ** 2 + 0.001 * action ** 2
-#     return cost
 
 
 def run(ctrl, env, retrain_dynamics, config, retrain_after_iter=50, iter=1000, render=True):
@@ -188,9 +180,9 @@ if __name__ == "__main__":
 
     fill_dataset(new_data)
     logger.info("bootstrapping finished")
-    # preprocessor = preprocess.PytorchTransformer(preprocess.MinMaxScaler())
-    # untransformed_config = ds.update_preprocessor(preprocessor)
-    untransformed_config = config
+    preprocessor = preprocess.PytorchTransformer(preprocess.AngleToCosSinRepresentation(0),
+                                                 preprocess.NullSingleTransformer())
+    untransformed_config = ds.update_preprocessor(preprocessor)
 
     # pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
@@ -198,7 +190,7 @@ if __name__ == "__main__":
         model.DeterministicUser(
             make.make_sequential_network(config, activation_factory=torch.nn.Tanh, h_units=(16, 16)).to(device=d)), ds)
     pm = prior.NNPrior.from_data(mw, train_epochs=0)
-    linearizable_dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, untransformed_config, sigreg=1e-10)
+    linearizable_dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, sigreg=1e-10)
 
     Nv = 1000
     statev = torch.cat(((torch.rand(Nv, 1, dtype=torch.double) - 0.5) * 2 * math.pi,
@@ -250,20 +242,13 @@ if __name__ == "__main__":
     # ctrl = online_controller.OnlineLQR(pm, ds, max_timestep=num_frames, Q=Q, R=R, horizon=20, lqr_iter=3,
     #                                    u_noise=0.1,
     #                                    init_gamma=0.1, u_max=ACTION_HIGH, compare_to_goal=compare_to_goal_np)
-    # ctrl = online_controller.OnlineCEM(linearizable_dynamics, untransformed_config, Q=Q, R=R, u_max=ACTION_HIGH,
-    #                                    compare_to_goal=compare_to_goal_np,
-    #                                    constrain_state=constrain_state, mpc_opts={'init_cov_diag': 10})  # use seed 7
-    mppi_opts = {'num_samples': N_SAMPLES, 'horizon': TIMESTEPS, 'lambda_': 1e-2,
+    mppi_opts = {'num_samples': N_SAMPLES, 'horizon': TIMESTEPS, 'lambda_': 1,
                  'noise_sigma': torch.eye(nu, dtype=dtype, device=d) * 1}
     ctrl = online_controller.OnlineMPPI(linearizable_dynamics, untransformed_config, Q=Q, R=R, u_max=ACTION_HIGH,
                                         compare_to_goal=compare_to_goal,
                                         constrain_state=constrain_state,
                                         device=d,
-                                        mpc_opts=mppi_opts)  # use seed 6
-    # ctrl = global_controller.GlobalLQRController(ds, u_max=ACTION_HIGH, Q=Q, R=R)
-    # ctrl = global_controller.GlobalCEMController(dynamics, untransformed_config, R=R, Q=Q,
-    #                                              compare_to_goal=compare_to_goal,
-    #                                              u_max=torch.tensor(ACTION_HIGH, dtype=dtype), init_cov_diag=10)
+                                        mpc_opts=mppi_opts)
     # ctrl = global_controller.GlobalMPPIController(dynamics, untransformed_config, R=R, Q=Q,
     #                                               compare_to_goal=compare_to_goal,
     #                                               u_max=torch.tensor(ACTION_HIGH, dtype=dtype),
@@ -315,7 +300,7 @@ if __name__ == "__main__":
     env.reset()
     if downward_start:
         env.env.state = [np.pi, 1]
-    total_reward, data = run(ctrl, env, train, config, iter=num_frames)
+    total_reward, data = run(ctrl, env, train, untransformed_config, iter=num_frames)
     logger.info("Total reward %f", total_reward)
     # save data (on successful trials could be used as prior for the next)
     if SAVE_TRIAL_DATA:
