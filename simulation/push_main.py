@@ -1,4 +1,3 @@
-import copy
 import logging
 import math
 import typing
@@ -303,7 +302,6 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
 
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds = block_push.PushDataSource(env, data_dir=get_data_dir(level), validation_ratio=0.1, config=config, device=d)
-    untransformed_config = copy.deepcopy(config)
 
     logger.info("initial random seed %d", rand.seed(seed))
 
@@ -329,7 +327,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
         # use minmax scaling if we're not using an invariant transform (baseline)
         preprocessor = preprocess.PytorchTransformer(preprocess.MinMaxScaler())
     # update the datasource to use transformed data
-    ds.update_preprocessor(preprocessor)
+    untransformed_config = ds.update_preprocessor(preprocessor)
 
     prior_name = '{}_prior'.format(transform_names[use_tsf])
 
@@ -381,7 +379,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
         plt.show()
 
     u_min, u_max = env.get_control_bounds()
-    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, untransformed_config, sigreg=1e-10)
+    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, sigreg=1e-10)
     Q = torch.diag(torch.tensor([10, 10, 0, 0.01], dtype=torch.double))
     R = 0.01
     # tune this so that we figure out to make u-turns

@@ -153,7 +153,7 @@ class DynamicsModel(abc.ABC):
     def __init__(self, ds, use_np=False):
         self.ds = ds
         # TODO check correctness of advance state function when we have have a transform (data is not xux' or xudx)
-        self.advance = advance_state(ds.config, use_np=use_np)
+        self.advance = advance_state(ds.original_config(), use_np=use_np)
 
     def predict(self, xu, already_transformed=False):
         """

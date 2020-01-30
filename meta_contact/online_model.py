@@ -21,14 +21,13 @@ class OnlineDynamicsModel(object):
     TODO change all API to take tensors as input and keep internal state as tensors
     """
 
-    def __init__(self, gamma, online_prior: prior.OnlineDynamicsPrior, ds, untransformed_config, N=1, sigreg=1e-5):
+    def __init__(self, gamma, online_prior: prior.OnlineDynamicsPrior, ds, N=1, sigreg=1e-5):
         self.gamma = gamma
         self.prior = online_prior
         self.sigreg = sigreg  # Covariance regularization (adds sigreg*eye(N))
         sigma, mu = prior.gaussian_params_from_datasource(ds)
         self.ds = ds
-        self.untransformed_config = untransformed_config
-        self.advance = model.advance_state(untransformed_config, use_np=False)
+        self.advance = model.advance_state(ds.original_config(), use_np=False)
 
         self.nx = ds.config.nx
         self.nu = ds.config.nu
@@ -92,7 +91,7 @@ class OnlineDynamicsModel(object):
     def update(self, px, pu, cx):
         """ Perform a moving average update on the current dynamics """
         # our internal dynamics could be on dx or x', so convert x' to whatever our model works with
-        y = cx - px if self.untransformed_config.predict_difference else cx
+        y = cx - px if self.ds.original_config().predict_difference else cx
         # convert xux to transformed coordinates
         if self.ds.preprocessor:
             x = torch.from_numpy(px).view(1, -1)
