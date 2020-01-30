@@ -7,6 +7,7 @@ import os
 import scipy.io
 from gym import wrappers, logger as gym_log
 from arm_pytorch_utilities import rand, load_data, math_utils
+from arm_pytorch_utilities import preprocess
 
 from meta_contact.controller import global_controller
 from meta_contact.controller import online_controller
@@ -25,14 +26,14 @@ logging.basicConfig(level=logging.INFO,
 
 
 class PendulumDataset(datasource.DataSource):
-    def __init__(self, data, preprocessor=None, config=load_data.DataConfig(), **kwargs):
-
-        super().__init__(**kwargs)
+    def __init__(self, data, **kwargs):
 
         self.data = data
-        self.preprocessor = preprocessor
-        self.config = config
-        self.make_data()
+        self._val_unprocessed = None
+        super().__init__(**kwargs)
+
+    def unprocessed_validation_set(self):
+        return self._val_unprocessed
 
     def make_data(self):
         if self.data is None:
@@ -50,10 +51,11 @@ class PendulumDataset(datasource.DataSource):
         self.config.load_data_info(XU[:, :2], XU[:, 2:], Y, XU)
 
         if self.preprocessor:
-            self.preprocessor._fit_impl(XU, Y, None)
+            self.preprocessor.tsf.fit(XU, Y)
+            self.preprocessor.update_data_config(self.config)
+            self._val_unprocessed = XU, Y, None
             # apply
-            XU = self.preprocessor.transform_x(XU)
-            Y = self.preprocessor.transform_y(Y)
+            XU, Y, _ = self.preprocessor.tsf.transform(XU, Y)
 
         self._train = XU, Y, None
         self._val = self._train
@@ -97,7 +99,7 @@ def run(ctrl, env, retrain_dynamics, config, retrain_after_iter=50, iter=1000, r
         command_start = time.perf_counter()
         action = ctrl.command(np.array(state))
         if torch.is_tensor(action):
-            action = action.numpy()
+            action = action.cpu().numpy()
         elapsed = time.perf_counter() - command_start
         s, r, _, _ = env.step(action)
         total_reward += r
@@ -124,7 +126,7 @@ if __name__ == "__main__":
     SAVE_TRIAL_DATA = False
     num_frames = 500
 
-    d = "cpu"
+    d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     dtype = torch.double
 
     seed = 6
@@ -139,13 +141,13 @@ if __name__ == "__main__":
     nx = 2
     nu = 1
 
-    Q = torch.tensor([[1, 0], [0, 0.1]], dtype=dtype)
+    Q = torch.tensor([[1, 0], [0, 0.1]], dtype=dtype, device=d)
     R = 0.001
 
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True)
 
-    preprocessor = None
-    ds = PendulumDataset(None, preprocessor=preprocessor, config=config)
+    # preprocessor = None
+    ds = PendulumDataset(None, config=config)
 
 
     def fill_dataset(new_data):
@@ -156,6 +158,7 @@ if __name__ == "__main__":
             new_data = torch.from_numpy(new_data)
         # clamp actions
         new_data[:, -1] = torch.clamp(new_data[:, -1], ACTION_LOW, ACTION_HIGH)
+        new_data = new_data.to(device=d)
         # append data to whole dataset
         if ds.data is None:
             ds.data = new_data
@@ -184,18 +187,21 @@ if __name__ == "__main__":
 
     fill_dataset(new_data)
     logger.info("bootstrapping finished")
+    # preprocessor = preprocess.PytorchTransformer(preprocess.MinMaxScaler())
+    # untransformed_config = ds.update_preprocessor(preprocessor)
+    untransformed_config = config
 
     # pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
     mw = model.NetworkModelWrapper(
         model.DeterministicUser(
-            make.make_sequential_network(config, activation_factory=torch.nn.Tanh, h_units=(16, 16))), ds)
+            make.make_sequential_network(config, activation_factory=torch.nn.Tanh, h_units=(16, 16)).to(device=d)), ds)
     pm = prior.NNPrior.from_data(mw, train_epochs=0)
 
     Nv = 1000
     statev = torch.cat(((torch.rand(Nv, 1, dtype=torch.double) - 0.5) * 2 * math.pi,
-                        (torch.rand(Nv, 1, dtype=torch.double) - 0.5) * 16), dim=1)
-    actionv = (torch.rand(Nv, 1, dtype=torch.double) - 0.5) * (ACTION_HIGH - ACTION_LOW)
+                        (torch.rand(Nv, 1, dtype=torch.double) - 0.5) * 16), dim=1).to(device=d)
+    actionv = ((torch.rand(Nv, 1, dtype=torch.double) - 0.5) * (ACTION_HIGH - ACTION_LOW)).to(device=d)
 
 
     def dynamics(state, perturbed_action):
@@ -225,7 +231,7 @@ if __name__ == "__main__":
         u = perturbed_action
         u = torch.clamp(u, -2, 2)
 
-        newthdot = thdot + (-3 * g / (2 * l) * np.sin(th + np.pi) + 3. / (m * l ** 2) * u) * dt
+        newthdot = thdot + (-3 * g / (2 * l) * torch.sin(th + np.pi) + 3. / (m * l ** 2) * u) * dt
         newth = th + newthdot * dt
         newthdot = torch.clamp(newthdot, -8, 8)
 
@@ -244,15 +250,20 @@ if __name__ == "__main__":
     #                                    init_gamma=0.1, u_max=ACTION_HIGH, compare_to_goal=compare_to_goal_np)
     # ctrl = online_controller.OnlineCEM(pm, ds, Q=Q.numpy(), R=R, u_max=ACTION_HIGH, compare_to_goal=compare_to_goal_np,
     #                                    constrain_state=constrain_state, mpc_opts={'init_cov_diag': 10}) # use seed 7
-    ctrl = online_controller.OnlineMPPI(pm, ds, Q=Q.numpy(), R=R, u_max=ACTION_HIGH, compare_to_goal=compare_to_goal_np,
-                                        constrain_state=constrain_state,
-                                        mpc_opts={'noise_sigma': torch.eye(nu, dtype=dtype) * 5})  # use seed 6
+    mppi_opts = {'num_samples': N_SAMPLES, 'horizon': TIMESTEPS, 'lambda_': 1e-2,
+                 'noise_sigma': torch.eye(nu, dtype=dtype, device=d) * 1}
+    # ctrl = online_controller.OnlineMPPI(pm, ds, Q=Q.numpy(), R=R, u_max=ACTION_HIGH, compare_to_goal=compare_to_goal_np,
+    #                                     constrain_state=constrain_state,
+    #                                     mpc_opts=mppi_opts)  # use seed 6
     # ctrl = global_controller.GlobalLQRController(ds, u_max=ACTION_HIGH, Q=Q, R=R)
-    # ctrl = global_controller.GlobalCEMController(dynamics, ds, R=R, Q=Q, compare_to_goal=compare_to_goal,
+    # ctrl = global_controller.GlobalCEMController(dynamics, untransformed_config, R=R, Q=Q,
+    #                                              compare_to_goal=compare_to_goal,
     #                                              u_max=torch.tensor(ACTION_HIGH, dtype=dtype), init_cov_diag=10)
-    # ctrl = global_controller.GlobalMPPIController(dynamics, ds, R=R, Q=Q, compare_to_goal=compare_to_goal,
-    #                                               u_max=torch.tensor(ACTION_HIGH, dtype=dtype),
-    #                                               noise_sigma=torch.eye(nu, dtype=dtype) * 5)
+    ctrl = global_controller.GlobalMPPIController(dynamics, untransformed_config, R=R, Q=Q,
+                                                  compare_to_goal=compare_to_goal,
+                                                  u_max=torch.tensor(ACTION_HIGH, dtype=dtype),
+                                                  device=d,
+                                                  mpc_opts=mppi_opts)
 
     ctrl.set_goal(np.array([0, 0]))
 
