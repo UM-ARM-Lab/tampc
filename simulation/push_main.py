@@ -294,7 +294,7 @@ class UseTransform:
     COORDINATE_TRANSFORM = 1
 
 
-def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True):
+def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False, online_adapt=True):
     seed = 1
     plot_model_error = False
     test_model_rollouts = True
@@ -334,7 +334,8 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_ada
     mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
                                    name=prior_name)
 
-    pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=600)
+    pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(),
+                                 train_epochs=600)
     # pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
 
@@ -352,12 +353,10 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_ada
         # check sign of the last states
         x = x_top[N - 1]
         assert x[0] > 0
-        assert x[1] < 0  # y decreased from pushing above it
         assert x[2] < 0  # yaw decreased (rotated ccw)
         assert abs(x[3] - x_top[0, 3]) < 0.1  # along hasn't changed much
         x = x_bot[N - 1]
         assert x[0] > 0
-        assert x[1] > 0  # y increased from pushing below it
         assert x[2] > 0  # yaw increased (rotated cw)
         assert abs(x[3] - x_bot[0, 3]) < 0.1  # along hasn't changed much
 
@@ -441,7 +440,6 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     lowest_costs = np.zeros_like(total_costs)
     successes = np.zeros_like(total_costs)
     for t in range(len(tasks)):
-        env.draw_user_text('success {}/{}'.format(int(np.sum(successes[t])), tries), 4)
         task_seed = tasks[t]
         rand.seed(task_seed)
         # configure init and goal for task
@@ -457,6 +455,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
         for i in range(tries):
             try_seed = rand.seed()
             env.draw_user_text('try {}'.format(try_seed), 3)
+            env.draw_user_text('success {}/{}'.format(int(np.sum(successes[t])), tries), 4)
             sim.run(try_seed)
             logger.info("task %d try %d run cost %f", task_seed, try_seed, sum(sim.last_run_cost))
             total_costs[t, i] = sum(sim.last_run_cost)
