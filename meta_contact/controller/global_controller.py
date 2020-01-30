@@ -97,8 +97,8 @@ class QRCostOptimalController(Controller):
     def command(self, obs):
         obs = tensor_utils.ensure_tensor(self.d, self.dtype, obs)
         if self.prev_predicted_x is not None:
-            diff_predicted = self.compare_to_goal(obs, self.prev_predicted_x)
-            diff_actual = self.compare_to_goal(obs, self.prev_x)
+            diff_predicted = self.compare_to_goal(obs.view(1, -1), self.prev_predicted_x)
+            diff_actual = self.compare_to_goal(obs.view(1, -1), self.prev_x)
             relative_residual = diff_predicted / diff_actual
             # ignore along since it can be 0
             self.prediction_error.append(relative_residual[:, :3].abs())

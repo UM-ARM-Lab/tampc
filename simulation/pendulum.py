@@ -11,6 +11,7 @@ from arm_pytorch_utilities import preprocess
 
 from meta_contact.controller import global_controller
 from meta_contact.controller import online_controller
+from meta_contact import online_model
 from meta_contact import prior
 from meta_contact import model
 from meta_contact import cfg
@@ -197,6 +198,7 @@ if __name__ == "__main__":
         model.DeterministicUser(
             make.make_sequential_network(config, activation_factory=torch.nn.Tanh, h_units=(16, 16)).to(device=d)), ds)
     pm = prior.NNPrior.from_data(mw, train_epochs=0)
+    linearizable_dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, untransformed_config, sigreg=1e-10)
 
     Nv = 1000
     statev = torch.cat(((torch.rand(Nv, 1, dtype=torch.double) - 0.5) * 2 * math.pi,
@@ -245,25 +247,28 @@ if __name__ == "__main__":
         return state
 
 
-    # ctrl = online_controller.OnlineLQR(pm, ds, max_timestep=num_frames, Q=Q.numpy(), R=R, horizon=20, lqr_iter=3,
+    # ctrl = online_controller.OnlineLQR(pm, ds, max_timestep=num_frames, Q=Q, R=R, horizon=20, lqr_iter=3,
     #                                    u_noise=0.1,
     #                                    init_gamma=0.1, u_max=ACTION_HIGH, compare_to_goal=compare_to_goal_np)
-    # ctrl = online_controller.OnlineCEM(pm, ds, Q=Q.numpy(), R=R, u_max=ACTION_HIGH, compare_to_goal=compare_to_goal_np,
-    #                                    constrain_state=constrain_state, mpc_opts={'init_cov_diag': 10}) # use seed 7
+    # ctrl = online_controller.OnlineCEM(linearizable_dynamics, untransformed_config, Q=Q, R=R, u_max=ACTION_HIGH,
+    #                                    compare_to_goal=compare_to_goal_np,
+    #                                    constrain_state=constrain_state, mpc_opts={'init_cov_diag': 10})  # use seed 7
     mppi_opts = {'num_samples': N_SAMPLES, 'horizon': TIMESTEPS, 'lambda_': 1e-2,
                  'noise_sigma': torch.eye(nu, dtype=dtype, device=d) * 1}
-    # ctrl = online_controller.OnlineMPPI(pm, ds, Q=Q.numpy(), R=R, u_max=ACTION_HIGH, compare_to_goal=compare_to_goal_np,
-    #                                     constrain_state=constrain_state,
-    #                                     mpc_opts=mppi_opts)  # use seed 6
+    ctrl = online_controller.OnlineMPPI(linearizable_dynamics, untransformed_config, Q=Q, R=R, u_max=ACTION_HIGH,
+                                        compare_to_goal=compare_to_goal,
+                                        constrain_state=constrain_state,
+                                        device=d,
+                                        mpc_opts=mppi_opts)  # use seed 6
     # ctrl = global_controller.GlobalLQRController(ds, u_max=ACTION_HIGH, Q=Q, R=R)
     # ctrl = global_controller.GlobalCEMController(dynamics, untransformed_config, R=R, Q=Q,
     #                                              compare_to_goal=compare_to_goal,
     #                                              u_max=torch.tensor(ACTION_HIGH, dtype=dtype), init_cov_diag=10)
-    ctrl = global_controller.GlobalMPPIController(dynamics, untransformed_config, R=R, Q=Q,
-                                                  compare_to_goal=compare_to_goal,
-                                                  u_max=torch.tensor(ACTION_HIGH, dtype=dtype),
-                                                  device=d,
-                                                  mpc_opts=mppi_opts)
+    # ctrl = global_controller.GlobalMPPIController(dynamics, untransformed_config, R=R, Q=Q,
+    #                                               compare_to_goal=compare_to_goal,
+    #                                               u_max=torch.tensor(ACTION_HIGH, dtype=dtype),
+    #                                               device=d,
+    #                                               mpc_opts=mppi_opts)
 
     ctrl.set_goal(np.array([0, 0]))
 
