@@ -195,6 +195,82 @@ class WorldBodyFrameTransformForStickyEnv(HandDesignedCoordTransform):
         return z
 
 
+class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
+    """Parameterize the coordinate transform such that it has to learn something"""
+
+    @staticmethod
+    def supports_only_direct_zi_to_dx():
+        # converts z to dx in body frame, then needs to bring back to world frame
+        return False
+
+    def __init__(self, ds, device, model_opts=None, **kwargs):
+        if model_opts is None:
+            model_opts = {}
+        # z_o is dx, dy, dyaw in body frame and d_along
+        self.nzo = 4
+        super().__init__(ds, 1 + ds.config.nu, **kwargs)
+        self.name = 'param_coord_{}'.format(self.name)
+        # input is x, output is yaw
+        config = load_data.DataConfig()
+        config.nx = self.ds.config.nx
+        config.ny = 1
+        # no hidden units, directly select a sum of the inputs
+        self.yaw_selector = model.DeterministicUser(make.make_sequential_network(config, h_units=()).to(device=device))
+        # input to local model is z, output is zo
+        config = load_data.DataConfig()
+        config.nx = self.nz
+        config.ny = self.nzo * self.nz  # matrix output
+        self.linear_model_producer = model.DeterministicUser(
+            make.make_sequential_network(config, **model_opts).to(device=device))
+
+    def linear_dynamics(self, zi):
+        return self.linear_model_producer.sample(zi)
+
+    def xu_to_zi(self, state, action):
+        if len(state.shape) < 2:
+            state = state.reshape(1, -1)
+            action = action.reshape(1, -1)
+
+        # TODO make more general parameterized versions where we select which components to take
+        # (along, d_along, push magnitude)
+        z = torch.from_numpy(np.column_stack((state[:, -1], action)))
+        return z
+
+    def dx_to_zo(self, x, dx):
+        raise RuntimeError("Shouldn't have to convert from dx to zo")
+
+    def zo_to_dx(self, x, z_o):
+        if len(x.shape) == 1:
+            x = x.view(1, -1)
+            z_o = z_o.view(1, -1)
+
+        # choose which component of x to take as rotation (should select just theta)
+        # TODO nx x (N x nx)
+        yaw = self.yaw_selector.sample(x)
+
+        N = z_o.shape[0]
+        dx = torch.zeros((N, 4), dtype=z_o.dtype, device=z_o.device)
+        # convert (dx, dy) from body frame back to world frame
+        dx[:, :2] = math_utils.batch_rotate_wrt_origin(z_o[:, :2], yaw)
+        # second last element is dyaw, which also gets passed along directly
+        dx[:, 2] = z_o[:, 2]
+        # last element is d_along, which gets passed along directly
+        dx[:, 3] = z_o[:, 3]
+        return dx
+
+    def parameters(self):
+        # TODO check correctness
+        return list(self.yaw_selector.model.parameters()) + list(self.linear_model_producer.model.parameters())
+
+    def _model_state_dict(self):
+        d = {'yaw': self.yaw_selector.model.state_dict(), 'linear': self.linear_model_producer.model.state_dict()}
+        return d
+
+    def _load_model_state_dict(self, saved_state_dict):
+        self.yaw_selector.model.load_state_dict(saved_state_dict['yaw'])
+        self.linear_model_producer.model.load_state_dict(saved_state_dict['linear'])
+
+
 class WorldBodyFrameTransformForDirectPush(HandDesignedCoordTransform):
     def __init__(self, ds, **kwargs):
         # need along, d_along, push magnitude, and push direction; don't need block position or yaw

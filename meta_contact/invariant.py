@@ -97,6 +97,7 @@ class InvariantTransform(LearnableParameterizedModel):
         writer.add_scalar('cov_loss', (sum(batch_cov_loss) / B).item(), self.step)
 
     def _evaluate_metrics_on_whole_set(self, neighbourhood, tsf):
+        # TODO do evaluation in original space to allow for comparison across transforms
         with torch.no_grad():
             data_set = self.ds.validation_set() if neighbourhood is self.neighbourhood_validation else \
                 self.ds.training_set()
@@ -296,6 +297,55 @@ class InvariantTransform(LearnableParameterizedModel):
 
         self.save(last=True)
         self._evaluate_no_transform(writer)
+
+
+class LearnLinearDynamicsTransform(InvariantTransform):
+    """
+    Proposal #3 where we learn linear dynamics given zi instead of doing least squares
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    @abc.abstractmethod
+    def dx_to_zo(self, x, dx):
+        raise RuntimeError("Learning linear dynamics instead of doing least squares")
+
+    @abc.abstractmethod
+    def linear_dynamics(self, zi):
+        """
+        Produce linear dynamics matrix A such that z_o = A * z_i
+        :param zi: latent input space
+        :return: (nzo x nzi) A
+        """
+
+    def _evaluate_neighbour(self, X, U, Y, neighbourhood, i, tsf=TransformToUse.LATENT_SPACE):
+        neighbours, neighbour_weights, N = array_utils.extract_positive_weights(neighbourhood[i])
+
+        if N < self.config.ny + self.nz:
+            return None
+        x, u = X[neighbours], U[neighbours]
+        y = Y[neighbours]
+
+        assert tsf is TransformToUse.LATENT_SPACE
+        z = self.xu_to_zi(x, u)
+
+        if N < self.ds.config.ny + z.shape[1]:
+            return None
+
+        # fit linear model to latent state
+        # TODO consider using weights somehow
+        A = self.linear_dynamics(z)
+
+        zo = z @ A.t()
+        yhat = self.zo_to_dx(x, zo)
+
+        # mse loss
+        mse_loss = torch.norm(yhat - y, dim=1)
+        return torch.zeros_like(mse_loss), mse_loss
+
+    def _evaluate_no_transform(self, writer):
+        pass
 
 
 class DirectLinearDynamicsTransform(InvariantTransform):
