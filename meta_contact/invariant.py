@@ -84,17 +84,19 @@ class InvariantTransform(LearnableParameterizedModel):
         :return: True or False
         """
 
-    def _record_metrics(self, writer, batch_mse_loss, batch_cov_loss):
+    def _record_metrics(self, writer, losses, suffix='', log=False):
         """
         Use summary writer and passed in losses to
         :param writer: SummaryWriter
-        :param batch_mse_loss:
-        :param batch_cov_loss:
         :return:
         """
-        B = len(batch_cov_loss)
-        writer.add_scalar('mse_loss', (sum(batch_mse_loss) / B).item(), self.step)
-        writer.add_scalar('cov_loss', (sum(batch_cov_loss) / B).item(), self.step)
+        with torch.no_grad():
+            for i, loss_name in enumerate(self._loss_names()):
+                name = '{}{}'.format(loss_name, suffix)
+                value = losses[i].mean().cpu().item()
+                writer.add_scalar(name, value, self.step)
+                if log:
+                    logger.debug("metric %s %f", name, value)
 
     def _evaluate_metrics_on_whole_set(self, neighbourhood, tsf):
         # TODO do evaluation in original space to allow for comparison across transforms
@@ -103,37 +105,29 @@ class InvariantTransform(LearnableParameterizedModel):
                 self.ds.training_set()
             X, U, Y = self._get_separate_data_columns(data_set)
             N = X.shape[0]
-            cov_losses = []
-            mse_losses = []
+
+            batch_losses = self._init_batch_losses()
+
             for i in range(N):
                 losses = self._evaluate_neighbour(X, U, Y, neighbourhood, i, tsf)
                 if losses is None:
                     continue
-                cov_loss, mse_loss = losses
-                cov_losses.append(cov_loss.mean())
-                mse_losses.append(mse_loss.mean())
 
-            cov_losses = torch.tensor(cov_losses)
-            mse_losses = torch.tensor(mse_losses)
-            # filter out nan/inf
-            math_utils.replace_nan_and_inf(cov_losses, 0)
-            return [losses.mean().item() for losses in (cov_losses, mse_losses)]
+                for i in range(len(batch_losses)):
+                    batch_losses[i].append(losses[i].mean())
+
+            batch_losses = [math_utils.replace_nan_and_inf(torch.tensor(losses)) for losses in batch_losses]
+            return batch_losses
 
     def _evaluate_validation_set(self, writer):
-        cov_loss, mse_loss = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation,
-                                                                 TransformToUse.LATENT_SPACE)
-        writer.add_scalar('cov_loss/validation', cov_loss, self.step)
-        writer.add_scalar('mse_loss/validation', mse_loss, self.step)
+        losses = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation, TransformToUse.LATENT_SPACE)
+        self._record_metrics(writer, losses, suffix="/validation", log=True)
 
     def _evaluate_no_transform(self, writer):
-        cov_loss, mse_loss = self._evaluate_metrics_on_whole_set(self.neighbourhood,
-                                                                 TransformToUse.NO_TRANSFORM)
-        writer.add_scalar('original_cov_loss', cov_loss, self.step)
-        writer.add_scalar('original_mse_loss', mse_loss, self.step)
-        cov_loss, mse_loss = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation,
-                                                                 TransformToUse.NO_TRANSFORM)
-        writer.add_scalar('original_cov_loss/validation', cov_loss, self.step)
-        writer.add_scalar('original_mse_loss/validation', mse_loss, self.step)
+        losses = self._evaluate_metrics_on_whole_set(self.neighbourhood, TransformToUse.NO_TRANSFORM)
+        self._record_metrics(writer, losses, suffix="_original", log=True)
+        losses = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation, TransformToUse.NO_TRANSFORM)
+        self._record_metrics(writer, losses, suffix="_original/validation", log=True)
 
     def _get_separate_data_columns(self, data_set):
         XU, Y, _ = data_set
@@ -222,7 +216,6 @@ class InvariantTransform(LearnableParameterizedModel):
 
         if tsf is TransformToUse.LATENT_SPACE:
             z = self.xu_to_zi(x, u)
-            # TODO can't actually train dx->dz together with xu->z? (can probably do dual gradient descent/alternate)
             y = self.dx_to_zo(x, y)
         elif tsf is TransformToUse.REDUCE_TO_INPUT:
             z = u
@@ -241,7 +234,19 @@ class InvariantTransform(LearnableParameterizedModel):
         # mse loss
         yhat = z @ p.t()
         mse_loss = torch.norm(yhat - y, dim=1)
-        return cov_loss, mse_loss
+        return mse_loss, cov_loss
+
+    @staticmethod
+    def _loss_names():
+        return "mse_loss", "cov_loss"
+
+    @staticmethod
+    def _reduce_losses(losses):
+        # use mse loss only
+        return torch.sum(losses[0])
+
+    def _init_batch_losses(self):
+        return [[] for _ in self._loss_names()]
 
     def learn_model(self, max_epoch, batch_N=500):
         if self.neighbourhood is None:
@@ -256,8 +261,7 @@ class InvariantTransform(LearnableParameterizedModel):
 
         self.optimizer = torch.optim.Adam(self.parameters())
         self.optimizer.zero_grad()
-        batch_cov_loss = None
-        batch_mse_loss = None
+        batch_losses = None
         self._evaluate_no_transform(writer)
         for epoch in range(max_epoch):
             logger.debug("Start epoch %d", epoch)
@@ -272,18 +276,19 @@ class InvariantTransform(LearnableParameterizedModel):
                 bi = self.step % batch_N
                 if bi == 0:
                     # treat previous batch
-                    if batch_cov_loss is not None and len(batch_cov_loss):
+                    if batch_losses is not None and len(batch_losses[0]):
+                        # turn lists into tensors
+                        for j in range(len(batch_losses)):
+                            batch_losses[j] = torch.stack(batch_losses[j])
                         # hold stats
-                        # reduced_loss = sum(batch_cov_loss)
-                        reduced_loss = sum(batch_mse_loss)
+                        reduced_loss = self._reduce_losses(batch_losses)
                         reduced_loss.backward()
                         self.optimizer.step()
                         self.optimizer.zero_grad()
 
-                        self._record_metrics(writer, batch_mse_loss, batch_cov_loss)
+                        self._record_metrics(writer, batch_losses)
 
-                    batch_cov_loss = []
-                    batch_mse_loss = []
+                    batch_losses = self._init_batch_losses()
 
                 self.step += 1
 
@@ -291,9 +296,9 @@ class InvariantTransform(LearnableParameterizedModel):
                 if losses is None:
                     continue
 
-                cov_loss, mse_loss = losses
-                batch_cov_loss.append(cov_loss.mean())
-                batch_mse_loss.append(mse_loss.mean())
+                # TODO consider if l.mean() generalizes to all kinds of losses
+                for i in range(len(batch_losses)):
+                    batch_losses[i].append(losses[i].mean())
 
         self.save(last=True)
         self._evaluate_no_transform(writer)
@@ -342,7 +347,11 @@ class LearnLinearDynamicsTransform(InvariantTransform):
 
         # mse loss
         mse_loss = torch.norm(yhat - y, dim=1)
-        return torch.zeros_like(mse_loss), mse_loss
+        return mse_loss
+
+    @staticmethod
+    def _loss_names():
+        return tuple("mse_loss", )
 
     def _evaluate_no_transform(self, writer):
         pass

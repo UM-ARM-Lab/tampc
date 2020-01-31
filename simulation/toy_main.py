@@ -95,7 +95,7 @@ def show_prior_accuracy(expected_max_error=1., relative=True):
     env = get_env(myenv.Mode.DIRECT)
     # plot a contour map over the state space - input space of how accurate the prior is
     # can't use preprocessor except for the neural network prior because their returned matrices are wrt transformed
-    preprocessor = preprocess.PytorchPreprocessing(preprocess.MinMaxScaler())
+    preprocessor = preprocess.PytorchTransformer(preprocess.MinMaxScaler())
     preprocessor = None
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds = toy.ToyDataSource(data_dir=save_dir + '.mat', preprocessor=preprocessor, validation_ratio=0.1,
@@ -125,7 +125,7 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
     env = get_env(myenv.Mode.DIRECT)
 
     # data source
-    preprocessor = preprocess.PytorchPreprocessing(preprocess.MinMaxScaler())
+    preprocessor = preprocess.PytorchTransformer(preprocess.MinMaxScaler())
     preprocessor = None
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds = toy.ToyDataSource(data_dir=save_dir + '.mat', preprocessor=preprocessor, validation_ratio=0.1,
@@ -333,8 +333,8 @@ class PolynomialInvariantTransform(invariant.DirectLinearDynamicsTransform):
     def _load_model_state_dict(self, saved_state_dict):
         self.params = saved_state_dict
 
-    def _record_metrics(self, writer, batch_mse_loss, batch_cov_loss):
-        super()._record_metrics(writer, batch_mse_loss, batch_cov_loss)
+    def _record_metrics(self, writer, losses, **kwargs):
+        super()._record_metrics(writer, losses, **kwargs)
 
         cs = cosine_similarity(self.params, self.true_params, dim=0).item()
         dist = torch.norm(self.params - self.true_params).item()
@@ -384,7 +384,6 @@ def evaluate_invariant(name='', trials=5, trial_length=50):
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds = toy.ToyDataSource(data_dir=save_dir + '.mat', preprocessor=preprocessor, validation_ratio=0.1,
                            config=config)
-    untransformed_config = copy.deepcopy(config)
 
     logger.info("initial random seed %d", rand.seed(seed))
 
@@ -428,8 +427,8 @@ def evaluate_invariant(name='', trials=5, trial_length=50):
 
     # create online controller with this prior (and transformed data)
     u_min, u_max = get_control_bounds()
-    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, untransformed_config)
-    ctrl = online_controller.OnlineCEM(dynamics, untransformed_config, u_min=u_min, u_max=u_max,
+    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds)
+    ctrl = online_controller.OnlineCEM(dynamics, ds.original_config(), u_min=u_min, u_max=u_max,
                                        mpc_opts={'init_cov_diag': 1.})
 
     # evaluate controller performance
@@ -443,6 +442,5 @@ if __name__ == "__main__":
     # collect_data(500, 20, x_min=(-3, -3), x_max=(3, 3))
     # show_prior_accuracy(relative=True)
     # compare_empirical_and_prior_error(20, 50)
-    # for seed in range(5):
-    #     learn_invariance(seed, "default", MAX_EPOCH=40, BATCH_SIZE=5)
-    evaluate_invariant('default', 20, 50)
+    learn_invariant(0, "default", MAX_EPOCH=40, BATCH_SIZE=5)
+    # evaluate_invariant('default', 20, 50)
