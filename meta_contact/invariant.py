@@ -199,11 +199,11 @@ class InvariantTransform(LearnableParameterizedModel):
             # make neighbours weighted on dist to data (to be used in weighted least squares)
             weights = dd.clamp(min=0)
             neighbourhood = weights
-            neighbourhood_size = neighbourhood.sum(1)
+            neighbourhood_size = (neighbourhood > 0).sum(1)
 
-        logger.info("min neighbourhood size %d max %d median %d median %f", neighbourhood_size.min(),
+        logger.info("min neighbourhood size %d max %d median %d", neighbourhood_size.min(),
                     neighbourhood_size.max(),
-                    neighbourhood_size.median(), neighbourhood_size.mean())
+                    neighbourhood_size.median())
         return neighbourhood
 
     def _evaluate_neighbour(self, X, U, Y, neighbourhood, i, tsf=TransformToUse.LATENT_SPACE):
