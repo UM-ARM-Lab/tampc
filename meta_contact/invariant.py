@@ -339,19 +339,25 @@ class LearnLinearDynamicsTransform(InvariantTransform):
             return None
 
         # fit linear model to latent state
-        # TODO consider using weights somehow
         A = self.linear_dynamics(z)
 
-        zo = z @ A.t()
+        zo = linalg.batch_batch_product(z, A.transpose(-1, -2))
         yhat = self.zo_to_dx(x, zo)
 
+        # TODO consider using weights somehow (can use on dynamics dispersion cost)
+        # add cost on difference of each A (each linear dynamics should be similar)
+        dynamics_spread = torch.std(A, dim=0)
         # mse loss
         mse_loss = torch.norm(yhat - y, dim=1)
-        return mse_loss
+        return mse_loss, dynamics_spread
 
     @staticmethod
     def _loss_names():
-        return tuple("mse_loss", )
+        return "mse_loss", "spread_loss"
+
+    @staticmethod
+    def _reduce_losses(losses):
+        return torch.sum(losses[0]) + torch.sum(losses[1])
 
     def _evaluate_no_transform(self, writer):
         pass
