@@ -341,7 +341,7 @@ class PolynomialInvariantTransform(invariant.DirectLinearDynamicsTransform):
 
         logger.debug("step %d cos dist %f dist %f", self.step, cs, dist)
 
-        writer.add_scalar('cosine_similiarty', cs, self.step)
+        writer.add_scalar('cosine_similarity', cs, self.step)
         writer.add_scalar('param_diff', dist, self.step)
         writer.add_scalar('param_norm', self.params.norm().item(), self.step)
 

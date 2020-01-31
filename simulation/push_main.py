@@ -22,7 +22,7 @@ from meta_contact.controller import global_controller
 from meta_contact.env import block_push
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO,
+logging.basicConfig(level=logging.DEBUG,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
                     datefmt='%m-%d %H:%M:%S')
 logging.getLogger('matplotlib.font_manager').disabled = True
@@ -208,23 +208,28 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
             model_opts = {}
         # z_o is dx, dy, dyaw in body frame and d_along
         self.nzo = 4
-        super().__init__(ds, 1 + ds.config.nu, **kwargs)
-        self.name = 'param_coord_{}'.format(self.name)
+        nz = 1 + ds.config.nu
         # input is x, output is yaw
-        config = load_data.DataConfig()
-        config.nx = self.ds.config.nx
-        config.ny = 1
-        # no hidden units, directly select a sum of the inputs
-        self.yaw_selector = model.DeterministicUser(make.make_sequential_network(config, h_units=()).to(device=device))
+        self.yaw_selector = torch.nn.Linear(ds.config.nx, 1, bias=False).to(device=device, dtype=torch.double)
+        self.true_yaw_param = torch.zeros(ds.config.nx, device=device, dtype=torch.double)
+        self.true_yaw_param[2] = 1
+        self.true_yaw_param = self.true_yaw_param.view(1, -1)  # to be consistent with weights
+        # try starting at the true parameters
+        # self.yaw_selector.weight.data = self.true_yaw_param + torch.randn_like(self.true_yaw_param)
+        # self.yaw_selector.weight.requires_grad = False
+
         # input to local model is z, output is zo
         config = load_data.DataConfig()
-        config.nx = self.nz
-        config.ny = self.nzo * self.nz  # matrix output
+        config.nx = nz
+        config.ny = self.nzo * nz  # matrix output
         self.linear_model_producer = model.DeterministicUser(
             make.make_sequential_network(config, **model_opts).to(device=device))
+        super().__init__(ds, nz, **kwargs)
+        self.name = 'param_coord_{}'.format(self.name)
 
     def linear_dynamics(self, zi):
-        return self.linear_model_producer.sample(zi)
+        B = zi.shape[0]
+        return self.linear_model_producer.sample(zi).view(B, self.nzo, self.nz)
 
     def xu_to_zi(self, state, action):
         if len(state.shape) < 2:
@@ -245,8 +250,7 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
             z_o = z_o.view(1, -1)
 
         # choose which component of x to take as rotation (should select just theta)
-        # TODO nx x (N x nx)
-        yaw = self.yaw_selector.sample(x)
+        yaw = self.yaw_selector(x)
 
         N = z_o.shape[0]
         dx = torch.zeros((N, 4), dtype=z_o.dtype, device=z_o.device)
@@ -260,15 +264,29 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
 
     def parameters(self):
         # TODO check correctness
-        return list(self.yaw_selector.model.parameters()) + list(self.linear_model_producer.model.parameters())
+        return list(self.yaw_selector.parameters()) + list(self.linear_model_producer.model.parameters())
 
     def _model_state_dict(self):
-        d = {'yaw': self.yaw_selector.model.state_dict(), 'linear': self.linear_model_producer.model.state_dict()}
+        d = {'yaw': self.yaw_selector.state_dict(), 'linear': self.linear_model_producer.model.state_dict()}
         return d
 
     def _load_model_state_dict(self, saved_state_dict):
-        self.yaw_selector.model.load_state_dict(saved_state_dict['yaw'])
+        self.yaw_selector.load_state_dict(saved_state_dict['yaw'])
         self.linear_model_producer.model.load_state_dict(saved_state_dict['linear'])
+
+    def _record_metrics(self, writer, losses, **kwargs):
+        super()._record_metrics(writer, losses, **kwargs)
+
+        with torch.no_grad():
+            yaw_param = self.yaw_selector.weight.data
+            cs = torch.nn.functional.cosine_similarity(yaw_param, self.true_yaw_param).item()
+            dist = torch.norm(yaw_param - self.true_yaw_param).item()
+
+            logger.debug("step %d yaw cos sim %f dist %f", self.step, cs, dist)
+
+            writer.add_scalar('cosine_similarity', cs, self.step)
+            writer.add_scalar('param_diff', dist, self.step)
+            writer.add_scalar('param_norm', yaw_param.norm().item(), self.step)
 
 
 class WorldBodyFrameTransformForDirectPush(HandDesignedCoordTransform):
@@ -565,8 +583,25 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     return total_costs
 
 
+def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
+    d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    env = get_easy_env(p.DIRECT)
+
+    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
+    ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config, device=d)
+
+    logger.info("initial random seed %d", rand.seed(seed))
+
+    # add in invariant transform here
+    invariant_tsf = ParameterizedCoordTransform(ds, d, model_opts={'h_units': (16, 32)}, too_far_for_neighbour=0.3,
+                                                name="{}_s{}".format(name, seed))
+    invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
+    # TODO evaluate transform (other than just using it for a controller)
+
+
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
     # test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
-    test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=False, relearn_dynamics=True)
+    # test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=False, relearn_dynamics=True)
     # verify_coordinate_transform()
+    learn_invariant(name="start_near_goal", MAX_EPOCH=40)
