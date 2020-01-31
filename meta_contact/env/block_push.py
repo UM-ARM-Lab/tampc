@@ -254,8 +254,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
         if self.level == 0:
             pass
         elif self.level == 1:
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0, -0.32, wall_z],
-                                         p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True))
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.5, 0., wall_z],
+                                         p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
         elif self.level == 2:
             self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-1, 0.5, wall_z],
                                          p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
@@ -636,20 +636,18 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         # apply force on the left face of the block at along
         p.applyExternalForce(self.blockId, -1, [fn, ft, 0], [-_MAX_ALONG, self.along * _MAX_ALONG, 0], p.LINK_FRAME)
         p.stepSimulation()
-        while not self._static_environment():
-            for _ in range(20):
-                # also move the pusher along visually
-                self._keep_pusher_adjacent()
-                for _ in range(5):
-                    p.stepSimulation()
+        for _ in range(20):
+            # also move the pusher along visually
+            self._keep_pusher_adjacent()
+            for _ in range(5):
+                p.stepSimulation()
 
         # apply the sliding along side after the push settles down
         self.along = np.clip(old_state[3] + d_along, -1, 1)
         self._keep_pusher_adjacent()
 
-        while not self._static_environment():
-            for _ in range(20):
-                p.stepSimulation()
+        for _ in range(20):
+            p.stepSimulation()
 
         cost, done, info = self._observe_finished_action(old_state, action)
 
