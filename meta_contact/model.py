@@ -57,7 +57,8 @@ class DeterministicUser(ModelUser):
         Yhat = self.sample(XUv)
         XUv_orig, Yv_orig, _ = ds.unprocessed_validation_set()
         # compare in original space
-        Yhat_orig = ds.preprocessor.invert_transform(Yhat, XUv_orig)
+        Xv_orig = XUv_orig[:, :ds.original_config().nx]
+        Yhat_orig = ds.preprocessor.invert_transform(Yhat, Xv_orig)
         return self._compute_error(Yv_orig, Yhat_orig)
 
     def _compute_error(self, Y, Yhat):
@@ -173,7 +174,8 @@ class DynamicsModel(abc.ABC):
             dxb = self._apply_model(xu)
 
         if self.ds.preprocessor:
-            dxb = self.ds.preprocessor.invert_transform(dxb, xu)  # TODO should probably give just x
+            x = xu[:, :self.ds.original_config().nx]
+            dxb = self.ds.preprocessor.invert_transform(dxb, x)
 
         x = self.advance(xu, dxb)
         if len(orig_shape) > 2:
