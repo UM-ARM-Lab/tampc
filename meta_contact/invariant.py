@@ -27,7 +27,7 @@ class TransformToUse:
 
 
 class InvariantTransform(LearnableParameterizedModel):
-    def __init__(self, ds: datasource.DataSource, nz, too_far_for_neighbour=0.3,
+    def __init__(self, ds: datasource.DataSource, nz, nzo, too_far_for_neighbour=0.3,
                  train_on_continuous_data=False, **kwargs):
         super().__init__(cfg.ROOT_DIR, **kwargs)
         self.ds = ds
@@ -37,7 +37,9 @@ class InvariantTransform(LearnableParameterizedModel):
         self.neighbourhood_validation = None
         self.too_far_for_neighbour = too_far_for_neighbour
         self.train_on_continuous_data = train_on_continuous_data
+        # do not assume at this abstraction level the input and output latent space is the same
         self.nz = nz
+        self.nzo = nzo
         # update name with parameteres
         self.name = '{}_{}_{}'.format(self.name, self.nz, self.config)
 
@@ -309,9 +311,6 @@ class LearnLinearDynamicsTransform(InvariantTransform):
     Proposal #3 where we learn linear dynamics given zi instead of doing least squares
     """
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
     @abc.abstractmethod
     def dx_to_zo(self, x, dx):
         raise RuntimeError("Learning linear dynamics instead of doing least squares")
@@ -368,6 +367,11 @@ class DirectLinearDynamicsTransform(InvariantTransform):
     Assume dynamics is dynamics is directly linear from z to dx, that is we don't need transforms between
     dx and dz; for simpler dynamics this assumption should be good enough
     """
+
+    def __init__(self, ds, *args, nzo=None, **kwargs):
+        if nzo is None:
+            nzo = ds.config.ny
+        super().__init__(ds, *args, nzo, **kwargs)
 
     @staticmethod
     def supports_only_direct_zi_to_dx():
@@ -465,8 +469,19 @@ class InvariantTransformer(preprocess.Transformer):
 
     def _fit_impl(self, XU, Y, labels):
         """Figure out what the transform outputs"""
-        x, u = torch.split(XU, self.tsf.config.nx, dim=1)
-        zi = self.tsf.xu_to_zi(x, u)
-        self.model_input_dim = zi.shape[1]
-        zo = self.tsf.dx_to_zo(x, Y)
-        self.model_output_dim = zo.shape[1]
+        self.model_input_dim = self.tsf.nz
+        self.model_output_dim = self.tsf.nzo
+
+
+class LearnLinearInvariantTransformer(InvariantTransformer):
+    def __init__(self, tsf: LearnLinearDynamicsTransform):
+        if not isinstance(tsf, LearnLinearDynamicsTransform):
+            raise RuntimeError("This transformer supports only transforms learning the linear transform")
+        super(LearnLinearInvariantTransformer, self).__init__(tsf)
+
+    def transform(self, XU, Y, labels=None):
+        # these transforms potentially require x to transform y and back, so can't just use them separately
+        z_i = self.transform_x(XU)
+        A = self.tsf.linear_dynamics(z_i)
+        z_o = linalg.batch_batch_product(z_i, A.transpose(-1, -2))
+        return z_i, z_o, labels

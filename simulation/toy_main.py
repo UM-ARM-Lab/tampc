@@ -306,13 +306,14 @@ def plot_empirical_and_prior_error(xy, emp_error, prior_error, expected_max_erro
 
 
 class PolynomialInvariantTransform(invariant.DirectLinearDynamicsTransform):
-    def __init__(self, ds, nx, true_params, order=2, dtype=torch.double, **kwargs):
+    def __init__(self, ds, true_params, order=2, dtype=torch.double, **kwargs):
         self.poly = PolynomialFeatures(order, include_bias=False)
-        x = np.random.rand(nx).reshape(1, -1)
+        x = np.random.rand(ds.config.nx).reshape(1, -1)
         self.poly.fit(x)
         self.params = torch.rand(self.poly.n_output_features_, dtype=dtype, requires_grad=True)
         self.true_params = true_params
-        super().__init__(ds, 1, **kwargs)
+        # z_i is action * scalar, so it's nu sized
+        super().__init__(ds, ds.config.nu, **kwargs)
         self.name = 'poly_{}'.format(self.name)
 
     def xu_to_zi(self, state, action):
@@ -390,7 +391,7 @@ def evaluate_invariant(name='', trials=5, trial_length=50):
     # create the invariant transform
     base_name = '{}_s{}'.format(name, seed)
     transforms = {UseTransform.NO_TRANSFORM: None,
-                  UseTransform.POLYNOMIAL_TRANSFORM: PolynomialInvariantTransform(ds, env.nx,
+                  UseTransform.POLYNOMIAL_TRANSFORM: PolynomialInvariantTransform(ds,
                                                                                   torch.from_numpy(env.true_params),
                                                                                   too_far_for_neighbour=1.,
                                                                                   train_on_continuous_data=True,
@@ -442,5 +443,5 @@ if __name__ == "__main__":
     # collect_data(500, 20, x_min=(-3, -3), x_max=(3, 3))
     # show_prior_accuracy(relative=True)
     # compare_empirical_and_prior_error(20, 50)
-    learn_invariant(0, "default", MAX_EPOCH=40, BATCH_SIZE=5)
-    # evaluate_invariant('default', 20, 50)
+    # learn_invariant(0, "default", MAX_EPOCH=40, BATCH_SIZE=5)
+    evaluate_invariant('default', 20, 50)

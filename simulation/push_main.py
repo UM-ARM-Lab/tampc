@@ -125,8 +125,7 @@ class HandDesignedCoordTransform(invariant.InvariantTransform):
 
     def __init__(self, ds, nz, **kwargs):
         # z_o is dx, dy, dyaw in body frame and d_along
-        self.nzo = 4
-        super().__init__(ds, nz, **kwargs)
+        super().__init__(ds, nz, 4, **kwargs)
         self.name = 'coord_{}'.format(self.name)
 
     def dx_to_zo(self, x, dx):
@@ -207,7 +206,7 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
         if model_opts is None:
             model_opts = {}
         # z_o is dx, dy, dyaw in body frame and d_along
-        self.nzo = 4
+        nzo = 4
         nz = 1 + ds.config.nu
         # input is x, output is yaw
         self.yaw_selector = torch.nn.Linear(ds.config.nx, 1, bias=False).to(device=device, dtype=torch.double)
@@ -221,10 +220,10 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
         # input to local model is z, output is zo
         config = load_data.DataConfig()
         config.nx = nz
-        config.ny = self.nzo * nz  # matrix output
+        config.ny = nzo * nz  # matrix output
         self.linear_model_producer = model.DeterministicUser(
             make.make_sequential_network(config, **model_opts).to(device=device))
-        super().__init__(ds, nz, **kwargs)
+        super().__init__(ds, nz, nzo, **kwargs)
         self.name = 'param_coord_{}'.format(self.name)
 
     def linear_dynamics(self, zi):
@@ -238,7 +237,7 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
 
         # TODO make more general parameterized versions where we select which components to take
         # (along, d_along, push magnitude)
-        z = torch.from_numpy(np.column_stack((state[:, -1], action)))
+        z = torch.cat((state[:, -1].view(-1, 1), action), dim=1)
         return z
 
     def dx_to_zo(self, x, dx):
@@ -277,6 +276,8 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
     def _record_metrics(self, writer, losses, **kwargs):
         super()._record_metrics(writer, losses, **kwargs)
 
+    def _evaluate_validation_set(self, writer):
+        super(ParameterizedCoordTransform, self)._evaluate_validation_set(writer)
         with torch.no_grad():
             yaw_param = self.yaw_selector.weight.data
             cs = torch.nn.functional.cosine_similarity(yaw_param, self.true_yaw_param).item()
@@ -385,6 +386,7 @@ def verify_coordinate_transform():
 class UseTransform:
     NO_TRANSFORM = 0
     COORDINATE_TRANSFORM = 1
+    PARAMETERIZED_1 = 2
 
 
 def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False, online_adapt=True):
@@ -402,8 +404,12 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     # add in invariant transform here
     base_name = 'push_s{}'.format(seed)
     transforms = {UseTransform.NO_TRANSFORM: None,
-                  UseTransform.COORDINATE_TRANSFORM: coord_tsf_factory(env, ds, name=base_name)}
-    transform_names = {UseTransform.NO_TRANSFORM: 'none', UseTransform.COORDINATE_TRANSFORM: 'coord'}
+                  UseTransform.COORDINATE_TRANSFORM: coord_tsf_factory(env, ds, name=base_name),
+                  UseTransform.PARAMETERIZED_1: ParameterizedCoordTransform(ds, d, model_opts={'h_units': (16, 32)},
+                                                                            # TODO currently using fixed tsf
+                                                                            too_far_for_neighbour=0.3, name="_s2")}
+    transform_names = {UseTransform.NO_TRANSFORM: 'none', UseTransform.COORDINATE_TRANSFORM: 'coord',
+                       UseTransform.PARAMETERIZED_1: 'param1'}
     invariant_tsf = transforms[use_tsf]
 
     if invariant_tsf:
@@ -413,9 +419,13 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
                 invariant_tsf.get_last_checkpoint()):
             invariant_tsf.learn_model(training_epochs, 5)
 
+        if isinstance(invariant_tsf, invariant.LearnLinearDynamicsTransform):
+            transformer = invariant.LearnLinearInvariantTransformer
+        else:
+            transformer = invariant.InvariantTransformer
         # wrap the transform as a data preprocessor
         preprocessor = preprocess.Compose(
-            [invariant.InvariantTransformer(invariant_tsf),
+            [transformer(invariant_tsf),
              preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
     else:
         # use minmax scaling if we're not using an invariant transform (baseline)
@@ -602,6 +612,7 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
     # test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
-    # test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=False, relearn_dynamics=True)
+    test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=False, relearn_dynamics=True)
     # verify_coordinate_transform()
-    learn_invariant(name="start_near_goal", MAX_EPOCH=40)
+    # for seed in range(10):
+    #     learn_invariant(seed=seed, name="", MAX_EPOCH=40)
