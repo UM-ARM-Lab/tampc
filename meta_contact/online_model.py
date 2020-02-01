@@ -21,7 +21,16 @@ class OnlineDynamicsModel(object):
     TODO change all API to take tensors as input and keep internal state as tensors
     """
 
-    def __init__(self, gamma, online_prior: prior.OnlineDynamicsPrior, ds, N=1, sigreg=1e-5):
+    def __init__(self, gamma, online_prior: prior.OnlineDynamicsPrior, ds, local_mix_weight=1., sigreg=1e-5):
+        """
+        :param gamma: How fast to update our empirical local model, with 1 being to completely forget the previous model
+        every time we get new data
+        :param online_prior: A global prior model that is linearizable (can get Jacobian)
+        :param ds: Some data source
+        :param local_mix_weight: Weight of mixing empirical local model with prior model; relative to n0 and m of the
+        prior model, which are typically 1, so use 1 for equal weighting
+        :param sigreg: How much to regularize conditioning of dynamics from p(x,u,x') to p(x'|x,u)
+        """
         self.gamma = gamma
         self.prior = online_prior
         self.sigreg = sigreg  # Covariance regularization (adds sigreg*eye(N))
@@ -31,7 +40,7 @@ class OnlineDynamicsModel(object):
 
         self.nx = ds.config.nx
         self.nu = ds.config.nu
-        self.empsig_N = N
+        self.empsig_N = local_mix_weight
         self.emp_error = None
         self.prior_error = None
         # device the prior model is on
@@ -141,6 +150,7 @@ class OnlineDynamicsModel(object):
         Phi, mu0, m, n0 = self.prior.get_batch_params(self.nx, self.nu, xu, pxu, xux)
 
         # mix prior and empirical distribution
+        # TODO decrease empsig_N with increasing horizon (trust global model more for more distant points)
         sigma, mu = prior.batch_mix_distribution(torch.from_numpy(self.sigma).to(device=cx.device),
                                                  torch.from_numpy(self.mu).to(device=cx.device), self.empsig_N,
                                                  Phi, mu0, m, n0)
