@@ -81,7 +81,7 @@ def mix_prior(dX, dU, nnF, nnf, xu, sigma_x=None, strength=1.0, dyn_init_sig=Non
     return nn_Phi, nn_mu
 
 
-def batch_mix_prior(nx, nu, nnF, strength=1.0):
+def batch_mix_prior(nnF, strength=1.0):
     """
     Mix prior but with batch nnF and expect pytorch tensor instead of np
     """
@@ -152,7 +152,7 @@ class NNPrior(OnlineDynamicsPrior):
         F = F[:, :, :nx + nu]
         xp = self._predict(full_input)
         # build \bar{Sigma} (nn_Phi) and \bar{mu} (nnf)
-        nn_Phi, nnf = batch_mix_prior(nx, nu, F, strength=self.mix_prior_strength)
+        nn_Phi, nnf = batch_mix_prior(F, strength=self.mix_prior_strength)
         # NOTE nnf is not used
         mu0 = torch.cat((xu, xp), 1)
         # m and n0 are 1 (mix prior strength already scaled nn_Phi)
