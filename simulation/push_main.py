@@ -252,7 +252,6 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
         return dx
 
     def parameters(self):
-        # TODO check correctness
         return list(self.yaw_selector.parameters()) + list(self.linear_model_producer.model.parameters())
 
     def _model_state_dict(self):
@@ -347,7 +346,6 @@ def verify_coordinate_transform():
     assert torch.allclose(dx, dx_inverted)
     # same push with yaw, should result in the same z_i and the dx should give the same z_o but different dx
 
-    # TODO fit linear model in z space; should get the same parameters
     N = 16
     dxes = torch.zeros((N, env.ny))
     z_os = torch.zeros((N, env.ny))
@@ -475,7 +473,6 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
         plt.show()
 
     u_min, u_max = env.get_control_bounds()
-    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, sigreg=1e-10)
     Q = torch.diag(torch.tensor([10, 10, 0, 0.01], dtype=torch.double))
     R = 0.01
     # tune this so that we figure out to make u-turns
@@ -488,6 +485,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
         'u_init': torch.tensor([0, 0.5, 0], dtype=torch.double, device=d),
     }
     if online_adapt:
+        dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, local_mix_weight=0.0, sigreg=1e-10)
         ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
                                             compare_to_goal=env.compare_to_goal,
                                             constrain_state=constrain_state,
@@ -598,13 +596,12 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
     invariant_tsf = ParameterizedCoordTransform(ds, d, model_opts={'h_units': (16, 32)}, too_far_for_neighbour=0.3,
                                                 name="{}_s{}".format(name, seed))
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
-    # TODO evaluate transform (other than just using it for a controller)
 
 
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
     # test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
-    test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=False, relearn_dynamics=True)
+    test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
     # verify_coordinate_transform()
     # for seed in range(10):
     #     learn_invariant(seed=seed, name="", MAX_EPOCH=40)
