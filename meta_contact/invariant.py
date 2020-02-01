@@ -76,16 +76,6 @@ class InvariantTransform(LearnableParameterizedModel):
         :return:
         """
 
-    @staticmethod
-    @abc.abstractmethod
-    def supports_only_direct_zi_to_dx():
-        """
-        Whether this transformation only supports direct linear dynamics from z to dx, or if it
-        supports dynamics in z to dz, then a nonlinear transform from dz to dx.
-        If false, then dz to dx and dx to dz should not be trivial.
-        :return: True or False
-        """
-
     def _record_metrics(self, writer, losses, suffix='', log=False):
         """
         Use summary writer and passed in losses to
@@ -373,10 +363,6 @@ class DirectLinearDynamicsTransform(InvariantTransform):
             nzo = ds.config.ny
         super().__init__(ds, *args, nzo, **kwargs)
 
-    @staticmethod
-    def supports_only_direct_zi_to_dx():
-        return True
-
     def zo_to_dx(self, x, z_o):
         return z_o
 
@@ -437,7 +423,7 @@ class InvariantTransformer(preprocess.Transformer):
         config.nu = 0
         config.ny = self.model_output_dim  # either ny or nz
         # if we're predicting z to dx then our y will not be in z space
-        if self.tsf.supports_only_direct_zi_to_dx():
+        if isinstance(self.tsf, DirectLinearDynamicsTransform):
             config.y_in_x_space = False
         # if we're predicting z to dz then definitely will be predicting difference, otherwise don't change
         else:
@@ -447,8 +433,7 @@ class InvariantTransformer(preprocess.Transformer):
         # these transforms potentially require x to transform y and back, so can't just use them separately
         X = XU[:, :self.tsf.config.nx]
         z_i = self.transform_x(XU)
-        # no transformation needed our output is already zo
-        z_o = Y if self.tsf.supports_only_direct_zi_to_dx() else self.tsf.dx_to_zo(X, Y)
+        z_o = self.tsf.dx_to_zo(X, Y)
         return z_i, z_o, labels
 
     def transform_x(self, XU):
@@ -462,9 +447,6 @@ class InvariantTransformer(preprocess.Transformer):
 
     def invert_transform(self, Y, X=None):
         """Invert transformation on Y"""
-        # no transformation needed our output is already dx
-        if self.tsf.supports_only_direct_zi_to_dx():
-            return Y
         return self.tsf.zo_to_dx(X, Y)
 
     def _fit_impl(self, XU, Y, labels):

@@ -118,11 +118,6 @@ def constrain_state(state):
 
 
 class HandDesignedCoordTransform(invariant.InvariantTransform):
-    @staticmethod
-    def supports_only_direct_zi_to_dx():
-        # converts z to dx in body frame, then needs to bring back to world frame
-        return False
-
     def __init__(self, ds, nz, **kwargs):
         # z_o is dx, dy, dyaw in body frame and d_along
         super().__init__(ds, nz, 4, **kwargs)
@@ -196,11 +191,6 @@ class WorldBodyFrameTransformForStickyEnv(HandDesignedCoordTransform):
 
 class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
     """Parameterize the coordinate transform such that it has to learn something"""
-
-    @staticmethod
-    def supports_only_direct_zi_to_dx():
-        # converts z to dx in body frame, then needs to bring back to world frame
-        return False
 
     def __init__(self, ds, device, model_opts=None, **kwargs):
         if model_opts is None:
@@ -338,6 +328,7 @@ def verify_coordinate_transform():
     action = np.array([0, 0.4, 0])
     # push with original yaw (try this N times to confirm that all pushes are consistent)
     N = 10
+    px, dx = None, None
     dxes = torch.zeros((N, env.ny))
     for i in range(N):
         px = env.reset()
@@ -346,6 +337,7 @@ def verify_coordinate_transform():
         dx = get_dx(px, cx)
         dxes[i] = dx
     assert torch.allclose(dxes.std(0), torch.zeros(env.ny))
+    assert px is not None
     # get input in latent space
     px = torch.from_numpy(px)
     z_i = tsf.xu_to_zi(px, action)
