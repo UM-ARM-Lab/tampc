@@ -15,21 +15,29 @@ LOGGER = logging.getLogger(__name__)
 
 
 class OnlineController(Controller):
-    """Controller mixing locally linear model with prior model from https://arxiv.org/pdf/1509.06841.pdf"""
+    """
+    Controller mixing locally linear model with prior model from https://arxiv.org/pdf/1509.06841.pdf
 
-    def __init__(self, online_dynamics: online_model.OnlineDynamicsModel, config,
-                 compare_to_goal=np.subtract, u_min=None, u_max=None, Q=1, R=1):
-        super().__init__(compare_to_goal)
+    External API is in numpy ndarrays, but internally keeps tensors, and interacts with any models using tensors
+    """
+
+    def __init__(self, online_dynamics: online_model.OnlineDynamicsModel, config, u_min=None, u_max=None, Q=1, R=1,
+                 device='cpu', dtype=torch.double, **kwargs):
+        super().__init__(**kwargs)
         self.nx = config.nx
         self.nu = config.nu
+        self.d = device
+        self.dtype = dtype
         self.u_min, self.u_max = math_utils.get_bounds(u_min, u_max)
+        if self.u_min is not None:
+            self.u_min, self.u_max = tensor_utils.ensure_tensor(self.d, self.dtype, self.u_min, self.u_max)
 
         self.dynamics = online_dynamics
 
         # Init objects
-        self.Q = tensor_utils.ensure_diagonal(Q, self.nx).cpu().numpy()
-        self.R = tensor_utils.ensure_diagonal(R, self.nu).cpu().numpy()
-        self.cost = cost.CostQROnline(self.goal, self.Q, self.R, self.compare_to_goal)
+        self.Q = tensor_utils.ensure_diagonal(Q, self.nx).to(device=self.d, dtype=self.dtype)
+        self.R = tensor_utils.ensure_diagonal(R, self.nu).to(device=self.d, dtype=self.dtype)
+        self.cost = cost.CostQROnlineTorch(self.goal, self.Q, self.R, self.compare_to_goal)
 
         self.prevx = None
         self.prevu = None
@@ -41,6 +49,7 @@ class OnlineController(Controller):
         self.u_history = []
 
     def set_goal(self, goal):
+        goal = torch.tensor(goal, dtype=self.dtype, device=self.d)
         super().set_goal(goal)
         self.cost.eetgt = goal
 
@@ -49,7 +58,7 @@ class OnlineController(Controller):
 
     def command(self, obs):
         t = len(self.u_history)
-        x = obs
+        x = torch.from_numpy(obs).to(device=self.d, dtype=self.dtype)
         if t > 0:
             self.dynamics.update(self.prevx, self.prevu, x)
 
@@ -57,7 +66,7 @@ class OnlineController(Controller):
 
         u = self.compute_action(x)
         if self.u_max is not None:
-            u = np.clip(u, self.u_min, self.u_max)
+            u = math_utils.clip(u, self.u_min, self.u_max)
 
         self.dynamics.evaluate_error(self.prevx, self.prevu, x, u)
         # if self.prevu is not None:  # smooth
@@ -66,7 +75,7 @@ class OnlineController(Controller):
         self.prevu = u
         self.u_history.append(u)
 
-        return u
+        return u.cpu().numpy()
 
     @abc.abstractmethod
     def update_policy(self, t, x):
@@ -93,18 +102,10 @@ class OnlineMPC(OnlineController):
     Online controller with a pytorch based MPC method (CEM, MPPI)
     """
 
-    def __init__(self, *args, constrain_state=noop_constrain, device='cpu', dtype=torch.double, **kwargs):
+    def __init__(self, *args, constrain_state=noop_constrain,  **kwargs):
         super().__init__(*args, **kwargs)
         self.constrain_state = constrain_state
         self.mpc = None
-        self.dtype = dtype
-        self.d = device
-        # replace np cost with pytorch version of cost for convenience
-        self.Q = tensor_utils.ensure_diagonal(self.Q, self.nx).to(dtype=self.dtype, device=self.d)
-        self.R = tensor_utils.ensure_diagonal(self.R, self.nu).to(dtype=self.dtype, device=self.d)
-        self.cost = cost.CostQROnlineTorch(self.goal, self.Q, self.R, self.compare_to_goal)
-        # pytorch version of bounds
-        self.u_min_t, self.u_max_t = tensor_utils.ensure_tensor(self.d, self.dtype, self.u_min, self.u_max)
 
     def apply_dynamics(self, state, u):
         if state.dim() is 1 or u.dim() is 1:
@@ -118,10 +119,6 @@ class OnlineMPC(OnlineController):
         next_state = self.constrain_state(next_state)
         return next_state
 
-    def set_goal(self, goal):
-        goal = torch.tensor(goal, dtype=self.dtype, device=self.d)
-        super().set_goal(goal)
-
     def _get_running_cost(self, state, u):
         return self.cost(state, u)
 
@@ -129,8 +126,7 @@ class OnlineMPC(OnlineController):
         pass
 
     def compute_action(self, x):
-        # TODO what is this madness - choose consistent data type at each abstraction level
-        return self.mpc.command(torch.from_numpy(x).to(device=self.d)).cpu().numpy()
+        return self.mpc.command(x)
 
 
 class OnlineCEM(OnlineMPC):
@@ -139,7 +135,7 @@ class OnlineCEM(OnlineMPC):
         if mpc_opts is None:
             mpc_opts = {}
         self.mpc = cem.CEM(self.apply_dynamics, self._get_running_cost, self.nx, self.nu,
-                           u_min=self.u_min_t, u_max=self.u_max_t, device=self.d,
+                           u_min=self.u_min, u_max=self.u_max, device=self.d,
                            **mpc_opts)
 
 
@@ -157,7 +153,7 @@ class OnlineMPPI(OnlineMPC):
                 noise_sigma = torch.eye(self.nu, dtype=self.dtype, device=self.d) * noise_mult
         # sometimes MPPI could benefit from not having bounds
         if use_bounds:
-            u_min, u_max = self.u_min_t, self.u_max_t
+            u_min, u_max = self.u_min, self.u_max
         else:
             u_min, u_max = None, None
         self.mpc = mppi.MPPI(self.apply_dynamics, self._get_running_cost, self.nx, noise_sigma=noise_sigma,
@@ -169,6 +165,7 @@ class OnlineMPPI(OnlineMPC):
 
 
 class OnlineLQR(OnlineController):
+    # TODO make compatible with new tensor internal data
     def __init__(self, *args, max_timestep=100, horizon=15, lqr_iter=1, u_noise=0.1, **kwargs):
         super().__init__(*args, **kwargs)
         self.H = horizon

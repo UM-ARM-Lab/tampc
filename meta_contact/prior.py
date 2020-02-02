@@ -33,7 +33,7 @@ def gaussian_params_from_datasource(ds):
     mu = data.mean(0)
     sigma = linalg.cov(data, rowvar=False)
     assert sigma.shape[0] == data.shape[1]
-    return sigma.cpu().numpy(), mu.cpu().numpy()
+    return sigma, mu
 
 
 class OnlineDynamicsPrior:
@@ -43,42 +43,9 @@ class OnlineDynamicsPrior:
     """
 
     @abc.abstractmethod
-    def get_params(self, nx, nu, xu, pxu, xux):
-        """Get normal inverse-Wishart prior parameters (Phi, mu0, m, n0) evaluated at this (pxu,xu)"""
-
-    @abc.abstractmethod
     def get_batch_params(self, nx, nu, xu, pxu, xux):
-        """Get normal inverse-Wishart prior parameters for batch of data (first dimension is batch)"""
-
-
-def mix_prior(dX, dU, nnF, nnf, xu, sigma_x=None, strength=1.0, dyn_init_sig=None,
-              use_least_squares=False, full_calculation=False):
-    """
-    Provide a covariance/bias term for mixing NN with least squares model.
-    """
-    it = slice(dX + dU)
-    ny = nnF.shape[0]
-
-    if use_least_squares:
-        sigX = dyn_init_sig[it, it]
-    else:
-        # \bar{Sigma}_xu,xu from section V.B, strength is alpha
-        sigX = np.eye(dX + dU) * strength
-
-    # lower left corner, nnF.T is df/dxu
-    sigXK = sigX.dot(nnF.T)
-    if full_calculation:
-        nn_Phi = np.r_[np.c_[sigX, sigXK],
-                       np.c_[sigXK.T, nnF.dot(sigX).dot(nnF.T) + sigma_x]]
-        # nnf is f(xu)
-        nn_mu = np.r_[xu, nnF.dot(xu) + nnf]
-    else:
-        # \bar{Sigma}, ignoring lower right
-        nn_Phi = np.r_[np.c_[sigX, sigXK],
-                       np.c_[sigXK.T, np.zeros((ny, ny))]]  # Lower right square is unused
-        nn_mu = None  # Unused
-
-    return nn_Phi, nn_mu
+        """Get normal inverse-Wishart prior parameters for batch of data (first dimension is batch) evaluated at each
+        (pxu, xu)"""
 
 
 def batch_mix_prior(nnF, strength=1.0):
@@ -118,26 +85,6 @@ class NNPrior(OnlineDynamicsPrior):
         self.dyn_net.freeze()
         self.mix_prior_strength = mix_strength
         self.full_context = mw.ds.config.expanded_input
-
-    def get_params(self, nx, nu, xu, pxu, xux):
-        # feed pxu and xu to network (full contextual network)
-        full_input = np.concatenate((xu, pxu)) if self.full_context else xu
-        full_input = torch.tensor(full_input, dtype=torch.double)
-        # jacobian of xu' wrt xu and pxu, need to strip the pxu columns
-        F = grad.jacobian(self._predict, full_input)
-        # first columns are xu, latter columns are pxu
-        F = F[:, :nx + nu].numpy()
-        # TODO not sure if this should be + xu since we're predicting residual, but f is currently unused
-        # TODO check correctness of linearization when our input isn't xu (transformed z)
-        xp = self._predict(full_input.view(1, -1))
-        xp = xp.view(-1).numpy()
-        f = -F @ xu + xp
-        # build \bar{Sigma} (nn_Phi) and \bar{mu} (nnf)
-        nn_Phi, nnf = mix_prior(nx, nu, F, f, xu, strength=self.mix_prior_strength, use_least_squares=False)
-        # NOTE nnf is not used
-        mu0 = np.r_[xu, xp]
-        # m and n0 are 1 (mix prior strength already scaled nn_Phi)
-        return nn_Phi, mu0, 1, 1
 
     def _predict(self, *args):
         # should use private method because everything is already transformed
@@ -306,24 +253,14 @@ class LSQPrior(OnlineDynamicsPrior):
         # m in equation 1
         self.mix_prior_strength = mix_strength
 
-    def get_params(self, nx, nu, xu, pxu, xux):
-        return self.dyn_init_sig, self.dyn_init_mu, self.mix_prior_strength, self.mix_prior_strength
-
     def get_batch_params(self, nx, nu, xu, pxu, xux):
         N = xu.shape[0]
-        return torch.from_numpy(self.dyn_init_sig).repeat(N, 1, 1), torch.from_numpy(self.dyn_init_mu).repeat(N, 1), \
+        return self.dyn_init_sig.repeat(N, 1, 1), self.dyn_init_mu.repeat(N, 1), \
                self.mix_prior_strength, self.mix_prior_strength
 
 
-def mix_distributions(emp_sigma, emp_mu, N, Phi, mu0, m, n0):
-    """Mix empirical normal with normal inverse-Wishart prior, giving a normal distribution"""
-    mu = (N * emp_mu + mu0 * m) / (N + m)
-    sigma = (N * emp_sigma + Phi + ((N * m) / (N + m)) * np.outer(emp_mu - mu0, emp_mu - mu0)) / (N + n0)
-    return sigma, mu
-
-
 def batch_mix_distribution(emp_sigma, emp_mu, N, Phi, mu0, m, n0):
-    """Mix current empirical normal with batch prior"""
+    """Mix current empirical normal with normal inverse-Wishart prior, giving a normal distribution with batch prior"""
     mu = (N * emp_mu + mu0 * m) / (N + m)
     d = emp_mu - mu0
     sigma = (N * emp_sigma + Phi + ((N * m) / (N + m)) * linalg.batch_outer_product(d, d)) / (N + n0)

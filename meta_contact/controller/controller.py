@@ -9,6 +9,10 @@ logger = logging.getLogger(__name__)
 
 
 class Controller(abc.ABC):
+    """
+    Controller that gives a command for a given observation (public API is ndarrays)
+    Internally may keep state represented as ndarrays or tensors
+    """
     def __init__(self, compare_to_goal=np.subtract):
         """
         :param compare_to_goal: function (state, goal) -> diff batched difference

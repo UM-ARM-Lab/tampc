@@ -55,7 +55,7 @@ class DeterministicUser(ModelUser):
         if not ds.preprocessor:
             return self.compute_loss(XUv, Yv)
         Yhat = self.sample(XUv)
-        XUv_orig, Yv_orig, _ = ds.unprocessed_validation_set()
+        XUv_orig, Yv_orig, _ = ds.original_validation_set()
         # compare in original space
         Xv_orig = XUv_orig[:, :ds.original_config().nx]
         Yhat_orig = ds.preprocessor.invert_transform(Yhat, Xv_orig)
@@ -270,7 +270,7 @@ class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
     def _evaluate_against_least_squares(self):
         # compare prediction accuracy against least squares
         XU, Y, _ = self.ds.training_set()
-        params, res, rank, _ = np.linalg.lstsq(XU.cpu().numpy(), Y.cpu().numpy())
+        params, res, rank, _ = np.linalg.lstsq(XU.cpu().numpy(), Y.cpu().numpy(), rcond=None)
         XU, Y, _ = self.ds.validation_set()
         Y = Y.cpu().numpy()
         Yhat = XU.cpu().numpy() @ params

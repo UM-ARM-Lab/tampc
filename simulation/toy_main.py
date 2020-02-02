@@ -159,7 +159,7 @@ def evaluate_prior(env, pm, ds, relative=True):
     Z = np.zeros(XY.shape[0])
 
     # we can evaluate just prior dynamics by mixing with N=0 (no weight for empirical data)
-    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, N=0, sigreg=1e-10)
+    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, local_mix_weight=0, sigreg=1e-10)
 
     if isinstance(pm, prior.NNPrior):
         # evaluate linearization by comparing error from applying model directly vs applying linearized model
