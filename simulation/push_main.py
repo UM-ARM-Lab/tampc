@@ -598,10 +598,86 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
+def test_online_model():
+    seed = 1
+    d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    env = get_easy_env(p.DIRECT, level=0)
+
+    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
+    ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config, device=d)
+
+    logger.info("initial random seed %d", rand.seed(seed))
+
+    base_name = 'push_s{}'.format(seed)
+    invariant_tsf = coord_tsf_factory(env, ds, name=base_name)
+    transformer = invariant.InvariantTransformer
+    preprocessor = preprocess.Compose(
+        [transformer(invariant_tsf),
+         preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
+
+    ds.update_preprocessor(preprocessor)
+
+    prior_name = 'coord_prior'
+
+    mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
+                                   name=prior_name)
+
+    pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=600)
+
+    # we can evaluate just prior dynamics by mixing with N=0 (no weight for empirical data)
+    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, local_mix_weight=0, sigreg=1e-10)
+
+    # evaluate linearization by comparing error from applying model directly vs applying linearized model
+    xuv, yv, _ = ds.original_validation_set()
+    xv = xuv[:, :ds.original_config().nx]
+    uv = xuv[:, ds.original_config().nx:]
+    if ds.original_config().predict_difference:
+        yv = yv + xv
+    # full model prediction
+    yhat1 = pm.dyn_net.predict(xuv)
+    # linearized prediction
+    yhat2 = dynamics.predict(None, None, xv, uv)
+
+    e1 = torch.norm((yhat1 - yv), dim=1)
+    e2 = torch.norm((yhat2 - yv), dim=1)
+    assert torch.allclose(yhat1, yhat2)
+    logger.info("Full model MSE %f linearized model MSE %f", e1.mean(), e2.mean())
+
+    mix_weights = [0.001, 0.01, 0.02, 0.05, 0.1, 0.5, 1.0]
+    errors = torch.zeros(len(mix_weights))
+    divergence = torch.zeros_like(errors)
+    # debug updating linear model and using non-0 weight (error should increase with distance from update)
+    for i, weight in enumerate(mix_weights):
+        dynamics.empsig_N = weight
+        yhat2 = dynamics.predict(None, None, xv, uv)
+        errors[i] = torch.mean(torch.norm((yhat2 - yv), dim=1))
+        divergence[i] = torch.mean(torch.norm((yhat2 - yhat1), dim=1))
+    logger.info("error with increasing weight %s", errors)
+    logger.info("divergence increasing weight %s", divergence)
+
+    for i in range(xv.shape[0]-1):
+        # before update
+        yhat2 = dynamics.predict(None, None, xv, uv)
+        e2 = torch.norm((yhat2 - yv), dim=1)
+        dynamics.update(xv[i], uv[i], xv[i+1])
+        # after
+        yhat3 = dynamics.predict(None, None, xv, uv)
+        e3 = torch.norm((yhat3 - yv), dim=1)
+        # when updated with xux' from ground truth, should do better at current location
+        if e3[i] > e2[i]:
+            logger.warning("error increased after update at %d", i)
+        # also look at error with global model
+        logger.info("global %.5f before %.5f after %.5f", e1[i], e2[i], e3[i])
+        # TODO plot these two errors relative to the global model error
+
+    # TODO an online controller with no local mix weight should give same output as global controller
+
+
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
     # test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
-    test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
+    # test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
     # verify_coordinate_transform()
     # for seed in range(10):
     #     learn_invariant(seed=seed, name="", MAX_EPOCH=40)
+    test_online_model()
