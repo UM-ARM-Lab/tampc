@@ -655,20 +655,54 @@ def test_online_model():
     logger.info("error with increasing weight %s", errors)
     logger.info("divergence increasing weight %s", divergence)
 
-    for i in range(xv.shape[0]-1):
-        # before update
-        yhat2 = dynamics.predict(None, None, xv, uv)
-        e2 = torch.norm((yhat2 - yv), dim=1)
-        dynamics.update(xv[i], uv[i], xv[i+1])
+    # use just a single trajectory
+    N = 49  # xv.shape[0]-1
+    xv = xv[:N]
+    uv = uv[:N]
+    yv = yv[:N]
+
+    horizon = 3
+    dynamics.gamma = 0.1
+    dynamics.empsig_N = 1.0
+    compare_against_last_updated = False
+    errors = torch.zeros((N, 3))
+    GLOBAL = 0
+    BEFORE = 1
+    AFTER = 2
+
+    yhat2 = dynamics.predict(None, None, xv, uv)
+    e2 = torch.norm((yhat2 - yv), dim=1)
+    for i in range(N - 1):
+        if compare_against_last_updated:
+            yhat2 = dynamics.predict(None, None, xv, uv)
+            e2 = torch.norm((yhat2 - yv), dim=1)
+        dynamics.update(xv[i], uv[i], xv[i + 1])
         # after
         yhat3 = dynamics.predict(None, None, xv, uv)
         e3 = torch.norm((yhat3 - yv), dim=1)
+
+        errors[i, GLOBAL] = e1[i + 1:i + 1 + horizon].mean()
+        errors[i, BEFORE] = e2[i + 1:i + 1 + horizon].mean()
+        errors[i, AFTER] = e3[i + 1:i + 1 + horizon].mean()
         # when updated with xux' from ground truth, should do better at current location
-        if e3[i] > e2[i]:
+        if errors[i, AFTER] > errors[i, BEFORE]:
             logger.warning("error increased after update at %d", i)
         # also look at error with global model
-        logger.info("global %.5f before %.5f after %.5f", e1[i], e2[i], e3[i])
-        # TODO plot these two errors relative to the global model error
+        logger.info("global before after %s", errors[i])
+
+    errors = errors[:N - 1]
+    # plot these two errors relative to the global model error
+    plt.figure()
+    plt.plot(errors[:, BEFORE] / errors[:, GLOBAL])
+    plt.plot(errors[:, AFTER] / errors[:, GLOBAL])
+    plt.title(
+        'local error after update for horizon {} gamma {} weight {}'.format(horizon, dynamics.gamma, dynamics.empsig_N))
+    plt.xlabel('step')
+    plt.ylabel('relative error to global model')
+    plt.yscale('log')
+    plt.legend(['before update', 'after update'])
+    plt.grid()
+    plt.show()
 
     # TODO an online controller with no local mix weight should give same output as global controller
 
