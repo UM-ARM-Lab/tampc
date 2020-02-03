@@ -191,6 +191,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self._init_block_debug_lines = [-1, -1]
         self._block_debug_lines = [-1, -1]
         self._traj_debug_lines = []
+        self._rollout_debug_lines = {}
         self._debug_text = -1
         self._user_debug_text = {}
         self._camera_pos = None
@@ -213,6 +214,19 @@ class PushAgainstWallEnv(MyPybulletEnv):
         u_min = np.array([-0.03, 0.03])
         u_max = np.array([0.03, 0.03])
         return u_min, u_max
+
+    def visualize_rollouts(self, states):
+        """In GUI mode, show how the sequence of states will look like"""
+        if states is None:
+            return
+        # TODO implement (assume states is iterable, so could be a bunch of row vectors)
+        T = len(states)
+        for t in range(T):
+            pose = self.get_block_pose(states[t])
+            if t not in self._rollout_debug_lines:
+                self._rollout_debug_lines[t] = [-1, -1]
+            c = (t + 1) / (T + 1)
+            _draw_debug_2d_pose(self._rollout_debug_lines[t], pose, (0, c, c))
 
     def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
         """Change task configuration; assumes only goal position is specified #TOOD relax assumption"""
@@ -660,11 +674,12 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
 
 class InteractivePush(simulation.Simulation):
     def __init__(self, env: PushAgainstWallEnv, controller, num_frames=1000, save_dir='pushing',
-                 terminal_cost_multiplier=1, stop_when_done=True, **kwargs):
+                 terminal_cost_multiplier=1, stop_when_done=True, visualize_rollouts=True, **kwargs):
 
         super(InteractivePush, self).__init__(save_dir=save_dir, num_frames=num_frames, config=cfg, **kwargs)
         self.mode = env.mode
         self.stop_when_done = stop_when_done
+        self.visualize_rollouts = visualize_rollouts
 
         self.env = env
         self.ctrl = controller
@@ -708,6 +723,9 @@ class InteractivePush(simulation.Simulation):
             start = time.perf_counter()
 
             action = self.ctrl.command(obs)
+            # plot expected state rollouts from this point
+            if self.visualize_rollouts:
+                self.env.visualize_rollouts(self.ctrl.get_rollouts(obs))
             # sanitize action
             if torch.is_tensor(action):
                 action = action.cpu()

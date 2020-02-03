@@ -152,3 +152,12 @@ class GlobalMPPIController(QRCostOptimalController):
 
     def _mpc_command(self, obs):
         return self.mpc.command(obs)
+
+    def get_rollouts(self, obs):
+        U = self.mpc.U
+        T = U.shape[0]
+        states = torch.zeros((T + 1, self.nx), dtype=U.dtype, device=U.device)
+        states[0] = torch.from_numpy(obs).to(dtype=U.dtype, device=U.device)
+        for t in range(T):
+            states[t + 1] = self.dynamics(states[t].view(1, -1), U[t].view(1, -1))
+        return states[1:].cpu().numpy()

@@ -13,6 +13,7 @@ class Controller(abc.ABC):
     Controller that gives a command for a given observation (public API is ndarrays)
     Internally may keep state represented as ndarrays or tensors
     """
+
     def __init__(self, compare_to_goal=np.subtract):
         """
         :param compare_to_goal: function (state, goal) -> diff batched difference
@@ -32,6 +33,10 @@ class Controller(abc.ABC):
     @abc.abstractmethod
     def command(self, obs):
         """Given current observation, command an action"""
+
+    def get_rollouts(self, obs):
+        """Return what the predicted states for the selected action sequence is applied on obs"""
+        return None
 
 
 class ArtificialController(Controller):
