@@ -112,7 +112,7 @@ def constrain_state(state):
     # yaw gets normalized
     state[:, 2] = math_utils.angle_normalize(state[:, 2])
     # along gets constrained
-    state[:, 3] = math_utils.clip(state[:, 3], -torch.tensor(-1, dtype=torch.double, device=state.device),
+    state[:, 3] = math_utils.clip(state[:, 3], torch.tensor(-1, dtype=torch.double, device=state.device),
                                   torch.tensor(1, dtype=torch.double, device=state.device))
     return state
 
@@ -704,14 +704,12 @@ def test_online_model():
     plt.grid()
     plt.show()
 
-    # TODO an online controller with no local mix weight should give same output as global controller
-
 
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
     # test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
-    # test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
+    test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
     # verify_coordinate_transform()
     # for seed in range(10):
     #     learn_invariant(seed=seed, name="", MAX_EPOCH=40)
-    test_online_model()
+    # test_online_model()
