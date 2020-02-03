@@ -13,7 +13,7 @@ class CostQROnlineTorch:
 
     def __call__(self, X, U):
         X = self.compare_to_goal(X, self.eetgt)
-        l = 0.5 * (linalg.batch_quadratic_product(X, self.Q) + linalg.batch_quadratic_product(U, self.R))
+        l = linalg.batch_quadratic_product(X, self.Q) + linalg.batch_quadratic_product(U, self.R)
         return l
 
     def eval(self, X, U, t, jac=None):
@@ -32,10 +32,10 @@ class CostQROnlineTorch:
 
         l = self.__call__(X, U)
         X = self.compare_to_goal(X, self.eetgt)
-        lu = U @ self.R
-        lx = X @ self.Q
-        luu = self.R.repeat(T, 1, 1)
-        lxx = self.Q.repeat(T, 1, 1)
+        lu = 2 * U @ self.R
+        lx = 2 * X @ self.Q
+        luu = 2 * self.R.repeat(T, 1, 1)
+        lxx = 2 * self.Q.repeat(T, 1, 1)
         lux = torch.zeros((T, nu, nx), dtype=X.dtype, device=X.device)
 
         return l, lx, lu, lxx, luu, lux
