@@ -485,7 +485,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
         'u_init': torch.tensor([0, 0.5, 0], dtype=torch.double, device=d),
     }
     if online_adapt:
-        dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, local_mix_weight=0.0, sigreg=1e-10)
+        dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, local_mix_weight=0.5, sigreg=1e-10)
         ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
                                             compare_to_goal=env.compare_to_goal,
                                             constrain_state=constrain_state,
@@ -530,9 +530,9 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
 
     logger.info("evaluation seed %d tasks %s tries %d", seed, tasks, tries)
 
-    total_costs = np.zeros((len(tasks), tries))
-    lowest_costs = np.zeros_like(total_costs)
-    successes = np.zeros_like(total_costs)
+    total_costs = torch.zeros((len(tasks), tries))
+    lowest_costs = torch.zeros_like(total_costs)
+    successes = torch.zeros_like(total_costs)
     for t in range(len(tasks)):
         task_seed = tasks[t]
         rand.seed(task_seed)
@@ -549,7 +549,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
         for i in range(tries):
             try_seed = rand.seed()
             env.draw_user_text('try {}'.format(try_seed), 3)
-            env.draw_user_text('success {}/{}'.format(int(np.sum(successes[t])), tries), 4)
+            env.draw_user_text('success {}/{}'.format(int(torch.sum(successes[t])), tries), 4)
             sim.run(try_seed)
             logger.info("task %d try %d run cost %f", task_seed, try_seed, sum(sim.last_run_cost))
             total_costs[t, i] = sum(sim.last_run_cost)
@@ -562,9 +562,9 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
         for step, costs in enumerate(task_costs):
             writer.add_histogram('ctrl_eval/task_{}'.format(task_seed), costs, step)
 
-        task_mean_cost = np.mean(total_costs[t])
+        task_mean_cost = torch.mean(total_costs[t])
         writer.add_scalar('ctrl_eval/task_{}'.format(task_seed), task_mean_cost, 0)
-        logger.info("task %d cost: %f std %f", task_seed, task_mean_cost, np.std(total_costs[t]))
+        logger.info("task %d cost: %f std %f", task_seed, task_mean_cost, torch.std(total_costs[t]))
         # clear trajectories of this task
         env.clear_debug_trajectories()
 
@@ -575,11 +575,12 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     logger.info(lowest_costs)
 
     for t in range(len(tasks)):
-        logger.info("task %d success %d/%d t cost %.2f (%.2f) l cost %.2f (%.2f)", tasks[t], np.sum(successes[t]),
-                    tries, np.mean(total_costs[t]), np.std(total_costs[t]), np.mean(lowest_costs), np.std(lowest_costs))
-    logger.info("total cost: %f (%f)", np.mean(total_costs), np.std(total_costs))
-    logger.info("lowest cost: %f (%f)", np.mean(lowest_costs), np.std(lowest_costs))
-    logger.info("total success: %d/%d", np.sum(successes), successes.size)
+        logger.info("task %d success %d/%d t cost %.2f (%.2f) l cost %.2f (%.2f)", tasks[t], torch.sum(successes[t]),
+                    tries, torch.mean(total_costs[t]), torch.std(total_costs[t]), torch.mean(lowest_costs),
+                    torch.std(lowest_costs))
+    logger.info("total cost: %f (%f)", torch.mean(total_costs), torch.std(total_costs))
+    logger.info("lowest cost: %f (%f)", torch.mean(lowest_costs), torch.std(lowest_costs))
+    logger.info("total success: %d/%d", torch.sum(successes), torch.numel(successes))
     return total_costs
 
 
