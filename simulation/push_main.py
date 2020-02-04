@@ -469,13 +469,16 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     Q = torch.diag(torch.tensor([10, 10, 0, 0.01], dtype=torch.double))
     R = 0.01
     # tune this so that we figure out to make u-turns
+    sigma = torch.ones(env.nu, dtype=torch.double, device=d) * 0.2
+    sigma[1] = 0.5
     mpc_opts = {
         'num_samples': 10000,
-        'noise_sigma': torch.diag(torch.ones(env.nu, dtype=torch.double, device=d) * 0.5),
+        'noise_sigma': torch.diag(sigma),
         'noise_mu': torch.tensor([0, 0.5, 0], dtype=torch.double, device=d),
-        'lambda_': 1e-2,
+        'lambda_': 1,
         'horizon': 35,
         'u_init': torch.tensor([0, 0.5, 0], dtype=torch.double, device=d),
+        'sample_null_action': False,
     }
     if online_adapt:
         dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, env.state_difference, local_mix_weight=1.0,
@@ -492,16 +495,16 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
 
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else pm.__class__.__name__
     # expensive evaluation
-    # evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440])
+    evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440])
 
-    name = "{}_{}".format(ctrl.__class__.__name__, name)
-    env.draw_user_text(name, 14, left_offset=-1.5)
-    sim = block_push.InteractivePush(env, ctrl, num_frames=150, plot=False, save=False, stop_when_done=True)
-    seed = rand.seed()
-    sim.run(seed)
-    logger.info("last run cost %f", np.sum(sim.last_run_cost))
-    plt.ioff()
-    plt.show()
+    # name = "{}_{}".format(ctrl.__class__.__name__, name)
+    # env.draw_user_text(name, 14, left_offset=-1.5)
+    # sim = block_push.InteractivePush(env, ctrl, num_frames=150, plot=False, save=False, stop_when_done=False)
+    # seed = rand.seed()
+    # sim.run(seed)
+    # logger.info("last run cost %f", np.sum(sim.last_run_cost))
+    # plt.ioff()
+    # plt.show()
 
     env.close()
 
@@ -708,7 +711,8 @@ def test_online_model():
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
     # test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
-    test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
+    # test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
+    test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=True)
     # verify_coordinate_transform()
     # for seed in range(10):
     #     learn_invariant(seed=seed, name="", MAX_EPOCH=40)
