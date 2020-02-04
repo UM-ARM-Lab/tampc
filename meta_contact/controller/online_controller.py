@@ -47,6 +47,7 @@ class OnlineController(Controller):
         self.prevx = None
         self.prevu = None
         self.u_history = []
+        self.dynamics.reset()
 
     def set_goal(self, goal):
         goal = torch.tensor(goal, dtype=self.dtype, device=self.d)

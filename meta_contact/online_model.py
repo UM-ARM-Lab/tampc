@@ -46,9 +46,14 @@ class OnlineDynamicsModel(object):
         self.d = device
 
         self.prior_trust_coefficient = 0.1  # the lower it is the more we trust the prior; 0 means only ever use prior
+        self.sigma, self.mu, self.xxt = None, None, None
         # Initial values
-        self.sigma, self.mu = prior.gaussian_params_from_datasource(ds)
-        self.xxt = self.sigma + torch.ger(self.mu, self.mu)
+        self.init_sigma, self.init_mu = prior.gaussian_params_from_datasource(ds)
+        self.init_xxt = self.init_sigma + torch.ger(self.init_mu, self.init_mu)
+        self.reset()
+
+    def reset(self):
+        self.sigma, self.mu, self.xxt = self.init_sigma.clone(), self.init_mu.clone(), self.init_xxt.clone()
 
     def evaluate_error(self, px, pu, cx, cu):
         """After updating dynamics and using that dynamics to plan an action,
