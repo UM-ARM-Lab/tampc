@@ -491,10 +491,10 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
                                             constrain_state=constrain_state,
                                             device=d, mpc_opts=mpc_opts)
     else:
-        ctrl = global_controller.GlobalMPPIController(mw, untransformed_config, Q=Q, R=R, u_min=u_min, u_max=u_max,
-                                                      compare_to_goal=env.compare_to_goal,
-                                                      device=d,
-                                                      mpc_opts=mpc_opts)
+        ctrl = global_controller.GlobalMPPI(mw, untransformed_config, Q=Q, R=R, u_min=u_min, u_max=u_max,
+                                            compare_to_goal=env.compare_to_goal,
+                                            device=d,
+                                            mpc_opts=mpc_opts)
 
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else pm.__class__.__name__
     # expensive evaluation

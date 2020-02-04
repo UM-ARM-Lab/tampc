@@ -112,7 +112,7 @@ class QRCostOptimalController(Controller):
         return u
 
 
-class GlobalCEMController(QRCostOptimalController):
+class GlobalCEM(QRCostOptimalController):
     def __init__(self, *args, mpc_opts=None, **kwargs):
         if mpc_opts is None:
             mpc_opts = {}
@@ -124,7 +124,7 @@ class GlobalCEMController(QRCostOptimalController):
         return self.mpc.command(obs)
 
 
-class GlobalMPPIController(QRCostOptimalController):
+class GlobalMPPI(QRCostOptimalController):
     def __init__(self, *args, use_bounds=True, mpc_opts=None, **kwargs):
         if mpc_opts is None:
             mpc_opts = {}
@@ -147,7 +147,7 @@ class GlobalMPPIController(QRCostOptimalController):
                              noise_sigma=noise_sigma, device=self.d, **mpc_opts)
 
     def reset(self):
-        super(GlobalMPPIController, self).reset()
+        super(GlobalMPPI, self).reset()
         self.mpc.reset()
 
     def _mpc_command(self, obs):
