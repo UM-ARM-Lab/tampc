@@ -101,13 +101,6 @@ def get_easy_env(mode=p.GUI, level=0, log_video=False):
     return env
 
 
-def compare_to_goal_factory(env):
-    def compare_to_goal(*args):
-        return torch.from_numpy(env.compare_to_goal(*args))
-
-    return compare_to_goal
-
-
 def constrain_state(state):
     # yaw gets normalized
     state[:, 2] = math_utils.angle_normalize(state[:, 2])
@@ -485,15 +478,15 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
         'u_init': torch.tensor([0, 0.5, 0], dtype=torch.double, device=d),
     }
     if online_adapt:
-        dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, env.compare_to_goal, local_mix_weight=1.0,
+        dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, env.state_difference, local_mix_weight=1.0,
                                                     sigreg=1e-10)
         ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
-                                            compare_to_goal=env.compare_to_goal,
+                                            compare_to_goal=env.state_difference,
                                             constrain_state=constrain_state,
                                             device=d, mpc_opts=mpc_opts)
     else:
         ctrl = global_controller.GlobalMPPI(mw, untransformed_config, Q=Q, R=R, u_min=u_min, u_max=u_max,
-                                            compare_to_goal=env.compare_to_goal,
+                                            compare_to_goal=env.state_difference,
                                             device=d,
                                             mpc_opts=mpc_opts)
 
@@ -632,7 +625,7 @@ def test_online_model():
     pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=600)
 
     # we can evaluate just prior dynamics by mixing with N=0 (no weight for empirical data)
-    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, env.compare_to_goal, local_mix_weight=0, sigreg=1e-10)
+    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, env.state_difference, local_mix_weight=0, sigreg=1e-10)
 
     # evaluate linearization by comparing error from applying model directly vs applying linearized model
     xuv, yv, _ = ds.original_validation_set()

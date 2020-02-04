@@ -398,13 +398,14 @@ class PushAgainstWallEnv(MyPybulletEnv):
                 p.stepSimulation()
 
     @staticmethod
-    def compare_to_goal(state, goal):
+    def state_difference(state, other_state):
+        """Get state - other_state in state space"""
         if len(state.shape) == 1:
             state = state.reshape(1, -1)
-        if len(goal.shape) == 1:
-            goal = goal.reshape(1, -1)
-        dyaw = math_utils.angular_diff_batch(state[:, 4], goal[:, 4])
-        dpos = state[:, :4] - goal[:, :4]
+        if len(other_state.shape) == 1:
+            other_state = other_state.reshape(1, -1)
+        dyaw = math_utils.angular_diff_batch(state[:, 4], other_state[:, 4])
+        dpos = state[:, :4] - other_state[:, :4]
         if torch.tensor(state):
             diff = torch.cat((dpos, dyaw.view(-1, 1)), dim=1)
         else:
@@ -412,7 +413,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         return diff
 
     def evaluate_cost(self, state, action=None):
-        diff = self.compare_to_goal(state, self.goal)
+        diff = self.state_difference(state, self.goal)
         diff = diff.reshape(-1)
         cost = diff @ self.Q @ diff
         done = cost < 0.04
@@ -530,14 +531,14 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         super()._set_init_pusher(pos)
 
     @staticmethod
-    def compare_to_goal(state, goal):
+    def state_difference(state, other_state):
         if len(state.shape) == 1:
             state = state.reshape(1, -1)
-        if len(goal.shape) == 1:
-            goal = goal.reshape(1, -1)
-        dyaw = math_utils.angular_diff_batch(state[:, 2], goal[:, 2])
-        dpos = state[:, :2] - goal[:, :2]
-        dalong = state[:, 3] - goal[:, 3]
+        if len(other_state.shape) == 1:
+            other_state = other_state.reshape(1, -1)
+        dyaw = math_utils.angular_diff_batch(state[:, 2], other_state[:, 2])
+        dpos = state[:, :2] - other_state[:, :2]
+        dalong = state[:, 3] - other_state[:, 3]
         if torch.is_tensor(state):
             diff = torch.cat((dpos, dyaw.view(-1, 1), dalong.view(-1, 1)), dim=1)
         else:
