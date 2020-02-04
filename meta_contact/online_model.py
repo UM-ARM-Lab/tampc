@@ -18,13 +18,14 @@ class OnlineDynamicsModel(object):
     Currently all the batch API takes torch tensors as input/output while all the single API takes numpy arrays
     """
 
-    def __init__(self, gamma, online_prior: prior.OnlineDynamicsPrior, ds, local_mix_weight=1., device='cpu',
-                 sigreg=1e-5):
+    def __init__(self, gamma, online_prior: prior.OnlineDynamicsPrior, ds, state_difference, local_mix_weight=1.,
+                 device='cpu', sigreg=1e-5):
         """
         :param gamma: How fast to update our empirical local model, with 1 being to completely forget the previous model
         every time we get new data
         :param online_prior: A global prior model that is linearizable (can get Jacobian)
         :param ds: Some data source
+        :param state_difference: Function (nx, nx) -> nx getting a - b in state space (order matters!)
         :param local_mix_weight: Weight of mixing empirical local model with prior model; relative to n0 and m of the
         prior model, which are typically 1, so use 1 for equal weighting
         :param sigreg: How much to regularize conditioning of dynamics from p(x,u,x') to p(x'|x,u)
@@ -34,6 +35,7 @@ class OnlineDynamicsModel(object):
         self.sigreg = sigreg  # Covariance regularization (adds sigreg*eye(N))
         self.ds = ds
         self.advance = model.advance_state(ds.original_config(), use_np=False)
+        self.state_difference = state_difference
 
         self.nx = ds.config.nx
         self.nu = ds.config.nu
@@ -81,8 +83,8 @@ class OnlineDynamicsModel(object):
         prior_x = self.advance(opx, prior_y)
 
         # compare against actual x'
-        self.emp_error = (emp_x - ocx).norm()
-        self.prior_error = (prior_x - ocx).norm()
+        self.emp_error = self.state_difference(emp_x, ocx).norm()
+        self.prior_error = self.state_difference(prior_x, ocx).norm()
         # TODO update gamma based on the relative error of these dynamics
         # rho = self.emp_error / self.prior_error
         # # high gamma means to trust empirical model (paper uses 1-rho, but this makes more sense)
@@ -91,7 +93,7 @@ class OnlineDynamicsModel(object):
     def update(self, px, pu, cx):
         """ Perform a moving average update on the current dynamics """
         # our internal dynamics could be on dx or x', so convert x' to whatever our model works with
-        y = cx - px if self.ds.original_config().predict_difference else cx
+        y = self.state_difference(cx, px) if self.ds.original_config().predict_difference else cx
         # convert xux to transformed coordinates
         if self.ds.preprocessor:
             x, u, y = self._make_2d_tensor(px, pu, y)
