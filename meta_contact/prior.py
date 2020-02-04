@@ -66,6 +66,15 @@ def batch_mix_prior(nnF, strength=1.0):
     return nn_Phi, nn_mu
 
 
+class NoPrior(OnlineDynamicsPrior):
+    def get_batch_params(self, nx, nu, xu, pxu, xux):
+        N = xu.shape[0]
+        nxux = 2 * nx + nu
+        Phi = torch.zeros((N, nxux, nxux), dtype=xu.dtype, device=xu.device)
+        mu0 = torch.zeros((N, nxux), dtype=xu.dtype, device=xu.device)
+        return Phi, mu0, 0, 0
+
+
 class NNPrior(OnlineDynamicsPrior):
     @classmethod
     def from_data(cls, mw: model.NetworkModelWrapper, checkpoint=None, train_epochs=50, batch_N=500, **kwargs):

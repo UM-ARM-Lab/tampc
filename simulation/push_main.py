@@ -421,13 +421,14 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
                                    name=prior_name)
 
-    pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(),
-                                 train_epochs=600)
+    # pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(),
+    #                              train_epochs=600)
     # pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
+    pm = prior.NoPrior()
 
     # test that the model predictions are relatively symmetric for positive and negative along
-    if test_model_rollouts and isinstance(env, block_push.PushAgainstWallStickyEnv):
+    if test_model_rollouts and isinstance(env, block_push.PushAgainstWallStickyEnv) and isinstance(pm, prior.NNPrior):
         N = 5
         x_top = torch.tensor([0, 0, 0, 1], dtype=torch.double, device=d).repeat(N, 1)
         x_bot = torch.tensor([0, 0, 0, -1], dtype=torch.double, device=d).repeat(N, 1)
@@ -493,7 +494,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
                                             device=d,
                                             mpc_opts=mpc_opts)
 
-    name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else pm.__class__.__name__
+    name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else "{}_{}".format(prior_name, pm.__class__.__name__)
     # expensive evaluation
     evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440])
 
@@ -710,8 +711,8 @@ def test_online_model():
 
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
-    # test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
-    # test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
+    test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
+    test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
     test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=True)
     # verify_coordinate_transform()
     # for seed in range(10):
