@@ -219,7 +219,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         """In GUI mode, show how the sequence of states will look like"""
         if states is None:
             return
-        # TODO implement (assume states is iterable, so could be a bunch of row vectors)
+        # assume states is iterable, so could be a bunch of row vectors
         T = len(states)
         for t in range(T):
             pose = self.get_block_pose(states[t])
@@ -383,7 +383,6 @@ class PushAgainstWallEnv(MyPybulletEnv):
     def _move_and_wait(self, eePos):
         # execute the action
         self._move_pusher(eePos)
-        self._traj_debug_lines.append(p.addUserDebugLine(eePos, np.add(eePos, [0, 0, 0.01]), [1, 1, 0], 4))
         # handle trying to go into wall (if we don't succeed)
         # we use a force insufficient for going into the wall
         while not self._reached_command(eePos):
@@ -604,6 +603,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
     def __init__(self, init_pusher=0, **kwargs):
         # initial config
         self.along = init_pusher
+        self._action_debug_line = -1
         super().__init__(init_pusher=init_pusher, face=BlockFace.LEFT, **kwargs)
 
     @staticmethod
@@ -634,6 +634,15 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         eePos = np.concatenate((pos, (z,)))
         self._move_pusher(eePos)
 
+    def _draw_action(self, f_mag, f_dir_world):
+        start = self._observe_pusher()
+        visual_scale = 0.4
+        pointer = math_utils.rotate_wrt_origin((f_mag / self.MAX_FORCE * visual_scale, 0), f_dir_world)
+        # replace previous debug lines
+        self._action_debug_line = p.addUserDebugLine(start, np.add(start, [pointer[0], pointer[1], 0]),
+                                                     (1, 0, 0), 2,
+                                                     replaceItemUniqueId=self._action_debug_line)
+
     def step(self, action):
         old_state = self._obs()
         # normalize action such that the input can be within a fixed range
@@ -644,6 +653,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         f_mag = max(0, action[1] * self.MAX_FORCE)
         # third option is push angle (0 being perpendicular to face)
         f_dir = np.clip(action[2], -1, 1) * self.MAX_PUSH_ANGLE
+        self._draw_action(f_mag, f_dir + old_state[2])
 
         # execute action
         ft = math.sin(f_dir) * f_mag
