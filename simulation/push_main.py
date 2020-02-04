@@ -22,7 +22,7 @@ from meta_contact.controller import global_controller
 from meta_contact.env import block_push
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG,
+logging.basicConfig(level=logging.INFO,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
                     datefmt='%m-%d %H:%M:%S')
 logging.getLogger('matplotlib.font_manager').disabled = True
@@ -83,7 +83,7 @@ def get_data_dir(level=0):
 def get_easy_env(mode=p.GUI, level=0, log_video=False):
     global env_dir
     init_block_pos = [0, 0]
-    init_block_yaw = 0
+    init_block_yaw = -1
     init_pusher = 0
     goal_pos = [-0.3, 0.3]
     # env = interactive_block_pushing.PushAgainstWallEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher,
@@ -485,7 +485,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
         'u_init': torch.tensor([0, 0.5, 0], dtype=torch.double, device=d),
     }
     if online_adapt:
-        dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, local_mix_weight=0.5, sigreg=1e-10)
+        dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, local_mix_weight=1.0, sigreg=1e-10)
         ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
                                             compare_to_goal=env.compare_to_goal,
                                             constrain_state=constrain_state,
@@ -498,15 +498,18 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
 
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else pm.__class__.__name__
     # expensive evaluation
-    evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440])
-    env.close()
+    # evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440])
 
-    # sim = block_push.InteractivePush(env, ctrl, num_frames=150, plot=True, save=False, stop_when_done=True)
-    # seed = rand.seed()
-    # sim.run(seed)
-    # logger.info("last run cost %f", np.sum(sim.last_run_cost))
-    # plt.ioff()
-    # plt.show()
+    name = "{}_{}".format(ctrl.__class__.__name__, name)
+    env.draw_user_text(name, 14, left_offset=-1.5)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=150, plot=False, save=False, stop_when_done=True)
+    seed = rand.seed()
+    sim.run(seed)
+    logger.info("last run cost %f", np.sum(sim.last_run_cost))
+    plt.ioff()
+    plt.show()
+
+    env.close()
 
 
 def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controller.Controller, name,
@@ -571,6 +574,8 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     # summarize stats
     logger.info("accumulated cost")
     logger.info(total_costs)
+    logger.info("successes")
+    logger.info(successes)
     logger.info("lowest costs per task and try")
     logger.info(lowest_costs)
 
@@ -708,7 +713,7 @@ def test_online_model():
 
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
-    # test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
+    # test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
     test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
     # verify_coordinate_transform()
     # for seed in range(10):
