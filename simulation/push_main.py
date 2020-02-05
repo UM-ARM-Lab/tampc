@@ -1,6 +1,8 @@
 import logging
 import math
 import typing
+import os
+import pickle
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -498,7 +500,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else "{}_{}".format(transform_names[use_tsf],
                                                                                 pm.__class__.__name__)
     # expensive evaluation
-    evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 2144219, 5932014, 305012, 102921])
+    evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921])
 
     # name = "{}_{}".format(ctrl.__class__.__name__, name)
     # env.draw_user_text(name, 14, left_offset=-1.5)
@@ -586,6 +588,25 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     logger.info("total cost: %f (%f)", torch.mean(total_costs), torch.std(total_costs))
     logger.info("lowest cost: %f (%f)", torch.mean(lowest_costs), torch.std(lowest_costs))
     logger.info("total success: %d/%d", torch.sum(successes), torch.numel(successes))
+
+    # save to file
+    fullname = os.path.join(cfg.DATA_DIR, 'ctrl_eval.pkl')
+    if os.path.exists(fullname):
+        with open(fullname, 'rb') as f:
+            runs = pickle.load(f)
+            logger.info("loaded runs from %s", fullname)
+    else:
+        runs = {}
+
+    for t in range(len(tasks)):
+        task_name = '{}{}'.format(tasks[t], translation)
+        if task_name not in runs:
+            runs[task_name] = {}
+        runs[task_name][name] = total_costs[t], successes[t], lowest_costs[t]
+
+    with open(fullname, 'wb') as f:
+        pickle.dump(runs, f)
+        logger.info("saved runs to %s", fullname)
     return total_costs
 
 
