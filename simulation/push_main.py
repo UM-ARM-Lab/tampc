@@ -413,19 +413,20 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     else:
         # use minmax scaling if we're not using an invariant transform (baseline)
         preprocessor = preprocess.PytorchTransformer(preprocess.MinMaxScaler())
+        # preprocessor = preprocess.Compose([preprocess.PytorchTransformer(preprocess.AngleToCosSinRepresentation(2),
+        #                                                                  preprocess.NullSingleTransformer()),
+        #                                    preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
     # update the datasource to use transformed data
     untransformed_config = ds.update_preprocessor(preprocessor)
 
-    prior_name = '{}_prior'.format(transform_names[use_tsf])
-
     mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
-                                   name=prior_name)
+                                   name=transform_names[use_tsf])
 
-    # pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(),
-    #                              train_epochs=600)
+    pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(),
+                                 train_epochs=600)
     # pm = prior.GMMPrior.from_data(ds)
     # pm = prior.LSQPrior.from_data(ds)
-    pm = prior.NoPrior()
+    # pm = prior.NoPrior()
 
     # test that the model predictions are relatively symmetric for positive and negative along
     if test_model_rollouts and isinstance(env, block_push.PushAgainstWallStickyEnv) and isinstance(pm, prior.NNPrior):
@@ -494,9 +495,10 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
                                             device=d,
                                             mpc_opts=mpc_opts)
 
-    name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else "{}_{}".format(prior_name, pm.__class__.__name__)
+    name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else "{}_{}".format(transform_names[use_tsf],
+                                                                                pm.__class__.__name__)
     # expensive evaluation
-    evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440])
+    evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 2144219, 5932014, 305012, 102921])
 
     # name = "{}_{}".format(ctrl.__class__.__name__, name)
     # env.draw_user_text(name, 14, left_offset=-1.5)
@@ -711,8 +713,11 @@ def test_online_model():
 
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
+    test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
     test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
+    test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=False)
     test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
+    test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=False)
     test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=True)
     # verify_coordinate_transform()
     # for seed in range(10):
