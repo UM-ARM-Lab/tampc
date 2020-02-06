@@ -352,7 +352,7 @@ class LearnLinearDynamicsTransform(InvariantTransform):
         pass
 
 
-class DirectLinearDynamicsTransform(InvariantTransform):
+class NoDecoderTransform(InvariantTransform):
     """
     Assume dynamics is dynamics is directly linear from z to dx, that is we don't need transforms between
     dx and dz; for simpler dynamics this assumption should be good enough
@@ -370,7 +370,7 @@ class DirectLinearDynamicsTransform(InvariantTransform):
         return dx
 
 
-class NetworkInvariantTransform(DirectLinearDynamicsTransform):
+class NetworkNoDecoder(NoDecoderTransform):
     def __init__(self, ds, nz, model_opts=None, **kwargs):
         if model_opts is None:
             model_opts = {}
@@ -423,7 +423,7 @@ class InvariantTransformer(preprocess.Transformer):
         config.nu = 0
         config.ny = self.model_output_dim  # either ny or nz
         # if we're predicting z to dx then our y will not be in z space
-        if isinstance(self.tsf, DirectLinearDynamicsTransform):
+        if isinstance(self.tsf, NoDecoderTransform):
             config.y_in_x_space = False
         # if we're predicting z to dz then definitely will be predicting difference, otherwise don't change
         else:

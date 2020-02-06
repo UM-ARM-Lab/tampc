@@ -305,7 +305,7 @@ def plot_empirical_and_prior_error(xy, emp_error, prior_error, expected_max_erro
     plt.show()
 
 
-class PolynomialInvariantTransform(invariant.DirectLinearDynamicsTransform):
+class PolynomialInvariantTransform(invariant.NoDecoderTransform):
     def __init__(self, ds, true_params, order=2, dtype=torch.double, **kwargs):
         self.poly = PolynomialFeatures(order, include_bias=False)
         x = np.random.rand(ds.config.nx).reshape(1, -1)
@@ -363,8 +363,8 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
     # invariant_tsf = PolynomialInvariantTransform(ds, env.nx, true_params,
     #                                              too_far_for_neighbour=1., train_on_continuous_data=True,
     #                                              name='{}_s{}'.format(name, seed))
-    invariant_tsf = invariant.NetworkInvariantTransform(ds, 2, too_far_for_neighbour=0.3,
-                                                        name='{}_s{}'.format(name, seed))
+    invariant_tsf = invariant.NetworkNoDecoder(ds, 2, too_far_for_neighbour=0.3,
+                                               name='{}_s{}'.format(name, seed))
     # more generalized encoder
 
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
@@ -396,8 +396,8 @@ def evaluate_invariant(name='', trials=5, trial_length=50):
                                                                                   too_far_for_neighbour=1.,
                                                                                   train_on_continuous_data=True,
                                                                                   name=base_name),
-                  UseTransform.NETWORK_TRANSFORM: invariant.NetworkInvariantTransform(ds, 2, too_far_for_neighbour=0.3,
-                                                                                      name=base_name)}
+                  UseTransform.NETWORK_TRANSFORM: invariant.NetworkNoDecoder(ds, 2, too_far_for_neighbour=0.3,
+                                                                             name=base_name)}
     transform_names = {UseTransform.NO_TRANSFORM: 'none', UseTransform.POLYNOMIAL_TRANSFORM: 'poly',
                        UseTransform.NETWORK_TRANSFORM: 'net'}
     invariant_tsf = transforms[use_tsf]
