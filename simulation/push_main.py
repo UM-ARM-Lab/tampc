@@ -115,8 +115,7 @@ def constrain_state(state):
 class HandDesignedCoordTransform(invariant.InvariantTransform):
     def __init__(self, ds, nz, **kwargs):
         # z_o is dx, dy, dyaw in body frame and d_along
-        super().__init__(ds, nz, 4, **kwargs)
-        self.name = 'coord_{}'.format(self.name)
+        super().__init__(ds, nz, 4, name='coord', **kwargs)
 
     def dx_to_zo(self, x, dx):
         if len(x.shape) == 1:
@@ -208,8 +207,7 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
         config.ny = nzo * nz  # matrix output
         self.linear_model_producer = model.DeterministicUser(
             make.make_sequential_network(config, **model_opts).to(device=device))
-        super().__init__(ds, nz, nzo, **kwargs)
-        self.name = 'param_coord_{}'.format(self.name)
+        super().__init__(ds, nz, nzo, name=kwargs.pop('name', 'param_coord'), **kwargs)
 
     def linear_dynamics(self, zi):
         B = zi.shape[0]
@@ -257,9 +255,6 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
         self.yaw_selector.load_state_dict(saved_state_dict['yaw'])
         self.linear_model_producer.model.load_state_dict(saved_state_dict['linear'])
 
-    def _record_metrics(self, writer, losses, **kwargs):
-        super()._record_metrics(writer, losses, **kwargs)
-
     def _evaluate_validation_set(self, writer):
         super(ParameterizedCoordTransform, self)._evaluate_validation_set(writer)
         with torch.no_grad():
@@ -272,6 +267,61 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
             writer.add_scalar('cosine_similarity', cs, self.step)
             writer.add_scalar('param_diff', dist, self.step)
             writer.add_scalar('param_norm', yaw_param.norm().item(), self.step)
+
+
+class Parameterized2Transform(ParameterizedCoordTransform):
+    """Also parameterize the encoding"""
+
+    def __init__(self, ds, device, **kwargs):
+        # z_o is dx, dy, dyaw in body frame and d_along
+        nz = 1 + ds.config.nu
+        # input is x, output is zi
+        # constrain output to 0 and 1
+        self.zi_selector = torch.nn.Linear(ds.config.nx + ds.config.nu, nz, bias=False).to(device=device,
+                                                                                           dtype=torch.double)
+        self.true_zi_param = torch.tensor(
+            [[0, 0, 0, 1, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0], [0, 0, 0, 0, 0, 1, 0], [0, 0, 0, 0, 0, 0, 1]], device=device,
+            dtype=torch.double)
+        # try starting at the true parameters
+        # self.zi_selector.weight.data = self.true_zi_param + torch.randn_like(self.true_zi_param) * 0.1
+        # self.zi_selector.weight.requires_grad = True
+        name = kwargs.pop('name', '')
+        super().__init__(ds, device, name='zi_select_{}'.format(name), **kwargs)
+
+    def xu_to_zi(self, state, action):
+        if len(state.shape) < 2:
+            state = state.reshape(1, -1)
+            action = action.reshape(1, -1)
+
+        # more general parameterized versions where we select which components to take
+        xu = torch.cat((state, action), dim=1)
+        z = self.zi_selector(xu)
+        return z
+
+    def parameters(self):
+        return super().parameters() + list(self.zi_selector.parameters())
+
+    def _model_state_dict(self):
+        d = super()._model_state_dict()
+        d['zi'] = self.zi_selector.state_dict()
+        return d
+
+    def _load_model_state_dict(self, saved_state_dict):
+        super()._load_model_state_dict(saved_state_dict)
+        self.zi_selector.load_state_dict(saved_state_dict['zi'])
+
+    def _evaluate_validation_set(self, writer):
+        super()._evaluate_validation_set(writer)
+        with torch.no_grad():
+            zi_param = self.zi_selector.weight.data
+            cs = torch.nn.functional.cosine_similarity(zi_param, self.true_zi_param).mean().item()
+            dist = torch.norm(zi_param - self.true_zi_param).item()
+
+            logger.debug("step %d zi cos sim %f dist %f", self.step, cs, dist)
+
+            writer.add_scalar('cosine_similarity/zi_selector', cs, self.step)
+            writer.add_scalar('param_diff/zi_selector', dist, self.step)
+            writer.add_scalar('param_norm/zi_selector', zi_param.norm().item(), self.step)
 
 
 class WorldBodyFrameTransformForDirectPush(HandDesignedCoordTransform):
@@ -372,6 +422,7 @@ class UseTransform:
     NO_TRANSFORM = 0
     COORDINATE_TRANSFORM = 1
     PARAMETERIZED_1 = 2
+    PARAMETERIZED_2 = 3
 
 
 def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False, online_adapt=True):
@@ -387,14 +438,18 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     logger.info("initial random seed %d", rand.seed(seed))
 
     # add in invariant transform here
-    base_name = 'push_s{}'.format(seed)
     transforms = {UseTransform.NO_TRANSFORM: None,
-                  UseTransform.COORDINATE_TRANSFORM: coord_tsf_factory(env, ds, name=base_name),
+                  UseTransform.COORDINATE_TRANSFORM: coord_tsf_factory(env, ds),
                   UseTransform.PARAMETERIZED_1: ParameterizedCoordTransform(ds, d, model_opts={'h_units': (16, 32)},
                                                                             # TODO currently using fixed tsf
-                                                                            too_far_for_neighbour=0.3, name="_s2")}
-    transform_names = {UseTransform.NO_TRANSFORM: 'none', UseTransform.COORDINATE_TRANSFORM: 'coord',
-                       UseTransform.PARAMETERIZED_1: 'param1'}
+                                                                            too_far_for_neighbour=0.3, name="_s2"),
+                  UseTransform.PARAMETERIZED_2: Parameterized2Transform(ds, d, model_opts={'h_units': (16, 32)},
+                                                                        too_far_for_neighbour=0.3,
+                                                                        name="rand_start_s9")}
+    transform_names = {UseTransform.NO_TRANSFORM: 'none',
+                       UseTransform.COORDINATE_TRANSFORM: 'coord',
+                       UseTransform.PARAMETERIZED_1: 'param1',
+                       UseTransform.PARAMETERIZED_2: 'param2'}
     invariant_tsf = transforms[use_tsf]
 
     if invariant_tsf:
@@ -500,7 +555,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else "{}_{}".format(transform_names[use_tsf],
                                                                                 pm.__class__.__name__)
     # expensive evaluation
-    evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921])
+    evaluate_controller(env, ctrl, name, translation=(4, 4), tasks=[885440, 214219, 305012, 102921])
 
     # name = "{}_{}".format(ctrl.__class__.__name__, name)
     # env.draw_user_text(name, 14, left_offset=-1.5)
@@ -620,8 +675,10 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
     logger.info("initial random seed %d", rand.seed(seed))
 
     # add in invariant transform here
-    invariant_tsf = ParameterizedCoordTransform(ds, d, model_opts={'h_units': (16, 32)}, too_far_for_neighbour=0.3,
-                                                name="{}_s{}".format(name, seed))
+    # invariant_tsf = ParameterizedCoordTransform(ds, d, model_opts={'h_units': (16, 32)}, too_far_for_neighbour=0.3,
+    #                                             name="{}_s{}".format(name, seed))
+    invariant_tsf = Parameterized2Transform(ds, d, model_opts={'h_units': (16, 32)}, too_far_for_neighbour=0.3,
+                                            name="{}_s{}".format(name, seed))
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
@@ -635,8 +692,7 @@ def test_online_model():
 
     logger.info("initial random seed %d", rand.seed(seed))
 
-    base_name = 'push_s{}'.format(seed)
-    invariant_tsf = coord_tsf_factory(env, ds, name=base_name)
+    invariant_tsf = coord_tsf_factory(env, ds)
     transformer = invariant.InvariantTransformer
     preprocessor = preprocess.Compose(
         [transformer(invariant_tsf),
@@ -734,13 +790,14 @@ def test_online_model():
 
 if __name__ == "__main__":
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
-    test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
-    test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
-    test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=False)
-    test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
-    test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=False)
-    test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=True)
+    # test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
+    # test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
+    # test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=False)
+    # test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
+    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=False)
+    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=True)
+    test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_2, online_adapt=False)
     # verify_coordinate_transform()
     # for seed in range(10):
-    #     learn_invariant(seed=seed, name="", MAX_EPOCH=40)
+    #     learn_invariant(seed=seed, name="rand_start", MAX_EPOCH=40)
     # test_online_model()
