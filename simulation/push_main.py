@@ -190,6 +190,10 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
     def __init__(self, ds, device, model_opts=None, **kwargs):
         if model_opts is None:
             model_opts = {}
+        # default values for the input model_opts to replace
+        opts = {'h_units': (16, 32)}
+        opts.update(model_opts)
+
         # z_o is dx, dy, dyaw in body frame and d_along
         nzo = 4
         nz = 1 + ds.config.nu
@@ -207,7 +211,7 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
         config.nx = nz
         config.ny = nzo * nz  # matrix output
         self.linear_model_producer = model.DeterministicUser(
-            make.make_sequential_network(config, **model_opts).to(device=device))
+            make.make_sequential_network(config, **opts).to(device=device))
         super().__init__(ds, nz, nzo, name=kwargs.pop('name', 'param_coord'), **kwargs)
 
     def linear_dynamics(self, zi):
@@ -502,15 +506,12 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     # add in invariant transform here
     transforms = {UseTransform.NO_TRANSFORM: None,
                   UseTransform.COORDINATE_TRANSFORM: coord_tsf_factory(env, ds),
-                  UseTransform.PARAMETERIZED_1: ParameterizedCoordTransform(ds, d, model_opts={'h_units': (16, 32)},
-                                                                            # TODO currently using fixed tsf
-                                                                            too_far_for_neighbour=0.3, name="_s2"),
-                  UseTransform.PARAMETERIZED_2: Parameterized2Transform(ds, d, model_opts={'h_units': (16, 32)},
-                                                                        too_far_for_neighbour=0.3,
+                  # TODO currently using fixed tsf
+                  UseTransform.PARAMETERIZED_1: ParameterizedCoordTransform(ds, d, too_far_for_neighbour=0.3,
+                                                                            name="_s2"),
+                  UseTransform.PARAMETERIZED_2: Parameterized2Transform(ds, d, too_far_for_neighbour=0.3,
                                                                         name="rand_start_s9"),
-                  UseTransform.PARAMETERIZED_3: Parameterized3Transform(ds, d, model_opts={'h_units': (16, 32)},
-                                                                        too_far_for_neighbour=0.3,
-                                                                        name="_s9")
+                  UseTransform.PARAMETERIZED_3: Parameterized3Transform(ds, d, too_far_for_neighbour=0.3, name="_s9")
                   }
     transform_names = {UseTransform.NO_TRANSFORM: 'none',
                        UseTransform.COORDINATE_TRANSFORM: 'coord',
@@ -748,16 +749,13 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
 
     logger.info("initial random seed %d", rand.seed(seed))
 
+    common_opts = {'too_far_for_neighbour': 0.3, 'name': "{}_s{}".format(name, seed)}
     # add in invariant transform here
-    # invariant_tsf = ParameterizedCoordTransform(ds, d, model_opts={'h_units': (16, 32)}, too_far_for_neighbour=0.3,
-    #                                             name="{}_s{}".format(name, seed))
-    # invariant_tsf = Parameterized2Transform(ds, d, model_opts={'h_units': (16, 32)}, too_far_for_neighbour=0.3,
-    #                                         name="{}_s{}".format(name, seed))
-    # invariant_tsf = Parameterized3Transform(ds, d, model_opts={'h_units': (16, 32)}, too_far_for_neighbour=0.3,
-    #                                         name="{}_s{}".format(name, seed))
+    # invariant_tsf = ParameterizedCoordTransform(ds, d, **common_opts)
+    # invariant_tsf = Parameterized2Transform(ds, d, **common_opts)
+    # invariant_tsf = Parameterized3Transform(ds, d, **common_opts)
     # parameterization 4
-    invariant_tsf = Parameterized3Transform(ds, d, model_opts={'h_units': (16, 32)}, too_far_for_neighbour=0.3,
-                                            name="{}_s{}".format(name, seed), use_sincos_angle=True)
+    invariant_tsf = Parameterized3Transform(ds, d, **common_opts, use_sincos_angle=True)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
