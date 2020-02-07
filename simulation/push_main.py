@@ -332,20 +332,23 @@ class Parameterized2Transform(ParameterizedCoordTransform):
 class Parameterized3Transform(Parameterized2Transform):
     """Relax parameterization structure to allow decoder to be some state dependent transformation of z_o"""
 
-    def __init__(self, ds, device, **kwargs):
+    def __init__(self, ds, device, use_sincos_angle=False, **kwargs):
         # z_o is dx, dy, dyaw in body frame and d_along
         nzo = 4
 
+        # replace angle with their sin and cos
+        self.use_sincos_angle = use_sincos_angle
         # input to producer is x, output is matrix to multiply z_o to get dx by
         config = load_data.DataConfig()
-        config.nx = ds.config.nx
-        config.ny = nzo * ds.config.nx  # matrix output
+        config.nx = ds.config.nx + (1 if use_sincos_angle else 0)
+        config.ny = nzo * ds.config.nx  # matrix output (original nx, ignore sincos)
         # outputs a linear transformation from z_o to dx (linear in z_o), that is dependent on state
         self.linear_decoder_producer = model.DeterministicUser(
             make.make_sequential_network(config, h_units=(16, 32)).to(device=device))
 
         name = kwargs.pop('name', '')
-        super().__init__(ds, device, name='state_dep_linear_tsf_{}'.format(name), **kwargs)
+        super().__init__(ds, device, name='state_dep_linear_tsf_{}_{}'.format(int(self.use_sincos_angle), name),
+                         **kwargs)
 
     def parameters(self):
         return list(self.linear_decoder_producer.model.parameters()) + list(self.zi_selector.parameters()) + list(
@@ -370,8 +373,13 @@ class Parameterized3Transform(Parameterized2Transform):
             z_o = z_o.view(1, -1)
 
         # make state-dependent linear transforms (matrices) that multiply z_o to get dx
-        B = x.shape[0]
-        linear_tsf = self.linear_decoder_producer.sample(x).view(B, x.shape[1], self.nzo)
+        B, nx = x.shape
+        if self.use_sincos_angle:
+            angle_index = 2
+            s = torch.sin(x[:, angle_index]).view(-1, 1)
+            c = torch.cos(x[:, angle_index]).view(-1, 1)
+            x = torch.cat((x[:, :angle_index], s, c, x[:, angle_index + 1:]), dim=1)
+        linear_tsf = self.linear_decoder_producer.sample(x).view(B, nx, self.nzo)
         dx = linalg.batch_batch_product(z_o, linear_tsf)
         return dx
 
@@ -476,6 +484,7 @@ class UseTransform:
     PARAMETERIZED_1 = 2
     PARAMETERIZED_2 = 3
     PARAMETERIZED_3 = 4
+    PARAMETERIZED_4 = 5
 
 
 def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False, online_adapt=True):
@@ -744,8 +753,11 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
     #                                             name="{}_s{}".format(name, seed))
     # invariant_tsf = Parameterized2Transform(ds, d, model_opts={'h_units': (16, 32)}, too_far_for_neighbour=0.3,
     #                                         name="{}_s{}".format(name, seed))
+    # invariant_tsf = Parameterized3Transform(ds, d, model_opts={'h_units': (16, 32)}, too_far_for_neighbour=0.3,
+    #                                         name="{}_s{}".format(name, seed))
+    # parameterization 4
     invariant_tsf = Parameterized3Transform(ds, d, model_opts={'h_units': (16, 32)}, too_far_for_neighbour=0.3,
-                                            name="{}_s{}".format(name, seed))
+                                            name="{}_s{}".format(name, seed), use_sincos_angle=True)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
@@ -864,8 +876,8 @@ if __name__ == "__main__":
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=False)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_2, online_adapt=False)
-    test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_3, online_adapt=False)
+    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_3, online_adapt=False)
     # verify_coordinate_transform()
-    # for seed in range(10):
-    #     learn_invariant(seed=seed, name="", MAX_EPOCH=40)
+    for seed in range(10):
+        learn_invariant(seed=seed, name="sincos", MAX_EPOCH=40)
     # test_online_model()
