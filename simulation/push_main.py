@@ -256,18 +256,20 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
         self.yaw_selector.load_state_dict(saved_state_dict['yaw'])
         self.linear_model_producer.model.load_state_dict(saved_state_dict['linear'])
 
-    def _evaluate_validation_set(self, writer):
-        super(ParameterizedCoordTransform, self)._evaluate_validation_set(writer)
-        with torch.no_grad():
-            yaw_param = self.yaw_selector.weight.data
-            cs = torch.nn.functional.cosine_similarity(yaw_param, self.true_yaw_param).item()
-            dist = torch.norm(yaw_param - self.true_yaw_param).item()
+    def evaluate_validation(self, writer):
+        losses = super(ParameterizedCoordTransform, self).evaluate_validation(writer)
+        if writer is not None:
+            with torch.no_grad():
+                yaw_param = self.yaw_selector.weight.data
+                cs = torch.nn.functional.cosine_similarity(yaw_param, self.true_yaw_param).item()
+                dist = torch.norm(yaw_param - self.true_yaw_param).item()
 
-            logger.debug("step %d yaw cos sim %f dist %f", self.step, cs, dist)
+                logger.debug("step %d yaw cos sim %f dist %f", self.step, cs, dist)
 
-            writer.add_scalar('cosine_similarity', cs, self.step)
-            writer.add_scalar('param_diff', dist, self.step)
-            writer.add_scalar('param_norm', yaw_param.norm().item(), self.step)
+                writer.add_scalar('cosine_similarity', cs, self.step)
+                writer.add_scalar('param_diff', dist, self.step)
+                writer.add_scalar('param_norm', yaw_param.norm().item(), self.step)
+        return losses
 
 
 class Parameterized2Transform(ParameterizedCoordTransform):
@@ -311,18 +313,20 @@ class Parameterized2Transform(ParameterizedCoordTransform):
         super()._load_model_state_dict(saved_state_dict)
         self.zi_selector.load_state_dict(saved_state_dict['zi'])
 
-    def _evaluate_validation_set(self, writer):
-        super()._evaluate_validation_set(writer)
-        with torch.no_grad():
-            zi_param = self.zi_selector.weight.data
-            cs = torch.nn.functional.cosine_similarity(zi_param, self.true_zi_param).mean().item()
-            dist = torch.norm(zi_param - self.true_zi_param).item()
+    def evaluate_validation(self, writer):
+        losses = super().evaluate_validation(writer)
+        if writer is not None:
+            with torch.no_grad():
+                zi_param = self.zi_selector.weight.data
+                cs = torch.nn.functional.cosine_similarity(zi_param, self.true_zi_param).mean().item()
+                dist = torch.norm(zi_param - self.true_zi_param).item()
 
-            logger.debug("step %d zi cos sim %f dist %f", self.step, cs, dist)
+                logger.debug("step %d zi cos sim %f dist %f", self.step, cs, dist)
 
-            writer.add_scalar('cosine_similarity/zi_selector', cs, self.step)
-            writer.add_scalar('param_diff/zi_selector', dist, self.step)
-            writer.add_scalar('param_norm/zi_selector', zi_param.norm().item(), self.step)
+                writer.add_scalar('cosine_similarity/zi_selector', cs, self.step)
+                writer.add_scalar('param_diff/zi_selector', dist, self.step)
+                writer.add_scalar('param_norm/zi_selector', zi_param.norm().item(), self.step)
+        return losses
 
 
 class Parameterized3Transform(Parameterized2Transform):
@@ -513,6 +517,12 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
         if use_tsf is not UseTransform.COORDINATE_TRANSFORM and not invariant_tsf.load(
                 invariant_tsf.get_last_checkpoint()):
             invariant_tsf.learn_model(training_epochs, 5)
+
+        # evaluate tsf on validation set
+        losses = invariant_tsf.evaluate_validation(None)
+        logger.info("tsf on validation %s",
+                    "  ".join(["{} {:.5f}".format(name, loss.mean().cpu().item()) for name, loss in
+                               zip(invariant_tsf.loss_names(), losses)]))
 
         if isinstance(invariant_tsf, invariant.LearnLinearDynamicsTransform):
             transformer = invariant.LearnLinearInvariantTransformer

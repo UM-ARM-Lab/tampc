@@ -3,6 +3,7 @@ import copy
 import logging
 import os
 import pickle
+from typing import Union
 
 import numpy as np
 import torch
@@ -77,13 +78,8 @@ class InvariantTransform(LearnableParameterizedModel):
         """
 
     def _record_metrics(self, writer, losses, suffix='', log=False):
-        """
-        Use summary writer and passed in losses to
-        :param writer: SummaryWriter
-        :return:
-        """
         with torch.no_grad():
-            for i, loss_name in enumerate(self._loss_names()):
+            for i, loss_name in enumerate(self.loss_names()):
                 name = '{}{}'.format(loss_name, suffix)
                 value = losses[i].mean().cpu().item()
                 writer.add_scalar(name, value, self.step)
@@ -91,7 +87,6 @@ class InvariantTransform(LearnableParameterizedModel):
                     logger.debug("metric %s %f", name, value)
 
     def _evaluate_metrics_on_whole_set(self, neighbourhood, tsf):
-        # TODO do evaluation in original space to allow for comparison across transforms
         with torch.no_grad():
             data_set = self.ds.validation_set() if neighbourhood is self.neighbourhood_validation else \
                 self.ds.training_set()
@@ -101,6 +96,8 @@ class InvariantTransform(LearnableParameterizedModel):
             batch_losses = self._init_batch_losses()
 
             for i in range(N):
+                # TODO evaluate validation MSE in original space to allow for comparison across transforms
+                # not easy in terms of infrastructure because we also need original neighbourhood x,y to convert back
                 losses = self._evaluate_neighbour(X, U, Y, neighbourhood, i, tsf)
                 if losses is None:
                     continue
@@ -111,9 +108,18 @@ class InvariantTransform(LearnableParameterizedModel):
             batch_losses = [math_utils.replace_nan_and_inf(torch.tensor(losses)) for losses in batch_losses]
             return batch_losses
 
-    def _evaluate_validation_set(self, writer):
+    def evaluate_validation(self, writer: Union[SummaryWriter, None]):
+        """
+        Evaluate losses on the validation set and recording them down if given a writer
+        :param writer:
+        :return: losses on the validation set
+        """
+        if self.neighbourhood is None:
+            self.calculate_neighbours()
         losses = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation, TransformToUse.LATENT_SPACE)
-        self._record_metrics(writer, losses, suffix="/validation", log=True)
+        if writer is not None:
+            self._record_metrics(writer, losses, suffix="/validation", log=True)
+        return losses
 
     def _evaluate_no_transform(self, writer):
         losses = self._evaluate_metrics_on_whole_set(self.neighbourhood, TransformToUse.NO_TRANSFORM)
@@ -229,7 +235,7 @@ class InvariantTransform(LearnableParameterizedModel):
         return mse_loss, cov_loss
 
     @staticmethod
-    def _loss_names():
+    def loss_names():
         return "mse_loss", "cov_loss"
 
     @staticmethod
@@ -238,7 +244,7 @@ class InvariantTransform(LearnableParameterizedModel):
         return torch.sum(losses[0])
 
     def _init_batch_losses(self):
-        return [[] for _ in self._loss_names()]
+        return [[] for _ in self.loss_names()]
 
     def learn_model(self, max_epoch, batch_N=500):
         if self.neighbourhood is None:
@@ -258,7 +264,7 @@ class InvariantTransform(LearnableParameterizedModel):
         for epoch in range(max_epoch):
             logger.debug("Start epoch %d", epoch)
             # evaluate on validation at the start of epochs
-            self._evaluate_validation_set(writer)
+            self.evaluate_validation(writer)
             if save_checkpoint_every_n_epochs and epoch % save_checkpoint_every_n_epochs == 0:
                 self.save()
             # randomize the order we're looking at the neighbourhoods
@@ -341,7 +347,7 @@ class LearnLinearDynamicsTransform(InvariantTransform):
         return mse_loss, dynamics_spread
 
     @staticmethod
-    def _loss_names():
+    def loss_names():
         return "mse_loss", "spread_loss"
 
     @staticmethod
