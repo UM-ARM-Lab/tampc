@@ -9,6 +9,7 @@ import numpy as np
 import pybullet as p
 import torch
 from arm_pytorch_utilities import math_utils
+from arm_pytorch_utilities import linalg
 from arm_pytorch_utilities import preprocess
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.model import make
@@ -270,7 +271,7 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
 
 
 class Parameterized2Transform(ParameterizedCoordTransform):
-    """Also parameterize the encoding"""
+    """Relax parameterization structure to allow (each dimension of) z_i to be some linear combination of x,u"""
 
     def __init__(self, ds, device, **kwargs):
         # z_o is dx, dy, dyaw in body frame and d_along
@@ -322,6 +323,53 @@ class Parameterized2Transform(ParameterizedCoordTransform):
             writer.add_scalar('cosine_similarity/zi_selector', cs, self.step)
             writer.add_scalar('param_diff/zi_selector', dist, self.step)
             writer.add_scalar('param_norm/zi_selector', zi_param.norm().item(), self.step)
+
+
+class Parameterized3Transform(Parameterized2Transform):
+    """Relax parameterization structure to allow decoder to be some state dependent transformation of z_o"""
+
+    def __init__(self, ds, device, **kwargs):
+        # z_o is dx, dy, dyaw in body frame and d_along
+        nzo = 4
+
+        # input to producer is x, output is matrix to multiply z_o to get dx by
+        config = load_data.DataConfig()
+        config.nx = ds.config.nx
+        config.ny = nzo * ds.config.nx  # matrix output
+        # outputs a linear transformation from z_o to dx (linear in z_o), that is dependent on state
+        self.linear_decoder_producer = model.DeterministicUser(
+            make.make_sequential_network(config, h_units=(16, 32)).to(device=device))
+
+        name = kwargs.pop('name', '')
+        super().__init__(ds, device, name='state_dep_linear_tsf_{}'.format(name), **kwargs)
+
+    def parameters(self):
+        return list(self.linear_decoder_producer.model.parameters()) + list(self.zi_selector.parameters()) + list(
+            self.linear_model_producer.model.parameters())
+
+    def _model_state_dict(self):
+        d = super()._model_state_dict()
+        d['decoder'] = self.linear_decoder_producer.model.state_dict()
+        return d
+
+    def _load_model_state_dict(self, saved_state_dict):
+        super()._load_model_state_dict(saved_state_dict)
+        self.linear_decoder_producer.model.load_state_dict(saved_state_dict['decoder'])
+
+    def linear_dynamics(self, zi):
+        B = zi.shape[0]
+        return self.linear_model_producer.sample(zi).view(B, self.nzo, self.nz)
+
+    def zo_to_dx(self, x, z_o):
+        if len(x.shape) == 1:
+            x = x.view(1, -1)
+            z_o = z_o.view(1, -1)
+
+        # make state-dependent linear transforms (matrices) that multiply z_o to get dx
+        B = x.shape[0]
+        linear_tsf = self.linear_decoder_producer.sample(x).view(B, x.shape[1], self.nzo)
+        dx = linalg.batch_batch_product(z_o, linear_tsf)
+        return dx
 
 
 class WorldBodyFrameTransformForDirectPush(HandDesignedCoordTransform):
@@ -423,6 +471,7 @@ class UseTransform:
     COORDINATE_TRANSFORM = 1
     PARAMETERIZED_1 = 2
     PARAMETERIZED_2 = 3
+    PARAMETERIZED_3 = 4
 
 
 def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False, online_adapt=True):
@@ -445,11 +494,17 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
                                                                             too_far_for_neighbour=0.3, name="_s2"),
                   UseTransform.PARAMETERIZED_2: Parameterized2Transform(ds, d, model_opts={'h_units': (16, 32)},
                                                                         too_far_for_neighbour=0.3,
-                                                                        name="rand_start_s9")}
+                                                                        name="rand_start_s9"),
+                  UseTransform.PARAMETERIZED_3: Parameterized3Transform(ds, d, model_opts={'h_units': (16, 32)},
+                                                                        too_far_for_neighbour=0.3,
+                                                                        name="_s9")
+                  }
     transform_names = {UseTransform.NO_TRANSFORM: 'none',
                        UseTransform.COORDINATE_TRANSFORM: 'coord',
                        UseTransform.PARAMETERIZED_1: 'param1',
-                       UseTransform.PARAMETERIZED_2: 'param2'}
+                       UseTransform.PARAMETERIZED_2: 'param2',
+                       UseTransform.PARAMETERIZED_3: 'param3',
+                       }
     invariant_tsf = transforms[use_tsf]
 
     if invariant_tsf:
@@ -477,7 +532,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     untransformed_config = ds.update_preprocessor(preprocessor)
 
     mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
-                                   name=transform_names[use_tsf])
+                                   name="dynamics_{}".format(transform_names[use_tsf]))
 
     pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(),
                                  train_epochs=600)
@@ -677,7 +732,9 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
     # add in invariant transform here
     # invariant_tsf = ParameterizedCoordTransform(ds, d, model_opts={'h_units': (16, 32)}, too_far_for_neighbour=0.3,
     #                                             name="{}_s{}".format(name, seed))
-    invariant_tsf = Parameterized2Transform(ds, d, model_opts={'h_units': (16, 32)}, too_far_for_neighbour=0.3,
+    # invariant_tsf = Parameterized2Transform(ds, d, model_opts={'h_units': (16, 32)}, too_far_for_neighbour=0.3,
+    #                                         name="{}_s{}".format(name, seed))
+    invariant_tsf = Parameterized3Transform(ds, d, model_opts={'h_units': (16, 32)}, too_far_for_neighbour=0.3,
                                             name="{}_s{}".format(name, seed))
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
@@ -796,8 +853,9 @@ if __name__ == "__main__":
     # test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=False)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=True)
-    test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_2, online_adapt=False)
+    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_2, online_adapt=False)
+    test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_3, online_adapt=False)
     # verify_coordinate_transform()
     # for seed in range(10):
-    #     learn_invariant(seed=seed, name="rand_start", MAX_EPOCH=40)
+    #     learn_invariant(seed=seed, name="", MAX_EPOCH=40)
     # test_online_model()
