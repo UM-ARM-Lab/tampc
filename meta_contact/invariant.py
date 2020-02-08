@@ -13,9 +13,8 @@ from arm_pytorch_utilities import load_data
 from arm_pytorch_utilities import math_utils
 from arm_pytorch_utilities import preprocess
 from arm_pytorch_utilities.make_data import datasource
-from arm_pytorch_utilities.model import make
 from arm_pytorch_utilities.model.common import LearnableParameterizedModel
-from meta_contact import cfg, model
+from meta_contact import cfg
 from tensorboardX import SummaryWriter
 
 logger = logging.getLogger(__name__)
@@ -358,54 +357,6 @@ class LearnLinearDynamicsTransform(InvariantTransform):
         pass
 
 
-class NoDecoderTransform(InvariantTransform):
-    """
-    Assume dynamics is dynamics is directly linear from z to dx, that is we don't need transforms between
-    dx and dz; for simpler dynamics this assumption should be good enough
-    """
-
-    def __init__(self, ds, *args, nzo=None, **kwargs):
-        if nzo is None:
-            nzo = ds.config.ny
-        super().__init__(ds, *args, nzo, **kwargs)
-
-    def zo_to_dx(self, x, z_o):
-        return z_o
-
-    def dx_to_zo(self, x, dx):
-        return dx
-
-
-class NetworkNoDecoder(NoDecoderTransform):
-    def __init__(self, ds, nz, model_opts=None, **kwargs):
-        if model_opts is None:
-            model_opts = {}
-        config = copy.deepcopy(ds.config)
-        # output the latent space instead of y
-        config.ny = nz
-        self.user = model.DeterministicUser(make.make_sequential_network(config, **model_opts))
-        super().__init__(ds, nz, **kwargs)
-
-    def xu_to_zi(self, state, action):
-        xu = torch.cat((state, action), dim=1)
-        z = self.user.sample(xu)
-
-        if self.nz is 1:
-            z = z.view(-1, 1)
-        # TODO see if we need to formulate it as action * z for toy problem (less generalized, but easier, and nz=1)
-        # z = action * z
-        return z
-
-    def parameters(self):
-        return self.user.model.parameters()
-
-    def _model_state_dict(self):
-        return self.user.model.state_dict()
-
-    def _load_model_state_dict(self, saved_state_dict):
-        self.user.model.load_state_dict(saved_state_dict)
-
-
 class InvariantTransformer(preprocess.Transformer):
     """
     Use an invariant transform to transform the data when needed, such that the dynamics model learned using
@@ -428,12 +379,10 @@ class InvariantTransformer(preprocess.Transformer):
         config.nx = self.model_input_dim
         config.nu = 0
         config.ny = self.model_output_dim  # either ny or nz
-        # if we're predicting z to dx then our y will not be in z space
-        if isinstance(self.tsf, NoDecoderTransform):
-            config.y_in_x_space = False
-        # if we're predicting z to dz then definitely will be predicting difference, otherwise don't change
-        else:
-            config.predict_difference = True
+        # in general z_o and z_i are different spaces
+        config.y_in_x_space = False
+        # not sure if below is necessary
+        # config.predict_difference = True
 
     def transform(self, XU, Y, labels=None):
         # these transforms potentially require x to transform y and back, so can't just use them separately

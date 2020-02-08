@@ -8,7 +8,7 @@ import torch.nn
 from arm_pytorch_utilities import preprocess
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.model import make
-from meta_contact import cfg
+from meta_contact import cfg, model
 from meta_contact import invariant
 from meta_contact import model
 from meta_contact import online_model
@@ -17,6 +17,7 @@ from meta_contact.controller import controller
 from meta_contact.controller import online_controller
 from meta_contact.env import myenv
 from meta_contact.env import toy
+from meta_contact.invariant import InvariantTransform
 from sklearn.preprocessing import PolynomialFeatures
 from torch.nn.functional import cosine_similarity
 
@@ -305,7 +306,25 @@ def plot_empirical_and_prior_error(xy, emp_error, prior_error, expected_max_erro
     plt.show()
 
 
-class PolynomialInvariantTransform(invariant.NoDecoderTransform):
+class NoDecoderTransform(InvariantTransform):
+    """
+    Assume dynamics is dynamics is directly linear from z to dx, that is we don't need transforms between
+    dx and dz; for simpler dynamics this assumption should be good enough
+    """
+
+    def __init__(self, ds, *args, nzo=None, **kwargs):
+        if nzo is None:
+            nzo = ds.config.ny
+        super().__init__(ds, *args, nzo, **kwargs)
+
+    def zo_to_dx(self, x, z_o):
+        return z_o
+
+    def dx_to_zo(self, x, dx):
+        return dx
+
+
+class PolynomialInvariantTransform(NoDecoderTransform):
     def __init__(self, ds, true_params, order=2, dtype=torch.double, **kwargs):
         self.poly = PolynomialFeatures(order, include_bias=False)
         x = np.random.rand(ds.config.nx).reshape(1, -1)
@@ -363,8 +382,8 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
     # invariant_tsf = PolynomialInvariantTransform(ds, env.nx, true_params,
     #                                              too_far_for_neighbour=1., train_on_continuous_data=True,
     #                                              name='{}_s{}'.format(name, seed))
-    invariant_tsf = invariant.NetworkNoDecoder(ds, 2, too_far_for_neighbour=0.3,
-                                               name='{}_s{}'.format(name, seed))
+    invariant_tsf = NetworkNoDecoder(ds, 2, too_far_for_neighbour=0.3,
+                                     name='{}_s{}'.format(name, seed))
     # more generalized encoder
 
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
@@ -396,8 +415,8 @@ def evaluate_invariant(name='', trials=5, trial_length=50):
                                                                                   too_far_for_neighbour=1.,
                                                                                   train_on_continuous_data=True,
                                                                                   name=base_name),
-                  UseTransform.NETWORK_TRANSFORM: invariant.NetworkNoDecoder(ds, 2, too_far_for_neighbour=0.3,
-                                                                             name=base_name)}
+                  UseTransform.NETWORK_TRANSFORM: NetworkNoDecoder(ds, 2, too_far_for_neighbour=0.3,
+                                                                   name=base_name)}
     transform_names = {UseTransform.NO_TRANSFORM: 'none', UseTransform.POLYNOMIAL_TRANSFORM: 'poly',
                        UseTransform.NETWORK_TRANSFORM: 'net'}
     invariant_tsf = transforms[use_tsf]
@@ -445,3 +464,33 @@ if __name__ == "__main__":
     # compare_empirical_and_prior_error(20, 50)
     # learn_invariant(0, "default", MAX_EPOCH=40, BATCH_SIZE=5)
     evaluate_invariant('default', 20, 50)
+
+
+class NetworkNoDecoder(NoDecoderTransform):
+    def __init__(self, ds, nz, model_opts=None, **kwargs):
+        if model_opts is None:
+            model_opts = {}
+        config = copy.deepcopy(ds.config)
+        # output the latent space instead of y
+        config.ny = nz
+        self.user = model.DeterministicUser(make.make_sequential_network(config, **model_opts))
+        super().__init__(ds, nz, **kwargs)
+
+    def xu_to_zi(self, state, action):
+        xu = torch.cat((state, action), dim=1)
+        z = self.user.sample(xu)
+
+        if self.nz is 1:
+            z = z.view(-1, 1)
+        # TODO see if we need to formulate it as action * z for toy problem (less generalized, but easier, and nz=1)
+        # z = action * z
+        return z
+
+    def parameters(self):
+        return self.user.model.parameters()
+
+    def _model_state_dict(self):
+        return self.user.model.state_dict()
+
+    def _load_model_state_dict(self, saved_state_dict):
+        self.user.model.load_state_dict(saved_state_dict)
