@@ -404,6 +404,76 @@ class Parameterized3Transform(Parameterized2Transform):
         return dx
 
 
+from meta_contact.invariant import TransformToUse
+
+
+class LearnNeighbourhoodTransform(Parameterized3Transform):
+    """
+    Instead of taking in predefined neighbourhoods, simultaneously produce dynamics for batches
+    and learn to structure z_i such that euclidean distance results in close dynamics.
+
+    Basically results in using batches instead of neighbourhoods for all of training and evaluation
+    """
+
+    # TODO make this a base class; currently inheriting since it's easier to try out
+    def __init__(self, *args, expected_neighbourhood_size=12, **kwargs):
+        self.k = expected_neighbourhood_size
+        super().__init__(*args, **kwargs)
+
+    def _evaluate_metrics_on_whole_set(self, neighbourhood, tsf):
+        with torch.no_grad():
+            data_set = self.ds.validation_set() if neighbourhood is self.neighbourhood_validation else \
+                self.ds.training_set()
+            X, U, Y = self._get_separate_data_columns(data_set)
+
+            batch_losses = self._evaluate_batch(X, U, Y, tsf=tsf)
+            batch_losses = [math_utils.replace_nan_and_inf(losses) for losses in batch_losses]
+            return batch_losses
+
+    def calculate_neighbours(self):
+        # don't actually calculate any neighbourhoods
+        self.neighbourhood = []
+        self.neighbourhood_validation = []
+
+    def _evaluate_neighbour(self, X, U, Y, neighbourhood, i, tsf=TransformToUse.LATENT_SPACE):
+        raise RuntimeError("This class should only evaluate batches")
+
+    # TODO override evaluate batch with the covariance loss regularization
+
+    def learn_model(self, max_epoch, batch_N=500):
+        writer = SummaryWriter(flush_secs=20, comment="{}_batch{}".format(self.name, batch_N))
+
+        ds_train = load_data.SimpleDataset(*self.ds.training_set())
+        train_loader = torch.utils.data.DataLoader(ds_train, batch_size=batch_N, shuffle=True)
+
+        save_checkpoint_every_n_epochs = max(max_epoch // 20, 5)
+
+        self.optimizer = torch.optim.Adam(self.parameters())
+        self.optimizer.zero_grad()
+        for epoch in range(max_epoch):
+            logger.debug("Start epoch %d", epoch)
+            # evaluate on validation at the start of epochs
+            self.evaluate_validation(writer)
+            if save_checkpoint_every_n_epochs and epoch % save_checkpoint_every_n_epochs == 0:
+                self.save()
+
+            for i_batch, data in enumerate(train_loader):
+                X, U, Y = self._get_separate_data_columns(data)
+                losses = self._evaluate_batch(X, U, Y)
+                if losses is None:
+                    continue
+
+                reduced_loss = self._reduce_losses(losses)
+                reduced_loss.backward()
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+
+                self._record_metrics(writer, losses)
+                self.step += 1
+
+        self.save(last=True)
+
+
 def coord_tsf_factory(env, *args, **kwargs):
     tsfs = {block_push.PushAgainstWallStickyEnv: WorldBodyFrameTransformForStickyEnv,
             block_push.PushWithForceDirectlyEnv: WorldBodyFrameTransformForDirectPush}
@@ -864,7 +934,8 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
     # invariant_tsf = Parameterized2Transform(ds, d, **common_opts)
     # invariant_tsf = Parameterized3Transform(ds, d, **common_opts)
     # parameterization 4
-    invariant_tsf = Parameterized3Transform(ds, d, **common_opts, use_sincos_angle=True)
+    # invariant_tsf = Parameterized3Transform(ds, d, **common_opts, use_sincos_angle=True)
+    invariant_tsf = LearnNeighbourhoodTransform(ds, d, **common_opts)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
@@ -879,10 +950,10 @@ if __name__ == "__main__":
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_2, online_adapt=False)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_2, online_adapt=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_3, online_adapt=False)
-    test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_3, online_adapt=True)
+    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_3, online_adapt=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_4, online_adapt=False)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_4, online_adapt=True)
     # verify_coordinate_transform()
     # test_online_model()
-    # for seed in range(10):
-    #     learn_invariant(seed=seed, name="", MAX_EPOCH=40)
+    for seed in range(10):
+        learn_invariant(seed=seed, name="try_batch", MAX_EPOCH=40, BATCH_SIZE=500)
