@@ -113,6 +113,7 @@ def constrain_state(state):
     return state
 
 
+# ------- Hand designed coordinate transform classes using architecture 2
 class HandDesignedCoordTransform(invariant.InvariantTransform):
     def __init__(self, ds, nz, **kwargs):
         # z_o is dx, dy, dyaw in body frame and d_along
@@ -178,12 +179,28 @@ class WorldBodyFrameTransformForStickyEnv(HandDesignedCoordTransform):
             state = state.reshape(1, -1)
             action = action.reshape(1, -1)
 
-        # TODO might be able to remove push magnitude (and just directly multiply by that)
         # (along, d_along, push magnitude)
         z = torch.from_numpy(np.column_stack((state[:, -1], action)))
         return z
 
 
+class WorldBodyFrameTransformForDirectPush(HandDesignedCoordTransform):
+    def __init__(self, ds, **kwargs):
+        # need along, d_along, push magnitude, and push direction; don't need block position or yaw
+        super().__init__(ds, 4, **kwargs)
+
+    def xu_to_zi(self, state, action):
+        if len(state.shape) < 2:
+            state = state.reshape(1, -1)
+            action = action.reshape(1, -1)
+
+        # (along, d_along, push magnitude, push direction)
+        # z = torch.from_numpy(np.column_stack((state[:, -1], action)))
+        z = torch.cat((state[:, -1].view(-1, 1), action), dim=1)
+        return z
+
+
+# ------- Learned transform classes using architecture 3
 class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
     """Parameterize the coordinate transform such that it has to learn something"""
 
@@ -223,7 +240,6 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
             state = state.reshape(1, -1)
             action = action.reshape(1, -1)
 
-        # TODO make more general parameterized versions where we select which components to take
         # (along, d_along, push magnitude)
         z = torch.cat((state[:, -1].view(-1, 1), action), dim=1)
         return z
@@ -388,22 +404,6 @@ class Parameterized3Transform(Parameterized2Transform):
         return dx
 
 
-class WorldBodyFrameTransformForDirectPush(HandDesignedCoordTransform):
-    def __init__(self, ds, **kwargs):
-        # need along, d_along, push magnitude, and push direction; don't need block position or yaw
-        super().__init__(ds, 4, **kwargs)
-
-    def xu_to_zi(self, state, action):
-        if len(state.shape) < 2:
-            state = state.reshape(1, -1)
-            action = action.reshape(1, -1)
-
-        # (along, d_along, push magnitude, push direction)
-        # z = torch.from_numpy(np.column_stack((state[:, -1], action)))
-        z = torch.cat((state[:, -1].view(-1, 1), action), dim=1)
-        return z
-
-
 def coord_tsf_factory(env, *args, **kwargs):
     tsfs = {block_push.PushAgainstWallStickyEnv: WorldBodyFrameTransformForStickyEnv,
             block_push.PushWithForceDirectlyEnv: WorldBodyFrameTransformForDirectPush}
@@ -480,6 +480,112 @@ def verify_coordinate_transform():
     assert torch.allclose(z_os.std(0), torch.zeros(4), atol=tol)
     # actual dx should be different since we have yaw
     assert not torch.allclose(dxes.std(0), torch.zeros(4), atol=tol)
+
+
+def test_online_model():
+    seed = 1
+    d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    env = get_easy_env(p.DIRECT, level=0)
+
+    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
+    ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config, device=d)
+
+    logger.info("initial random seed %d", rand.seed(seed))
+
+    invariant_tsf = coord_tsf_factory(env, ds)
+    transformer = invariant.InvariantTransformer
+    preprocessor = preprocess.Compose(
+        [transformer(invariant_tsf),
+         preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
+
+    ds.update_preprocessor(preprocessor)
+
+    prior_name = 'coord_prior'
+
+    mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
+                                   name=prior_name)
+
+    pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=600)
+
+    # we can evaluate just prior dynamics by mixing with N=0 (no weight for empirical data)
+    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, env.state_difference, local_mix_weight=0, sigreg=1e-10)
+
+    # evaluate linearization by comparing error from applying model directly vs applying linearized model
+    xuv, yv, _ = ds.original_validation_set()
+    xv = xuv[:, :ds.original_config().nx]
+    uv = xuv[:, ds.original_config().nx:]
+    if ds.original_config().predict_difference:
+        yv = yv + xv
+    # full model prediction
+    yhat1 = pm.dyn_net.predict(xuv)
+    # linearized prediction
+    yhat2 = dynamics.predict(None, None, xv, uv)
+
+    e1 = torch.norm((yhat1 - yv), dim=1)
+    e2 = torch.norm((yhat2 - yv), dim=1)
+    assert torch.allclose(yhat1, yhat2)
+    logger.info("Full model MSE %f linearized model MSE %f", e1.mean(), e2.mean())
+
+    mix_weights = [0.001, 0.01, 0.02, 0.05, 0.1, 0.5, 1.0]
+    errors = torch.zeros(len(mix_weights))
+    divergence = torch.zeros_like(errors)
+    # debug updating linear model and using non-0 weight (error should increase with distance from update)
+    for i, weight in enumerate(mix_weights):
+        dynamics.empsig_N = weight
+        yhat2 = dynamics.predict(None, None, xv, uv)
+        errors[i] = torch.mean(torch.norm((yhat2 - yv), dim=1))
+        divergence[i] = torch.mean(torch.norm((yhat2 - yhat1), dim=1))
+    logger.info("error with increasing weight %s", errors)
+    logger.info("divergence increasing weight %s", divergence)
+
+    # use just a single trajectory
+    N = 49  # xv.shape[0]-1
+    xv = xv[:N]
+    uv = uv[:N]
+    yv = yv[:N]
+
+    horizon = 3
+    dynamics.gamma = 0.1
+    dynamics.empsig_N = 1.0
+    compare_against_last_updated = False
+    errors = torch.zeros((N, 3))
+    GLOBAL = 0
+    BEFORE = 1
+    AFTER = 2
+
+    yhat2 = dynamics.predict(None, None, xv, uv)
+    e2 = torch.norm((yhat2 - yv), dim=1)
+    for i in range(N - 1):
+        if compare_against_last_updated:
+            yhat2 = dynamics.predict(None, None, xv, uv)
+            e2 = torch.norm((yhat2 - yv), dim=1)
+        dynamics.update(xv[i], uv[i], xv[i + 1])
+        # after
+        yhat3 = dynamics.predict(None, None, xv, uv)
+        e3 = torch.norm((yhat3 - yv), dim=1)
+
+        errors[i, GLOBAL] = e1[i + 1:i + 1 + horizon].mean()
+        errors[i, BEFORE] = e2[i + 1:i + 1 + horizon].mean()
+        errors[i, AFTER] = e3[i + 1:i + 1 + horizon].mean()
+        # when updated with xux' from ground truth, should do better at current location
+        if errors[i, AFTER] > errors[i, BEFORE]:
+            logger.warning("error increased after update at %d", i)
+        # also look at error with global model
+        logger.info("global before after %s", errors[i])
+
+    errors = errors[:N - 1]
+    # plot these two errors relative to the global model error
+    plt.figure()
+    plt.plot(errors[:, BEFORE] / errors[:, GLOBAL])
+    plt.plot(errors[:, AFTER] / errors[:, GLOBAL])
+    plt.title(
+        'local error after update for horizon {} gamma {} weight {}'.format(horizon, dynamics.gamma, dynamics.empsig_N))
+    plt.xlabel('step')
+    plt.ylabel('relative error to global model')
+    plt.yscale('log')
+    plt.legend(['before update', 'after update'])
+    plt.grid()
+    plt.show()
 
 
 class UseTransform:
@@ -760,112 +866,6 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
     # parameterization 4
     invariant_tsf = Parameterized3Transform(ds, d, **common_opts, use_sincos_angle=True)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
-
-
-def test_online_model():
-    seed = 1
-    d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    env = get_easy_env(p.DIRECT, level=0)
-
-    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-    ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config, device=d)
-
-    logger.info("initial random seed %d", rand.seed(seed))
-
-    invariant_tsf = coord_tsf_factory(env, ds)
-    transformer = invariant.InvariantTransformer
-    preprocessor = preprocess.Compose(
-        [transformer(invariant_tsf),
-         preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
-
-    ds.update_preprocessor(preprocessor)
-
-    prior_name = 'coord_prior'
-
-    mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
-                                   name=prior_name)
-
-    pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=600)
-
-    # we can evaluate just prior dynamics by mixing with N=0 (no weight for empirical data)
-    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, env.state_difference, local_mix_weight=0, sigreg=1e-10)
-
-    # evaluate linearization by comparing error from applying model directly vs applying linearized model
-    xuv, yv, _ = ds.original_validation_set()
-    xv = xuv[:, :ds.original_config().nx]
-    uv = xuv[:, ds.original_config().nx:]
-    if ds.original_config().predict_difference:
-        yv = yv + xv
-    # full model prediction
-    yhat1 = pm.dyn_net.predict(xuv)
-    # linearized prediction
-    yhat2 = dynamics.predict(None, None, xv, uv)
-
-    e1 = torch.norm((yhat1 - yv), dim=1)
-    e2 = torch.norm((yhat2 - yv), dim=1)
-    assert torch.allclose(yhat1, yhat2)
-    logger.info("Full model MSE %f linearized model MSE %f", e1.mean(), e2.mean())
-
-    mix_weights = [0.001, 0.01, 0.02, 0.05, 0.1, 0.5, 1.0]
-    errors = torch.zeros(len(mix_weights))
-    divergence = torch.zeros_like(errors)
-    # debug updating linear model and using non-0 weight (error should increase with distance from update)
-    for i, weight in enumerate(mix_weights):
-        dynamics.empsig_N = weight
-        yhat2 = dynamics.predict(None, None, xv, uv)
-        errors[i] = torch.mean(torch.norm((yhat2 - yv), dim=1))
-        divergence[i] = torch.mean(torch.norm((yhat2 - yhat1), dim=1))
-    logger.info("error with increasing weight %s", errors)
-    logger.info("divergence increasing weight %s", divergence)
-
-    # use just a single trajectory
-    N = 49  # xv.shape[0]-1
-    xv = xv[:N]
-    uv = uv[:N]
-    yv = yv[:N]
-
-    horizon = 3
-    dynamics.gamma = 0.1
-    dynamics.empsig_N = 1.0
-    compare_against_last_updated = False
-    errors = torch.zeros((N, 3))
-    GLOBAL = 0
-    BEFORE = 1
-    AFTER = 2
-
-    yhat2 = dynamics.predict(None, None, xv, uv)
-    e2 = torch.norm((yhat2 - yv), dim=1)
-    for i in range(N - 1):
-        if compare_against_last_updated:
-            yhat2 = dynamics.predict(None, None, xv, uv)
-            e2 = torch.norm((yhat2 - yv), dim=1)
-        dynamics.update(xv[i], uv[i], xv[i + 1])
-        # after
-        yhat3 = dynamics.predict(None, None, xv, uv)
-        e3 = torch.norm((yhat3 - yv), dim=1)
-
-        errors[i, GLOBAL] = e1[i + 1:i + 1 + horizon].mean()
-        errors[i, BEFORE] = e2[i + 1:i + 1 + horizon].mean()
-        errors[i, AFTER] = e3[i + 1:i + 1 + horizon].mean()
-        # when updated with xux' from ground truth, should do better at current location
-        if errors[i, AFTER] > errors[i, BEFORE]:
-            logger.warning("error increased after update at %d", i)
-        # also look at error with global model
-        logger.info("global before after %s", errors[i])
-
-    errors = errors[:N - 1]
-    # plot these two errors relative to the global model error
-    plt.figure()
-    plt.plot(errors[:, BEFORE] / errors[:, GLOBAL])
-    plt.plot(errors[:, AFTER] / errors[:, GLOBAL])
-    plt.title(
-        'local error after update for horizon {} gamma {} weight {}'.format(horizon, dynamics.gamma, dynamics.empsig_N))
-    plt.xlabel('step')
-    plt.ylabel('relative error to global model')
-    plt.yscale('log')
-    plt.legend(['before update', 'after update'])
-    plt.grid()
-    plt.show()
 
 
 if __name__ == "__main__":
