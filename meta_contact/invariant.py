@@ -203,6 +203,29 @@ class InvariantTransform(LearnableParameterizedModel):
                     neighbourhood_size.median())
         return neighbourhood
 
+    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+        if tsf is TransformToUse.LATENT_SPACE:
+            z = self.xu_to_zi(X, U)
+            y = self.dx_to_zo(X, Y)
+        elif tsf is TransformToUse.REDUCE_TO_INPUT:
+            z = U
+        elif tsf is TransformToUse.NO_TRANSFORM:
+            z = torch.cat((X, U), dim=1)
+        else:
+            raise RuntimeError("Unrecognized option for transform")
+
+        if z.shape[0] < self.ds.config.ny + z.shape[1]:
+            return None
+        # fit linear model to latent state
+        p, cov = linalg.ls_cov(z, Y, weights=weights)
+        # covariance loss
+        cov_loss = cov.trace()
+
+        # mse loss
+        yhat = z @ p.t()
+        mse_loss = torch.norm(yhat - Y, dim=1)
+        return mse_loss, cov_loss
+
     def _evaluate_neighbour(self, X, U, Y, neighbourhood, i, tsf=TransformToUse.LATENT_SPACE):
         neighbours, neighbour_weights, N = array_utils.extract_positive_weights(neighbourhood[i])
 
@@ -211,27 +234,7 @@ class InvariantTransform(LearnableParameterizedModel):
         x, u = X[neighbours], U[neighbours]
         y = Y[neighbours]
 
-        if tsf is TransformToUse.LATENT_SPACE:
-            z = self.xu_to_zi(x, u)
-            y = self.dx_to_zo(x, y)
-        elif tsf is TransformToUse.REDUCE_TO_INPUT:
-            z = u
-        elif tsf is TransformToUse.NO_TRANSFORM:
-            z = torch.cat((x, u), dim=1)
-        else:
-            raise RuntimeError("Unrecognized option for transform")
-
-        if N < self.ds.config.ny + z.shape[1]:
-            return None
-        # fit linear model to latent state
-        p, cov = linalg.ls_cov(z, y, weights=neighbour_weights)
-        # covariance loss
-        cov_loss = cov.trace()
-
-        # mse loss
-        yhat = z @ p.t()
-        mse_loss = torch.norm(yhat - y, dim=1)
-        return mse_loss, cov_loss
+        return self._evaluate_batch(x, u, y, weights=neighbour_weights, tsf=tsf)
 
     @staticmethod
     def loss_names():
@@ -318,31 +321,24 @@ class LearnLinearDynamicsTransform(InvariantTransform):
         :return: (nzo x nzi) A
         """
 
-    def _evaluate_neighbour(self, X, U, Y, neighbourhood, i, tsf=TransformToUse.LATENT_SPACE):
-        neighbours, neighbour_weights, N = array_utils.extract_positive_weights(neighbourhood[i])
-
-        if N < self.config.ny + self.nz:
-            return None
-        x, u = X[neighbours], U[neighbours]
-        y = Y[neighbours]
-
+    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
         assert tsf is TransformToUse.LATENT_SPACE
-        z = self.xu_to_zi(x, u)
+        z = self.xu_to_zi(X, U)
 
-        if N < self.ds.config.ny + z.shape[1]:
+        if z.shape[0] < self.ds.config.ny + z.shape[1]:
             return None
 
         # fit linear model to latent state
         A = self.linear_dynamics(z)
 
         zo = linalg.batch_batch_product(z, A.transpose(-1, -2))
-        yhat = self.zo_to_dx(x, zo)
+        yhat = self.zo_to_dx(X, zo)
 
         # TODO consider using weights somehow (can use on dynamics dispersion cost)
         # add cost on difference of each A (each linear dynamics should be similar)
         dynamics_spread = torch.std(A, dim=0)
         # mse loss
-        mse_loss = torch.norm(yhat - y, dim=1)
+        mse_loss = torch.norm(yhat - Y, dim=1)
         return mse_loss, dynamics_spread
 
     @staticmethod
