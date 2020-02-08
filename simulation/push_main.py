@@ -511,13 +511,16 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
                                                                             name="_s2"),
                   UseTransform.PARAMETERIZED_2: Parameterized2Transform(ds, d, too_far_for_neighbour=0.3,
                                                                         name="rand_start_s9"),
-                  UseTransform.PARAMETERIZED_3: Parameterized3Transform(ds, d, too_far_for_neighbour=0.3, name="_s9")
+                  UseTransform.PARAMETERIZED_3: Parameterized3Transform(ds, d, too_far_for_neighbour=0.3, name="_s9"),
+                  UseTransform.PARAMETERIZED_4: Parameterized3Transform(ds, d, too_far_for_neighbour=0.3,
+                                                                        name="sincos_s2", use_sincos_angle=True),
                   }
     transform_names = {UseTransform.NO_TRANSFORM: 'none',
                        UseTransform.COORDINATE_TRANSFORM: 'coord',
                        UseTransform.PARAMETERIZED_1: 'param1',
                        UseTransform.PARAMETERIZED_2: 'param2',
                        UseTransform.PARAMETERIZED_3: 'param3',
+                       UseTransform.PARAMETERIZED_4: 'param4',
                        }
     invariant_tsf = transforms[use_tsf]
 
@@ -526,7 +529,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
         # either load or learn the transform
         if use_tsf is not UseTransform.COORDINATE_TRANSFORM and not invariant_tsf.load(
                 invariant_tsf.get_last_checkpoint()):
-            invariant_tsf.learn_model(training_epochs, 5)
+            invariant_tsf.learn_model(training_epochs, 10)
 
         # evaluate tsf on validation set
         losses = invariant_tsf.evaluate_validation(None)
@@ -874,8 +877,12 @@ if __name__ == "__main__":
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=False)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_2, online_adapt=False)
+    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_2, online_adapt=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_3, online_adapt=False)
+    test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_3, online_adapt=True)
+    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_4, online_adapt=False)
+    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_4, online_adapt=True)
     # verify_coordinate_transform()
-    for seed in range(10):
-        learn_invariant(seed=seed, name="sincos", MAX_EPOCH=40)
     # test_online_model()
+    # for seed in range(10):
+    #     learn_invariant(seed=seed, name="", MAX_EPOCH=40)
