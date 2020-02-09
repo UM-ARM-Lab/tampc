@@ -420,11 +420,14 @@ class LearnNeighbourhoodTransform(Parameterized3Transform):
         self.k = expected_neighbourhood_size
         super().__init__(*args, **kwargs)
 
-    def _evaluate_metrics_on_whole_set(self, neighbourhood, tsf):
+    def _evaluate_metrics_on_whole_set(self, neighbourhood, tsf, translation=(0, 0)):
         with torch.no_grad():
             data_set = self.ds.validation_set() if neighbourhood is self.neighbourhood_validation else \
                 self.ds.training_set()
             X, U, Y = self._get_separate_data_columns(data_set)
+
+            # TODO this is hacky and specific to the block pushing env (translate state)
+            X = torch.cat((X[:,:2] + torch.tensor(translation, device=X.device, dtype=X.dtype), X[:, 2:]), dim=1)
 
             batch_losses = self._evaluate_batch(X, U, Y, tsf=tsf)
             batch_losses = [math_utils.replace_nan_and_inf(losses) for losses in batch_losses]
@@ -437,6 +440,20 @@ class LearnNeighbourhoodTransform(Parameterized3Transform):
 
     def _evaluate_neighbour(self, X, U, Y, neighbourhood, i, tsf=TransformToUse.LATENT_SPACE):
         raise RuntimeError("This class should only evaluate batches")
+
+    def evaluate_validation(self, writer):
+        # evaluate with translation
+        losses = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation, TransformToUse.LATENT_SPACE)
+        if writer is not None:
+            self._record_metrics(writer, losses, suffix="/validation", log=True)
+            for d in [4, 10]:
+                for trans in [[1, 1], [-1, 1], [-1, -1]]:
+                    dd = (trans[0] * d, trans[1] * d)
+                    ls = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation, TransformToUse.LATENT_SPACE,
+                                                             translation=dd)
+                    self._record_metrics(writer, ls, suffix="/validation_{}_{}".format(dd[0], dd[1]))
+
+        return losses
 
     # TODO override evaluate batch with the covariance loss regularization
 
@@ -955,5 +972,5 @@ if __name__ == "__main__":
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_4, online_adapt=True)
     # verify_coordinate_transform()
     # test_online_model()
-    for seed in range(10):
-        learn_invariant(seed=seed, name="try_batch", MAX_EPOCH=40, BATCH_SIZE=500)
+    for seed in range(5):
+        learn_invariant(seed=seed, name="trans_eval", MAX_EPOCH=1000, BATCH_SIZE=500)
