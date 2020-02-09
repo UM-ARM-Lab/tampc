@@ -741,20 +741,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
                 invariant_tsf.get_last_checkpoint()):
             invariant_tsf.learn_model(training_epochs, 10)
 
-        # evaluate tsf on validation set
-        losses = invariant_tsf.evaluate_validation(None)
-        logger.info("tsf on validation %s",
-                    "  ".join(["{} {:.5f}".format(name, loss.mean().cpu().item()) for name, loss in
-                               zip(invariant_tsf.loss_names(), losses)]))
-
-        if isinstance(invariant_tsf, invariant.LearnLinearDynamicsTransform):
-            transformer = invariant.LearnLinearInvariantTransformer
-        else:
-            transformer = invariant.InvariantTransformer
-        # wrap the transform as a data preprocessor
-        preprocessor = preprocess.Compose(
-            [transformer(invariant_tsf),
-             preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
+        preprocessor = get_preprocessor_for_invariant_tsf(invariant_tsf)
     else:
         # use minmax scaling if we're not using an invariant transform (baseline)
         preprocessor = preprocess.PytorchTransformer(preprocess.MinMaxScaler())
@@ -953,14 +940,19 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     return total_costs
 
 
-def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
+def get_free_space_env_init(seed=1, **kwargs):
     d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    env = get_easy_env(p.DIRECT)
+    env = get_easy_env(kwargs.pop('mode', p.DIRECT), **kwargs)
 
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config, device=d)
 
     logger.info("initial random seed %d", rand.seed(seed))
+    return d, env, config, ds
+
+
+def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
+    d, env, config, ds = get_free_space_env_init(seed)
 
     common_opts = {'too_far_for_neighbour': 0.3, 'name': "{}_s{}".format(name, seed)}
     # add in invariant transform here
@@ -971,6 +963,42 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
     # invariant_tsf = Parameterized3Transform(ds, d, **common_opts, use_sincos_angle=True)
     invariant_tsf = LearnNeighbourhoodTransform(ds, d, **common_opts)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
+
+
+def get_preprocessor_for_invariant_tsf(invariant_tsf):
+    # evaluate tsf on validation set
+    losses = invariant_tsf.evaluate_validation(None)
+    logger.info("tsf on validation %s",
+                "  ".join(["{} {:.5f}".format(name, loss.mean().cpu().item()) for name, loss in
+                           zip(invariant_tsf.loss_names(), losses)]))
+
+    if isinstance(invariant_tsf, invariant.LearnLinearDynamicsTransform):
+        transformer = invariant.LearnLinearInvariantTransformer
+    else:
+        transformer = invariant.InvariantTransformer
+
+    # wrap the transform as a data preprocessor
+    preprocessor = preprocess.Compose(
+        [transformer(invariant_tsf),
+         preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
+
+    return preprocessor
+
+
+def learn_model(seed=1, name="", transform_name="", train_epochs=600, batch_N=500):
+    d, env, config, ds = get_free_space_env_init(seed)
+
+    invariant_tsf = LearnNeighbourhoodTransform(ds, d, too_far_for_neighbour=0.3, name=transform_name)
+    # we expect this transform to have been learned already
+    if not invariant_tsf.load(invariant_tsf.get_last_checkpoint()):
+        raise RuntimeError("transform {} need to be learned first - use learn_invariant")
+
+    preprocessor = get_preprocessor_for_invariant_tsf(invariant_tsf)
+    ds.update_preprocessor(preprocessor)
+
+    mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
+                       name="dynamics_{}{}".format(transform_name, name))
+    mw.learn_model(train_epochs, batch_N=batch_N)
 
 
 if __name__ == "__main__":
