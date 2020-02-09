@@ -221,9 +221,8 @@ class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
 
         self.writer = None
 
-    def _accumulate_stats(self, loss, vloss):
-        self.writer.add_scalar('loss/training', loss, self.step)
-        self.writer.add_scalar('loss/validation', vloss, self.step)
+    def evaluate_validation(self):
+        """Any additional evaluation on the validation set goes here"""
 
     def learn_model(self, max_epoch, batch_N=500):
         self.XU, self.Y, self.labels = self.ds.training_set()
@@ -249,14 +248,16 @@ class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
 
                 # validation and other analysis
                 with torch.no_grad():
+                    self.writer.add_scalar('loss/training', loss.mean(), self.step)
                     vloss = self.user.compute_validation_loss(self.XUv, self.Yv, self.ds)
-                    self._accumulate_stats(loss.mean(), vloss.mean())
+                    self.writer.add_scalar('loss/validation', vloss.mean(), self.step)
+                    self.evaluate_validation()
+                    logger.debug("Epoch %d loss %f vloss %f", epoch, loss.mean().item(), vloss.mean().item())
 
                 loss.mean().backward()
                 # torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
                 self.optimizer.step()
 
-                logger.debug("Epoch %d loss %f vloss %f", epoch, loss.mean().item(), vloss.mean().item())
         # save after training
         self.save(last=True)
         self._evaluate_against_least_squares()

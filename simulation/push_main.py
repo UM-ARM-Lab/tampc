@@ -104,6 +104,24 @@ def get_easy_env(mode=p.GUI, level=0, log_video=False):
     return env
 
 
+class PusherNetwork(model.NetworkModelWrapper):
+    """Network wrapper with some special validation evaluation"""
+
+    def evaluate_validation(self):
+        with torch.no_grad():
+            # try validation loss outside of our training region (by translating input)
+            for d in [4, 10]:
+                for trans in [[1, 1], [-1, 1], [-1, -1]]:
+                    dd = (trans[0] * d, trans[1] * d)
+                    XU = torch.cat(
+                        (self.XUv[:, :2] + torch.tensor(dd, device=self.XUv.device, dtype=self.XUv.dtype),
+                         self.XUv[:, 2:]),
+                        dim=1)
+                    vloss = self.user.compute_validation_loss(XU, self.Yv, self.ds)
+                    self.writer.add_scalar("loss/validation_{}_{}".format(dd[0], dd[1]), vloss.mean(),
+                                           self.step)
+
+
 def constrain_state(state):
     # yaw gets normalized
     state[:, 2] = math_utils.angle_normalize(state[:, 2])
@@ -427,7 +445,7 @@ class LearnNeighbourhoodTransform(Parameterized3Transform):
             X, U, Y = self._get_separate_data_columns(data_set)
 
             # TODO this is hacky and specific to the block pushing env (translate state)
-            X = torch.cat((X[:,:2] + torch.tensor(translation, device=X.device, dtype=X.dtype), X[:, 2:]), dim=1)
+            X = torch.cat((X[:, :2] + torch.tensor(translation, device=X.device, dtype=X.dtype), X[:, 2:]), dim=1)
 
             batch_losses = self._evaluate_batch(X, U, Y, tsf=tsf)
             batch_losses = [math_utils.replace_nan_and_inf(losses) for losses in batch_losses]
@@ -589,8 +607,7 @@ def test_online_model():
 
     prior_name = 'coord_prior'
 
-    mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
-                                   name=prior_name)
+    mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds, name=prior_name)
 
     pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=600)
 
@@ -747,8 +764,8 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     # update the datasource to use transformed data
     untransformed_config = ds.update_preprocessor(preprocessor)
 
-    mw = model.NetworkModelWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
-                                   name="dynamics_{}".format(transform_names[use_tsf]))
+    mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
+                       name="dynamics_{}".format(transform_names[use_tsf]))
 
     pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(),
                                  train_epochs=600)
@@ -972,5 +989,5 @@ if __name__ == "__main__":
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_4, online_adapt=True)
     # verify_coordinate_transform()
     # test_online_model()
-    for seed in range(5):
+    for seed in range(10):
         learn_invariant(seed=seed, name="trans_eval", MAX_EPOCH=1000, BATCH_SIZE=500)
