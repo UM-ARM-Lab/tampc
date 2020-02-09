@@ -143,14 +143,17 @@ class PusherNetwork(model.NetworkModelWrapper):
 
     def evaluate_validation(self):
         with torch.no_grad():
+            XUv, _, _ = self.ds.original_validation_set()
             # try validation loss outside of our training region (by translating input)
             for d in [4, 10]:
                 for trans in [[1, 1], [-1, 1], [-1, -1]]:
                     dd = (trans[0] * d, trans[1] * d)
                     XU = torch.cat(
-                        (self.XUv[:, :2] + torch.tensor(dd, device=self.XUv.device, dtype=self.XUv.dtype),
-                         self.XUv[:, 2:]),
+                        (XUv[:, :2] + torch.tensor(dd, device=XUv.device, dtype=XUv.dtype),
+                         XUv[:, 2:]),
                         dim=1)
+                    if self.ds.preprocessor is not None:
+                        XU = self.ds.preprocessor.transform_x(XU)
                     vloss = self.user.compute_validation_loss(XU, self.Yv, self.ds)
                     self.writer.add_scalar("loss/validation_{}_{}".format(dd[0], dd[1]), vloss.mean(),
                                            self.step)
@@ -1057,5 +1060,7 @@ if __name__ == "__main__":
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_4, online_adapt=True)
     # verify_coordinate_transform()
     # test_online_model()
+    # for seed in range(10):
+    #     learn_invariant(seed=seed, name="knn_regularization", MAX_EPOCH=1000, BATCH_SIZE=500)
     for seed in range(10):
-        learn_invariant(seed=seed, name="knn_regularization", MAX_EPOCH=1000, BATCH_SIZE=500)
+        learn_model(seed=seed, transform_name="trans_eval_s{}".format(seed))
