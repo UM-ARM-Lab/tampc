@@ -9,9 +9,11 @@ import numpy as np
 import pybullet as p
 import torch
 from arm_pytorch_utilities import math_utils
+from arm_pytorch_utilities import array_utils
 from arm_pytorch_utilities import linalg
 from arm_pytorch_utilities import preprocess
 from arm_pytorch_utilities import rand, load_data
+from arm_pytorch_utilities import softknn
 from arm_pytorch_utilities.model import make
 from tensorboardX import SummaryWriter
 
@@ -23,6 +25,7 @@ from meta_contact.controller import controller
 from meta_contact.controller import online_controller
 from meta_contact.controller import global_controller
 from meta_contact.env import block_push
+from meta_contact.invariant import TransformToUse
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO,
@@ -102,6 +105,37 @@ def get_easy_env(mode=p.GUI, level=0, log_video=False):
                                               environment_level=level)
     env_dir = 'pushing/direct_force'
     return env
+
+
+def get_free_space_env_init(seed=1, **kwargs):
+    d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    env = get_easy_env(kwargs.pop('mode', p.DIRECT), **kwargs)
+
+    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
+    ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config, device=d)
+
+    logger.info("initial random seed %d", rand.seed(seed))
+    return d, env, config, ds
+
+
+def get_preprocessor_for_invariant_tsf(invariant_tsf):
+    # evaluate tsf on validation set
+    losses = invariant_tsf.evaluate_validation(None)
+    logger.info("tsf on validation %s",
+                "  ".join(["{} {:.5f}".format(name, loss.mean().cpu().item()) for name, loss in
+                           zip(invariant_tsf.loss_names(), losses)]))
+
+    if isinstance(invariant_tsf, invariant.LearnLinearDynamicsTransform):
+        transformer = invariant.LearnLinearInvariantTransformer
+    else:
+        transformer = invariant.InvariantTransformer
+
+    # wrap the transform as a data preprocessor
+    preprocessor = preprocess.Compose(
+        [transformer(invariant_tsf),
+         preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
+
+    return preprocessor
 
 
 class PusherNetwork(model.NetworkModelWrapper):
@@ -422,22 +456,12 @@ class Parameterized3Transform(Parameterized2Transform):
         return dx
 
 
-from meta_contact.invariant import TransformToUse
-
-
-class LearnNeighbourhoodTransform(Parameterized3Transform):
+class LearnFromBatchTransform(Parameterized3Transform):
     """
-    Instead of taking in predefined neighbourhoods, simultaneously produce dynamics for batches
-    and learn to structure z_i such that euclidean distance results in close dynamics.
-
-    Basically results in using batches instead of neighbourhoods for all of training and evaluation
+    Instead of taking in predefined neighbourhoods, just learn over all batches
     """
 
     # TODO make this a base class; currently inheriting since it's easier to try out
-    def __init__(self, *args, expected_neighbourhood_size=12, **kwargs):
-        self.k = expected_neighbourhood_size
-        super().__init__(*args, **kwargs)
-
     def _evaluate_metrics_on_whole_set(self, neighbourhood, tsf, translation=(0, 0)):
         with torch.no_grad():
             data_set = self.ds.validation_set() if neighbourhood is self.neighbourhood_validation else \
@@ -507,6 +531,50 @@ class LearnNeighbourhoodTransform(Parameterized3Transform):
                 self.step += 1
 
         self.save(last=True)
+
+
+class LearnNeighbourhoodTransform(LearnFromBatchTransform):
+    """
+    Instead of taking in predefined neighbourhoods, simultaneously produce dynamics for batches
+    and learn to structure z_i such that euclidean distance results in close dynamics.
+    """
+
+    def __init__(self, *args, expected_neighbourhood_size=12, **kwargs):
+        self.nbrs = softknn.SoftKNN(min_k=expected_neighbourhood_size, normalization=1)
+        super().__init__(*args, **kwargs)
+
+    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+        assert tsf is TransformToUse.LATENT_SPACE
+        z = self.xu_to_zi(X, U)
+
+        if z.shape[0] < self.ds.config.ny + z.shape[1]:
+            return None
+
+        # fit linear model to latent state
+        A = self.linear_dynamics(z)
+
+        zo = linalg.batch_batch_product(z, A.transpose(-1, -2))
+        yhat = self.zo_to_dx(X, zo)
+
+        cov_loss = []
+        # regularize by making sure nearest neighbours in z leads to good linear fits
+        weights = self.nbrs(z)
+        for i, w in enumerate(weights):
+            neighbours, nw, N = array_utils.extract_positive_weights(w)
+
+            nz = z[neighbours]
+            nzo = zo[neighbours]
+            _, sigma = linalg.ls_cov(nz, nzo, nw)
+            cov_loss.append(sigma.trace())
+        cov_loss = torch.stack(cov_loss)
+
+        # mse loss
+        mse_loss = torch.norm(yhat - Y, dim=1)
+        return mse_loss, cov_loss
+
+    @staticmethod
+    def loss_names():
+        return "mse_loss", "cov_loss"
 
 
 def coord_tsf_factory(env, *args, **kwargs):
@@ -940,17 +1008,6 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     return total_costs
 
 
-def get_free_space_env_init(seed=1, **kwargs):
-    d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    env = get_easy_env(kwargs.pop('mode', p.DIRECT), **kwargs)
-
-    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-    ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config, device=d)
-
-    logger.info("initial random seed %d", rand.seed(seed))
-    return d, env, config, ds
-
-
 def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
     d, env, config, ds = get_free_space_env_init(seed)
 
@@ -961,34 +1018,17 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
     # invariant_tsf = Parameterized3Transform(ds, d, **common_opts)
     # parameterization 4
     # invariant_tsf = Parameterized3Transform(ds, d, **common_opts, use_sincos_angle=True)
+    # try learning from batches directly (don't use predefined neighbourhoods)
+    # invariant_tsf = LearnFromBatchTransform(ds, d, **common_opts)
+    # try regularizing z space by forcing it to produce good linear neighbourhoods
     invariant_tsf = LearnNeighbourhoodTransform(ds, d, **common_opts)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
-
-
-def get_preprocessor_for_invariant_tsf(invariant_tsf):
-    # evaluate tsf on validation set
-    losses = invariant_tsf.evaluate_validation(None)
-    logger.info("tsf on validation %s",
-                "  ".join(["{} {:.5f}".format(name, loss.mean().cpu().item()) for name, loss in
-                           zip(invariant_tsf.loss_names(), losses)]))
-
-    if isinstance(invariant_tsf, invariant.LearnLinearDynamicsTransform):
-        transformer = invariant.LearnLinearInvariantTransformer
-    else:
-        transformer = invariant.InvariantTransformer
-
-    # wrap the transform as a data preprocessor
-    preprocessor = preprocess.Compose(
-        [transformer(invariant_tsf),
-         preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
-
-    return preprocessor
 
 
 def learn_model(seed=1, name="", transform_name="", train_epochs=600, batch_N=500):
     d, env, config, ds = get_free_space_env_init(seed)
 
-    invariant_tsf = LearnNeighbourhoodTransform(ds, d, too_far_for_neighbour=0.3, name=transform_name)
+    invariant_tsf = LearnFromBatchTransform(ds, d, too_far_for_neighbour=0.3, name=transform_name)
     # we expect this transform to have been learned already
     if not invariant_tsf.load(invariant_tsf.get_last_checkpoint()):
         raise RuntimeError("transform {} need to be learned first - use learn_invariant")
@@ -1018,4 +1058,4 @@ if __name__ == "__main__":
     # verify_coordinate_transform()
     # test_online_model()
     for seed in range(10):
-        learn_invariant(seed=seed, name="trans_eval", MAX_EPOCH=1000, BATCH_SIZE=500)
+        learn_invariant(seed=seed, name="knn_regularization", MAX_EPOCH=1000, BATCH_SIZE=500)
