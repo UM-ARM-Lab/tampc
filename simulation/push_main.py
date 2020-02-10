@@ -356,7 +356,7 @@ class Parameterized2Transform(ParameterizedCoordTransform):
         # input is x, output is z
         # constrain output to 0 and 1
         self.z_selector = torch.nn.Linear(ds.config.nx + ds.config.nu, nz, bias=False).to(device=device,
-                                                                                           dtype=torch.double)
+                                                                                          dtype=torch.double)
         self.true_z_param = torch.tensor(
             [[0, 0, 0, 1, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0], [0, 0, 0, 0, 0, 1, 0], [0, 0, 0, 0, 0, 0, 1]], device=device,
             dtype=torch.double)
@@ -684,6 +684,38 @@ class AblationRemoveAllLinearityTransform(Parameterized2Transform, invariant.Lea
 
     def learn_model(self, max_epoch, batch_N=500):
         return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
+
+
+class AblationAllRegularizedTransform(AblationRemoveAllLinearityTransform):
+    """Try requiring pairwise distances are proportional"""
+
+    def __init__(self, *args, dist_loss_weight=1., **kwargs):
+        self.dist_loss_weight = dist_loss_weight
+        super(AblationAllRegularizedTransform, self).__init__(*args, **kwargs)
+
+    def _name_prefix(self):
+        return 'ablation_dist_reg'
+
+    def _loss_weight_name(self):
+        return "dist_{}".format(self.dist_loss_weight)
+
+    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+        z = self.xu_to_z(X, U)
+        v = self.get_v(X, Y, z)
+        yhat = self.get_dx(X, v)
+
+        dz = torch.nn.functional.pdist(z)
+        dv = torch.nn.functional.pdist(v)
+        dist_loss = 1 - torch.nn.functional.cosine_similarity(dz, dv, dim=0)
+        mse_loss = torch.norm(yhat - Y, dim=1)
+        return mse_loss, dist_loss
+
+    @staticmethod
+    def loss_names():
+        return "mse_loss", "dist_loss"
+
+    def _reduce_losses(self, losses):
+        return torch.sum(losses[0]) + self.dist_loss_weight * torch.sum(losses[1])
 
 
 def coord_tsf_factory(env, *args, **kwargs):
@@ -1133,7 +1165,8 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
     # invariant_tsf = DistRegularizedTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationRemoveLinearDecoderTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationRemoveLinearDynamicsTransform(ds, d, **common_opts, **kwargs)
-    invariant_tsf = AblationRemoveAllLinearityTransform(ds, d, **common_opts, **kwargs)
+    # invariant_tsf = AblationRemoveAllLinearityTransform(ds, d, **common_opts, **kwargs)
+    invariant_tsf = AblationAllRegularizedTransform(ds, d, **common_opts, **kwargs)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
