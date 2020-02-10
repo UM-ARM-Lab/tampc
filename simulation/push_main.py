@@ -819,11 +819,10 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     invariant_tsf = transforms[use_tsf]
 
     if invariant_tsf:
-        training_epochs = 40
-        # either load or learn the transform
+        # load transform (only 1 function for learning transform reduces potential for different learning params)
         if use_tsf is not UseTransform.COORDINATE_TRANSFORM and not invariant_tsf.load(
                 invariant_tsf.get_last_checkpoint()):
-            invariant_tsf.learn_model(training_epochs, 10)
+            raise RuntimeError("Transform {} should be learned before using".format(invariant_tsf.name))
 
         preprocessor = get_preprocessor_for_invariant_tsf(invariant_tsf)
     else:
