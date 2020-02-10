@@ -91,13 +91,19 @@ class InvariantTransform(LearnableParameterizedModel):
                 if log:
                     logger.debug("metric %s %f", name, value)
 
-    def _evaluate_metrics_on_whole_set(self, neighbourhood, tsf):
+    def _setup_evaluate_metrics_on_whole_set(self, neighbourhood, translation):
         with torch.no_grad():
             data_set = self.ds.validation_set() if neighbourhood is self.neighbourhood_validation else \
                 self.ds.training_set()
             X, U, Y = self._get_separate_data_columns(data_set)
-            N = X.shape[0]
+            # TODO this is hacky and specific to the block pushing env (translate state)
+            X = torch.cat((X[:, :2] + torch.tensor(translation, device=X.device, dtype=X.dtype), X[:, 2:]), dim=1)
+            return X, U, Y
 
+    def _evaluate_metrics_on_whole_set(self, neighbourhood, tsf, translation=(0, 0)):
+        with torch.no_grad():
+            X, U, Y = self._setup_evaluate_metrics_on_whole_set(neighbourhood, translation)
+            N = X.shape[0]
             batch_losses = self._init_batch_losses()
 
             for i in range(N):
@@ -124,6 +130,12 @@ class InvariantTransform(LearnableParameterizedModel):
         losses = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation, TransformToUse.LATENT_SPACE)
         if writer is not None:
             self._record_metrics(writer, losses, suffix="/validation", log=True)
+            for d in [4, 10]:
+                for trans in [[1, 1], [-1, 1], [-1, -1]]:
+                    dd = (trans[0] * d, trans[1] * d)
+                    ls = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation, TransformToUse.LATENT_SPACE,
+                                                             translation=dd)
+                    self._record_metrics(writer, ls, suffix="/validation_{}_{}".format(dd[0], dd[1]))
         return losses
 
     def _evaluate_no_transform(self, writer):
@@ -376,13 +388,7 @@ class LearnFromBatchTransform(LearnLinearDynamicsTransform, ABC):
 
     def _evaluate_metrics_on_whole_set(self, neighbourhood, tsf, translation=(0, 0)):
         with torch.no_grad():
-            data_set = self.ds.validation_set() if neighbourhood is self.neighbourhood_validation else \
-                self.ds.training_set()
-            X, U, Y = self._get_separate_data_columns(data_set)
-
-            # TODO this is hacky and specific to the block pushing env (translate state)
-            X = torch.cat((X[:, :2] + torch.tensor(translation, device=X.device, dtype=X.dtype), X[:, 2:]), dim=1)
-
+            X, U, Y = self._setup_evaluate_metrics_on_whole_set(neighbourhood, translation)
             batch_losses = self._evaluate_batch(X, U, Y, tsf=tsf)
             batch_losses = [math_utils.replace_nan_and_inf(losses) if losses is not None else None for losses in
                             batch_losses]
@@ -395,20 +401,6 @@ class LearnFromBatchTransform(LearnLinearDynamicsTransform, ABC):
 
     def _evaluate_neighbour(self, X, U, Y, neighbourhood, i, tsf=TransformToUse.LATENT_SPACE):
         raise RuntimeError("This class should only evaluate batches")
-
-    def evaluate_validation(self, writer):
-        # evaluate with translation
-        losses = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation, TransformToUse.LATENT_SPACE)
-        if writer is not None:
-            self._record_metrics(writer, losses, suffix="/validation", log=True)
-            for d in [4, 10]:
-                for trans in [[1, 1], [-1, 1], [-1, -1]]:
-                    dd = (trans[0] * d, trans[1] * d)
-                    ls = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation, TransformToUse.LATENT_SPACE,
-                                                             translation=dd)
-                    self._record_metrics(writer, ls, suffix="/validation_{}_{}".format(dd[0], dd[1]))
-
-        return losses
 
     def learn_model(self, max_epoch, batch_N=500):
         writer = SummaryWriter(flush_secs=20, comment="{}_batch{}".format(self.name, batch_N))
@@ -508,11 +500,10 @@ class InvariantTransformer(preprocess.Transformer):
         if self.model_output_dim is None:
             raise RuntimeError("Fit the preprocessor for it to know what the proper output dim is")
         # this is not just tsf.nz because the tsf could have an additional structure such as z*u as output
-        # TODO for our current transform we go from xu->z instead of x->z, u->v and we can treat this as nu = 0
         config.n_input = self.model_input_dim
         config.nx = self.model_input_dim
         config.nu = 0
-        config.ny = self.model_output_dim  # either ny or nz
+        config.ny = self.model_output_dim  # z_o
         # in general z_o and z_i are different spaces
         config.y_in_x_space = False
         # not sure if below is necessary
