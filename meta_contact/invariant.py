@@ -314,7 +314,10 @@ class LearnLinearDynamicsTransform(InvariantTransform):
     def __init__(self, *args, spread_loss_weight=1., **kwargs):
         self.spread_loss_weight = spread_loss_weight
         super(LearnLinearDynamicsTransform, self).__init__(*args, **kwargs)
-        self.name = "{}_{}".format(self.name, self.spread_loss_weight)
+        self.name = "{}_{}".format(self.name, self._loss_weight_name())
+
+    def _loss_weight_name(self):
+        return "spread_{}".format(self.spread_loss_weight)
 
     @abc.abstractmethod
     def dx_to_zo(self, x, dx):

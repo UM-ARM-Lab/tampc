@@ -282,7 +282,11 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
         config.ny = nzo * nz  # matrix output
         self.linear_model_producer = model.DeterministicUser(
             make.make_sequential_network(config, **opts).to(device=device))
-        super().__init__(ds, nz, nzo, name=kwargs.pop('name', 'param_coord'), **kwargs)
+        name = kwargs.pop('name', '')
+        super().__init__(ds, nz, nzo, name='{}_{}'.format(self._name_prefix(), name), **kwargs)
+
+    def _name_prefix(self):
+        return 'param_coord'
 
     def linear_dynamics(self, zi):
         B = zi.shape[0]
@@ -361,8 +365,10 @@ class Parameterized2Transform(ParameterizedCoordTransform):
         # try starting at the true parameters
         # self.zi_selector.weight.data = self.true_zi_param + torch.randn_like(self.true_zi_param) * 0.1
         # self.zi_selector.weight.requires_grad = True
-        name = kwargs.pop('name', '')
-        super().__init__(ds, device, name='zi_select_{}'.format(name), **kwargs)
+        super().__init__(ds, device, **kwargs)
+
+    def _name_prefix(self):
+        return "zi_select"
 
     def xu_to_zi(self, state, action):
         if len(state.shape) < 2:
@@ -418,10 +424,10 @@ class Parameterized3Transform(Parameterized2Transform):
         # outputs a linear transformation from z_o to dx (linear in z_o), that is dependent on state
         self.linear_decoder_producer = model.DeterministicUser(
             make.make_sequential_network(config, h_units=(16, 32)).to(device=device))
+        super().__init__(ds, device, **kwargs)
 
-        name = kwargs.pop('name', '')
-        super().__init__(ds, device, name='state_dep_linear_tsf_{}_{}'.format(int(self.use_sincos_angle), name),
-                         **kwargs)
+    def _name_prefix(self):
+        return 'state_dep_linear_tsf_{}'.format(int(self.use_sincos_angle))
 
     def parameters(self):
         return list(self.linear_decoder_producer.model.parameters()) + list(self.zi_selector.parameters()) + list(
@@ -462,6 +468,43 @@ class Parameterized3BatchTransform(Parameterized3Transform, invariant.LearnFromB
 
     def learn_model(self, max_epoch, batch_N=500):
         return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
+
+
+from meta_contact.invariant import TransformToUse
+
+
+class Parameterized5Transform(Parameterized3BatchTransform):
+    """Try requiring pairwise distances are proportional"""
+
+    def __init__(self, *args, dist_loss_weight=1., **kwargs):
+        self.dist_loss_weight = dist_loss_weight
+        super(Parameterized5Transform, self).__init__(*args, **kwargs)
+
+    def _name_prefix(self):
+        return 'dist_reg'
+
+    def _loss_weight_name(self):
+        return "dist_{}".format(self.dist_loss_weight)
+
+    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+        z, A, zo, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
+
+        # hypothesize that close in z_i iff close in A, z_o space
+        # TODO maybe only require that things close in z_i should be close in A, z_o space (not bidirectional)
+        # TODO try distance instead of cosine/directionality
+        di = torch.nn.functional.pdist(z)
+        dA = torch.nn.functional.pdist(A.view(A.shape[0], -1))
+        # do = torch.nn.functional.pdist(zo)
+        dist_loss = 1 - torch.nn.functional.cosine_similarity(di, dA, dim=0)
+        mse_loss = torch.norm(yhat - Y, dim=1)
+        return mse_loss, dist_loss
+
+    @staticmethod
+    def loss_names():
+        return "mse_loss", "dist_loss"
+
+    def _reduce_losses(self, losses):
+        return torch.sum(losses[0]) + self.dist_loss_weight * torch.sum(losses[1])
 
 
 def coord_tsf_factory(env, *args, **kwargs):
@@ -904,7 +947,8 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
     # invariant_tsf = Parameterized3Transform(ds, d, **common_opts)
     # parameterization 4
     # invariant_tsf = Parameterized3Transform(ds, d, **common_opts, use_sincos_angle=True)
-    invariant_tsf = Parameterized3BatchTransform(ds, d, **common_opts, **kwargs)
+    # invariant_tsf = Parameterized3BatchTransform(ds, d, **common_opts, **kwargs)
+    invariant_tsf = Parameterized5Transform(ds, d, **common_opts, **kwargs)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
@@ -941,6 +985,6 @@ if __name__ == "__main__":
     # verify_coordinate_transform()
     # test_online_model()
     for seed in range(10):
-        learn_invariant(seed=seed, name="remove_spread_loss", MAX_EPOCH=1000, BATCH_SIZE=500)
+        learn_invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
     # for seed in range(5):
     #     learn_model(seed=seed, transform_name="knn_regularization_s{}".format(seed), name="cov_reg")
