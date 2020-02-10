@@ -29,7 +29,7 @@ class TransformToUse:
 
 
 class InvariantTransform(LearnableParameterizedModel):
-    def __init__(self, ds: datasource.DataSource, nz, nzo, too_far_for_neighbour=0.3,
+    def __init__(self, ds: datasource.DataSource, nz, nv, too_far_for_neighbour=0.3,
                  train_on_continuous_data=False, **kwargs):
         super().__init__(cfg.ROOT_DIR, **kwargs)
         self.ds = ds
@@ -41,14 +41,14 @@ class InvariantTransform(LearnableParameterizedModel):
         self.train_on_continuous_data = train_on_continuous_data
         # do not assume at this abstraction level the input and output latent space is the same
         self.nz = nz
-        self.nzo = nzo
+        self.nv = nv
         # update name with parameteres
         self.name = '{}_{}_{}'.format(self.name, self.nz, self.config)
 
     @abc.abstractmethod
-    def xu_to_zi(self, state, action):
+    def xu_to_z(self, state, action):
         """
-        Transform state and action down to underlying latent input of dynamics. h(x,u) = z_i
+        Transform state and action down to underlying latent input of dynamics. h(x,u) = z
         This transform should be invariant to certain variations in state action, such as
         translation and rotation.
 
@@ -57,25 +57,25 @@ class InvariantTransform(LearnableParameterizedModel):
         body frame.
         :param state: N x nx
         :param action: N x nu
-        :return: z_i, N x nz input latent space
+        :return: z, N x nz input latent space
         """
 
     @abc.abstractmethod
-    def zo_to_dx(self, x, z_o):
+    def get_dx(self, x, v):
         """
         Reverse transform output latent space back to difference in observation space at a given observation state
-        :param x: state at which to perform the h^{-1}(z_o)
-        :param z_o: output latent state from learned dynamics z_o = bar{f}(z_i)
+        :param x: state at which to perform the h^{-1}(v)
+        :param v: output latent state / latent control input
         :return:
         """
 
     @abc.abstractmethod
-    def get_zo(self, x, dx, z_i):
+    def get_v(self, x, dx, z):
         """
-        Get output latent variable
+        Get output latent variable / latent control input
         :param x:
         :param dx:
-        :param z_i:
+        :param z:
         :return:
         """
 
@@ -222,8 +222,8 @@ class InvariantTransform(LearnableParameterizedModel):
 
     def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
         if tsf is TransformToUse.LATENT_SPACE:
-            z = self.xu_to_zi(X, U)
-            Y = self.get_zo(X, Y, z)
+            z = self.xu_to_z(X, U)
+            Y = self.get_v(X, Y, z)
         elif tsf is TransformToUse.REDUCE_TO_INPUT:
             z = U
         elif tsf is TransformToUse.NO_TRANSFORM:
@@ -333,35 +333,35 @@ class LearnLinearDynamicsTransform(InvariantTransform):
     def _loss_weight_name(self):
         return "spread_{}".format(self.spread_loss_weight)
 
-    def get_zo(self, x, dx, z_i):
-        A = self.linear_dynamics(z_i)
-        z_o = linalg.batch_batch_product(z_i, A.transpose(-1, -2))
-        return z_o
+    def get_v(self, x, dx, z):
+        A = self.linear_dynamics(z)
+        v = linalg.batch_batch_product(z, A.transpose(-1, -2))
+        return v
 
     @abc.abstractmethod
-    def linear_dynamics(self, zi):
+    def linear_dynamics(self, z):
         """
-        Produce linear dynamics matrix A such that z_o = A * z_i
-        :param zi: latent input space
-        :return: (nzo x nzi) A
+        Produce linear dynamics matrix A such that v = A * z
+        :param z: latent input space
+        :return: (nv x nzi) A
         """
 
     def _evaluate_batch_apply_tsf(self, X, U, tsf):
         assert tsf is TransformToUse.LATENT_SPACE
-        z = self.xu_to_zi(X, U)
+        z = self.xu_to_z(X, U)
 
         if z.shape[0] < self.ds.config.ny + z.shape[1]:
             return None
 
         # fit linear model to latent state
         A = self.linear_dynamics(z)
-        zo = linalg.batch_batch_product(z, A.transpose(-1, -2))
+        v = linalg.batch_batch_product(z, A.transpose(-1, -2))
 
-        yhat = self.zo_to_dx(X, zo)
-        return z, A, zo, yhat
+        yhat = self.get_dx(X, v)
+        return z, A, v, yhat
 
     def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
-        z, A, zo, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
+        z, A, v, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
 
         # TODO consider using weights somehow (can use on dynamics dispersion cost)
         # add cost on difference of each A (each linear dynamics should be similar)
@@ -439,7 +439,7 @@ class LearnFromBatchTransform(LearnLinearDynamicsTransform, ABC):
 class LearnNeighbourhoodCovRegTransform(LearnFromBatchTransform, ABC):
     """
     Instead of taking in predefined neighbourhoods, simultaneously produce dynamics for batches
-    and learn to structure z_i such that euclidean distance results in close dynamics
+    and learn to structure z such that euclidean distance results in close dynamics
     using covariance loss regularization on local neighbourhoods.
 
     Doesn't do much it seems
@@ -452,7 +452,7 @@ class LearnNeighbourhoodCovRegTransform(LearnFromBatchTransform, ABC):
         LearnFromBatchTransform.__init__(self, *args, **kwargs)
 
     def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
-        z, A, zo, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
+        z, A, v, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
 
         cov_loss = None
         if np.random.rand() > (1 - self.cov_loss_usage):
@@ -463,8 +463,8 @@ class LearnNeighbourhoodCovRegTransform(LearnFromBatchTransform, ABC):
                 neighbours, nw, N = array_utils.extract_positive_weights(w)
 
                 nz = z[neighbours]
-                nzo = zo[neighbours]
-                _, sigma = linalg.ls_cov(nz, nzo, nw)
+                nv = v[neighbours]
+                _, sigma = linalg.ls_cov(nz, nv, nw)
                 cov_loss.append(sigma.trace())
             cov_loss = torch.stack(cov_loss)
 
@@ -503,8 +503,8 @@ class InvariantTransformer(preprocess.Transformer):
         config.n_input = self.model_input_dim
         config.nx = self.model_input_dim
         config.nu = 0
-        config.ny = self.model_output_dim  # z_o
-        # in general z_o and z_i are different spaces
+        config.ny = self.model_output_dim
+        # in general v and z are different spaces
         config.y_in_x_space = False
         # not sure if below is necessary
         # config.predict_difference = True
@@ -512,24 +512,24 @@ class InvariantTransformer(preprocess.Transformer):
     def transform(self, XU, Y, labels=None):
         # these transforms potentially require x to transform y and back, so can't just use them separately
         X = XU[:, :self.tsf.config.nx]
-        z_i = self.transform_x(XU)
-        z_o = self.tsf.get_zo(X, Y, z_i)
-        return z_i, z_o, labels
+        z = self.transform_x(XU)
+        v = self.tsf.get_v(X, Y, z)
+        return z, v, labels
 
     def transform_x(self, XU):
         X = XU[:, :self.tsf.config.nx]
         U = XU[:, self.tsf.config.nx:]
-        z_i = self.tsf.xu_to_zi(X, U)
-        return z_i
+        z = self.tsf.xu_to_z(X, U)
+        return z
 
     def transform_y(self, Y):
         raise RuntimeError("Should not attempt to transform Y directly; instead must be done with both X and Y")
 
     def invert_transform(self, Y, X=None):
         """Invert transformation on Y"""
-        return self.tsf.zo_to_dx(X, Y)
+        return self.tsf.get_dx(X, Y)
 
     def _fit_impl(self, XU, Y, labels):
         """Figure out what the transform outputs"""
         self.model_input_dim = self.tsf.nz
-        self.model_output_dim = self.tsf.nzo
+        self.model_output_dim = self.tsf.nv

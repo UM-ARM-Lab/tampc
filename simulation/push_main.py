@@ -164,35 +164,38 @@ def constrain_state(state):
 # ------- Hand designed coordinate transform classes using architecture 2
 class HandDesignedCoordTransform(invariant.InvariantTransform):
     def __init__(self, ds, nz, **kwargs):
-        # z_o is dx, dy, dyaw in body frame and d_along
+        # v is dx, dy, dyaw in body frame and d_along
         super().__init__(ds, nz, 4, name='coord', **kwargs)
 
-    def dx_to_zo(self, x, dx):
+    def get_v(self, x, dx, z):
+        return self.dx_to_v(x, dx)
+
+    def dx_to_v(self, x, dx):
         if len(x.shape) == 1:
             x = x.view(1, -1)
             dx = dx.view(1, -1)
         N = dx.shape[0]
-        z_o = torch.zeros((N, self.nzo), dtype=dx.dtype, device=dx.device)
+        v = torch.zeros((N, self.nv), dtype=dx.dtype, device=dx.device)
         # convert world frame to body frame
-        z_o[:, :2] = math_utils.batch_rotate_wrt_origin(dx[:, :2], -x[:, 2])
+        v[:, :2] = math_utils.batch_rotate_wrt_origin(dx[:, :2], -x[:, 2])
         # second last element is dyaw, which also gets passed along directly
-        z_o[:, 2] = dx[:, 2]
+        v[:, 2] = dx[:, 2]
         # last element is d_along, which gets passed along directly
-        z_o[:, 3] = dx[:, 3]
-        return z_o
+        v[:, 3] = dx[:, 3]
+        return v
 
-    def zo_to_dx(self, x, z_o):
+    def get_dx(self, x, v):
         if len(x.shape) == 1:
             x = x.view(1, -1)
-            z_o = z_o.view(1, -1)
-        N = z_o.shape[0]
-        dx = torch.zeros((N, 4), dtype=z_o.dtype, device=z_o.device)
+            v = v.view(1, -1)
+        N = v.shape[0]
+        dx = torch.zeros((N, 4), dtype=v.dtype, device=v.device)
         # convert (dx, dy) from body frame back to world frame
-        dx[:, :2] = math_utils.batch_rotate_wrt_origin(z_o[:, :2], x[:, 2])
+        dx[:, :2] = math_utils.batch_rotate_wrt_origin(v[:, :2], x[:, 2])
         # second last element is dyaw, which also gets passed along directly
-        dx[:, 2] = z_o[:, 2]
+        dx[:, 2] = v[:, 2]
         # last element is d_along, which gets passed along directly
-        dx[:, 3] = z_o[:, 3]
+        dx[:, 3] = v[:, 3]
         return dx
 
     def parameters(self):
@@ -213,16 +216,16 @@ class WorldBodyFrameTransformForStickyEnv(HandDesignedCoordTransform):
     Specific to StickyEnv formulation! (expects the states to be block pose and pusher along)
 
     Transforms world frame coordinates to input required for body frame dynamics
-    (along, d_along, and push magnitude) = z_i and predicts (dx, dy, dtheta) of block in previous block frame = z_o
-    separate latent space for input and output (z_i, z_o)
-    this is actually h and h^{-1} combined into 1, h(x,u) = z_i, learned dynamics hat{f}(z_i) = z_o, h^{-1}(z_o) = dx
+    (along, d_along, and push magnitude) = z and predicts (dx, dy, dtheta) of block in previous block frame = v
+    separate latent space for input and output (z, v)
+    this is actually h and h^{-1} combined into 1, h(x,u) = z, learned dynamics hat{f}(z) = v, h^{-1}(v) = dx
     """
 
     def __init__(self, ds, **kwargs):
         # need along, d_along, and push magnitude; don't need block position or yaw
         super().__init__(ds, 3, **kwargs)
 
-    def xu_to_zi(self, state, action):
+    def xu_to_z(self, state, action):
         if len(state.shape) < 2:
             state = state.reshape(1, -1)
             action = action.reshape(1, -1)
@@ -237,7 +240,7 @@ class WorldBodyFrameTransformForDirectPush(HandDesignedCoordTransform):
         # need along, d_along, push magnitude, and push direction; don't need block position or yaw
         super().__init__(ds, 4, **kwargs)
 
-    def xu_to_zi(self, state, action):
+    def xu_to_z(self, state, action):
         if len(state.shape) < 2:
             state = state.reshape(1, -1)
             action = action.reshape(1, -1)
@@ -259,8 +262,8 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
         opts = {'h_units': (16, 32)}
         opts.update(model_opts)
 
-        # z_o is dx, dy, dyaw in body frame and d_along
-        nzo = 4
+        # v is dx, dy, dyaw in body frame and d_along
+        nv = 4
         nz = 1 + ds.config.nu
         # input is x, output is yaw
         self.yaw_selector = torch.nn.Linear(ds.config.nx, 1, bias=False).to(device=device, dtype=torch.double)
@@ -271,23 +274,23 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
         # self.yaw_selector.weight.data = self.true_yaw_param + torch.randn_like(self.true_yaw_param)
         # self.yaw_selector.weight.requires_grad = False
 
-        # input to local model is z, output is zo
+        # input to local model is z, output is v
         config = load_data.DataConfig()
         config.nx = nz
-        config.ny = nzo * nz  # matrix output
+        config.ny = nv * nz  # matrix output
         self.linear_model_producer = model.DeterministicUser(
             make.make_sequential_network(config, **opts).to(device=device))
         name = kwargs.pop('name', '')
-        super().__init__(ds, nz, nzo, name='{}_{}'.format(self._name_prefix(), name), **kwargs)
+        super().__init__(ds, nz, nv, name='{}_{}'.format(self._name_prefix(), name), **kwargs)
 
     def _name_prefix(self):
         return 'param_coord'
 
-    def linear_dynamics(self, zi):
-        B = zi.shape[0]
-        return self.linear_model_producer.sample(zi).view(B, self.nzo, self.nz)
+    def linear_dynamics(self, z):
+        B = z.shape[0]
+        return self.linear_model_producer.sample(z).view(B, self.nv, self.nz)
 
-    def xu_to_zi(self, state, action):
+    def xu_to_z(self, state, action):
         if len(state.shape) < 2:
             state = state.reshape(1, -1)
             action = action.reshape(1, -1)
@@ -296,25 +299,25 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
         z = torch.cat((state[:, -1].view(-1, 1), action), dim=1)
         return z
 
-    def dx_to_zo(self, x, dx):
-        raise RuntimeError("Shouldn't have to convert from dx to zo")
+    def dx_to_v(self, x, dx):
+        raise RuntimeError("Shouldn't have to convert from dx to v")
 
-    def zo_to_dx(self, x, z_o):
+    def get_dx(self, x, v):
         if len(x.shape) == 1:
             x = x.view(1, -1)
-            z_o = z_o.view(1, -1)
+            v = v.view(1, -1)
 
         # choose which component of x to take as rotation (should select just theta)
         yaw = self.yaw_selector(x)
 
-        N = z_o.shape[0]
-        dx = torch.zeros((N, 4), dtype=z_o.dtype, device=z_o.device)
+        N = v.shape[0]
+        dx = torch.zeros((N, 4), dtype=v.dtype, device=v.device)
         # convert (dx, dy) from body frame back to world frame
-        dx[:, :2] = math_utils.batch_rotate_wrt_origin(z_o[:, :2], yaw)
+        dx[:, :2] = math_utils.batch_rotate_wrt_origin(v[:, :2], yaw)
         # second last element is dyaw, which also gets passed along directly
-        dx[:, 2] = z_o[:, 2]
+        dx[:, 2] = v[:, 2]
         # last element is d_along, which gets passed along directly
-        dx[:, 3] = z_o[:, 3]
+        dx[:, 3] = v[:, 3]
         return dx
 
     def parameters(self):
@@ -345,78 +348,78 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
 
 
 class Parameterized2Transform(ParameterizedCoordTransform):
-    """Relax parameterization structure to allow (each dimension of) z_i to be some linear combination of x,u"""
+    """Relax parameterization structure to allow (each dimension of) z to be some linear combination of x,u"""
 
     def __init__(self, ds, device, **kwargs):
-        # z_o is dx, dy, dyaw in body frame and d_along
+        # v is dx, dy, dyaw in body frame and d_along
         nz = 1 + ds.config.nu
-        # input is x, output is zi
+        # input is x, output is z
         # constrain output to 0 and 1
-        self.zi_selector = torch.nn.Linear(ds.config.nx + ds.config.nu, nz, bias=False).to(device=device,
+        self.z_selector = torch.nn.Linear(ds.config.nx + ds.config.nu, nz, bias=False).to(device=device,
                                                                                            dtype=torch.double)
-        self.true_zi_param = torch.tensor(
+        self.true_z_param = torch.tensor(
             [[0, 0, 0, 1, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0], [0, 0, 0, 0, 0, 1, 0], [0, 0, 0, 0, 0, 0, 1]], device=device,
             dtype=torch.double)
         # try starting at the true parameters
-        # self.zi_selector.weight.data = self.true_zi_param + torch.randn_like(self.true_zi_param) * 0.1
-        # self.zi_selector.weight.requires_grad = True
+        # self.z_selector.weight.data = self.true_z_param + torch.randn_like(self.true_z_param) * 0.1
+        # self.z_selector.weight.requires_grad = True
         super().__init__(ds, device, **kwargs)
 
     def _name_prefix(self):
-        return "zi_select"
+        return "z_select"
 
-    def xu_to_zi(self, state, action):
+    def xu_to_z(self, state, action):
         if len(state.shape) < 2:
             state = state.reshape(1, -1)
             action = action.reshape(1, -1)
 
         # more general parameterized versions where we select which components to take
         xu = torch.cat((state, action), dim=1)
-        z = self.zi_selector(xu)
+        z = self.z_selector(xu)
         return z
 
     def parameters(self):
-        return super().parameters() + list(self.zi_selector.parameters())
+        return super().parameters() + list(self.z_selector.parameters())
 
     def _model_state_dict(self):
         d = super()._model_state_dict()
-        d['zi'] = self.zi_selector.state_dict()
+        d['z'] = self.z_selector.state_dict()
         return d
 
     def _load_model_state_dict(self, saved_state_dict):
         super()._load_model_state_dict(saved_state_dict)
-        self.zi_selector.load_state_dict(saved_state_dict['zi'])
+        self.z_selector.load_state_dict(saved_state_dict['z'])
 
     def evaluate_validation(self, writer):
         losses = super().evaluate_validation(writer)
         if writer is not None:
             with torch.no_grad():
-                zi_param = self.zi_selector.weight.data
-                cs = torch.nn.functional.cosine_similarity(zi_param, self.true_zi_param).mean().item()
-                dist = torch.norm(zi_param - self.true_zi_param).item()
+                z_param = self.z_selector.weight.data
+                cs = torch.nn.functional.cosine_similarity(z_param, self.true_z_param).mean().item()
+                dist = torch.norm(z_param - self.true_z_param).item()
 
-                logger.debug("step %d zi cos sim %f dist %f", self.step, cs, dist)
+                logger.debug("step %d z cos sim %f dist %f", self.step, cs, dist)
 
-                writer.add_scalar('cosine_similarity/zi_selector', cs, self.step)
-                writer.add_scalar('param_diff/zi_selector', dist, self.step)
-                writer.add_scalar('param_norm/zi_selector', zi_param.norm().item(), self.step)
+                writer.add_scalar('cosine_similarity/z_selector', cs, self.step)
+                writer.add_scalar('param_diff/z_selector', dist, self.step)
+                writer.add_scalar('param_norm/z_selector', z_param.norm().item(), self.step)
         return losses
 
 
 class Parameterized3Transform(Parameterized2Transform):
-    """Relax parameterization structure to allow decoder to be some state dependent transformation of z_o"""
+    """Relax parameterization structure to allow decoder to be some state dependent transformation of v"""
 
     def __init__(self, ds, device, use_sincos_angle=False, **kwargs):
-        # z_o is dx, dy, dyaw in body frame and d_along
-        nzo = 4
+        # v is dx, dy, dyaw in body frame and d_along
+        nv = 4
 
         # replace angle with their sin and cos
         self.use_sincos_angle = use_sincos_angle
-        # input to producer is x, output is matrix to multiply z_o to get dx by
+        # input to producer is x, output is matrix to multiply v to get dx by
         config = load_data.DataConfig()
         config.nx = ds.config.nx + (1 if use_sincos_angle else 0)
-        config.ny = nzo * ds.config.nx  # matrix output (original nx, ignore sincos)
-        # outputs a linear transformation from z_o to dx (linear in z_o), that is dependent on state
+        config.ny = nv * ds.config.nx  # matrix output (original nx, ignore sincos)
+        # outputs a linear transformation from v to dx (linear in v), that is dependent on state
         self.linear_decoder_producer = model.DeterministicUser(
             make.make_sequential_network(config, h_units=(16, 32)).to(device=device))
         super().__init__(ds, device, **kwargs)
@@ -425,7 +428,7 @@ class Parameterized3Transform(Parameterized2Transform):
         return 'state_dep_linear_tsf_{}'.format(int(self.use_sincos_angle))
 
     def parameters(self):
-        return list(self.linear_decoder_producer.model.parameters()) + list(self.zi_selector.parameters()) + list(
+        return list(self.linear_decoder_producer.model.parameters()) + list(self.z_selector.parameters()) + list(
             self.linear_model_producer.model.parameters())
 
     def _model_state_dict(self):
@@ -437,24 +440,24 @@ class Parameterized3Transform(Parameterized2Transform):
         super()._load_model_state_dict(saved_state_dict)
         self.linear_decoder_producer.model.load_state_dict(saved_state_dict['decoder'])
 
-    def linear_dynamics(self, zi):
-        B = zi.shape[0]
-        return self.linear_model_producer.sample(zi).view(B, self.nzo, self.nz)
+    def linear_dynamics(self, z):
+        B = z.shape[0]
+        return self.linear_model_producer.sample(z).view(B, self.nv, self.nz)
 
-    def zo_to_dx(self, x, z_o):
+    def get_dx(self, x, v):
         if len(x.shape) == 1:
             x = x.view(1, -1)
-            z_o = z_o.view(1, -1)
+            v = v.view(1, -1)
 
-        # make state-dependent linear transforms (matrices) that multiply z_o to get dx
+        # make state-dependent linear transforms (matrices) that multiply v to get dx
         B, nx = x.shape
         if self.use_sincos_angle:
             angle_index = 2
             s = torch.sin(x[:, angle_index]).view(-1, 1)
             c = torch.cos(x[:, angle_index]).view(-1, 1)
             x = torch.cat((x[:, :angle_index], s, c, x[:, angle_index + 1:]), dim=1)
-        linear_tsf = self.linear_decoder_producer.sample(x).view(B, nx, self.nzo)
-        dx = linalg.batch_batch_product(z_o, linear_tsf)
+        linear_tsf = self.linear_decoder_producer.sample(x).view(B, nx, self.nv)
+        dx = linalg.batch_batch_product(v, linear_tsf)
         return dx
 
 
@@ -482,14 +485,14 @@ class DistRegularizedTransform(Parameterized3BatchTransform):
         return "dist_{}".format(self.dist_loss_weight)
 
     def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
-        z, A, zo, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
+        z, A, v, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
 
-        # hypothesize that close in z_i iff close in A, z_o space
-        # TODO maybe only require that things close in z_i should be close in A, z_o space (not bidirectional)
+        # hypothesize that close in z iff close in A, v space
+        # TODO maybe only require that things close in z should be close in A, v space (not bidirectional)
         # TODO try distance instead of cosine/directionality
         di = torch.nn.functional.pdist(z)
         # dA = torch.nn.functional.pdist(A.view(A.shape[0], -1))
-        do = torch.nn.functional.pdist(zo)
+        do = torch.nn.functional.pdist(v)
         dist_loss = 1 - torch.nn.functional.cosine_similarity(di, do, dim=0)
         mse_loss = torch.norm(yhat - Y, dim=1)
         return mse_loss, dist_loss
@@ -504,16 +507,16 @@ class DistRegularizedTransform(Parameterized3BatchTransform):
 
 # ------- Ablations on architecture 3
 class AblationRemoveLinearDecoderTransform(Parameterized2Transform, invariant.LearnFromBatchTransform):
-    """Don't require that g_rho output a linear transformation of z_o"""
+    """Don't require that g_rho output a linear transformation of v"""
 
     def __init__(self, ds, device, **kwargs):
-        # z_o is dx, dy, dyaw in body frame and d_along
-        nzo = 4
+        # v is dx, dy, dyaw in body frame and d_along
+        nv = 4
 
         config = load_data.DataConfig()
-        config.nx = ds.config.nx + nzo
+        config.nx = ds.config.nx + nv
         config.ny = ds.config.nx
-        # directly decode z_o and x to dx
+        # directly decode v and x to dx
         self.decoder = model.DeterministicUser(make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
         super().__init__(ds, device, **kwargs)
 
@@ -521,7 +524,7 @@ class AblationRemoveLinearDecoderTransform(Parameterized2Transform, invariant.Le
         return 'ablation_remove_decoder_linear'
 
     def parameters(self):
-        return list(self.decoder.model.parameters()) + list(self.zi_selector.parameters()) + list(
+        return list(self.decoder.model.parameters()) + list(self.z_selector.parameters()) + list(
             self.linear_model_producer.model.parameters())
 
     def _model_state_dict(self):
@@ -533,12 +536,12 @@ class AblationRemoveLinearDecoderTransform(Parameterized2Transform, invariant.Le
         super()._load_model_state_dict(saved_state_dict)
         self.decoder.model.load_state_dict(saved_state_dict['decoder'])
 
-    def zo_to_dx(self, x, z_o):
+    def get_dx(self, x, v):
         if len(x.shape) == 1:
             x = x.view(1, -1)
-            z_o = z_o.view(1, -1)
+            v = v.view(1, -1)
 
-        decoder_input = torch.cat((x, z_o), dim=1)
+        decoder_input = torch.cat((x, v), dim=1)
         dx = self.decoder.sample(decoder_input)
         return dx
 
@@ -547,17 +550,17 @@ class AblationRemoveLinearDecoderTransform(Parameterized2Transform, invariant.Le
 
 
 class AblationRemoveLinearDynamicsTransform(Parameterized3Transform, invariant.LearnFromBatchTransform):
-    """Don't require that f_psi output a linear transformation of z_i; instead allow it to output z_o directly"""
+    """Don't require that f_psi output a linear transformation of z; instead allow it to output v directly"""
 
     def __init__(self, ds, device, **kwargs):
-        # z_o is dx, dy, dyaw in body frame and d_along
-        nzo = 4
+        # v is dx, dy, dyaw in body frame and d_along
+        nv = 4
         nz = 1 + ds.config.nu
 
         config = load_data.DataConfig()
-        # directly learn dynamics from z_i to z_o
+        # directly learn dynamics from z to v
         config.nx = nz
-        config.ny = nzo
+        config.ny = nv
         self.dynamics = model.DeterministicUser(
             make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
         super().__init__(ds, device, **kwargs)
@@ -565,15 +568,15 @@ class AblationRemoveLinearDynamicsTransform(Parameterized3Transform, invariant.L
     def _name_prefix(self):
         return 'ablation_remove_dynamics_linear'
 
-    def get_zo(self, x, dx, z_i):
-        z_o = self.dynamics.sample(z_i)
-        return z_o
+    def get_v(self, x, dx, z):
+        v = self.dynamics.sample(z)
+        return v
 
     def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
         assert tsf is TransformToUse.LATENT_SPACE
-        z = self.xu_to_zi(X, U)
-        zo = self.get_zo(X, Y, z)
-        yhat = self.zo_to_dx(X, zo)
+        z = self.xu_to_z(X, U)
+        v = self.get_v(X, Y, z)
+        yhat = self.get_dx(X, v)
 
         # mse loss
         mse_loss = torch.norm(yhat - Y, dim=1)
@@ -587,7 +590,7 @@ class AblationRemoveLinearDynamicsTransform(Parameterized3Transform, invariant.L
         return torch.sum(losses[0])
 
     def parameters(self):
-        return list(self.linear_decoder_producer.model.parameters()) + list(self.zi_selector.parameters()) + list(
+        return list(self.linear_decoder_producer.model.parameters()) + list(self.z_selector.parameters()) + list(
             self.dynamics.model.parameters())
 
     def _model_state_dict(self):
@@ -599,8 +602,8 @@ class AblationRemoveLinearDynamicsTransform(Parameterized3Transform, invariant.L
         super()._load_model_state_dict(saved_state_dict)
         self.dynamics.model.load_state_dict(saved_state_dict['dynamics'])
 
-    def linear_dynamics(self, zi):
-        raise RuntimeError("Shouldn't be calling this; instead should transform z_i to z_o directly")
+    def linear_dynamics(self, z):
+        raise RuntimeError("Shouldn't be calling this; instead should transform z to v directly")
 
     def learn_model(self, max_epoch, batch_N=500):
         return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
@@ -610,21 +613,21 @@ class AblationRemoveAllLinearityTransform(Parameterized2Transform, invariant.Lea
     """Combine the previous 2 ablations"""
 
     def __init__(self, ds, device, **kwargs):
-        # z_o is dx, dy, dyaw in body frame and d_along
-        nzo = 4
+        # v is dx, dy, dyaw in body frame and d_along
+        nv = 4
         nz = 1 + ds.config.nu
 
         config = load_data.DataConfig()
-        # directly learn dynamics from z_i to z_o
+        # directly learn dynamics from z to v
         config.nx = nz
-        config.ny = nzo
+        config.ny = nv
         self.dynamics = model.DeterministicUser(
             make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
 
         config = load_data.DataConfig()
-        config.nx = ds.config.nx + nzo
+        config.nx = ds.config.nx + nv
         config.ny = ds.config.nx
-        # directly decode z_o and x to dx
+        # directly decode v and x to dx
         self.decoder = model.DeterministicUser(make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
         super().__init__(ds, device, **kwargs)
 
@@ -632,7 +635,7 @@ class AblationRemoveAllLinearityTransform(Parameterized2Transform, invariant.Lea
         return 'ablation_remove_all_linear'
 
     def parameters(self):
-        return list(self.decoder.model.parameters()) + list(self.zi_selector.parameters()) + list(
+        return list(self.decoder.model.parameters()) + list(self.z_selector.parameters()) + list(
             self.dynamics.model.parameters())
 
     def _model_state_dict(self):
@@ -646,24 +649,24 @@ class AblationRemoveAllLinearityTransform(Parameterized2Transform, invariant.Lea
         self.decoder.model.load_state_dict(saved_state_dict['decoder'])
         self.dynamics.model.load_state_dict(saved_state_dict['dynamics'])
 
-    def zo_to_dx(self, x, z_o):
+    def get_dx(self, x, v):
         if len(x.shape) == 1:
             x = x.view(1, -1)
-            z_o = z_o.view(1, -1)
+            v = v.view(1, -1)
 
-        decoder_input = torch.cat((x, z_o), dim=1)
+        decoder_input = torch.cat((x, v), dim=1)
         dx = self.decoder.sample(decoder_input)
         return dx
 
-    def get_zo(self, x, dx, z_i):
-        z_o = self.dynamics.sample(z_i)
-        return z_o
+    def get_v(self, x, dx, z):
+        v = self.dynamics.sample(z)
+        return v
 
     def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
         assert tsf is TransformToUse.LATENT_SPACE
-        z = self.xu_to_zi(X, U)
-        zo = self.get_zo(X, Y, z)
-        yhat = self.zo_to_dx(X, zo)
+        z = self.xu_to_z(X, U)
+        v = self.get_v(X, Y, z)
+        yhat = self.get_dx(X, v)
 
         # mse loss
         mse_loss = torch.norm(yhat - Y, dim=1)
@@ -676,8 +679,8 @@ class AblationRemoveAllLinearityTransform(Parameterized2Transform, invariant.Lea
     def _reduce_losses(self, losses):
         return torch.sum(losses[0])
 
-    def linear_dynamics(self, zi):
-        raise RuntimeError("Shouldn't be calling this; instead should transform z_i to z_o directly")
+    def linear_dynamics(self, z):
+        raise RuntimeError("Shouldn't be calling this; instead should transform z to v directly")
 
     def learn_model(self, max_epoch, batch_N=500):
         return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
@@ -727,16 +730,16 @@ def verify_coordinate_transform():
     assert px is not None
     # get input in latent space
     px = torch.from_numpy(px)
-    z_i = tsf.xu_to_zi(px, action)
+    z = tsf.xu_to_z(px, action)
     # try inverting the transforms
-    z_o_1 = tsf.dx_to_zo(px, dx)
-    dx_inverted = tsf.zo_to_dx(px, z_o_1)
+    v_1 = tsf.dx_to_v(px, dx)
+    dx_inverted = tsf.get_dx(px, v_1)
     assert torch.allclose(dx, dx_inverted)
-    # same push with yaw, should result in the same z_i and the dx should give the same z_o but different dx
+    # same push with yaw, should result in the same z and the dx should give the same v but different dx
 
     N = 16
     dxes = torch.zeros((N, env.ny))
-    z_os = torch.zeros((N, env.ny))
+    vs = torch.zeros((N, env.ny))
     # for i, yaw_shift in enumerate(np.linspace(0, math.pi*2, 4)):
     for i, yaw_shift in enumerate(np.linspace(0, math.pi * 2, N)):
         env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw + yaw_shift, init_pusher=along)
@@ -745,18 +748,18 @@ def verify_coordinate_transform():
         # get actual difference dx
         dx = get_dx(px, cx)
         px = torch.from_numpy(px)
-        z_i_2 = tsf.xu_to_zi(px, action)
-        assert torch.allclose(z_i, z_i_2, atol=tol / 10)
-        z_o_2 = tsf.dx_to_zo(px, dx)
-        z_os[i] = z_o_2
+        z_2 = tsf.xu_to_z(px, action)
+        assert torch.allclose(z, z_2, atol=tol / 10)
+        v_2 = tsf.dx_to_v(px, dx)
+        vs[i] = v_2
         dxes[i] = dx
-        dx_inverted_2 = tsf.zo_to_dx(px, z_o_2)
+        dx_inverted_2 = tsf.get_dx(px, v_2)
         assert torch.allclose(dx, dx_inverted_2)
     # change in body frame should be exactly the same
-    logger.info(z_os)
+    logger.info(vs)
     # relative standard deviation
-    logger.info(z_os.std(0) / torch.abs(z_os.mean(0)))
-    assert torch.allclose(z_os.std(0), torch.zeros(4), atol=tol)
+    logger.info(vs.std(0) / torch.abs(vs.mean(0)))
+    assert torch.allclose(vs.std(0), torch.zeros(4), atol=tol)
     # actual dx should be different since we have yaw
     assert not torch.allclose(dxes.std(0), torch.zeros(4), atol=tol)
 

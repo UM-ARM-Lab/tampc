@@ -312,12 +312,12 @@ class NoDecoderTransform(InvariantTransform):
     dx and dz; for simpler dynamics this assumption should be good enough
     """
 
-    def __init__(self, ds, *args, nzo=None, **kwargs):
-        if nzo is None:
-            nzo = ds.config.ny
-        super().__init__(ds, *args, nzo, **kwargs)
+    def __init__(self, ds, *args, nv=None, **kwargs):
+        if nv is None:
+            nv = ds.config.ny
+        super().__init__(ds, *args, nv, **kwargs)
 
-    def zo_to_dx(self, x, z_o):
+    def get_dx(self, x, z_o):
         return z_o
 
     def dx_to_zo(self, x, dx):
@@ -335,7 +335,7 @@ class PolynomialInvariantTransform(NoDecoderTransform):
         super().__init__(ds, ds.config.nu, **kwargs)
         self.name = 'poly_{}'.format(self.name)
 
-    def xu_to_zi(self, state, action):
+    def xu_to_z(self, state, action):
         poly_out = self.poly.transform(state)
         z = torch.from_numpy(poly_out) @ self.params
 
@@ -476,7 +476,7 @@ class NetworkNoDecoder(NoDecoderTransform):
         self.user = model.DeterministicUser(make.make_sequential_network(config, **model_opts))
         super().__init__(ds, nz, **kwargs)
 
-    def xu_to_zi(self, state, action):
+    def xu_to_z(self, state, action):
         xu = torch.cat((state, action), dim=1)
         z = self.user.sample(xu)
 
