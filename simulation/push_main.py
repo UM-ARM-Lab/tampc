@@ -546,6 +546,66 @@ class AblationRemoveLinearDecoderTransform(Parameterized2Transform, invariant.Le
         return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
 
 
+class AblationRemoveLinearDynamicsTransform(Parameterized3Transform, invariant.LearnFromBatchTransform):
+    """Don't require that f_psi output a linear transformation of z_i; instead allow it to output z_o directly"""
+
+    def __init__(self, ds, device, **kwargs):
+        # z_o is dx, dy, dyaw in body frame and d_along
+        nzo = 4
+        nz = 1 + ds.config.nu
+
+        config = load_data.DataConfig()
+        # directly learn dynamics from z_i to z_o
+        config.nx = nz
+        config.ny = nzo
+        self.dynamics = model.DeterministicUser(
+            make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
+        super().__init__(ds, device, **kwargs)
+
+    def _name_prefix(self):
+        return 'ablation_remove_dynamics_linear'
+
+    def get_zo(self, x, dx, z_i):
+        z_o = self.dynamics.sample(z_i)
+        return z_o
+
+    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+        assert tsf is TransformToUse.LATENT_SPACE
+        z = self.xu_to_zi(X, U)
+        zo = self.get_zo(X, Y, z)
+        yhat = self.zo_to_dx(X, zo)
+
+        # mse loss
+        mse_loss = torch.norm(yhat - Y, dim=1)
+        return mse_loss,
+
+    @staticmethod
+    def loss_names():
+        return "mse_loss",
+
+    def _reduce_losses(self, losses):
+        return torch.sum(losses[0])
+
+    def parameters(self):
+        return list(self.linear_decoder_producer.model.parameters()) + list(self.zi_selector.parameters()) + list(
+            self.dynamics.model.parameters())
+
+    def _model_state_dict(self):
+        d = super()._model_state_dict()
+        d['dynamics'] = self.dynamics.model.state_dict()
+        return d
+
+    def _load_model_state_dict(self, saved_state_dict):
+        super()._load_model_state_dict(saved_state_dict)
+        self.dynamics.model.load_state_dict(saved_state_dict['dynamics'])
+
+    def linear_dynamics(self, zi):
+        raise RuntimeError("Shouldn't be calling this; instead should transform z_i to z_o directly")
+
+    def learn_model(self, max_epoch, batch_N=500):
+        return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
+
+
 def coord_tsf_factory(env, *args, **kwargs):
     tsfs = {block_push.PushAgainstWallStickyEnv: WorldBodyFrameTransformForStickyEnv,
             block_push.PushWithForceDirectlyEnv: WorldBodyFrameTransformForDirectPush}
@@ -991,7 +1051,8 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
     # invariant_tsf = Parameterized3Transform(ds, d, **common_opts, use_sincos_angle=True)
     # invariant_tsf = Parameterized3BatchTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = DistRegularizedTransform(ds, d, **common_opts, **kwargs)
-    invariant_tsf = AblationRemoveLinearDecoderTransform(ds, d, **common_opts, **kwargs)
+    # invariant_tsf = AblationRemoveLinearDecoderTransform(ds, d, **common_opts, **kwargs)
+    invariant_tsf = AblationRemoveLinearDynamicsTransform(ds, d, **common_opts, **kwargs)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
