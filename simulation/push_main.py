@@ -122,8 +122,9 @@ def get_preprocessor_for_invariant_tsf(invariant_tsf):
     # evaluate tsf on validation set
     losses = invariant_tsf.evaluate_validation(None)
     logger.info("tsf on validation %s",
-                "  ".join(["{} {:.5f}".format(name, loss.mean().cpu().item()) for name, loss in
-                           zip(invariant_tsf.loss_names(), losses)]))
+                "  ".join(
+                    ["{} {:.5f}".format(name, loss.mean().cpu().item()) if loss is not None else "" for name, loss in
+                     zip(invariant_tsf.loss_names(), losses)]))
 
     if isinstance(invariant_tsf, invariant.LearnLinearDynamicsTransform):
         transformer = invariant.LearnLinearInvariantTransformer
@@ -475,7 +476,8 @@ class LearnFromBatchTransform(Parameterized3Transform):
             X = torch.cat((X[:, :2] + torch.tensor(translation, device=X.device, dtype=X.dtype), X[:, 2:]), dim=1)
 
             batch_losses = self._evaluate_batch(X, U, Y, tsf=tsf)
-            batch_losses = [math_utils.replace_nan_and_inf(losses) for losses in batch_losses]
+            batch_losses = [math_utils.replace_nan_and_inf(losses) if losses is not None else None for losses in
+                            batch_losses]
             return batch_losses
 
     def calculate_neighbours(self):
@@ -544,6 +546,8 @@ class LearnNeighbourhoodTransform(LearnFromBatchTransform):
 
     def __init__(self, *args, expected_neighbourhood_size=12, **kwargs):
         self.nbrs = softknn.SoftKNN(min_k=expected_neighbourhood_size, normalization=1)
+        # this calculation is just too slow so we're only going to randomly do it
+        self.cov_loss_usage = 0.05
         super().__init__(*args, **kwargs)
 
     def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
@@ -559,21 +563,30 @@ class LearnNeighbourhoodTransform(LearnFromBatchTransform):
         zo = linalg.batch_batch_product(z, A.transpose(-1, -2))
         yhat = self.zo_to_dx(X, zo)
 
-        cov_loss = []
-        # regularize by making sure nearest neighbours in z leads to good linear fits
-        weights = self.nbrs(z)
-        for i, w in enumerate(weights):
-            neighbours, nw, N = array_utils.extract_positive_weights(w)
+        cov_loss = None
+        if np.random.rand() > (1 - self.cov_loss_usage):
+            cov_loss = []
+            # regularize by making sure nearest neighbours in z leads to good linear fits
+            weights = self.nbrs(z)
+            for i, w in enumerate(weights):
+                neighbours, nw, N = array_utils.extract_positive_weights(w)
 
-            nz = z[neighbours]
-            nzo = zo[neighbours]
-            _, sigma = linalg.ls_cov(nz, nzo, nw)
-            cov_loss.append(sigma.trace())
-        cov_loss = torch.stack(cov_loss)
+                nz = z[neighbours]
+                nzo = zo[neighbours]
+                _, sigma = linalg.ls_cov(nz, nzo, nw)
+                cov_loss.append(sigma.trace())
+            cov_loss = torch.stack(cov_loss)
 
         # mse loss
         mse_loss = torch.norm(yhat - Y, dim=1)
         return mse_loss, cov_loss
+
+    @staticmethod
+    def _reduce_losses(losses):
+        loss = torch.sum(losses[0])
+        if losses[1] is not None:
+            loss += torch.sum(losses[1])
+        return loss
 
     @staticmethod
     def loss_names():
@@ -1031,7 +1044,8 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
 def learn_model(seed=1, name="", transform_name="", train_epochs=600, batch_N=500):
     d, env, config, ds = get_free_space_env_init(seed)
 
-    invariant_tsf = LearnFromBatchTransform(ds, d, too_far_for_neighbour=0.3, name=transform_name)
+    # invariant_tsf = LearnFromBatchTransform(ds, d, too_far_for_neighbour=0.3, name=transform_name)
+    invariant_tsf = LearnNeighbourhoodTransform(ds, d, too_far_for_neighbour=0.3, name=transform_name)
     # we expect this transform to have been learned already
     if not invariant_tsf.load(invariant_tsf.get_last_checkpoint()):
         raise RuntimeError("transform {} need to be learned first - use learn_invariant")
@@ -1062,5 +1076,5 @@ if __name__ == "__main__":
     # test_online_model()
     # for seed in range(10):
     #     learn_invariant(seed=seed, name="knn_regularization", MAX_EPOCH=1000, BATCH_SIZE=500)
-    for seed in range(10):
-        learn_model(seed=seed, transform_name="trans_eval_s{}".format(seed))
+    for seed in range(5):
+        learn_model(seed=seed, transform_name="knn_regularization_s{}".format(seed), name="cov_reg")

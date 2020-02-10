@@ -80,6 +80,9 @@ class InvariantTransform(LearnableParameterizedModel):
         with torch.no_grad():
             for i, loss_name in enumerate(self.loss_names()):
                 name = '{}{}'.format(loss_name, suffix)
+                # allow some loss to be None (e.g. when not always used for every batch)
+                if losses[i] is None:
+                    continue
                 value = losses[i].mean().cpu().item()
                 writer.add_scalar(name, value, self.step)
                 if log:
