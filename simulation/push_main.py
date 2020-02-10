@@ -123,14 +123,9 @@ def get_preprocessor_for_invariant_tsf(invariant_tsf):
                     ["{} {:.5f}".format(name, loss.mean().cpu().item()) if loss is not None else "" for name, loss in
                      zip(invariant_tsf.loss_names(), losses)]))
 
-    if isinstance(invariant_tsf, invariant.LearnLinearDynamicsTransform):
-        transformer = invariant.LearnLinearInvariantTransformer
-    else:
-        transformer = invariant.InvariantTransformer
-
     # wrap the transform as a data preprocessor
     preprocessor = preprocess.Compose(
-        [transformer(invariant_tsf),
+        [invariant.InvariantTransformer(invariant_tsf),
          preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
 
     return preprocessor

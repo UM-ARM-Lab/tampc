@@ -70,11 +70,12 @@ class InvariantTransform(LearnableParameterizedModel):
         """
 
     @abc.abstractmethod
-    def dx_to_zo(self, x, dx):
+    def get_zo(self, x, dx, z_i):
         """
-        Transform differences in observation state to output latent state for training
+        Get output latent variable
         :param x:
         :param dx:
+        :param z_i:
         :return:
         """
 
@@ -210,7 +211,7 @@ class InvariantTransform(LearnableParameterizedModel):
     def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
         if tsf is TransformToUse.LATENT_SPACE:
             z = self.xu_to_zi(X, U)
-            y = self.dx_to_zo(X, Y)
+            Y = self.get_zo(X, Y, z)
         elif tsf is TransformToUse.REDUCE_TO_INPUT:
             z = U
         elif tsf is TransformToUse.NO_TRANSFORM:
@@ -311,6 +312,7 @@ class LearnLinearDynamicsTransform(InvariantTransform):
     """
     Proposal #3 where we learn linear dynamics given zi instead of doing least squares
     """
+
     def __init__(self, *args, spread_loss_weight=1., **kwargs):
         self.spread_loss_weight = spread_loss_weight
         super(LearnLinearDynamicsTransform, self).__init__(*args, **kwargs)
@@ -319,9 +321,10 @@ class LearnLinearDynamicsTransform(InvariantTransform):
     def _loss_weight_name(self):
         return "spread_{}".format(self.spread_loss_weight)
 
-    @abc.abstractmethod
-    def dx_to_zo(self, x, dx):
-        raise RuntimeError("Learning linear dynamics instead of doing least squares")
+    def get_zo(self, x, dx, z_i):
+        A = self.linear_dynamics(z_i)
+        z_o = linalg.batch_batch_product(z_i, A.transpose(-1, -2))
+        return z_o
 
     @abc.abstractmethod
     def linear_dynamics(self, zi):
@@ -340,8 +343,8 @@ class LearnLinearDynamicsTransform(InvariantTransform):
 
         # fit linear model to latent state
         A = self.linear_dynamics(z)
-
         zo = linalg.batch_batch_product(z, A.transpose(-1, -2))
+
         yhat = self.zo_to_dx(X, zo)
         return z, A, zo, yhat
 
@@ -477,8 +480,7 @@ class LearnNeighbourhoodCovRegTransform(LearnFromBatchTransform, ABC):
         mse_loss = torch.norm(yhat - Y, dim=1)
         return mse_loss, cov_loss
 
-    @staticmethod
-    def _reduce_losses(losses):
+    def _reduce_losses(self, losses):
         loss = torch.sum(losses[0])
         if losses[1] is not None:
             loss += torch.sum(losses[1])
@@ -520,7 +522,7 @@ class InvariantTransformer(preprocess.Transformer):
         # these transforms potentially require x to transform y and back, so can't just use them separately
         X = XU[:, :self.tsf.config.nx]
         z_i = self.transform_x(XU)
-        z_o = self.tsf.dx_to_zo(X, Y)
+        z_o = self.tsf.get_zo(X, Y, z_i)
         return z_i, z_o, labels
 
     def transform_x(self, XU):
@@ -540,18 +542,3 @@ class InvariantTransformer(preprocess.Transformer):
         """Figure out what the transform outputs"""
         self.model_input_dim = self.tsf.nz
         self.model_output_dim = self.tsf.nzo
-
-
-class LearnLinearInvariantTransformer(InvariantTransformer):
-    def __init__(self, tsf: LearnLinearDynamicsTransform):
-        if not isinstance(tsf, LearnLinearDynamicsTransform):
-            raise RuntimeError("This transformer supports only transforms learning the linear transform")
-        super(LearnLinearInvariantTransformer, self).__init__(tsf)
-
-    def transform(self, XU, Y, labels=None):
-        assert isinstance(self.tsf, LearnLinearDynamicsTransform)
-        # these transforms potentially require x to transform y and back, so can't just use them separately
-        z_i = self.transform_x(XU)
-        A = self.tsf.linear_dynamics(z_i)
-        z_o = linalg.batch_batch_product(z_i, A.transpose(-1, -2))
-        return z_i, z_o, labels
