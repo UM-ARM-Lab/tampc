@@ -606,6 +606,83 @@ class AblationRemoveLinearDynamicsTransform(Parameterized3Transform, invariant.L
         return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
 
 
+class AblationRemoveAllLinearityTransform(Parameterized2Transform, invariant.LearnFromBatchTransform):
+    """Combine the previous 2 ablations"""
+
+    def __init__(self, ds, device, **kwargs):
+        # z_o is dx, dy, dyaw in body frame and d_along
+        nzo = 4
+        nz = 1 + ds.config.nu
+
+        config = load_data.DataConfig()
+        # directly learn dynamics from z_i to z_o
+        config.nx = nz
+        config.ny = nzo
+        self.dynamics = model.DeterministicUser(
+            make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
+
+        config = load_data.DataConfig()
+        config.nx = ds.config.nx + nzo
+        config.ny = ds.config.nx
+        # directly decode z_o and x to dx
+        self.decoder = model.DeterministicUser(make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
+        super().__init__(ds, device, **kwargs)
+
+    def _name_prefix(self):
+        return 'ablation_remove_all_linear'
+
+    def parameters(self):
+        return list(self.decoder.model.parameters()) + list(self.zi_selector.parameters()) + list(
+            self.dynamics.model.parameters())
+
+    def _model_state_dict(self):
+        d = super()._model_state_dict()
+        d['decoder'] = self.decoder.model.state_dict()
+        d['dynamics'] = self.dynamics.model.state_dict()
+        return d
+
+    def _load_model_state_dict(self, saved_state_dict):
+        super()._load_model_state_dict(saved_state_dict)
+        self.decoder.model.load_state_dict(saved_state_dict['decoder'])
+        self.dynamics.model.load_state_dict(saved_state_dict['dynamics'])
+
+    def zo_to_dx(self, x, z_o):
+        if len(x.shape) == 1:
+            x = x.view(1, -1)
+            z_o = z_o.view(1, -1)
+
+        decoder_input = torch.cat((x, z_o), dim=1)
+        dx = self.decoder.sample(decoder_input)
+        return dx
+
+    def get_zo(self, x, dx, z_i):
+        z_o = self.dynamics.sample(z_i)
+        return z_o
+
+    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+        assert tsf is TransformToUse.LATENT_SPACE
+        z = self.xu_to_zi(X, U)
+        zo = self.get_zo(X, Y, z)
+        yhat = self.zo_to_dx(X, zo)
+
+        # mse loss
+        mse_loss = torch.norm(yhat - Y, dim=1)
+        return mse_loss,
+
+    @staticmethod
+    def loss_names():
+        return "mse_loss",
+
+    def _reduce_losses(self, losses):
+        return torch.sum(losses[0])
+
+    def linear_dynamics(self, zi):
+        raise RuntimeError("Shouldn't be calling this; instead should transform z_i to z_o directly")
+
+    def learn_model(self, max_epoch, batch_N=500):
+        return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
+
+
 def coord_tsf_factory(env, *args, **kwargs):
     tsfs = {block_push.PushAgainstWallStickyEnv: WorldBodyFrameTransformForStickyEnv,
             block_push.PushWithForceDirectlyEnv: WorldBodyFrameTransformForDirectPush}
@@ -1052,7 +1129,8 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
     # invariant_tsf = Parameterized3BatchTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = DistRegularizedTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationRemoveLinearDecoderTransform(ds, d, **common_opts, **kwargs)
-    invariant_tsf = AblationRemoveLinearDynamicsTransform(ds, d, **common_opts, **kwargs)
+    # invariant_tsf = AblationRemoveLinearDynamicsTransform(ds, d, **common_opts, **kwargs)
+    invariant_tsf = AblationRemoveAllLinearityTransform(ds, d, **common_opts, **kwargs)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
