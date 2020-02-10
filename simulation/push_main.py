@@ -894,7 +894,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     return total_costs
 
 
-def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
+def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
     d, env, config, ds = get_free_space_env_init(seed)
 
     common_opts = {'too_far_for_neighbour': 0.3, 'name': "{}_s{}".format(name, seed)}
@@ -904,7 +904,7 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
     # invariant_tsf = Parameterized3Transform(ds, d, **common_opts)
     # parameterization 4
     # invariant_tsf = Parameterized3Transform(ds, d, **common_opts, use_sincos_angle=True)
-    invariant_tsf = Parameterized3BatchTransform(ds, d, **common_opts)
+    invariant_tsf = Parameterized3BatchTransform(ds, d, **common_opts, **kwargs)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 

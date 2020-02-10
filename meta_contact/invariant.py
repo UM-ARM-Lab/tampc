@@ -166,7 +166,6 @@ class InvariantTransform(LearnableParameterizedModel):
         # train from samples of ds that are close in euclidean space
         X, U = torch.split(XU, self.config.nx, dim=1)
         # can precalculate since XUY won't change during training and it's only dependent on these
-        # TODO for now just consider distance in X, later consider U and also Y?
         if consider_only_continuous:
             # assume training set is not shuffled, we can just look at adjacent datapoints sequentially
             N = XU.shape[0]
@@ -245,8 +244,7 @@ class InvariantTransform(LearnableParameterizedModel):
     def loss_names():
         return "mse_loss", "cov_loss"
 
-    @staticmethod
-    def _reduce_losses(losses):
+    def _reduce_losses(self, losses):
         # use mse loss only
         return torch.sum(losses[0])
 
@@ -313,6 +311,10 @@ class LearnLinearDynamicsTransform(InvariantTransform):
     """
     Proposal #3 where we learn linear dynamics given zi instead of doing least squares
     """
+    def __init__(self, *args, spread_loss_weight=1., **kwargs):
+        self.spread_loss_weight = spread_loss_weight
+        super(LearnLinearDynamicsTransform, self).__init__(*args, **kwargs)
+        self.name = "{}_{}".format(self.name, self.spread_loss_weight)
 
     @abc.abstractmethod
     def dx_to_zo(self, x, dx):
@@ -354,9 +356,8 @@ class LearnLinearDynamicsTransform(InvariantTransform):
     def loss_names():
         return "mse_loss", "spread_loss"
 
-    @staticmethod
-    def _reduce_losses(losses):
-        return torch.sum(losses[0]) + torch.sum(losses[1])
+    def _reduce_losses(self, losses):
+        return torch.sum(losses[0]) + self.spread_loss_weight * torch.sum(losses[1])
 
     def _evaluate_no_transform(self, writer):
         pass
