@@ -502,6 +502,50 @@ class DistRegularizedTransform(Parameterized3BatchTransform):
         return torch.sum(losses[0]) + self.dist_loss_weight * torch.sum(losses[1])
 
 
+# ------- Ablations on architecture 3
+class AblationRemoveLinearDecoderTransform(Parameterized2Transform, invariant.LearnFromBatchTransform):
+    """Don't require that g_rho output a linear transformation of z_o"""
+
+    def __init__(self, ds, device, **kwargs):
+        # z_o is dx, dy, dyaw in body frame and d_along
+        nzo = 4
+
+        config = load_data.DataConfig()
+        config.nx = ds.config.nx + nzo
+        config.ny = ds.config.nx
+        # directly decode z_o and x to dx
+        self.decoder = model.DeterministicUser(make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
+        super().__init__(ds, device, **kwargs)
+
+    def _name_prefix(self):
+        return 'ablation_remove_decoder_linear'
+
+    def parameters(self):
+        return list(self.decoder.model.parameters()) + list(self.zi_selector.parameters()) + list(
+            self.linear_model_producer.model.parameters())
+
+    def _model_state_dict(self):
+        d = super()._model_state_dict()
+        d['decoder'] = self.decoder.model.state_dict()
+        return d
+
+    def _load_model_state_dict(self, saved_state_dict):
+        super()._load_model_state_dict(saved_state_dict)
+        self.decoder.model.load_state_dict(saved_state_dict['decoder'])
+
+    def zo_to_dx(self, x, z_o):
+        if len(x.shape) == 1:
+            x = x.view(1, -1)
+            z_o = z_o.view(1, -1)
+
+        decoder_input = torch.cat((x, z_o), dim=1)
+        dx = self.decoder.sample(decoder_input)
+        return dx
+
+    def learn_model(self, max_epoch, batch_N=500):
+        return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
+
+
 def coord_tsf_factory(env, *args, **kwargs):
     tsfs = {block_push.PushAgainstWallStickyEnv: WorldBodyFrameTransformForStickyEnv,
             block_push.PushWithForceDirectlyEnv: WorldBodyFrameTransformForDirectPush}
@@ -946,7 +990,8 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
     # parameterization 4
     # invariant_tsf = Parameterized3Transform(ds, d, **common_opts, use_sincos_angle=True)
     # invariant_tsf = Parameterized3BatchTransform(ds, d, **common_opts, **kwargs)
-    invariant_tsf = DistRegularizedTransform(ds, d, **common_opts, **kwargs)
+    # invariant_tsf = DistRegularizedTransform(ds, d, **common_opts, **kwargs)
+    invariant_tsf = AblationRemoveLinearDecoderTransform(ds, d, **common_opts, **kwargs)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
@@ -985,6 +1030,6 @@ if __name__ == "__main__":
     # verify_coordinate_transform()
     # test_online_model()
     for seed in range(10):
-        learn_invariant(seed=seed, name="zi_zo_cossim", MAX_EPOCH=1000, BATCH_SIZE=500)
+        learn_invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
     # for seed in range(5):
     #     learn_model(seed=seed, transform_name="knn_regularization_s{}".format(seed), name="cov_reg")
