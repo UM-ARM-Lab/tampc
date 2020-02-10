@@ -25,7 +25,7 @@ from meta_contact.controller import global_controller
 from meta_contact.env import block_push
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO,
+logging.basicConfig(level=logging.DEBUG,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
                     datefmt='%m-%d %H:%M:%S')
 logging.getLogger('matplotlib.font_manager').disabled = True
@@ -473,12 +473,12 @@ class Parameterized3BatchTransform(Parameterized3Transform, invariant.LearnFromB
 from meta_contact.invariant import TransformToUse
 
 
-class Parameterized5Transform(Parameterized3BatchTransform):
+class DistRegularizedTransform(Parameterized3BatchTransform):
     """Try requiring pairwise distances are proportional"""
 
     def __init__(self, *args, dist_loss_weight=1., **kwargs):
         self.dist_loss_weight = dist_loss_weight
-        super(Parameterized5Transform, self).__init__(*args, **kwargs)
+        super(DistRegularizedTransform, self).__init__(*args, **kwargs)
 
     def _name_prefix(self):
         return 'dist_reg'
@@ -493,9 +493,9 @@ class Parameterized5Transform(Parameterized3BatchTransform):
         # TODO maybe only require that things close in z_i should be close in A, z_o space (not bidirectional)
         # TODO try distance instead of cosine/directionality
         di = torch.nn.functional.pdist(z)
-        dA = torch.nn.functional.pdist(A.view(A.shape[0], -1))
-        # do = torch.nn.functional.pdist(zo)
-        dist_loss = 1 - torch.nn.functional.cosine_similarity(di, dA, dim=0)
+        # dA = torch.nn.functional.pdist(A.view(A.shape[0], -1))
+        do = torch.nn.functional.pdist(zo)
+        dist_loss = 1 - torch.nn.functional.cosine_similarity(di, do, dim=0)
         mse_loss = torch.norm(yhat - Y, dim=1)
         return mse_loss, dist_loss
 
@@ -697,6 +697,7 @@ class UseTransform:
     PARAMETERIZED_2 = 3
     PARAMETERIZED_3 = 4
     PARAMETERIZED_4 = 5
+    PARAMETERIZED_3_BATCH = 6
 
 
 def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False, online_adapt=True):
@@ -722,6 +723,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
                   UseTransform.PARAMETERIZED_3: Parameterized3Transform(ds, d, too_far_for_neighbour=0.3, name="_s9"),
                   UseTransform.PARAMETERIZED_4: Parameterized3Transform(ds, d, too_far_for_neighbour=0.3,
                                                                         name="sincos_s2", use_sincos_angle=True),
+                  UseTransform.PARAMETERIZED_3_BATCH: Parameterized3BatchTransform(ds, d, name="_s1"),
                   }
     transform_names = {UseTransform.NO_TRANSFORM: 'none',
                        UseTransform.COORDINATE_TRANSFORM: 'coord',
@@ -729,6 +731,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
                        UseTransform.PARAMETERIZED_2: 'param2',
                        UseTransform.PARAMETERIZED_3: 'param3',
                        UseTransform.PARAMETERIZED_4: 'param4',
+                       UseTransform.PARAMETERIZED_3_BATCH: 'param3_batch',
                        }
     invariant_tsf = transforms[use_tsf]
 
@@ -948,7 +951,7 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
     # parameterization 4
     # invariant_tsf = Parameterized3Transform(ds, d, **common_opts, use_sincos_angle=True)
     # invariant_tsf = Parameterized3BatchTransform(ds, d, **common_opts, **kwargs)
-    invariant_tsf = Parameterized5Transform(ds, d, **common_opts, **kwargs)
+    invariant_tsf = DistRegularizedTransform(ds, d, **common_opts, **kwargs)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
@@ -982,9 +985,11 @@ if __name__ == "__main__":
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_3, online_adapt=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_4, online_adapt=False)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_4, online_adapt=True)
+    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_3_BATCH, online_adapt=False)
+    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_3_BATCH, online_adapt=True)
     # verify_coordinate_transform()
     # test_online_model()
     for seed in range(10):
-        learn_invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
+        learn_invariant(seed=seed, name="zi_zo_cossim", MAX_EPOCH=1000, BATCH_SIZE=500)
     # for seed in range(5):
     #     learn_model(seed=seed, transform_name="knn_regularization_s{}".format(seed), name="cov_reg")
