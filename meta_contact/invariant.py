@@ -3,6 +3,7 @@ import copy
 import logging
 import os
 import pickle
+from abc import ABC
 from typing import Union
 
 import numpy as np
@@ -12,6 +13,7 @@ from arm_pytorch_utilities import linalg
 from arm_pytorch_utilities import load_data
 from arm_pytorch_utilities import math_utils
 from arm_pytorch_utilities import preprocess
+from arm_pytorch_utilities import softknn
 from arm_pytorch_utilities.make_data import datasource
 from arm_pytorch_utilities.model.common import LearnableParameterizedModel
 from meta_contact import cfg
@@ -324,7 +326,7 @@ class LearnLinearDynamicsTransform(InvariantTransform):
         :return: (nzo x nzi) A
         """
 
-    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+    def _evaluate_batch_apply_tsf(self, X, U, tsf):
         assert tsf is TransformToUse.LATENT_SPACE
         z = self.xu_to_zi(X, U)
 
@@ -336,6 +338,10 @@ class LearnLinearDynamicsTransform(InvariantTransform):
 
         zo = linalg.batch_batch_product(z, A.transpose(-1, -2))
         yhat = self.zo_to_dx(X, zo)
+        return z, A, zo, yhat
+
+    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+        z, A, zo, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
 
         # TODO consider using weights somehow (can use on dynamics dispersion cost)
         # add cost on difference of each A (each linear dynamics should be similar)
@@ -354,6 +360,129 @@ class LearnLinearDynamicsTransform(InvariantTransform):
 
     def _evaluate_no_transform(self, writer):
         pass
+
+
+class LearnFromBatchTransform(LearnLinearDynamicsTransform, ABC):
+    """
+    Instead of taking in predefined neighbourhoods, just learn over all batches
+    """
+
+    def _evaluate_metrics_on_whole_set(self, neighbourhood, tsf, translation=(0, 0)):
+        with torch.no_grad():
+            data_set = self.ds.validation_set() if neighbourhood is self.neighbourhood_validation else \
+                self.ds.training_set()
+            X, U, Y = self._get_separate_data_columns(data_set)
+
+            # TODO this is hacky and specific to the block pushing env (translate state)
+            X = torch.cat((X[:, :2] + torch.tensor(translation, device=X.device, dtype=X.dtype), X[:, 2:]), dim=1)
+
+            batch_losses = self._evaluate_batch(X, U, Y, tsf=tsf)
+            batch_losses = [math_utils.replace_nan_and_inf(losses) if losses is not None else None for losses in
+                            batch_losses]
+            return batch_losses
+
+    def calculate_neighbours(self):
+        # don't actually calculate any neighbourhoods
+        self.neighbourhood = []
+        self.neighbourhood_validation = []
+
+    def _evaluate_neighbour(self, X, U, Y, neighbourhood, i, tsf=TransformToUse.LATENT_SPACE):
+        raise RuntimeError("This class should only evaluate batches")
+
+    def evaluate_validation(self, writer):
+        # evaluate with translation
+        losses = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation, TransformToUse.LATENT_SPACE)
+        if writer is not None:
+            self._record_metrics(writer, losses, suffix="/validation", log=True)
+            for d in [4, 10]:
+                for trans in [[1, 1], [-1, 1], [-1, -1]]:
+                    dd = (trans[0] * d, trans[1] * d)
+                    ls = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation, TransformToUse.LATENT_SPACE,
+                                                             translation=dd)
+                    self._record_metrics(writer, ls, suffix="/validation_{}_{}".format(dd[0], dd[1]))
+
+        return losses
+
+    def learn_model(self, max_epoch, batch_N=500):
+        writer = SummaryWriter(flush_secs=20, comment="{}_batch{}".format(self.name, batch_N))
+
+        ds_train = load_data.SimpleDataset(*self.ds.training_set())
+        train_loader = torch.utils.data.DataLoader(ds_train, batch_size=batch_N, shuffle=True)
+
+        save_checkpoint_every_n_epochs = max(max_epoch // 20, 5)
+
+        self.optimizer = torch.optim.Adam(self.parameters())
+        self.optimizer.zero_grad()
+        for epoch in range(max_epoch):
+            logger.debug("Start epoch %d", epoch)
+            # evaluate on validation at the start of epochs
+            self.evaluate_validation(writer)
+            if save_checkpoint_every_n_epochs and epoch % save_checkpoint_every_n_epochs == 0:
+                self.save()
+
+            for i_batch, data in enumerate(train_loader):
+                X, U, Y = self._get_separate_data_columns(data)
+                losses = self._evaluate_batch(X, U, Y)
+                if losses is None:
+                    continue
+
+                reduced_loss = self._reduce_losses(losses)
+                reduced_loss.backward()
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+
+                self._record_metrics(writer, losses)
+                self.step += 1
+
+        self.save(last=True)
+
+
+class LearnNeighbourhoodCovRegTransform(LearnFromBatchTransform, ABC):
+    """
+    Instead of taking in predefined neighbourhoods, simultaneously produce dynamics for batches
+    and learn to structure z_i such that euclidean distance results in close dynamics
+    using covariance loss regularization on local neighbourhoods.
+
+    Doesn't do much it seems
+    """
+
+    def __init__(self, *args, expected_neighbourhood_size=12, **kwargs):
+        self.nbrs = softknn.SoftKNN(min_k=expected_neighbourhood_size, normalization=1)
+        # this calculation is just too slow so we're only going to randomly do it
+        self.cov_loss_usage = 0.05
+        LearnFromBatchTransform.__init__(self, *args, **kwargs)
+
+    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+        z, A, zo, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
+
+        cov_loss = None
+        if np.random.rand() > (1 - self.cov_loss_usage):
+            cov_loss = []
+            # regularize by making sure nearest neighbours in z leads to good linear fits
+            weights = self.nbrs(z)
+            for i, w in enumerate(weights):
+                neighbours, nw, N = array_utils.extract_positive_weights(w)
+
+                nz = z[neighbours]
+                nzo = zo[neighbours]
+                _, sigma = linalg.ls_cov(nz, nzo, nw)
+                cov_loss.append(sigma.trace())
+            cov_loss = torch.stack(cov_loss)
+
+        # mse loss
+        mse_loss = torch.norm(yhat - Y, dim=1)
+        return mse_loss, cov_loss
+
+    @staticmethod
+    def _reduce_losses(losses):
+        loss = torch.sum(losses[0])
+        if losses[1] is not None:
+            loss += torch.sum(losses[1])
+        return loss
+
+    @staticmethod
+    def loss_names():
+        return "mse_loss", "cov_loss"
 
 
 class InvariantTransformer(preprocess.Transformer):
@@ -416,6 +545,7 @@ class LearnLinearInvariantTransformer(InvariantTransformer):
         super(LearnLinearInvariantTransformer, self).__init__(tsf)
 
     def transform(self, XU, Y, labels=None):
+        assert isinstance(self.tsf, LearnLinearDynamicsTransform)
         # these transforms potentially require x to transform y and back, so can't just use them separately
         z_i = self.transform_x(XU)
         A = self.tsf.linear_dynamics(z_i)
