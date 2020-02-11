@@ -1150,10 +1150,35 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
 
     logger.info("evaluation seed %d tasks %s tries %d", seed, tasks, tries)
 
+    # load previous runs to avoid doing duplicates
+    fullname = os.path.join(cfg.DATA_DIR, 'ctrl_eval.pkl')
+    if os.path.exists(fullname):
+        with open(fullname, 'rb') as f:
+            runs = pickle.load(f)
+            logger.info("loaded runs from %s", fullname)
+    else:
+        runs = {}
+
     total_costs = torch.zeros((len(tasks), tries))
     lowest_costs = torch.zeros_like(total_costs)
     successes = torch.zeros_like(total_costs)
     for t in range(len(tasks)):
+        task_name = '{}{}'.format(tasks[t], translation)
+        if task_name not in runs:
+            runs[task_name] = {}
+
+        saved = runs[task_name].get(name, None)
+        if saved and len(saved) is 4:
+            tc, ss, lc, ts = saved
+        # new controller for this task or legacy saved results
+        else:
+            ts = []
+        # try only non-duplicated task seeds
+        new_tries = [i for i in range(len(try_seeds[t])) if try_seeds[t] not in ts]
+        if not new_tries:
+            continue
+        try_seeds[t] = [try_seeds[t][i] for i in new_tries]
+
         task_seed = tasks[t]
         rand.seed(task_seed)
         # configure init and goal for task
@@ -1166,8 +1191,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
 
         task_costs = np.zeros((num_frames, tries))
 
-        for i in range(tries):
-            try_seed = try_seeds[t][i]
+        for i, try_seed in enumerate(try_seeds[t]):
             rand.seed(try_seed)
             env.draw_user_text('try {}'.format(try_seed), 3)
             env.draw_user_text('success {}/{}'.format(int(torch.sum(successes[t])), tries), 4)
@@ -1189,6 +1213,16 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
         # clear trajectories of this task
         env.clear_debug_trajectories()
 
+        if saved is None or len(saved) is 3:
+            runs[task_name][name] = total_costs[t], successes[t], lowest_costs[t], try_seeds[t]
+        else:
+            tc, ss, lc, ts = saved
+            ts = ts + try_seeds[t]
+            tc = torch.cat((tc, total_costs[t][new_tries]), dim=0)
+            ss = torch.cat((ss, successes[t][new_tries]), dim=0)
+            lc = torch.cat((lc, lowest_costs[t][new_tries]), dim=0)
+            runs[task_name][name] = tc, ss, lc, ts
+
     # summarize stats
     logger.info("accumulated cost")
     logger.info(total_costs)
@@ -1206,32 +1240,6 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     logger.info("total success: %d/%d", torch.sum(successes), torch.numel(successes))
 
     # save to file
-    fullname = os.path.join(cfg.DATA_DIR, 'ctrl_eval.pkl')
-    if os.path.exists(fullname):
-        with open(fullname, 'rb') as f:
-            runs = pickle.load(f)
-            logger.info("loaded runs from %s", fullname)
-    else:
-        runs = {}
-
-    for t in range(len(tasks)):
-        task_name = '{}{}'.format(tasks[t], translation)
-        if task_name not in runs:
-            runs[task_name] = {}
-        # new controller for this task or legacy saved results
-        saved = runs[task_name].get(name, None)
-        if saved is None or len(saved) is 3:
-            runs[task_name][name] = total_costs[t], successes[t], lowest_costs[t], try_seeds[t]
-        else:
-            # add only non-duplicated task seeds
-            tc, ss, lc, ts = saved
-            new_tries = [i for i in range(len(try_seeds[t])) if try_seeds[t] not in ts]
-            ts = ts + [try_seeds[i] for i in new_tries]
-            tc = torch.cat((tc, total_costs[t][new_tries]), dim=0)
-            ss = torch.cat((ss, successes[t][new_tries]), dim=0)
-            lc = torch.cat((lc, lowest_costs[t][new_tries]), dim=0)
-            runs[task_name][name] = tc, ss, lc, ts
-
     with open(fullname, 'wb') as f:
         pickle.dump(runs, f)
         logger.info("saved runs to %s", fullname)
