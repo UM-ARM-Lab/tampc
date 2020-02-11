@@ -653,6 +653,71 @@ class AblationRemoveAllLinearityTransform(Parameterized2Transform, invariant.Lea
         return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
 
 
+class AblationRelaxEncoderTransform(AblationRemoveAllLinearityTransform):
+    """Relax the parameterization of z encoding"""
+
+    def __init__(self, ds, device, nz=4, **kwargs):
+        config = load_data.DataConfig()
+        # directly learn dynamics from z to v
+        config.nx = ds.config.nx + ds.config.nu
+        config.ny = nz
+        self.encoder = model.DeterministicUser(
+            make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
+
+        super().__init__(ds, device, nz=nz, **kwargs)
+
+    def _name_prefix(self):
+        return 'ablation_relax_encoder'
+
+    def xu_to_z(self, state, action):
+        if len(state.shape) < 2:
+            state = state.reshape(1, -1)
+            action = action.reshape(1, -1)
+
+        xu = torch.cat((state, action), dim=1)
+        z = self.encoder.sample(xu)
+        return z
+
+    def parameters(self):
+        return list(self.decoder.model.parameters()) + list(self.encoder.model.parameters()) + list(
+            self.dynamics.model.parameters())
+
+    def _model_state_dict(self):
+        d = super()._model_state_dict()
+        d['encoder'] = self.encoder.model.state_dict()
+        return d
+
+    def _load_model_state_dict(self, saved_state_dict):
+        super()._load_model_state_dict(saved_state_dict)
+        self.encoder.model.load_state_dict(saved_state_dict['encoder'])
+
+
+class AblationDirectDynamics(AblationRelaxEncoderTransform):
+    """Remove v and pass z directly to the decoder"""
+
+    def __init__(self, ds, device, nz=4, **kwargs):
+        super().__init__(ds, device, nz=nz, nv=nz, **kwargs)
+
+    def _name_prefix(self):
+        return 'ablation_direct_no_v'
+
+    def get_v(self, x, dx, z):
+        raise RuntimeError("Shouldn't have to produce v")
+
+    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+        assert tsf is TransformToUse.LATENT_SPACE
+        z = self.xu_to_z(X, U)
+        # use z instead of v
+        yhat = self.get_dx(X, z)
+
+        # mse loss
+        mse_loss = torch.norm(yhat - Y, dim=1)
+        return mse_loss,
+
+    def parameters(self):
+        return list(self.decoder.model.parameters()) + list(self.encoder.model.parameters())
+
+
 class AblationAllRegularizedTransform(AblationRemoveAllLinearityTransform):
     """Try requiring pairwise distances are proportional"""
 
@@ -1132,8 +1197,10 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
     # invariant_tsf = DistRegularizedTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationRemoveLinearDecoderTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationRemoveLinearDynamicsTransform(ds, d, **common_opts, **kwargs)
-    invariant_tsf = AblationRemoveAllLinearityTransform(ds, d, **common_opts, **kwargs)
+    # invariant_tsf = AblationRemoveAllLinearityTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationAllRegularizedTransform(ds, d, **common_opts, **kwargs)
+    # invariant_tsf = AblationRelaxEncoderTransform(ds, d, **common_opts, **kwargs)
+    invariant_tsf = AblationDirectDynamics(ds, d, **common_opts, **kwargs)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
@@ -1171,8 +1238,7 @@ if __name__ == "__main__":
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_3_BATCH, online_adapt=True)
     # verify_coordinate_transform()
     # test_online_model()
-    for z in [3, 5, 7, 10]:
-        for seed in range(10):
-            learn_invariant(seed=seed, name="vary_size", MAX_EPOCH=1000, BATCH_SIZE=500, nz=z, nv=z)
+    for seed in range(10):
+        learn_invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
     # for seed in range(5):
     #     learn_model(seed=seed, transform_name="knn_regularization_s{}".format(seed), name="cov_reg")
