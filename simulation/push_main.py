@@ -718,6 +718,41 @@ class AblationDirectDynamics(AblationRelaxEncoderTransform):
         return list(self.decoder.model.parameters()) + list(self.encoder.model.parameters())
 
 
+class AblationNoPassthrough(AblationDirectDynamics):
+    """Remove x from decoder input (only pass x to decoder)"""
+
+    def __init__(self, ds, device, nz=4, **kwargs):
+        config = load_data.DataConfig()
+        config.nx = nz
+        config.ny = ds.config.nx
+        # directly decode v and x to dx
+        self.direct_decoder = model.DeterministicUser(
+            make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
+        super().__init__(ds, device, nz=nz, **kwargs)
+
+    def _name_prefix(self):
+        return 'ablation_no passthrough'
+
+    def _model_state_dict(self):
+        d = super()._model_state_dict()
+        d['d2'] = self.direct_decoder.model.state_dict()
+        return d
+
+    def _load_model_state_dict(self, saved_state_dict):
+        super()._load_model_state_dict(saved_state_dict)
+        self.direct_decoder.model.load_state_dict(saved_state_dict['d2'])
+
+    def get_dx(self, x, v):
+        if len(x.shape) == 1:
+            v = v.view(1, -1)
+
+        dx = self.direct_decoder.sample(v)
+        return dx
+
+    def parameters(self):
+        return list(self.decoder.model.parameters()) + list(self.encoder.model.parameters())
+
+
 class AblationAllRegularizedTransform(AblationRemoveAllLinearityTransform):
     """Try requiring pairwise distances are proportional"""
 
@@ -941,6 +976,7 @@ class UseTransform:
     PARAMETERIZED_3 = 4
     PARAMETERIZED_4 = 5
     PARAMETERIZED_3_BATCH = 6
+    PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER = 7
 
 
 def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False, online_adapt=True):
@@ -958,7 +994,6 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     # add in invariant transform here
     transforms = {UseTransform.NO_TRANSFORM: None,
                   UseTransform.COORDINATE_TRANSFORM: coord_tsf_factory(env, ds),
-                  # TODO currently using fixed tsf
                   UseTransform.PARAMETERIZED_1: ParameterizedCoordTransform(ds, d, too_far_for_neighbour=0.3,
                                                                             name="_s2"),
                   UseTransform.PARAMETERIZED_2: Parameterized2Transform(ds, d, too_far_for_neighbour=0.3,
@@ -967,6 +1002,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
                   UseTransform.PARAMETERIZED_4: Parameterized3Transform(ds, d, too_far_for_neighbour=0.3,
                                                                         name="sincos_s2", use_sincos_angle=True),
                   UseTransform.PARAMETERIZED_3_BATCH: Parameterized3BatchTransform(ds, d, name="_s1"),
+                  UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER: AblationRelaxEncoderTransform(ds, d, name="_s0"),
                   }
     transform_names = {UseTransform.NO_TRANSFORM: 'none',
                        UseTransform.COORDINATE_TRANSFORM: 'coord',
@@ -975,6 +1011,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
                        UseTransform.PARAMETERIZED_3: 'param3',
                        UseTransform.PARAMETERIZED_4: 'param4',
                        UseTransform.PARAMETERIZED_3_BATCH: 'param3_batch',
+                       UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER: 'ablate_linear_relax_encoder',
                        }
     invariant_tsf = transforms[use_tsf]
 
@@ -1200,7 +1237,8 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
     # invariant_tsf = AblationRemoveAllLinearityTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationAllRegularizedTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationRelaxEncoderTransform(ds, d, **common_opts, **kwargs)
-    invariant_tsf = AblationDirectDynamics(ds, d, **common_opts, **kwargs)
+    # invariant_tsf = AblationDirectDynamics(ds, d, **common_opts, **kwargs)
+    invariant_tsf = AblationNoPassthrough(ds, d, **common_opts, **kwargs)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
@@ -1236,9 +1274,11 @@ if __name__ == "__main__":
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_4, online_adapt=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_3_BATCH, online_adapt=False)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_3_BATCH, online_adapt=True)
+    test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER, online_adapt=False)
+    test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER, online_adapt=True)
     # verify_coordinate_transform()
     # test_online_model()
-    for seed in range(10):
-        learn_invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
+    # for seed in range(10):
+    #     learn_invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500, nz=10)
     # for seed in range(5):
     #     learn_model(seed=seed, transform_name="knn_regularization_s{}".format(seed), name="cov_reg")
