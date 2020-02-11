@@ -255,7 +255,7 @@ class WorldBodyFrameTransformForDirectPush(HandDesignedCoordTransform):
 class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
     """Parameterize the coordinate transform such that it has to learn something"""
 
-    def __init__(self, ds, device, model_opts=None, **kwargs):
+    def __init__(self, ds, device, model_opts=None, nz=4, nv=4, **kwargs):
         if model_opts is None:
             model_opts = {}
         # default values for the input model_opts to replace
@@ -263,8 +263,6 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
         opts.update(model_opts)
 
         # v is dx, dy, dyaw in body frame and d_along
-        nv = 4
-        nz = 1 + ds.config.nu
         # input is x, output is yaw
         self.yaw_selector = torch.nn.Linear(ds.config.nx, 1, bias=False).to(device=device, dtype=torch.double)
         self.true_yaw_param = torch.zeros(ds.config.nx, device=device, dtype=torch.double)
@@ -350,9 +348,7 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
 class Parameterized2Transform(ParameterizedCoordTransform):
     """Relax parameterization structure to allow (each dimension of) z to be some linear combination of x,u"""
 
-    def __init__(self, ds, device, **kwargs):
-        # v is dx, dy, dyaw in body frame and d_along
-        nz = 1 + ds.config.nu
+    def __init__(self, ds, device, nz=4, **kwargs):
         # input is x, output is z
         # constrain output to 0 and 1
         self.z_selector = torch.nn.Linear(ds.config.nx + ds.config.nu, nz, bias=False).to(device=device,
@@ -363,7 +359,7 @@ class Parameterized2Transform(ParameterizedCoordTransform):
         # try starting at the true parameters
         # self.z_selector.weight.data = self.true_z_param + torch.randn_like(self.true_z_param) * 0.1
         # self.z_selector.weight.requires_grad = True
-        super().__init__(ds, device, **kwargs)
+        super().__init__(ds, device, nz=nz, **kwargs)
 
     def _name_prefix(self):
         return "z_select"
@@ -390,29 +386,11 @@ class Parameterized2Transform(ParameterizedCoordTransform):
         super()._load_model_state_dict(saved_state_dict)
         self.z_selector.load_state_dict(saved_state_dict['z'])
 
-    def evaluate_validation(self, writer):
-        losses = super().evaluate_validation(writer)
-        if writer is not None:
-            with torch.no_grad():
-                z_param = self.z_selector.weight.data
-                cs = torch.nn.functional.cosine_similarity(z_param, self.true_z_param).mean().item()
-                dist = torch.norm(z_param - self.true_z_param).item()
-
-                logger.debug("step %d z cos sim %f dist %f", self.step, cs, dist)
-
-                writer.add_scalar('cosine_similarity/z_selector', cs, self.step)
-                writer.add_scalar('param_diff/z_selector', dist, self.step)
-                writer.add_scalar('param_norm/z_selector', z_param.norm().item(), self.step)
-        return losses
-
 
 class Parameterized3Transform(Parameterized2Transform):
     """Relax parameterization structure to allow decoder to be some state dependent transformation of v"""
 
-    def __init__(self, ds, device, use_sincos_angle=False, **kwargs):
-        # v is dx, dy, dyaw in body frame and d_along
-        nv = 4
-
+    def __init__(self, ds, device, use_sincos_angle=False, nv=4, **kwargs):
         # replace angle with their sin and cos
         self.use_sincos_angle = use_sincos_angle
         # input to producer is x, output is matrix to multiply v to get dx by
@@ -422,7 +400,7 @@ class Parameterized3Transform(Parameterized2Transform):
         # outputs a linear transformation from v to dx (linear in v), that is dependent on state
         self.linear_decoder_producer = model.DeterministicUser(
             make.make_sequential_network(config, h_units=(16, 32)).to(device=device))
-        super().__init__(ds, device, **kwargs)
+        super().__init__(ds, device, nv=nv, **kwargs)
 
     def _name_prefix(self):
         return 'state_dep_linear_tsf_{}'.format(int(self.use_sincos_angle))
@@ -509,16 +487,13 @@ class DistRegularizedTransform(Parameterized3BatchTransform):
 class AblationRemoveLinearDecoderTransform(Parameterized2Transform, invariant.LearnFromBatchTransform):
     """Don't require that g_rho output a linear transformation of v"""
 
-    def __init__(self, ds, device, **kwargs):
-        # v is dx, dy, dyaw in body frame and d_along
-        nv = 4
-
+    def __init__(self, ds, device, nv=4, **kwargs):
         config = load_data.DataConfig()
         config.nx = ds.config.nx + nv
         config.ny = ds.config.nx
         # directly decode v and x to dx
         self.decoder = model.DeterministicUser(make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
-        super().__init__(ds, device, **kwargs)
+        super().__init__(ds, device, nv=nv, **kwargs)
 
     def _name_prefix(self):
         return 'ablation_remove_decoder_linear'
@@ -552,18 +527,14 @@ class AblationRemoveLinearDecoderTransform(Parameterized2Transform, invariant.Le
 class AblationRemoveLinearDynamicsTransform(Parameterized3Transform, invariant.LearnFromBatchTransform):
     """Don't require that f_psi output a linear transformation of z; instead allow it to output v directly"""
 
-    def __init__(self, ds, device, **kwargs):
-        # v is dx, dy, dyaw in body frame and d_along
-        nv = 4
-        nz = 1 + ds.config.nu
-
+    def __init__(self, ds, device, nz=4, nv=4, **kwargs):
         config = load_data.DataConfig()
         # directly learn dynamics from z to v
         config.nx = nz
         config.ny = nv
         self.dynamics = model.DeterministicUser(
             make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
-        super().__init__(ds, device, **kwargs)
+        super().__init__(ds, device, nz=nz, nv=nv, **kwargs)
 
     def _name_prefix(self):
         return 'ablation_remove_dynamics_linear'
@@ -612,11 +583,7 @@ class AblationRemoveLinearDynamicsTransform(Parameterized3Transform, invariant.L
 class AblationRemoveAllLinearityTransform(Parameterized2Transform, invariant.LearnFromBatchTransform):
     """Combine the previous 2 ablations"""
 
-    def __init__(self, ds, device, **kwargs):
-        # v is dx, dy, dyaw in body frame and d_along
-        nv = 4
-        nz = 1 + ds.config.nu
-
+    def __init__(self, ds, device, nz=4, nv=4, **kwargs):
         config = load_data.DataConfig()
         # directly learn dynamics from z to v
         config.nx = nz
@@ -629,7 +596,7 @@ class AblationRemoveAllLinearityTransform(Parameterized2Transform, invariant.Lea
         config.ny = ds.config.nx
         # directly decode v and x to dx
         self.decoder = model.DeterministicUser(make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
-        super().__init__(ds, device, **kwargs)
+        super().__init__(ds, device, nz=nz, nv=nv, **kwargs)
 
     def _name_prefix(self):
         return 'ablation_remove_all_linear'
@@ -1165,8 +1132,8 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
     # invariant_tsf = DistRegularizedTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationRemoveLinearDecoderTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationRemoveLinearDynamicsTransform(ds, d, **common_opts, **kwargs)
-    # invariant_tsf = AblationRemoveAllLinearityTransform(ds, d, **common_opts, **kwargs)
-    invariant_tsf = AblationAllRegularizedTransform(ds, d, **common_opts, **kwargs)
+    invariant_tsf = AblationRemoveAllLinearityTransform(ds, d, **common_opts, **kwargs)
+    # invariant_tsf = AblationAllRegularizedTransform(ds, d, **common_opts, **kwargs)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
@@ -1204,7 +1171,8 @@ if __name__ == "__main__":
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_3_BATCH, online_adapt=True)
     # verify_coordinate_transform()
     # test_online_model()
-    for seed in range(10):
-        learn_invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
+    for z in [3, 5, 7, 10]:
+        for seed in range(10):
+            learn_invariant(seed=seed, name="vary_size", MAX_EPOCH=1000, BATCH_SIZE=500, nz=z, nv=z)
     # for seed in range(5):
     #     learn_model(seed=seed, transform_name="knn_regularization_s{}".format(seed), name="cov_reg")

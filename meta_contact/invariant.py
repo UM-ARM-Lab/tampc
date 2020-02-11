@@ -43,7 +43,7 @@ class InvariantTransform(LearnableParameterizedModel):
         self.nz = nz
         self.nv = nv
         # update name with parameteres
-        self.name = '{}_{}_{}'.format(self.name, self.nz, self.config)
+        self.name = '{}_z{}_v{}_{}'.format(self.name, self.nz, self.nv, self.config)
 
     @abc.abstractmethod
     def xu_to_z(self, state, action):
