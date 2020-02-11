@@ -1002,7 +1002,8 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
                   UseTransform.PARAMETERIZED_4: Parameterized3Transform(ds, d, too_far_for_neighbour=0.3,
                                                                         name="sincos_s2", use_sincos_angle=True),
                   UseTransform.PARAMETERIZED_3_BATCH: Parameterized3BatchTransform(ds, d, name="_s1"),
-                  UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER: AblationRelaxEncoderTransform(ds, d, name="_s0"),
+                  UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER: AblationRelaxEncoderTransform(ds, d,
+                                                                                                                name="_s0"),
                   }
     transform_names = {UseTransform.NO_TRANSFORM: 'none',
                        UseTransform.COORDINATE_TRANSFORM: 'coord',
@@ -1143,6 +1144,10 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     if type(tasks) is int:
         tasks = [rand.seed() for _ in range(tasks)]
 
+    try_seeds = []
+    for _ in tasks:
+        try_seeds.append([rand.seed() for _ in range(tries)])
+
     logger.info("evaluation seed %d tasks %s tries %d", seed, tasks, tries)
 
     total_costs = torch.zeros((len(tasks), tries))
@@ -1162,7 +1167,8 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
         task_costs = np.zeros((num_frames, tries))
 
         for i in range(tries):
-            try_seed = rand.seed()
+            try_seed = try_seeds[t][i]
+            rand.seed(try_seed)
             env.draw_user_text('try {}'.format(try_seed), 3)
             env.draw_user_text('success {}/{}'.format(int(torch.sum(successes[t])), tries), 4)
             sim.run(try_seed)
@@ -1212,7 +1218,19 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
         task_name = '{}{}'.format(tasks[t], translation)
         if task_name not in runs:
             runs[task_name] = {}
-        runs[task_name][name] = total_costs[t], successes[t], lowest_costs[t]
+        # new controller for this task or legacy saved results
+        saved = runs[task_name].get(name, None)
+        if saved is None or len(saved) is 3:
+            runs[task_name][name] = total_costs[t], successes[t], lowest_costs[t], try_seeds[t]
+        else:
+            # add only non-duplicated task seeds
+            tc, ss, lc, ts = saved
+            new_tries = [i for i in range(len(try_seeds[t])) if try_seeds[t] not in ts]
+            ts = ts + [try_seeds[i] for i in new_tries]
+            tc = torch.cat((tc, total_costs[t][new_tries]), dim=0)
+            ss = torch.cat((ss, successes[t][new_tries]), dim=0)
+            lc = torch.cat((lc, lowest_costs[t][new_tries]), dim=0)
+            runs[task_name][name] = tc, ss, lc, ts
 
     with open(fullname, 'wb') as f:
         pickle.dump(runs, f)
