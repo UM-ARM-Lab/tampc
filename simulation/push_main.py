@@ -546,11 +546,24 @@ class DistRegularizedTransform(Parameterized3BatchTransform):
         return torch.sum(losses[0]) + self.dist_loss_weight * torch.sum(losses[1])
 
 
+def compression_reward(v, xu, dist_regularization=1e-8):
+    # normalize here so loss wouldn't change if all v were scaled by a fixed amount (tested)
+    mn = v.norm(dim=1).mean()
+    vv = v / mn
+    dv = torch.nn.functional.pdist(vv + dist_regularization)
+    # invariance captured by small distance in v despite large difference in XU
+    dxu = torch.nn.functional.pdist(xu)
+    # use log to prevent numerical issues so dxu/dv -> log(dxu) - log(dv)
+    return torch.log(dxu) - torch.log(dv)
+
+
 class CompressionRewardTransform(Parameterized3BatchTransform):
     """Reward mapping large differences in x,u space to small differences in v space"""
 
-    def __init__(self, *args, compression_loss_weight=1., **kwargs):
+    def __init__(self, *args, compression_loss_weight=1e-5, dist_regularization=1e-8, **kwargs):
         self.compression_loss_weight = compression_loss_weight
+        # avoid log(0)
+        self.dist_regularization = dist_regularization
         super(CompressionRewardTransform, self).__init__(*args, **kwargs)
 
     def _name_prefix(self):
@@ -564,21 +577,14 @@ class CompressionRewardTransform(Parameterized3BatchTransform):
         z = self.xu_to_z(X, U)
         A = self.linear_dynamics(z)
         v = linalg.batch_batch_product(z, A.transpose(-1, -2))
-        # normalize v so that compression doesn't just scale everything down
-        v = torch.nn.functional.normalize(v, p=2, dim=1)
         yhat = self.get_dx(X, v)
         return z, A, v, yhat
 
     def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
         z, A, v, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
-
-        dv = torch.nn.functional.pdist(v)
-        # invariance captured by small distance in v despite large difference in XU
-        dxu = torch.nn.functional.pdist(torch.cat((X, U), dim=1))
-        # use log to prevent numerical issues so dxu/dv -> log(dxu) - log(dv)
-        compression_reward = torch.log(dxu) - torch.log(dv)
+        compression_r = compression_reward(v, torch.cat((X, U), dim=1), dist_regularization=self.dist_regularization)
         mse_loss = torch.norm(yhat - Y, dim=1)
-        return mse_loss, -compression_reward
+        return mse_loss, -compression_r
 
     @staticmethod
     def loss_names():
@@ -1424,7 +1430,8 @@ if __name__ == "__main__":
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=True)
     # verify_coordinate_transform()
     # test_online_model()
-    for seed in range(10):
-        learn_invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
+    for weight in [1e-5, 1e-4, 1e-3]:
+        for seed in range(7):
+            learn_invariant(seed=seed, name="add_reg", MAX_EPOCH=1000, BATCH_SIZE=500, compression_loss_weight=weight)
     # for seed in range(5):
     #     learn_model(seed=seed, transform_name="knn_regularization_s{}".format(seed), name="cov_reg")
