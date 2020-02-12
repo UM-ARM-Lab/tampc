@@ -446,6 +446,44 @@ class Parameterized3BatchTransform(Parameterized3Transform, invariant.LearnFromB
         return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
 
 
+class LinearRelaxEncoderTransform(Parameterized3BatchTransform):
+    """Still enforce that dynamics and decoder are linear, but relax parameterization of encoder"""
+
+    def __init__(self, ds, device, nz=4, **kwargs):
+        config = load_data.DataConfig()
+        config.nx = ds.config.nx + ds.config.nu
+        config.ny = nz
+        self.encoder = model.DeterministicUser(
+            make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
+
+        super().__init__(ds, device, nz=nz, **kwargs)
+
+    def _name_prefix(self):
+        return 'linear_relax_encoder'
+
+    def xu_to_z(self, state, action):
+        if len(state.shape) < 2:
+            state = state.reshape(1, -1)
+            action = action.reshape(1, -1)
+
+        xu = torch.cat((state, action), dim=1)
+        z = self.encoder.sample(xu)
+        return z
+
+    def parameters(self):
+        return list(self.linear_decoder_producer.model.parameters()) + list(self.encoder.model.parameters()) + list(
+            self.linear_model_producer.model.parameters())
+
+    def _model_state_dict(self):
+        d = super()._model_state_dict()
+        d['encoder'] = self.encoder.model.state_dict()
+        return d
+
+    def _load_model_state_dict(self, saved_state_dict):
+        super()._load_model_state_dict(saved_state_dict)
+        self.encoder.model.load_state_dict(saved_state_dict['encoder'])
+
+
 from meta_contact.invariant import TransformToUse
 
 
@@ -1275,7 +1313,8 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
     # invariant_tsf = AblationAllRegularizedTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationRelaxEncoderTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationDirectDynamics(ds, d, **common_opts, **kwargs)
-    invariant_tsf = AblationNoPassthrough(ds, d, **common_opts, **kwargs)
+    # invariant_tsf = AblationNoPassthrough(ds, d, **common_opts, **kwargs)
+    invariant_tsf = LinearRelaxEncoderTransform(ds, d, **common_opts, **kwargs)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
@@ -1313,11 +1352,11 @@ if __name__ == "__main__":
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_3_BATCH, online_adapt=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER, online_adapt=False)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER, online_adapt=True)
-    test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=False, relearn_dynamics=True)
-    test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=True)
+    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=False, relearn_dynamics=True)
+    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=True)
     # verify_coordinate_transform()
     # test_online_model()
-    # for seed in range(10):
-    #     learn_invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500, nz=10)
+    for seed in range(10):
+        learn_invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
     # for seed in range(5):
     #     learn_model(seed=seed, transform_name="knn_regularization_s{}".format(seed), name="cov_reg")
