@@ -152,6 +152,26 @@ class PusherNetwork(model.NetworkModelWrapper):
                                            self.step)
 
 
+class PusherTransform(invariant.InvariantTransform):
+    def _move_data_out_of_distribution(self, data, move_params):
+        X, U, Y = data
+        translation = move_params
+        if translation:
+            X = torch.cat((X[:, :2] + torch.tensor(translation, device=X.device, dtype=X.dtype), X[:, 2:]), dim=1)
+        return X, U, Y
+
+    def evaluate_validation(self, writer):
+        losses = super(PusherTransform, self).evaluate_validation(writer)
+        if writer is not None:
+            for d in [4, 10]:
+                for trans in [[1, 1], [-1, 1], [-1, -1]]:
+                    dd = (trans[0] * d, trans[1] * d)
+                    ls = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation, TransformToUse.LATENT_SPACE,
+                                                             move_params=dd)
+                    self._record_metrics(writer, ls, suffix="/validation_{}_{}".format(dd[0], dd[1]))
+        return losses
+
+
 def constrain_state(state):
     # yaw gets normalized
     state[:, 2] = math_utils.angle_normalize(state[:, 2])
@@ -162,7 +182,7 @@ def constrain_state(state):
 
 
 # ------- Hand designed coordinate transform classes using architecture 2
-class HandDesignedCoordTransform(invariant.InvariantTransform):
+class HandDesignedCoordTransform(PusherTransform):
     def __init__(self, ds, nz, **kwargs):
         # v is dx, dy, dyaw in body frame and d_along
         super().__init__(ds, nz, 4, name='coord', **kwargs)
@@ -252,7 +272,7 @@ class WorldBodyFrameTransformForDirectPush(HandDesignedCoordTransform):
 
 
 # ------- Learned transform classes using architecture 3
-class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
+class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform, PusherTransform):
     """Parameterize the coordinate transform such that it has to learn something"""
 
     def __init__(self, ds, device, model_opts=None, nz=4, nv=4, **kwargs):
@@ -279,7 +299,9 @@ class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform):
         self.linear_model_producer = model.DeterministicUser(
             make.make_sequential_network(config, **opts).to(device=device))
         name = kwargs.pop('name', '')
-        super().__init__(ds, nz, nv, name='{}_{}'.format(self._name_prefix(), name), **kwargs)
+        invariant.LearnLinearDynamicsTransform.__init__(self, ds, nz, nv,
+                                                        name='{}_{}'.format(self._name_prefix(), name),
+                                                        **kwargs)
 
     def _name_prefix(self):
         return 'param_coord'

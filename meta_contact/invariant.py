@@ -91,18 +91,20 @@ class InvariantTransform(LearnableParameterizedModel):
                 if log:
                     logger.debug("metric %s %f", name, value)
 
-    def _setup_evaluate_metrics_on_whole_set(self, neighbourhood, translation):
+    @abc.abstractmethod
+    def _move_data_out_of_distribution(self, data, move_params):
+        """Move the data out of the training distribution with given parameters to allow evaluation"""
+
+    def _setup_evaluate_metrics_on_whole_set(self, neighbourhood, move_params):
         with torch.no_grad():
             data_set = self.ds.validation_set() if neighbourhood is self.neighbourhood_validation else \
                 self.ds.training_set()
-            X, U, Y = self._get_separate_data_columns(data_set)
-            # TODO this is hacky and specific to the block pushing env (translate state)
-            X = torch.cat((X[:, :2] + torch.tensor(translation, device=X.device, dtype=X.dtype), X[:, 2:]), dim=1)
+            X, U, Y = self._move_data_out_of_distribution(self._get_separate_data_columns(data_set), move_params)
             return X, U, Y
 
-    def _evaluate_metrics_on_whole_set(self, neighbourhood, tsf, translation=(0, 0)):
+    def _evaluate_metrics_on_whole_set(self, neighbourhood, tsf, move_params=None):
         with torch.no_grad():
-            X, U, Y = self._setup_evaluate_metrics_on_whole_set(neighbourhood, translation)
+            X, U, Y = self._setup_evaluate_metrics_on_whole_set(neighbourhood, move_params)
             N = X.shape[0]
             batch_losses = self._init_batch_losses()
 
@@ -130,12 +132,6 @@ class InvariantTransform(LearnableParameterizedModel):
         losses = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation, TransformToUse.LATENT_SPACE)
         if writer is not None:
             self._record_metrics(writer, losses, suffix="/validation", log=True)
-            for d in [4, 10]:
-                for trans in [[1, 1], [-1, 1], [-1, -1]]:
-                    dd = (trans[0] * d, trans[1] * d)
-                    ls = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation, TransformToUse.LATENT_SPACE,
-                                                             translation=dd)
-                    self._record_metrics(writer, ls, suffix="/validation_{}_{}".format(dd[0], dd[1]))
         return losses
 
     def _evaluate_no_transform(self, writer):
@@ -287,7 +283,6 @@ class InvariantTransform(LearnableParameterizedModel):
                 self.save()
             # randomize the order we're looking at the neighbourhoods
             neighbour_order = np.random.permutation(N)
-            # TODO batch process neighbours
             for i in neighbour_order:
                 bi = self.step % batch_N
                 if bi == 0:
@@ -363,7 +358,6 @@ class LearnLinearDynamicsTransform(InvariantTransform):
     def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
         z, A, v, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
 
-        # TODO consider using weights somehow (can use on dynamics dispersion cost)
         # add cost on difference of each A (each linear dynamics should be similar)
         dynamics_spread = torch.std(A, dim=0)
         # mse loss
@@ -386,9 +380,9 @@ class LearnFromBatchTransform(LearnLinearDynamicsTransform, ABC):
     Instead of taking in predefined neighbourhoods, just learn over all batches
     """
 
-    def _evaluate_metrics_on_whole_set(self, neighbourhood, tsf, translation=(0, 0)):
+    def _evaluate_metrics_on_whole_set(self, neighbourhood, tsf, move_params=None):
         with torch.no_grad():
-            X, U, Y = self._setup_evaluate_metrics_on_whole_set(neighbourhood, translation)
+            X, U, Y = self._setup_evaluate_metrics_on_whole_set(neighbourhood, move_params)
             batch_losses = self._evaluate_batch(X, U, Y, tsf=tsf)
             batch_losses = [math_utils.replace_nan_and_inf(losses) if losses is not None else None for losses in
                             batch_losses]
