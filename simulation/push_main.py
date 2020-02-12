@@ -131,6 +131,13 @@ def get_preprocessor_for_invariant_tsf(invariant_tsf):
     return preprocessor
 
 
+def translation_generator():
+    for d in [4, 10, 50]:
+        for trans in [[1, 1], [-1, 1], [-1, -1]]:
+            dd = (trans[0] * d, trans[1] * d)
+            yield dd
+
+
 class PusherNetwork(model.NetworkModelWrapper):
     """Network wrapper with some special validation evaluation"""
 
@@ -138,18 +145,16 @@ class PusherNetwork(model.NetworkModelWrapper):
         with torch.no_grad():
             XUv, _, _ = self.ds.original_validation_set()
             # try validation loss outside of our training region (by translating input)
-            for d in [4, 10]:
-                for trans in [[1, 1], [-1, 1], [-1, -1]]:
-                    dd = (trans[0] * d, trans[1] * d)
-                    XU = torch.cat(
-                        (XUv[:, :2] + torch.tensor(dd, device=XUv.device, dtype=XUv.dtype),
-                         XUv[:, 2:]),
-                        dim=1)
-                    if self.ds.preprocessor is not None:
-                        XU = self.ds.preprocessor.transform_x(XU)
-                    vloss = self.user.compute_validation_loss(XU, self.Yv, self.ds)
-                    self.writer.add_scalar("loss/validation_{}_{}".format(dd[0], dd[1]), vloss.mean(),
-                                           self.step)
+            for dd in translation_generator():
+                XU = torch.cat(
+                    (XUv[:, :2] + torch.tensor(dd, device=XUv.device, dtype=XUv.dtype),
+                     XUv[:, 2:]),
+                    dim=1)
+                if self.ds.preprocessor is not None:
+                    XU = self.ds.preprocessor.transform_x(XU)
+                vloss = self.user.compute_validation_loss(XU, self.Yv, self.ds)
+                self.writer.add_scalar("loss/validation_{}_{}".format(dd[0], dd[1]), vloss.mean(),
+                                       self.step)
 
 
 class PusherTransform(invariant.InvariantTransform):
@@ -163,12 +168,10 @@ class PusherTransform(invariant.InvariantTransform):
     def evaluate_validation(self, writer):
         losses = super(PusherTransform, self).evaluate_validation(writer)
         if writer is not None:
-            for d in [4, 10]:
-                for trans in [[1, 1], [-1, 1], [-1, -1]]:
-                    dd = (trans[0] * d, trans[1] * d)
-                    ls = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation, TransformToUse.LATENT_SPACE,
-                                                             move_params=dd)
-                    self._record_metrics(writer, ls, suffix="/validation_{}_{}".format(dd[0], dd[1]))
+            for dd in translation_generator():
+                ls = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation, TransformToUse.LATENT_SPACE,
+                                                         move_params=dd)
+                self._record_metrics(writer, ls, suffix="/validation_{}_{}".format(dd[0], dd[1]))
         return losses
 
 
