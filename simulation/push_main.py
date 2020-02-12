@@ -543,7 +543,7 @@ class DistRegularizedTransform(Parameterized3BatchTransform):
         return "mse_loss", "dist_loss"
 
     def _reduce_losses(self, losses):
-        return torch.sum(losses[0]) + self.dist_loss_weight * torch.sum(losses[1])
+        return torch.mean(losses[0]) + self.dist_loss_weight * torch.mean(losses[1])
 
 
 def compression_reward(v, xu, dist_regularization=1e-8, top_percent=None):
@@ -570,7 +570,7 @@ def compression_reward(v, xu, dist_regularization=1e-8, top_percent=None):
 class CompressionRewardTransform(Parameterized3BatchTransform):
     """Reward mapping large differences in x,u space to small differences in v space"""
 
-    def __init__(self, *args, compression_loss_weight=1e-5, dist_regularization=1e-8, **kwargs):
+    def __init__(self, *args, compression_loss_weight=1e-3, dist_regularization=1e-8, **kwargs):
         self.compression_loss_weight = compression_loss_weight
         # avoid log(0)
         self.dist_regularization = dist_regularization
@@ -602,7 +602,7 @@ class CompressionRewardTransform(Parameterized3BatchTransform):
         return "mse_loss", "compression_loss"
 
     def _reduce_losses(self, losses):
-        return torch.sum(losses[0]) + self.compression_loss_weight * torch.sum(losses[1])
+        return torch.mean(losses[0]) + self.compression_loss_weight * torch.mean(losses[1])
 
 
 class PartialPassthroughTransform(CompressionRewardTransform):
@@ -773,7 +773,7 @@ class AblationRemoveLinearDynamicsTransform(Parameterized3Transform, invariant.L
         return "mse_loss",
 
     def _reduce_losses(self, losses):
-        return torch.sum(losses[0])
+        return torch.mean(losses[0])
 
     def parameters(self):
         return list(self.linear_decoder_producer.model.parameters()) + list(self.z_selector.parameters()) + list(
@@ -859,7 +859,7 @@ class AblationRemoveAllLinearityTransform(Parameterized2Transform, invariant.Lea
         return "mse_loss",
 
     def _reduce_losses(self, losses):
-        return torch.sum(losses[0])
+        return torch.mean(losses[0])
 
     def linear_dynamics(self, z):
         raise RuntimeError("Shouldn't be calling this; instead should transform z to v directly")
@@ -997,7 +997,7 @@ class AblationAllRegularizedTransform(AblationRemoveAllLinearityTransform):
         return "mse_loss", "dist_loss"
 
     def _reduce_losses(self, losses):
-        return torch.sum(losses[0]) + self.dist_loss_weight * torch.sum(losses[1])
+        return torch.mean(losses[0]) + self.dist_loss_weight * torch.mean(losses[1])
 
 
 def coord_tsf_factory(env, *args, **kwargs):
@@ -1536,6 +1536,6 @@ if __name__ == "__main__":
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=True)
     # test_online_model()
     for seed in range(1):
-        learn_invariant(seed=seed, name="sincos", MAX_EPOCH=1000, BATCH_SIZE=500, compression_loss_weight=2e-5)
+        learn_invariant(seed=seed, name="mean", MAX_EPOCH=1000, BATCH_SIZE=500, compression_loss_weight=1e-2)
     # for seed in range(5):
     #     learn_model(seed=seed, transform_name="knn_regularization_s{}".format(seed), name="cov_reg")
