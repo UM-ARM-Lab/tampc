@@ -546,7 +546,7 @@ class DistRegularizedTransform(Parameterized3BatchTransform):
         return torch.sum(losses[0]) + self.dist_loss_weight * torch.sum(losses[1])
 
 
-def compression_reward(v, xu, dist_regularization=1e-8):
+def compression_reward(v, xu, dist_regularization=1e-8, top_percent=None):
     # normalize here so loss wouldn't change if all v were scaled by a fixed amount (tested)
     mn = v.norm(dim=1).mean()
     vv = v / mn
@@ -558,8 +558,13 @@ def compression_reward(v, xu, dist_regularization=1e-8):
     xu = torch.cat((xu[:, :angle_index], s, c, xu[:, angle_index + 1:]), dim=1)
     # invariance captured by small distance in v despite large difference in XU
     dxu = torch.nn.functional.pdist(xu)
+    # only consider the reward for the closest dv
+    if top_percent is not None:
+        k = int(top_percent * dv.shape[0])
+        dv, indices = torch.topk(dv, k=k, largest=False, sorted=False)
+        dxu = dxu[indices]
     # use log to prevent numerical issues so dxu/dv -> log(dxu) - log(dv)
-    return torch.log(dxu + dist_regularization) - torch.log(dv)
+    return torch.log(dxu) - torch.log(dv + dist_regularization)
 
 
 class CompressionRewardTransform(Parameterized3BatchTransform):
@@ -587,7 +592,8 @@ class CompressionRewardTransform(Parameterized3BatchTransform):
 
     def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
         z, A, v, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
-        compression_r = compression_reward(v, torch.cat((X, U), dim=1), dist_regularization=self.dist_regularization)
+        compression_r = compression_reward(v, torch.cat((X, U), dim=1), dist_regularization=self.dist_regularization,
+                                           top_percent=0.05)
         mse_loss = torch.norm(yhat - Y, dim=1)
         return mse_loss, -compression_r
 
@@ -597,6 +603,49 @@ class CompressionRewardTransform(Parameterized3BatchTransform):
 
     def _reduce_losses(self, losses):
         return torch.sum(losses[0]) + self.compression_loss_weight * torch.sum(losses[1])
+
+
+class PartialPassthroughTransform(CompressionRewardTransform):
+    """Don't pass through all of x to g, since it could just learn to map v to u"""
+
+    def __init__(self, ds, device, *args, nv=4, **kwargs):
+        # TODO how to partition x such that the part that's not selected for z gets passed through?
+        config = load_data.DataConfig()
+        config.nx = 2
+        config.ny = nv * ds.config.nx  # matrix output (original nx, ignore sincos)
+        self.partial_decoder = model.DeterministicUser(
+            make.make_sequential_network(config, h_units=(16, 32)).to(device=device))
+        super().__init__(ds, device, *args, nv=nv, **kwargs)
+
+    def _name_prefix(self):
+        return 'partial_passthrough'
+
+    def parameters(self):
+        return list(self.partial_decoder.model.parameters()) + list(self.z_selector.parameters()) + list(
+            self.linear_model_producer.model.parameters())
+
+    def _model_state_dict(self):
+        d = super()._model_state_dict()
+        d['pd'] = self.partial_decoder.model.state_dict()
+        return d
+
+    def _load_model_state_dict(self, saved_state_dict):
+        super()._load_model_state_dict(saved_state_dict)
+        self.partial_decoder.model.load_state_dict(saved_state_dict['pd'])
+
+    def get_dx(self, x, v):
+        if len(x.shape) == 1:
+            x = x.view(1, -1)
+            v = v.view(1, -1)
+
+        B, nx = x.shape
+        angle_index = 2
+        s = torch.sin(x[:, angle_index]).view(-1, 1)
+        c = torch.cos(x[:, angle_index]).view(-1, 1)
+        x = torch.cat((s, c), dim=1)
+        linear_tsf = self.partial_decoder.sample(x).view(B, nx, self.nv)
+        dx = linalg.batch_batch_product(v, linear_tsf)
+        return dx
 
 
 class GroundTruthWithCompression(CompressionRewardTransform):
@@ -633,7 +682,8 @@ class GroundTruthWithCompression(CompressionRewardTransform):
         v = self.get_v(X, Y, z)
 
         # compression reward should be a constant
-        compression_r = compression_reward(v, torch.cat((X, U), dim=1), dist_regularization=self.dist_regularization)
+        compression_r = compression_reward(v, torch.cat((X, U), dim=1), dist_regularization=self.dist_regularization,
+                                           top_percent=0.05)
         mse_loss = torch.norm(yhat - Y, dim=1)
         return mse_loss, -compression_r
 
@@ -1443,7 +1493,8 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
     # invariant_tsf = AblationNoPassthrough(ds, d, **common_opts, **kwargs)
     # invariant_tsf = LinearRelaxEncoderTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = CompressionRewardTransform(ds, d, **common_opts, **kwargs)
-    invariant_tsf = GroundTruthWithCompression(ds, d, **common_opts, **kwargs)
+    # invariant_tsf = GroundTruthWithCompression(ds, d, **common_opts, **kwargs)
+    invariant_tsf = PartialPassthroughTransform(ds, d, **common_opts, **kwargs)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
@@ -1484,7 +1535,7 @@ if __name__ == "__main__":
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=False, relearn_dynamics=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=True)
     # test_online_model()
-    for seed in range(7):
-        learn_invariant(seed=seed, name="mse_on_y", MAX_EPOCH=1000, BATCH_SIZE=500, compression_loss_weight=2e-5)
+    for seed in range(1):
+        learn_invariant(seed=seed, name="sincos", MAX_EPOCH=1000, BATCH_SIZE=500, compression_loss_weight=2e-5)
     # for seed in range(5):
     #     learn_model(seed=seed, transform_name="knn_regularization_s{}".format(seed), name="cov_reg")
