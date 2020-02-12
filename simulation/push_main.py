@@ -521,6 +521,48 @@ class DistRegularizedTransform(Parameterized3BatchTransform):
         return torch.sum(losses[0]) + self.dist_loss_weight * torch.sum(losses[1])
 
 
+class CompressionRewardTransform(Parameterized3BatchTransform):
+    """Reward mapping large differences in x,u space to small differences in v space"""
+
+    def __init__(self, *args, compression_loss_weight=1., **kwargs):
+        self.compression_loss_weight = compression_loss_weight
+        super(CompressionRewardTransform, self).__init__(*args, **kwargs)
+
+    def _name_prefix(self):
+        return 'reward_compression'
+
+    def _loss_weight_name(self):
+        return "compress_{}".format(self.compression_loss_weight)
+
+    def _evaluate_batch_apply_tsf(self, X, U, tsf):
+        assert tsf is TransformToUse.LATENT_SPACE
+        z = self.xu_to_z(X, U)
+        A = self.linear_dynamics(z)
+        v = linalg.batch_batch_product(z, A.transpose(-1, -2))
+        # normalize v so that compression doesn't just scale everything down
+        v = torch.nn.functional.normalize(v, p=2, dim=1)
+        yhat = self.get_dx(X, v)
+        return z, A, v, yhat
+
+    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+        z, A, v, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
+
+        dv = torch.nn.functional.pdist(v)
+        # invariance captured by small distance in v despite large difference in XU
+        dxu = torch.nn.functional.pdist(torch.cat((X, U), dim=1))
+        # use log to prevent numerical issues so dxu/dv -> log(dxu) - log(dv)
+        compression_reward = torch.log(dxu) - torch.log(dv)
+        mse_loss = torch.norm(yhat - Y, dim=1)
+        return mse_loss, -compression_reward
+
+    @staticmethod
+    def loss_names():
+        return "mse_loss", "compression_loss"
+
+    def _reduce_losses(self, losses):
+        return torch.sum(losses[0]) + self.compression_loss_weight * torch.sum(losses[1])
+
+
 # ------- Ablations on architecture 3
 class AblationRemoveLinearDecoderTransform(Parameterized2Transform, invariant.LearnFromBatchTransform):
     """Don't require that g_rho output a linear transformation of v"""
@@ -1314,7 +1356,8 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
     # invariant_tsf = AblationRelaxEncoderTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationDirectDynamics(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationNoPassthrough(ds, d, **common_opts, **kwargs)
-    invariant_tsf = LinearRelaxEncoderTransform(ds, d, **common_opts, **kwargs)
+    # invariant_tsf = LinearRelaxEncoderTransform(ds, d, **common_opts, **kwargs)
+    invariant_tsf = CompressionRewardTransform(ds, d, **common_opts, **kwargs)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
