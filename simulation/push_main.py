@@ -550,11 +550,16 @@ def compression_reward(v, xu, dist_regularization=1e-8):
     # normalize here so loss wouldn't change if all v were scaled by a fixed amount (tested)
     mn = v.norm(dim=1).mean()
     vv = v / mn
-    dv = torch.nn.functional.pdist(vv + dist_regularization)
+    dv = torch.nn.functional.pdist(vv)
+    # TODO generalize special treatment of angular distance
+    angle_index = 2
+    s = torch.sin(xu[:, angle_index]).view(-1, 1)
+    c = torch.cos(xu[:, angle_index]).view(-1, 1)
+    xu = torch.cat((xu[:, :angle_index], s, c, xu[:, angle_index + 1:]), dim=1)
     # invariance captured by small distance in v despite large difference in XU
     dxu = torch.nn.functional.pdist(xu)
     # use log to prevent numerical issues so dxu/dv -> log(dxu) - log(dv)
-    return torch.log(dxu) - torch.log(dv)
+    return torch.log(dxu + dist_regularization) - torch.log(dv)
 
 
 class CompressionRewardTransform(Parameterized3BatchTransform):
@@ -592,6 +597,55 @@ class CompressionRewardTransform(Parameterized3BatchTransform):
 
     def _reduce_losses(self, losses):
         return torch.sum(losses[0]) + self.compression_loss_weight * torch.sum(losses[1])
+
+
+class GroundTruthWithCompression(CompressionRewardTransform):
+    """Ground truth coordinate transform with only f learned"""
+
+    def _name_prefix(self):
+        return 'ground_truth'
+
+    def xu_to_z(self, state, action):
+        if len(state.shape) < 2:
+            state = state.reshape(1, -1)
+            action = action.reshape(1, -1)
+
+        # (along, d_along, push magnitude)
+        z = torch.cat((state[:, -1].view(-1, 1), action), dim=1)
+        return z
+
+    def get_dx(self, x, v):
+        if len(x.shape) == 1:
+            x = x.view(1, -1)
+            v = v.view(1, -1)
+
+        yaw = x[:, 2]
+        N = v.shape[0]
+        dx = torch.zeros((N, 4), dtype=v.dtype, device=v.device)
+        # convert (dx, dy) from body frame back to world frame
+        dx[:, :2] = math_utils.batch_rotate_wrt_origin(v[:, :2], yaw)
+        dx[:, 2:] = v[:, 2:]
+        return dx
+
+    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+        z, A, v, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
+        # we know what v actually is based on y; train the network to output the actual v
+        v = self.get_v(X, Y, z)
+
+        # compression reward should be a constant
+        compression_r = compression_reward(v, torch.cat((X, U), dim=1), dist_regularization=self.dist_regularization)
+        mse_loss = torch.norm(yhat - Y, dim=1)
+        return mse_loss, -compression_r
+
+    def parameters(self):
+        return list(self.linear_model_producer.model.parameters())
+
+    def _model_state_dict(self):
+        d = {'linear': self.linear_model_producer.model.state_dict()}
+        return d
+
+    def _load_model_state_dict(self, saved_state_dict):
+        self.linear_model_producer.model.load_state_dict(saved_state_dict['linear'])
 
 
 # ------- Ablations on architecture 3
@@ -1388,7 +1442,8 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
     # invariant_tsf = AblationDirectDynamics(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationNoPassthrough(ds, d, **common_opts, **kwargs)
     # invariant_tsf = LinearRelaxEncoderTransform(ds, d, **common_opts, **kwargs)
-    invariant_tsf = CompressionRewardTransform(ds, d, **common_opts, **kwargs)
+    # invariant_tsf = CompressionRewardTransform(ds, d, **common_opts, **kwargs)
+    invariant_tsf = GroundTruthWithCompression(ds, d, **common_opts, **kwargs)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
@@ -1428,10 +1483,8 @@ if __name__ == "__main__":
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER, online_adapt=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=False, relearn_dynamics=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=True)
-    # verify_coordinate_transform()
     # test_online_model()
-    for weight in [1e-5, 1e-4, 1e-3]:
-        for seed in range(7):
-            learn_invariant(seed=seed, name="add_reg", MAX_EPOCH=1000, BATCH_SIZE=500, compression_loss_weight=weight)
+    for seed in range(7):
+        learn_invariant(seed=seed, name="mse_on_y", MAX_EPOCH=1000, BATCH_SIZE=500, compression_loss_weight=2e-5)
     # for seed in range(5):
     #     learn_model(seed=seed, transform_name="knn_regularization_s{}".format(seed), name="cov_reg")
