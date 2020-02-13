@@ -1307,7 +1307,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     plot_model_error = False
     enforce_model_rollout = False
     d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    env = get_easy_env(p.GUI, level=level, log_video=True)
+    env = get_easy_env(p.GUI, level=level, log_video=False)
 
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds = block_push.PushDataSource(env, data_dir=get_data_dir(level), validation_ratio=0.1, config=config, device=d)
@@ -1424,8 +1424,8 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     Q = torch.diag(torch.tensor([10, 10, 0, 0.01], dtype=torch.double))
     R = 0.01
     # tune this so that we figure out to make u-turns
-    sigma = torch.ones(env.nu, dtype=torch.double, device=d) * 0.2
-    sigma[1] = 0.5
+    sigma = torch.ones(env.nu, dtype=torch.double, device=d) * 0.8
+    sigma[1] = 2
     common_wrapper_opts = {
         'Q': Q,
         'R': R,
@@ -1433,6 +1433,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
         'u_max': u_max,
         'compare_to_goal': env.state_difference,
         'device': d,
+        'terminal_cost_multiplier': 50,
     }
     mpc_opts = {
         'num_samples': 10000,
@@ -1606,14 +1607,14 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
     # invariant_tsf = AblationRemoveLinearDynamicsTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationRemoveAllLinearityTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationAllRegularizedTransform(ds, d, **common_opts, **kwargs)
-    # invariant_tsf = AblationRelaxEncoderTransform(ds, d, **common_opts, **kwargs)
+    invariant_tsf = AblationRelaxEncoderTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationDirectDynamics(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationNoPassthrough(ds, d, **common_opts, **kwargs)
     # invariant_tsf = LinearRelaxEncoderTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = CompressionRewardTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = GroundTruthWithCompression(ds, d, **common_opts, **kwargs)
     # invariant_tsf = PartialPassthroughTransform(ds, d, **common_opts, **kwargs)
-    invariant_tsf = LearnedPartialPassthroughTransform(ds, d, **common_opts, **kwargs)
+    # invariant_tsf = LearnedPartialPassthroughTransform(ds, d, **common_opts, **kwargs)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
@@ -1653,12 +1654,12 @@ if __name__ == "__main__":
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER, online_adapt=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=False, relearn_dynamics=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=True)
-    test_dynamics(0, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=False)
+    # test_dynamics(0, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=False)
     # test_dynamics(0, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=True)
     # test_dynamics(0, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=False)
     # test_dynamics(0, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=True)
     # test_online_model()
-    # for seed in range(5):
-    #     learn_invariant(seed=seed, name="new_partition", MAX_EPOCH=1000, BATCH_SIZE=500)
+    for seed in range(5):
+        learn_invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
     # for seed in range(5):
     #     learn_model(seed=seed, transform_name="knn_regularization_s{}".format(seed), name="cov_reg")
