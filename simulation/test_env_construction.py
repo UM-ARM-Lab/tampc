@@ -236,8 +236,26 @@ def tune_direct_push():
     plot_and_analyze_body_frame_invariance(yaws, z_os)
 
 
+def run_direct_push():
+    N = 20
+    init_block_pos = [0, 0]
+    init_block_yaw = 0
+    env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=-1,
+                                              init_block=init_block_pos, init_yaw=init_block_yaw)
+
+    env.draw_user_text('run direct push')
+    ctrl = controller.PreDeterminedController([(0.0, 0.8, 1) for _ in range(N)])
+    # record how many steps of pushing to reach 1m
+    obs = env.reset()
+    while True:
+        action = ctrl.command(obs)
+        obs, _, _, _ = env.step(action)
+        time.sleep(0.3)
+
+
 if __name__ == "__main__":
     # test_pusher_placement_inverse()
     # test_env_control()
     # test_simulator_friction_isometry()
-    tune_direct_push()
+    # tune_direct_push()
+    run_direct_push()
