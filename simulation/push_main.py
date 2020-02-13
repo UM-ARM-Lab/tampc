@@ -648,25 +648,50 @@ class PartialPassthroughTransform(CompressionRewardTransform):
         return dx
 
 
+class PartitionBlock(torch.nn.Module):
+    def __init__(self, input_dim, output_dim, split_at):
+        super().__init__()
+        self.split_at = split_at
+        self.linear = torch.nn.Parameter(torch.randn((input_dim, output_dim)))
+        # self.linear = torch.nn.Linear(input_dim, output_dim, bias=False)
+
+    def forward(self, x, split):
+        # require that a single dimension is split up (can't have multiple copies of same element)
+        # each column should sum to 1
+        weights = torch.nn.functional.softmax(self.linear, dim=0)
+        y = x @ weights
+        if split is 0:
+            y = y[:, :self.split_at]
+        else:
+            y = y[:, self.split_at:]
+        return y
+
+
 class LearnedPartialPassthroughTransform(CompressionRewardTransform):
     """Don't pass through all of x to g; learn which parts to pass to g and which to h"""
 
-    def __init__(self, ds, device, *args, nv=4, **kwargs):
+    def __init__(self, ds, device, *args, nz=4, nv=4, **kwargs):
         config = load_data.DataConfig()
         config.nx = ds.config.nx
         config.ny = ds.config.nx
-        self.x_partition = torch.randn(ds.config.nx, dtype=torch.double, device=device, requires_grad=True)
-        # TODO try setting true parameters
-        self.x_partition = torch.tensor([10, 10, -10, 10], dtype=torch.double, device=device, requires_grad=False)
+        self.split_size = 2
+        # self.x_partition = torch.randn(ds.config.nx, dtype=torch.double, device=device, requires_grad=True)
+        self.x_partition = PartitionBlock(ds.config.nx, ds.config.nx, self.split_size).to(device=device,
+                                                                                          dtype=torch.double)
+        # try setting true parameters
+        # self.x_partition = torch.tensor([10, 10, -10, 10], dtype=torch.double, device=device, requires_grad=False)
 
         self.true_partition = torch.tensor([1, 1, 0, 1], device=device, dtype=torch.double)
 
         config = load_data.DataConfig()
-        config.nx = ds.config.nx
+        config.nx = ds.config.nx - self.split_size
         config.ny = nv * ds.config.nx  # matrix output (original nx, ignore sincos)
         self.partial_decoder = model.DeterministicUser(
             make.make_sequential_network(config, h_units=(16, 32)).to(device=device))
-        super().__init__(ds, device, *args, nv=nv, **kwargs)
+
+        self.encoder = torch.nn.Linear(self.split_size + ds.config.nu, nz, bias=False).to(device=device,
+                                                                                          dtype=torch.double)
+        super().__init__(ds, device, *args, nz=nz, nv=nv, **kwargs)
 
     def _name_prefix(self):
         return 'partition_passthrough'
@@ -677,25 +702,27 @@ class LearnedPartialPassthroughTransform(CompressionRewardTransform):
             action = action.reshape(1, -1)
 
         # more general parameterized versions where we select which components to take
-        encoder_partition = torch.sigmoid(self.x_partition)
-        xu = torch.cat((encoder_partition * state, action), dim=1)
-        z = self.z_selector(xu)
+        encoder_partition = self.x_partition(state, 0)
+        xu = torch.cat((encoder_partition, action), dim=1)
+        z = self.encoder(xu)
         return z
 
     def parameters(self):
-        return list(self.partial_decoder.model.parameters()) + list(self.z_selector.parameters()) + list(
-            self.linear_model_producer.model.parameters()) + [self.x_partition]
+        return list(self.partial_decoder.model.parameters()) + list(self.encoder.parameters()) + list(
+            self.linear_model_producer.model.parameters()) + list(self.x_partition.parameters())
 
     def _model_state_dict(self):
         d = super()._model_state_dict()
         d['pd'] = self.partial_decoder.model.state_dict()
-        d['partition'] = self.x_partition
+        d['partition'] = self.x_partition.state_dict()
+        d['enc'] = self.encoder.state_dict()
         return d
 
     def _load_model_state_dict(self, saved_state_dict):
         super()._load_model_state_dict(saved_state_dict)
         self.partial_decoder.model.load_state_dict(saved_state_dict['pd'])
-        self.x_partition = saved_state_dict['partition']
+        self.x_partition.load_state_dict(saved_state_dict['partition'])
+        self.encoder.load_state_dict(saved_state_dict['enc'])
 
     def get_dx(self, x, v):
         if len(x.shape) == 1:
@@ -703,28 +730,27 @@ class LearnedPartialPassthroughTransform(CompressionRewardTransform):
             v = v.view(1, -1)
 
         B, nx = x.shape
-        decoder_partition = 1 - torch.sigmoid(self.x_partition)
-        x = decoder_partition * x
-        linear_tsf = self.partial_decoder.sample(x).view(B, nx, self.nv)
+        decoder_partition = self.x_partition(x, 1)
+        linear_tsf = self.partial_decoder.sample(decoder_partition).view(B, nx, self.nv)
         dx = linalg.batch_batch_product(v, linear_tsf)
         return dx
 
-    def evaluate_validation(self, writer):
-        losses = super().evaluate_validation(writer)
-        if writer is not None:
-            with torch.no_grad():
-                encoder_partition = torch.sigmoid(self.x_partition)
-                # the first two components (x,y) don't matter to encoder or decoder
-                ep = encoder_partition[2:]
-                tp = self.true_partition[2:]
-                cs = torch.nn.functional.cosine_similarity(ep, tp, dim=0).item()
-                dist = torch.norm(ep - tp).item()
-
-                logger.debug("step %d partition cos sim %f dist %f", self.step, cs, dist)
-
-                writer.add_scalar('cosine_similarity/partition', cs, self.step)
-                writer.add_scalar('param_diff/partition', dist, self.step)
-        return losses
+    # def evaluate_validation(self, writer):
+    #     losses = super().evaluate_validation(writer)
+    #     if writer is not None:
+    #         with torch.no_grad():
+    #             encoder_partition = torch.sigmoid(self.x_partition)
+    #             # the first two components (x,y) don't matter to encoder or decoder
+    #             ep = encoder_partition[2:]
+    #             tp = self.true_partition[2:]
+    #             cs = torch.nn.functional.cosine_similarity(ep, tp, dim=0).item()
+    #             dist = torch.norm(ep - tp).item()
+    #
+    #             logger.debug("step %d partition cos sim %f dist %f", self.step, cs, dist)
+    #
+    #             writer.add_scalar('cosine_similarity/partition', cs, self.step)
+    #             writer.add_scalar('param_diff/partition', dist, self.step)
+    #     return losses
 
 
 class GroundTruthWithCompression(CompressionRewardTransform):
@@ -1272,6 +1298,8 @@ class UseTransform:
     PARAMETERIZED_3_BATCH = 6
     PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER = 7
     PARAMETERIZED_ABLATE_NO_V = 8
+    COORDINATE_LEARN_DYNAMICS_TRANSFORM = 9
+    WITH_COMPRESSION_AND_PARTITION = 10
 
 
 def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False, online_adapt=True):
@@ -1300,6 +1328,11 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
                   UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER: AblationRelaxEncoderTransform(ds, d,
                                                                                                                 name="_s0"),
                   UseTransform.PARAMETERIZED_ABLATE_NO_V: AblationDirectDynamics(ds, d, name="_s3"),
+                  UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM: GroundTruthWithCompression(ds, d,
+                                                                                               name="mse_on_y_s0",
+                                                                                               compression_loss_weight=2e-5),
+                  UseTransform.WITH_COMPRESSION_AND_PARTITION: LearnedPartialPassthroughTransform(ds, d,
+                                                                                                  name="new_partition_s3"),
                   }
     transform_names = {UseTransform.NO_TRANSFORM: 'none',
                        UseTransform.COORDINATE_TRANSFORM: 'coord',
@@ -1310,6 +1343,8 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
                        UseTransform.PARAMETERIZED_3_BATCH: 'param3_batch',
                        UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER: 'ablate_linear_relax_encoder',
                        UseTransform.PARAMETERIZED_ABLATE_NO_V: 'ablate_no_v',
+                       UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM: 'coord_learn',
+                       UseTransform.WITH_COMPRESSION_AND_PARTITION: 'compression + partition',
                        }
     invariant_tsf = transforms[use_tsf]
 
@@ -1614,8 +1649,12 @@ if __name__ == "__main__":
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER, online_adapt=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=False, relearn_dynamics=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=True)
+    # test_dynamics(0, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=False)
+    # test_dynamics(0, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=True)
+    test_dynamics(0, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=False)
+    test_dynamics(0, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=True)
     # test_online_model()
-    for seed in range(3):
-        learn_invariant(seed=seed, name="true_partition", MAX_EPOCH=1000, BATCH_SIZE=500)
+    # for seed in range(5):
+    #     learn_invariant(seed=seed, name="new_partition", MAX_EPOCH=1000, BATCH_SIZE=500)
     # for seed in range(5):
     #     learn_model(seed=seed, transform_name="knn_regularization_s{}".format(seed), name="cov_reg")
