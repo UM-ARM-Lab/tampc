@@ -109,7 +109,8 @@ class PreDeterminedController(Controller):
         self.j = 0
 
     def command(self, obs):
-        j = self.j
-        u = self.u[j]
+        if self.j >= len(self.u):
+            return np.zeros_like(self.u[self.j - 1])
+        u = self.u[self.j]
         self.j += 1
         return u
