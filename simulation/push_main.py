@@ -1076,33 +1076,31 @@ class AblationNoPassthrough(AblationDirectDynamics):
 class AblationAllRegularizedTransform(AblationRemoveAllLinearityTransform):
     """Try requiring pairwise distances are proportional"""
 
-    def __init__(self, *args, dist_loss_weight=1., **kwargs):
-        self.dist_loss_weight = dist_loss_weight
+    def __init__(self, *args, compression_loss_weight=1e-3, **kwargs):
+        self.compression_loss_weight = compression_loss_weight
         super(AblationAllRegularizedTransform, self).__init__(*args, **kwargs)
 
     def _name_prefix(self):
-        return 'ablation_dist_reg'
+        return 'ablation_reg'
 
     def _loss_weight_name(self):
-        return "dist_{}".format(self.dist_loss_weight)
+        return "compress_{}".format(self.compression_loss_weight)
 
     def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
         z = self.xu_to_z(X, U)
         v = self.get_v(X, Y, z)
         yhat = self.get_dx(X, v)
-
-        dz = torch.nn.functional.pdist(z)
-        dv = torch.nn.functional.pdist(v)
-        dist_loss = 1 - torch.nn.functional.cosine_similarity(dz, dv, dim=0)
+        compression_r = compression_reward(v, torch.cat((X, U), dim=1), dist_regularization=1e-8,
+                                           top_percent=0.05)
         mse_loss = torch.norm(yhat - Y, dim=1)
-        return mse_loss, dist_loss
+        return mse_loss, -compression_r
 
     @staticmethod
     def loss_names():
-        return "mse_loss", "dist_loss"
+        return "mse_loss", "compression_loss"
 
     def _reduce_losses(self, losses):
-        return torch.mean(losses[0]) + self.dist_loss_weight * torch.mean(losses[1])
+        return torch.mean(losses[0]) + self.compression_loss_weight * torch.mean(losses[1])
 
 
 def coord_tsf_factory(env, *args, **kwargs):
@@ -1456,16 +1454,16 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else "{}_{}".format(transform_names[use_tsf],
                                                                                 pm.__class__.__name__)
     # expensive evaluation
-    # evaluate_controller(env, ctrl, name, translation=(4, 4), tasks=[885440, 214219, 305012, 102921])
+    evaluate_controller(env, ctrl, name, translation=(4, 4), tasks=[885440, 214219, 305012, 102921])
 
-    name = "{}_{}".format(ctrl.__class__.__name__, name)
-    env.draw_user_text(name, 14, left_offset=-1.5)
-    sim = block_push.InteractivePush(env, ctrl, num_frames=150, plot=False, save=False, stop_when_done=False)
-    seed = rand.seed()
-    sim.run(seed)
-    logger.info("last run cost %f", np.sum(sim.last_run_cost))
-    plt.ioff()
-    plt.show()
+    # name = "{}_{}".format(ctrl.__class__.__name__, name)
+    # env.draw_user_text(name, 14, left_offset=-1.5)
+    # sim = block_push.InteractivePush(env, ctrl, num_frames=150, plot=False, save=False, stop_when_done=False)
+    # seed = rand.seed()
+    # sim.run(seed)
+    # logger.info("last run cost %f", np.sum(sim.last_run_cost))
+    # plt.ioff()
+    # plt.show()
 
     env.close()
 
@@ -1519,7 +1517,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
         else:
             ts = []
         # try only non-duplicated task seeds
-        new_tries = [i for i in range(len(try_seeds[t])) if try_seeds[t] not in ts]
+        new_tries = [i for i,s in enumerate(try_seeds[t]) if s not in ts]
         if not new_tries:
             continue
         try_seeds[t] = [try_seeds[t][i] for i in new_tries]
@@ -1606,8 +1604,8 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
     # invariant_tsf = AblationRemoveLinearDecoderTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationRemoveLinearDynamicsTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationRemoveAllLinearityTransform(ds, d, **common_opts, **kwargs)
-    # invariant_tsf = AblationAllRegularizedTransform(ds, d, **common_opts, **kwargs)
-    invariant_tsf = AblationRelaxEncoderTransform(ds, d, **common_opts, **kwargs)
+    invariant_tsf = AblationAllRegularizedTransform(ds, d, **common_opts, **kwargs)
+    # invariant_tsf = AblationRelaxEncoderTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationDirectDynamics(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationNoPassthrough(ds, d, **common_opts, **kwargs)
     # invariant_tsf = LinearRelaxEncoderTransform(ds, d, **common_opts, **kwargs)
@@ -1654,12 +1652,12 @@ if __name__ == "__main__":
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER, online_adapt=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=False, relearn_dynamics=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=True)
-    # test_dynamics(0, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=False)
-    # test_dynamics(0, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=True)
+    test_dynamics(0, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=False)
+    test_dynamics(0, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=True)
     # test_dynamics(0, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=False)
     # test_dynamics(0, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=True)
     # test_online_model()
-    for seed in range(5):
-        learn_invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
+    # for seed in range(5):
+    #     learn_invariant(seed=seed, name="reg_v", MAX_EPOCH=1000, BATCH_SIZE=500, compression_loss_weight=1e-4)
     # for seed in range(5):
     #     learn_model(seed=seed, transform_name="knn_regularization_s{}".format(seed), name="cov_reg")
