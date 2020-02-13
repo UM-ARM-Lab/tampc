@@ -62,7 +62,8 @@ class GlobalLQRController(Controller):
 
 
 class QRCostOptimalController(Controller):
-    def __init__(self, dynamics, config, Q=1, R=1, compare_to_goal=torch.sub, u_min=None, u_max=None, device='cpu'):
+    def __init__(self, dynamics, config, Q=1, R=1, compare_to_goal=torch.sub, u_min=None, u_max=None, device='cpu',
+                 terminal_cost_multiplier=0.):
         super().__init__(compare_to_goal)
 
         self.nu = config.nu
@@ -77,11 +78,17 @@ class QRCostOptimalController(Controller):
 
         self.Q = tensor_utils.ensure_diagonal(Q, self.nx).to(device=self.d, dtype=self.dtype)
         self.R = tensor_utils.ensure_diagonal(R, self.nu).to(device=self.d, dtype=self.dtype)
+        self.terminal_cost_multiplier = terminal_cost_multiplier
+
+    def _state_cost(self, state):
+        diff = self.compare_to_goal(state, torch.tensor(self.goal, dtype=state.dtype, device=state.device))
+        return linalg.batch_quadratic_product(diff, self.Q)
 
     def _running_cost(self, state, action):
-        diff = self.compare_to_goal(state, torch.tensor(self.goal, dtype=state.dtype, device=state.device))
-        cost = linalg.batch_quadratic_product(diff, self.Q) + linalg.batch_quadratic_product(action, self.R)
-        return cost
+        return self._state_cost(state) + linalg.batch_quadratic_product(action, self.R)
+
+    def _terminal_cost(self, state):
+        return self.terminal_cost_multiplier * self._state_cost(state)
 
     @abc.abstractmethod
     def _mpc_command(self, obs):
@@ -118,7 +125,7 @@ class GlobalCEM(QRCostOptimalController):
             mpc_opts = {}
         super().__init__(*args, **kwargs)
         self.mpc = cem.CEM(self.dynamics, self._running_cost, self.nx, self.nu, u_min=self.u_min, u_max=self.u_max,
-                           device=self.d, **mpc_opts)
+                           device=self.d, terminal_state_cost=self._terminal_cost, **mpc_opts)
 
     def _mpc_command(self, obs):
         return self.mpc.command(obs)
@@ -144,7 +151,8 @@ class GlobalMPPI(QRCostOptimalController):
         else:
             u_min, u_max = None, None
         self.mpc = mppi.MPPI(self.dynamics, self._running_cost, self.nx, u_min=u_min, u_max=u_max,
-                             noise_sigma=noise_sigma, device=self.d, **mpc_opts)
+                             noise_sigma=noise_sigma, device=self.d, terminal_state_cost=self._terminal_cost,
+                             **mpc_opts)
 
     def reset(self):
         super(GlobalMPPI, self).reset()

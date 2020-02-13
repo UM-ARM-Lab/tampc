@@ -103,10 +103,11 @@ class OnlineMPC(OnlineController):
     Online controller with a pytorch based MPC method (CEM, MPPI)
     """
 
-    def __init__(self, *args, constrain_state=noop_constrain,  **kwargs):
+    def __init__(self, *args, constrain_state=noop_constrain, terminal_cost_multiplier=0., **kwargs):
         super().__init__(*args, **kwargs)
         self.constrain_state = constrain_state
         self.mpc = None
+        self.terminal_cost_multiplier = terminal_cost_multiplier
 
     def apply_dynamics(self, state, u):
         if state.dim() is 1 or u.dim() is 1:
@@ -123,6 +124,9 @@ class OnlineMPC(OnlineController):
     def _get_running_cost(self, state, u):
         return self.cost(state, u)
 
+    def _get_terminal_cost(self, state):
+        return self.terminal_cost_multiplier * self.cost(state, terminal=True)
+
     def update_policy(self, t, x):
         pass
 
@@ -137,6 +141,7 @@ class OnlineCEM(OnlineMPC):
             mpc_opts = {}
         self.mpc = cem.CEM(self.apply_dynamics, self._get_running_cost, self.nx, self.nu,
                            u_min=self.u_min, u_max=self.u_max, device=self.d,
+                           terminal_state_cost=self._get_terminal_cost,
                            **mpc_opts)
 
 
@@ -158,7 +163,8 @@ class OnlineMPPI(OnlineMPC):
         else:
             u_min, u_max = None, None
         self.mpc = mppi.MPPI(self.apply_dynamics, self._get_running_cost, self.nx, noise_sigma=noise_sigma,
-                             u_min=u_min, u_max=u_max, device=self.d, **mpc_opts)
+                             u_min=u_min, u_max=u_max, device=self.d, terminal_state_cost=self._get_terminal_cost,
+                             **mpc_opts)
 
     def reset(self):
         super(OnlineMPPI, self).reset()
@@ -172,6 +178,7 @@ class OnlineMPPI(OnlineMPC):
         for t in range(T):
             states[t + 1] = self.apply_dynamics(states[t].view(1, -1), U[t].view(1, -1))
         return states[1:].cpu().numpy()
+
 
 class OnlineLQR(OnlineController):
     # TODO make compatible with new tensor internal data
