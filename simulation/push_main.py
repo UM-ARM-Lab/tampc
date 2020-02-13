@@ -86,9 +86,9 @@ def get_data_dir(level=0):
 def get_easy_env(mode=p.GUI, level=0, log_video=False):
     global env_dir
     init_block_pos = [0, 0]
-    init_block_yaw = -1
+    init_block_yaw = 0
     init_pusher = 0
-    goal_pos = [-0.3, 0.3]
+    goal_pos = [0.1, 0.1]
     # env = interactive_block_pushing.PushAgainstWallEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher,
     #                                                    init_block=init_block_pos, init_yaw=init_block_yaw,
     #                                                    environment_level=level)
@@ -1426,6 +1426,14 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     # tune this so that we figure out to make u-turns
     sigma = torch.ones(env.nu, dtype=torch.double, device=d) * 0.2
     sigma[1] = 0.5
+    common_wrapper_opts = {
+        'Q': Q,
+        'R': R,
+        'u_min': u_min,
+        'u_max': u_max,
+        'compare_to_goal': env.state_difference,
+        'device': d,
+    }
     mpc_opts = {
         'num_samples': 10000,
         'noise_sigma': torch.diag(sigma),
@@ -1438,29 +1446,25 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     if online_adapt:
         dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, env.state_difference, local_mix_weight=1.0,
                                                     sigreg=1e-10)
-        ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, Q=Q.numpy(), R=R, u_min=u_min, u_max=u_max,
-                                            compare_to_goal=env.state_difference,
-                                            constrain_state=constrain_state,
-                                            device=d, mpc_opts=mpc_opts)
+        ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
+                                            constrain_state=constrain_state, mpc_opts=mpc_opts)
     else:
-        ctrl = global_controller.GlobalMPPI(mw, untransformed_config, Q=Q, R=R, u_min=u_min, u_max=u_max,
-                                            compare_to_goal=env.state_difference,
-                                            device=d,
+        ctrl = global_controller.GlobalMPPI(mw, untransformed_config, **common_wrapper_opts,
                                             mpc_opts=mpc_opts)
 
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else "{}_{}".format(transform_names[use_tsf],
                                                                                 pm.__class__.__name__)
     # expensive evaluation
-    evaluate_controller(env, ctrl, name, translation=(4, 4), tasks=[885440, 214219, 305012, 102921])
+    # evaluate_controller(env, ctrl, name, translation=(4, 4), tasks=[885440, 214219, 305012, 102921])
 
-    # name = "{}_{}".format(ctrl.__class__.__name__, name)
-    # env.draw_user_text(name, 14, left_offset=-1.5)
-    # sim = block_push.InteractivePush(env, ctrl, num_frames=150, plot=False, save=False, stop_when_done=False)
-    # seed = rand.seed()
-    # sim.run(seed)
-    # logger.info("last run cost %f", np.sum(sim.last_run_cost))
-    # plt.ioff()
-    # plt.show()
+    name = "{}_{}".format(ctrl.__class__.__name__, name)
+    env.draw_user_text(name, 14, left_offset=-1.5)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=150, plot=False, save=False, stop_when_done=False)
+    seed = rand.seed()
+    sim.run(seed)
+    logger.info("last run cost %f", np.sum(sim.last_run_cost))
+    plt.ioff()
+    plt.show()
 
     env.close()
 
@@ -1649,10 +1653,10 @@ if __name__ == "__main__":
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER, online_adapt=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=False, relearn_dynamics=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=True)
-    # test_dynamics(0, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=False)
+    test_dynamics(0, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=False)
     # test_dynamics(0, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=True)
-    test_dynamics(0, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=False)
-    test_dynamics(0, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=True)
+    # test_dynamics(0, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=False)
+    # test_dynamics(0, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=True)
     # test_online_model()
     # for seed in range(5):
     #     learn_invariant(seed=seed, name="new_partition", MAX_EPOCH=1000, BATCH_SIZE=500)
