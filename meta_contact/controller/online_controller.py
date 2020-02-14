@@ -23,6 +23,7 @@ class OnlineController(controller.MPC):
     def reset(self):
         self.prev_u = None
         self.u_history = []
+        self.dynamics.reset()
         super(OnlineController, self).reset()
 
     def update_prior(self, prior):

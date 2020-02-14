@@ -178,7 +178,6 @@ class MPC(Controller):
         logger.debug("median relative error %s", median)
         self.prediction_error = []
         self.prev_predicted_x = None
-        self.dynamics.reset()
 
     def command(self, obs):
         obs = tensor_utils.ensure_tensor(self.d, self.dtype, obs)
