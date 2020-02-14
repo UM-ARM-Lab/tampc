@@ -146,6 +146,7 @@ class MPC(Controller):
         self.prediction_error = []
         self.prev_predicted_x = None
         self.prev_x = None
+        self.diff_predicted = None
 
     def set_goal(self, goal):
         goal = torch.tensor(goal, dtype=self.dtype, device=self.d)
@@ -169,8 +170,16 @@ class MPC(Controller):
         :return:
         """
 
-    def _apply_dynamics(self, state, u):
-        return self.dynamics(state, u)
+    def _apply_dynamics(self, state, u, t=0):
+        next_state = self.dynamics(state, u)
+        return self._adjust_next_state(next_state, t)
+
+    def _adjust_next_state(self, next_state, t):
+        # correct for next state with previous state's error
+        if t is 0 and self.diff_predicted is not None:
+            # TODO generalize beyond addition (what about angles?)
+            next_state += self.diff_predicted
+        return next_state
 
     def reset(self):
         error = torch.cat(self.prediction_error)
@@ -178,13 +187,14 @@ class MPC(Controller):
         logger.debug("median relative error %s", median)
         self.prediction_error = []
         self.prev_predicted_x = None
+        self.diff_predicted = None
 
     def command(self, obs):
         obs = tensor_utils.ensure_tensor(self.d, self.dtype, obs)
         if self.prev_predicted_x is not None:
-            diff_predicted = self.compare_to_goal(obs.view(1, -1), self.prev_predicted_x)
+            self.diff_predicted = self.compare_to_goal(obs.view(1, -1), self.prev_predicted_x)
             diff_actual = self.compare_to_goal(obs.view(1, -1), self.prev_x)
-            relative_residual = diff_predicted / diff_actual
+            relative_residual = self.diff_predicted / diff_actual
             # ignore along since it can be 0
             self.prediction_error.append(relative_residual[:, :3].abs())
 
@@ -192,7 +202,7 @@ class MPC(Controller):
         if self.u_max is not None:
             u = math_utils.clip(u, self.u_min, self.u_max)
 
-        self.prev_predicted_x = self._apply_dynamics(obs.view(1, -1), u.view(1, -1))
+        self.prev_predicted_x = self._apply_dynamics(obs.view(1, -1), u.view(1, -1), -1)
         self.prev_x = obs
         return u.cpu().numpy()
 

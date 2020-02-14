@@ -68,7 +68,7 @@ class OnlineMPC(OnlineController):
         self.mpc = None
         super().__init__(*args, **kwargs)
 
-    def _apply_dynamics(self, state, u):
+    def _apply_dynamics(self, state, u, t=0):
         if state.dim() is 1 or u.dim() is 1:
             state = state.view(1, -1)
             u = u.view(1, -1)
@@ -76,6 +76,7 @@ class OnlineMPC(OnlineController):
         # TODO the MPC method doesn't give dynamics px and pu (different from our prevx and prevu)
         # verified against non-batch calculations
         next_state = self.dynamics.predict(None, None, state, u)
+        next_state = self._adjust_next_state(next_state, t)
 
         next_state = self.constrain_state(next_state)
         return next_state
