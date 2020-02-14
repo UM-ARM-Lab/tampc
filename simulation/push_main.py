@@ -84,10 +84,10 @@ def get_data_dir(level=0):
 
 def get_easy_env(mode=p.GUI, level=0, log_video=False):
     global env_dir
-    init_block_pos = [-0.8, 0.05]
+    init_block_pos = [-0.8, 0.12]
     init_block_yaw = 0
     init_pusher = 0
-    goal_pos = [0.8, 0.]
+    goal_pos = [0.85, -0.35]
     # env = interactive_block_pushing.PushAgainstWallEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher,
     #                                                    init_block=init_block_pos, init_yaw=init_block_yaw,
     #                                                    environment_level=level)
@@ -1299,12 +1299,13 @@ class UseTransform:
     WITH_COMPRESSION_AND_PARTITION = 10
 
 
-def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False, online_adapt=True):
+def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False, online_adapt=True,
+                  prior_class: typing.Type[prior.OnlineDynamicsPrior]=prior.NNPrior):
     seed = 1
     plot_model_error = False
     enforce_model_rollout = False
     d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    env = get_easy_env(p.GUI, level=level, log_video=False)
+    env = get_easy_env(p.GUI, level=level, log_video=True)
 
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     # TODO always using freespace data for now
@@ -1359,14 +1360,16 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     # update the datasource to use transformed data
     untransformed_config = ds.update_preprocessor(preprocessor)
 
-    mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
-                       name="dynamics_{}".format(transform_names[use_tsf]))
+    if prior_class is prior.NNPrior:
+        mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
+                           name="dynamics_{}".format(transform_names[use_tsf]))
 
-    pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(),
-                                 train_epochs=600)
-    # pm = prior.GMMPrior.from_data(ds)
-    # pm = prior.LSQPrior.from_data(ds)
-    # pm = prior.NoPrior()
+        pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(),
+                                     train_epochs=600)
+    elif prior_class is prior.NoPrior:
+        pm = prior.NoPrior()
+    else:
+        pm = prior_class.from_data(ds)
 
     # test that the model predictions are relatively symmetric for positive and negative along
     if isinstance(env, block_push.PushAgainstWallStickyEnv) and isinstance(pm, prior.NNPrior):
@@ -1454,7 +1457,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
 
     name = "{}_{}".format(ctrl.__class__.__name__, name)
     env.draw_user_text(name, 14, left_offset=-1.5)
-    sim = block_push.InteractivePush(env, ctrl, num_frames=150, plot=False, save=False, stop_when_done=False)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=False, stop_when_done=False)
     seed = rand.seed()
     sim.run(seed)
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
@@ -1631,10 +1634,13 @@ def learn_model(seed=1, name="", transform_name="", train_epochs=600, batch_N=50
 if __name__ == "__main__":
     level = 1
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
-    # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
-    # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
-    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=False)
-    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
+    test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
+    test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
+    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=False)
+    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
+    test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True, prior_class=prior.NoPrior)
+    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True, prior_class=prior.NoPrior)
+
     # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=False)
     # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=True)
     # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_2, online_adapt=False)
@@ -1650,11 +1656,11 @@ if __name__ == "__main__":
     # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=False, relearn_dynamics=True)
     # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=True)
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=False)
-    test_dynamics(level, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=True)
+    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=True)
     # test_dynamics(level, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=False)
     # test_dynamics(level, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=True)
     # test_online_model()
     # for seed in range(5):
-    #     learn_invariant(seed=seed, name="reg_v", MAX_EPOCH=1000, BATCH_SIZE=500, compression_loss_weight=1e-4)
+    # learn_invariant(seed=0, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
     # for seed in range(5):
     #     learn_model(seed=seed, transform_name="knn_regularization_s{}".format(seed), name="cov_reg")
