@@ -42,6 +42,11 @@ class OnlineDynamicsPrior:
     Assumes all input are in transformed space and doesn't do any transformation itself.
     """
 
+    @classmethod
+    @abc.abstractmethod
+    def from_data(cls, *args, **kwargs):
+        """Construct a prior from a given data options"""
+
     @abc.abstractmethod
     def get_batch_params(self, nx, nu, xu, pxu, xux):
         """Get normal inverse-Wishart prior parameters for batch of data (first dimension is batch) evaluated at each
@@ -67,6 +72,10 @@ def batch_mix_prior(nnF, strength=1.0):
 
 
 class NoPrior(OnlineDynamicsPrior):
+    @classmethod
+    def from_data(cls):
+        return cls()
+
     def get_batch_params(self, nx, nu, xu, pxu, xux):
         N = xu.shape[0]
         nxux = 2 * nx + nu
