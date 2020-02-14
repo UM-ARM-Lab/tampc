@@ -12,6 +12,7 @@ from hybrid_sysid import simulation
 from matplotlib import pyplot as plt
 from meta_contact import cfg
 from meta_contact.env.myenv import MyPybulletEnv
+from meta_contact.controller import controller
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,12 @@ def _draw_debug_2d_pose(line_unique_ids, pose, color=(0, 0, 0), length=0.15 / 2,
     line_unique_ids[1] = p.addUserDebugLine(np.add(location, [0, 0, 0]),
                                             np.add(location, [pointer[0], pointer[1], 0]),
                                             color, 2, replaceItemUniqueId=line_unique_ids[1])
+
+
+def _draw_debug_2d_line(line_unique_id, start, diff, color=(0, 0, 0), size=2, scale=0.4):
+    return p.addUserDebugLine(start, np.add(start, [diff[0] * scale, diff[1] * scale, 0]),
+                              color, size,
+                              replaceItemUniqueId=line_unique_id)
 
 
 class PushLoader(load_utils.DataLoader):
@@ -192,6 +199,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self._block_debug_lines = [-1, -1]
         self._traj_debug_lines = []
         self._rollout_debug_lines = {}
+        self._error_debug_lines = {'pose': [-1, -1], 'line': -1}
         self._debug_text = -1
         self._user_debug_text = {}
         self._camera_pos = None
@@ -227,6 +235,18 @@ class PushAgainstWallEnv(MyPybulletEnv):
                 self._rollout_debug_lines[t] = [-1, -1]
             c = (t + 1) / (T + 1)
             _draw_debug_2d_pose(self._rollout_debug_lines[t], pose, (0, c, c))
+
+    def visualize_prediction_error(self, predicted_state):
+        """In GUI mode, show the difference between the predicted state and the current actual state"""
+        pred_pose = self.get_block_pose(predicted_state)
+        c = (0.5, 0, 0.5)
+        _draw_debug_2d_pose(self._error_debug_lines['pose'], pred_pose, c)
+        pose = self.get_block_pose(self.state)
+        pose[2] = _BLOCK_HEIGHT
+        # draw line from current pose to predicted pose
+        self._error_debug_lines['line'] = _draw_debug_2d_line(self._error_debug_lines['line'], pose, pred_pose - pose,
+                                                              c, scale=20)
+        logger.info(np.linalg.norm((pred_pose - pose)[:2]))
 
     def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
         """Change task configuration; assumes only goal position is specified #TOOD relax assumption"""
@@ -637,12 +657,8 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
 
     def _draw_action(self, f_mag, f_dir_world):
         start = self._observe_pusher()
-        visual_scale = 0.4
-        pointer = math_utils.rotate_wrt_origin((f_mag / self.MAX_FORCE * visual_scale, 0), f_dir_world)
-        # replace previous debug lines
-        self._action_debug_line = p.addUserDebugLine(start, np.add(start, [pointer[0], pointer[1], 0]),
-                                                     (1, 0, 0), 2,
-                                                     replaceItemUniqueId=self._action_debug_line)
+        pointer = math_utils.rotate_wrt_origin((f_mag / self.MAX_FORCE, 0), f_dir_world)
+        self._action_debug_line = _draw_debug_2d_line(self._action_debug_line, start, pointer, (1, 0, 0), scale=0.4)
 
     def step(self, action):
         old_state = self._obs()
@@ -746,6 +762,9 @@ class InteractivePush(simulation.Simulation):
             cost = -rew
             logger.debug("cost %.2f took %.3fs done %d action %-20s obs %s", cost, time.perf_counter() - start, done,
                          np.round(action, 2), obs)
+
+            if self.visualize_rollouts and isinstance(self.ctrl, controller.MPC):
+                self.env.visualize_prediction_error(self.ctrl.prev_predicted_x.view(-1).cpu().numpy())
 
             self.last_run_cost.append(cost)
             self.u[simTime, :] = action
