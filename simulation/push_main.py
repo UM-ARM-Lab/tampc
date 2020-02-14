@@ -1634,10 +1634,10 @@ def learn_model(seed=1, name="", transform_name="", train_epochs=600, batch_N=50
 if __name__ == "__main__":
     level = 1
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
-    test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
-    test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
     test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=False)
     test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
+    test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
+    test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
     test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True, prior_class=prior.NoPrior)
     test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True, prior_class=prior.NoPrior)
 

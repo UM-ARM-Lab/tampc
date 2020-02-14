@@ -17,11 +17,9 @@ class OnlineController(controller.MPC):
 
     def __init__(self, online_dynamics: online_model.OnlineDynamicsModel, config, **kwargs):
         super().__init__(online_dynamics, config, **kwargs)
-        self.prev_u = None
         self.u_history = []
 
     def reset(self):
-        self.prev_u = None
         self.u_history = []
         self.dynamics.reset()
         super(OnlineController, self).reset()
@@ -42,7 +40,6 @@ class OnlineController(controller.MPC):
         self.dynamics.evaluate_error(self.prev_x, self.prev_u, x, u)
         # if self.prevu is not None:  # smooth
         #    u = 0.5*u+0.5*self.prevu
-        self.prev_u = u
         self.u_history.append(u)
 
         return u
@@ -76,7 +73,7 @@ class OnlineMPC(OnlineController):
         # TODO the MPC method doesn't give dynamics px and pu (different from our prevx and prevu)
         # verified against non-batch calculations
         next_state = self.dynamics.predict(None, None, state, u)
-        next_state = self._adjust_next_state(next_state, t)
+        next_state = self._adjust_next_state(next_state, u, t)
 
         next_state = self.constrain_state(next_state)
         return next_state

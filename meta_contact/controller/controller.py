@@ -146,6 +146,7 @@ class MPC(Controller):
         self.prediction_error = []
         self.prev_predicted_x = None
         self.prev_x = None
+        self.prev_u = None
         self.diff_predicted = None
 
     def set_goal(self, goal):
@@ -172,13 +173,14 @@ class MPC(Controller):
 
     def _apply_dynamics(self, state, u, t=0):
         next_state = self.dynamics(state, u)
-        return self._adjust_next_state(next_state, t)
+        return self._adjust_next_state(next_state, u, t)
 
-    def _adjust_next_state(self, next_state, t):
+    def _adjust_next_state(self, next_state, u, t):
         # correct for next state with previous state's error
-        if t is 0 and self.diff_predicted is not None:
+        if t is not -1 and self.diff_predicted is not None:
             # TODO generalize beyond addition (what about angles?)
-            next_state += self.diff_predicted
+            # adjustment_vector = u @ self.prev_u
+            next_state += self.diff_predicted * (0.99 ** t) # * adjustment_vector.view(-1, 1)
         return next_state
 
     def reset(self):
@@ -204,6 +206,7 @@ class MPC(Controller):
 
         self.prev_predicted_x = self._apply_dynamics(obs.view(1, -1), u.view(1, -1), -1)
         self.prev_x = obs
+        self.prev_u = u
         return u.cpu().numpy()
 
 
