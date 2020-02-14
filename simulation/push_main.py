@@ -84,10 +84,10 @@ def get_data_dir(level=0):
 
 def get_easy_env(mode=p.GUI, level=0, log_video=False):
     global env_dir
-    init_block_pos = [0, 0]
+    init_block_pos = [-0.8, 0.05]
     init_block_yaw = 0
     init_pusher = 0
-    goal_pos = [0.1, 0.1]
+    goal_pos = [0.8, 0.]
     # env = interactive_block_pushing.PushAgainstWallEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher,
     #                                                    init_block=init_block_pos, init_yaw=init_block_yaw,
     #                                                    environment_level=level)
@@ -1307,7 +1307,8 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     env = get_easy_env(p.GUI, level=level, log_video=False)
 
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-    ds = block_push.PushDataSource(env, data_dir=get_data_dir(level), validation_ratio=0.1, config=config, device=d)
+    # TODO always using freespace data for now
+    ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config, device=d)
 
     logger.info("initial random seed %d", rand.seed(seed))
 
@@ -1628,29 +1629,30 @@ def learn_model(seed=1, name="", transform_name="", train_epochs=600, batch_N=50
 
 
 if __name__ == "__main__":
+    level = 1
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
-    # test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
-    # test_dynamics(0, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
-    # test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=False)
-    # test_dynamics(0, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
-    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=False)
-    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=True)
-    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_2, online_adapt=False)
-    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_2, online_adapt=True)
-    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_3, online_adapt=False)
-    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_3, online_adapt=True)
-    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_4, online_adapt=False)
-    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_4, online_adapt=True)
-    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_3_BATCH, online_adapt=False)
-    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_3_BATCH, online_adapt=True)
-    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER, online_adapt=False)
-    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER, online_adapt=True)
-    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=False, relearn_dynamics=True)
-    # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=True)
-    # test_dynamics(0, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=False)
-    test_dynamics(0, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=True)
-    # test_dynamics(0, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=False)
-    # test_dynamics(0, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=True)
+    # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
+    # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
+    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=False)
+    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
+    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=False)
+    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=True)
+    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_2, online_adapt=False)
+    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_2, online_adapt=True)
+    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_3, online_adapt=False)
+    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_3, online_adapt=True)
+    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_4, online_adapt=False)
+    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_4, online_adapt=True)
+    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_3_BATCH, online_adapt=False)
+    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_3_BATCH, online_adapt=True)
+    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER, online_adapt=False)
+    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER, online_adapt=True)
+    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=False, relearn_dynamics=True)
+    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=True)
+    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=False)
+    test_dynamics(level, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=True)
+    # test_dynamics(level, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=False)
+    # test_dynamics(level, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=True)
     # test_online_model()
     # for seed in range(5):
     #     learn_invariant(seed=seed, name="reg_v", MAX_EPOCH=1000, BATCH_SIZE=500, compression_loss_weight=1e-4)
