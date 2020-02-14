@@ -1454,7 +1454,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else "{}_{}".format(transform_names[use_tsf],
                                                                                 pm.__class__.__name__)
     # expensive evaluation
-    evaluate_controller(env, ctrl, name, translation=(4, 4), tasks=[885440, 214219, 305012, 102921])
+    evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921])
 
     # name = "{}_{}".format(ctrl.__class__.__name__, name)
     # env.draw_user_text(name, 14, left_offset=-1.5)
