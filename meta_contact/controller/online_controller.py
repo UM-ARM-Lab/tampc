@@ -63,9 +63,9 @@ class OnlineMPC(OnlineController):
     """
 
     def __init__(self, *args, constrain_state=noop_constrain, **kwargs):
-        super().__init__(*args, **kwargs)
         self.constrain_state = constrain_state
         self.mpc = None
+        super().__init__(*args, **kwargs)
 
     def _apply_dynamics(self, state, u):
         if state.dim() is 1 or u.dim() is 1:
@@ -84,9 +84,5 @@ class OnlineMPC(OnlineController):
 
 
 class OnlineMPPI(OnlineMPC, controller.MPPI):
-    def __init__(self, *args, constrain_state=noop_constrain, **kwargs):
-        OnlineMPC.__init__(self, *args, constrain_state=constrain_state)
-        controller.MPPI.__init__(self, *args, **kwargs)
-
     def _command(self, obs):
         return OnlineMPC._command(self, obs)
