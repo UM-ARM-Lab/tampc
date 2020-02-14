@@ -2,8 +2,13 @@ import abc
 import logging
 
 import numpy as np
+import torch
 
-from arm_pytorch_utilities.math_utils import rotate_wrt_origin
+from arm_pytorch_utilities import math_utils
+from arm_pytorch_utilities import tensor_utils
+from pytorch_mppi import mppi
+
+from meta_contact import cost
 
 logger = logging.getLogger(__name__)
 
@@ -67,8 +72,8 @@ class RandomController(Controller):
     def command(self, obs):
         x, y, xb, yb, yaw = obs
         to_block = np.subtract((xb, yb), (x, y))
-        u = rotate_wrt_origin(to_block / np.linalg.norm(to_block) * np.random.rand() * self.push_magnitude,
-                              np.random.randn() * self.random_angular_std + self.fixed_angular_bias)
+        u = math_utils.rotate_wrt_origin(to_block / np.linalg.norm(to_block) * np.random.rand() * self.push_magnitude,
+                                         np.random.randn() * self.random_angular_std + self.fixed_angular_bias)
         return u
 
 
@@ -81,7 +86,8 @@ class RandomStraightController(Controller):
         x, y = start_pos
         xb, yb = block_pos
         to_block = np.subtract((xb, yb), (x, y))
-        self.u = rotate_wrt_origin(to_block / np.linalg.norm(to_block), np.random.randn() * random_angular_std)
+        self.u = math_utils.rotate_wrt_origin(to_block / np.linalg.norm(to_block),
+                                              np.random.randn() * random_angular_std)
 
     def command(self, obs):
         return np.multiply(self.u, np.random.rand() * self.push_magnitude)
@@ -114,3 +120,113 @@ class PreDeterminedController(Controller):
         u = self.u[self.j]
         self.j += 1
         return u
+
+
+class MPC(Controller):
+    def __init__(self, dynamics, config, Q=1, R=1, compare_to_goal=torch.sub, u_min=None, u_max=None, device='cpu',
+                 terminal_cost_multiplier=0.):
+        super().__init__(compare_to_goal)
+
+        self.nu = config.nu
+        self.nx = config.nx
+        self.dtype = torch.double
+        self.d = device
+        self.u_min, self.u_max = math_utils.get_bounds(u_min, u_max)
+        if self.u_min is not None:
+            self.u_min, self.u_max = tensor_utils.ensure_tensor(self.d, self.dtype, self.u_min, self.u_max)
+        self.dynamics = dynamics
+
+        # cost
+        self.Q = tensor_utils.ensure_diagonal(Q, self.nx).to(device=self.d, dtype=self.dtype)
+        self.R = tensor_utils.ensure_diagonal(R, self.nu).to(device=self.d, dtype=self.dtype)
+        self.cost = cost.CostQROnlineTorch(self.goal, self.Q, self.R, self.compare_to_goal)
+        self.terminal_cost_multiplier = terminal_cost_multiplier
+
+        # analysis
+        self.prediction_error = []
+        self.prev_predicted_x = None
+        self.prev_x = None
+
+    def set_goal(self, goal):
+        goal = torch.tensor(goal, dtype=self.dtype, device=self.d)
+        super().set_goal(goal)
+        self.cost.eetgt = goal
+
+    def _running_cost(self, state, action):
+        return self.cost(state, action)
+
+    def _terminal_cost(self, state, action):
+        # extract the last state; assume if given 3 dimensions then it's (B x T x nx)
+        if len(state.shape) is 3:
+            state = state[:, -1, :]
+        return self.terminal_cost_multiplier * self.cost(state, action, terminal=True)
+
+    @abc.abstractmethod
+    def _command(self, obs):
+        """
+        Calculate the (nu) action to take given observing the (nx) observation
+        :param obs:
+        :return:
+        """
+
+    def _apply_dynamics(self, state, u):
+        return self.dynamics(state, u)
+
+    def reset(self):
+        error = torch.cat(self.prediction_error)
+        median, _ = error.median(0)
+        logger.debug("median relative error %s", median)
+        self.prediction_error = []
+        self.prev_predicted_x = None
+        self.dynamics.reset()
+
+    def command(self, obs):
+        obs = tensor_utils.ensure_tensor(self.d, self.dtype, obs)
+        if self.prev_predicted_x is not None:
+            diff_predicted = self.compare_to_goal(obs.view(1, -1), self.prev_predicted_x)
+            diff_actual = self.compare_to_goal(obs.view(1, -1), self.prev_x)
+            relative_residual = diff_predicted / diff_actual
+            # ignore along since it can be 0
+            self.prediction_error.append(relative_residual[:, :3].abs())
+
+        u = self._command(obs)
+        if self.u_max is not None:
+            u = math_utils.clip(u, self.u_min, self.u_max)
+
+        self.prev_predicted_x = self._apply_dynamics(obs.view(1, -1), u.view(1, -1))
+        self.prev_x = obs
+        return u.cpu().numpy()
+
+
+class MPPI(MPC):
+    def __init__(self, *args, use_bounds=True, mpc_opts=None, **kwargs):
+        if mpc_opts is None:
+            mpc_opts = {}
+        super().__init__(*args, **kwargs)
+        # if not given we give it a default value
+        noise_sigma = mpc_opts.pop('noise_sigma', None)
+        if noise_sigma is None:
+            if torch.is_tensor(self.u_max):
+                noise_sigma = torch.diag(self.u_max)
+            else:
+                noise_mult = self.u_max if self.u_max is not None else 1
+                noise_sigma = torch.eye(self.nu, dtype=self.dtype) * noise_mult
+        # there's interesting behaviour for MPPI if we don't pass in bounds - it'll be optimistic and try to exploit
+        # regions in the dynamics where we don't know the effects of control
+        if use_bounds:
+            u_min, u_max = self.u_min, self.u_max
+        else:
+            u_min, u_max = None, None
+        self.mpc = mppi.MPPI(self._apply_dynamics, self._running_cost, self.nx, u_min=u_min, u_max=u_max,
+                             noise_sigma=noise_sigma, device=self.d, terminal_state_cost=self._terminal_cost,
+                             **mpc_opts)
+
+    def reset(self):
+        super().reset()
+        self.mpc.reset()
+
+    def _command(self, obs):
+        return self.mpc.command(obs)
+
+    def get_rollouts(self, obs):
+        return self.mpc.get_rollouts(torch.from_numpy(obs).to(dtype=self.dtype, device=self.d))[0].cpu().numpy()

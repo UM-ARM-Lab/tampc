@@ -21,7 +21,6 @@ from meta_contact import online_model
 from meta_contact import prior
 from meta_contact.controller import controller
 from meta_contact.controller import online_controller
-from meta_contact.controller import global_controller
 from meta_contact.env import block_push
 
 logger = logging.getLogger(__name__)
@@ -652,7 +651,7 @@ class PartitionBlock(torch.nn.Module):
     def __init__(self, input_dim, output_dim, split_at):
         super().__init__()
         self.split_at = split_at
-        self.linear = torch.nn.Parameter(torch.randn((input_dim, output_dim)))
+        self.linear = torch.nn.Parameter(torch.randn((input_dim, output_dim)), requires_grad=True)
         # self.linear = torch.nn.Linear(input_dim, output_dim, bias=False)
 
     def forward(self, x, split):
@@ -1313,37 +1312,34 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     logger.info("initial random seed %d", rand.seed(seed))
 
     # add in invariant transform here
-    transforms = {UseTransform.NO_TRANSFORM: None,
-                  UseTransform.COORDINATE_TRANSFORM: coord_tsf_factory(env, ds),
-                  UseTransform.PARAMETERIZED_1: ParameterizedCoordTransform(ds, d, too_far_for_neighbour=0.3,
-                                                                            name="_s2"),
-                  UseTransform.PARAMETERIZED_2: Parameterized2Transform(ds, d, too_far_for_neighbour=0.3,
-                                                                        name="rand_start_s9"),
-                  UseTransform.PARAMETERIZED_3: Parameterized3Transform(ds, d, too_far_for_neighbour=0.3, name="_s9"),
-                  UseTransform.PARAMETERIZED_4: Parameterized3Transform(ds, d, too_far_for_neighbour=0.3,
-                                                                        name="sincos_s2", use_sincos_angle=True),
-                  UseTransform.PARAMETERIZED_3_BATCH: Parameterized3BatchTransform(ds, d, name="_s1"),
-                  UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER: AblationRelaxEncoderTransform(ds, d,
-                                                                                                                name="_s0"),
-                  UseTransform.PARAMETERIZED_ABLATE_NO_V: AblationDirectDynamics(ds, d, name="_s3"),
-                  UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM: GroundTruthWithCompression(ds, d,
-                                                                                               name="mse_on_y_s0",
-                                                                                               compression_loss_weight=2e-5),
-                  UseTransform.WITH_COMPRESSION_AND_PARTITION: LearnedPartialPassthroughTransform(ds, d,
-                                                                                                  name="new_partition_s3"),
-                  }
-    transform_names = {UseTransform.NO_TRANSFORM: 'none',
-                       UseTransform.COORDINATE_TRANSFORM: 'coord',
-                       UseTransform.PARAMETERIZED_1: 'param1',
-                       UseTransform.PARAMETERIZED_2: 'param2',
-                       UseTransform.PARAMETERIZED_3: 'param3',
-                       UseTransform.PARAMETERIZED_4: 'param4',
-                       UseTransform.PARAMETERIZED_3_BATCH: 'param3_batch',
-                       UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER: 'ablate_linear_relax_encoder',
-                       UseTransform.PARAMETERIZED_ABLATE_NO_V: 'ablate_no_v',
-                       UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM: 'coord_learn',
-                       UseTransform.WITH_COMPRESSION_AND_PARTITION: 'compression + partition',
-                       }
+    transforms = {
+        UseTransform.NO_TRANSFORM: None,
+        UseTransform.COORDINATE_TRANSFORM: coord_tsf_factory(env, ds),
+        UseTransform.PARAMETERIZED_1: ParameterizedCoordTransform(ds, d, too_far_for_neighbour=0.3, name="_s2"),
+        UseTransform.PARAMETERIZED_2: Parameterized2Transform(ds, d, too_far_for_neighbour=0.3, name="rand_start_s9"),
+        UseTransform.PARAMETERIZED_3: Parameterized3Transform(ds, d, too_far_for_neighbour=0.3, name="_s9"),
+        UseTransform.PARAMETERIZED_4: Parameterized3Transform(ds, d, too_far_for_neighbour=0.3, name="sincos_s2",
+                                                              use_sincos_angle=True),
+        UseTransform.PARAMETERIZED_3_BATCH: Parameterized3BatchTransform(ds, d, name="_s1"),
+        UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER: AblationRelaxEncoderTransform(ds, d,
+                                                                                                      name="_s0"),
+        UseTransform.PARAMETERIZED_ABLATE_NO_V: AblationDirectDynamics(ds, d, name="_s3"),
+        UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM: GroundTruthWithCompression(ds, d, name="_s0"),
+        UseTransform.WITH_COMPRESSION_AND_PARTITION: LearnedPartialPassthroughTransform(ds, d, name="new_partition_s3"),
+    }
+    transform_names = {
+        UseTransform.NO_TRANSFORM: 'none',
+        UseTransform.COORDINATE_TRANSFORM: 'coord',
+        UseTransform.PARAMETERIZED_1: 'param1',
+        UseTransform.PARAMETERIZED_2: 'param2',
+        UseTransform.PARAMETERIZED_3: 'param3',
+        UseTransform.PARAMETERIZED_4: 'param4',
+        UseTransform.PARAMETERIZED_3_BATCH: 'param3_batch',
+        UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER: 'ablate_linear_relax_encoder',
+        UseTransform.PARAMETERIZED_ABLATE_NO_V: 'ablate_no_v',
+        UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM: 'coord_learn',
+        UseTransform.WITH_COMPRESSION_AND_PARTITION: 'compression + partition',
+    }
     invariant_tsf = transforms[use_tsf]
 
     if invariant_tsf:
@@ -1448,22 +1444,21 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
         ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
                                             constrain_state=constrain_state, mpc_opts=mpc_opts)
     else:
-        ctrl = global_controller.GlobalMPPI(mw, untransformed_config, **common_wrapper_opts,
-                                            mpc_opts=mpc_opts)
+        ctrl = controller.MPPI(mw, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
 
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else "{}_{}".format(transform_names[use_tsf],
                                                                                 pm.__class__.__name__)
     # expensive evaluation
-    evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921])
+    # evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921])
 
-    # name = "{}_{}".format(ctrl.__class__.__name__, name)
-    # env.draw_user_text(name, 14, left_offset=-1.5)
-    # sim = block_push.InteractivePush(env, ctrl, num_frames=150, plot=False, save=False, stop_when_done=False)
-    # seed = rand.seed()
-    # sim.run(seed)
-    # logger.info("last run cost %f", np.sum(sim.last_run_cost))
-    # plt.ioff()
-    # plt.show()
+    name = "{}_{}".format(ctrl.__class__.__name__, name)
+    env.draw_user_text(name, 14, left_offset=-1.5)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=150, plot=False, save=False, stop_when_done=False)
+    seed = rand.seed()
+    sim.run(seed)
+    logger.info("last run cost %f", np.sum(sim.last_run_cost))
+    plt.ioff()
+    plt.show()
 
     env.close()
 
@@ -1517,7 +1512,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
         else:
             ts = []
         # try only non-duplicated task seeds
-        new_tries = [i for i,s in enumerate(try_seeds[t]) if s not in ts]
+        new_tries = [i for i, s in enumerate(try_seeds[t]) if s not in ts]
         if not new_tries:
             continue
         try_seeds[t] = [try_seeds[t][i] for i in new_tries]
@@ -1604,13 +1599,13 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
     # invariant_tsf = AblationRemoveLinearDecoderTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationRemoveLinearDynamicsTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationRemoveAllLinearityTransform(ds, d, **common_opts, **kwargs)
-    invariant_tsf = AblationAllRegularizedTransform(ds, d, **common_opts, **kwargs)
+    # invariant_tsf = AblationAllRegularizedTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationRelaxEncoderTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationDirectDynamics(ds, d, **common_opts, **kwargs)
     # invariant_tsf = AblationNoPassthrough(ds, d, **common_opts, **kwargs)
     # invariant_tsf = LinearRelaxEncoderTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = CompressionRewardTransform(ds, d, **common_opts, **kwargs)
-    # invariant_tsf = GroundTruthWithCompression(ds, d, **common_opts, **kwargs)
+    invariant_tsf = GroundTruthWithCompression(ds, d, **common_opts, **kwargs)
     # invariant_tsf = PartialPassthroughTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = LearnedPartialPassthroughTransform(ds, d, **common_opts, **kwargs)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
@@ -1652,7 +1647,7 @@ if __name__ == "__main__":
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER, online_adapt=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=False, relearn_dynamics=True)
     # test_dynamics(0, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=True)
-    test_dynamics(0, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=False)
+    # test_dynamics(0, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=False)
     test_dynamics(0, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=True)
     # test_dynamics(0, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=False)
     # test_dynamics(0, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=True)

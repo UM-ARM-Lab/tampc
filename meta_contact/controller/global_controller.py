@@ -1,16 +1,11 @@
-import abc
 import logging
 
 import numpy as np
-import torch
-from arm_pytorch_utilities import linalg
 from arm_pytorch_utilities import math_utils
 from arm_pytorch_utilities import tensor_utils
 from arm_pytorch_utilities.trajectory import dlqr
 from meta_contact import model
 from meta_contact.controller.controller import Controller
-from pytorch_cem import cem
-from pytorch_mppi import mppi
 
 logger = logging.getLogger(__name__)
 
@@ -59,113 +54,3 @@ class GlobalLQRController(Controller):
         if self.u_max is not None:
             u = np.clip(u, self.u_min, self.u_max)
         return u
-
-
-class QRCostOptimalController(Controller):
-    def __init__(self, dynamics, config, Q=1, R=1, compare_to_goal=torch.sub, u_min=None, u_max=None, device='cpu',
-                 terminal_cost_multiplier=0.):
-        super().__init__(compare_to_goal)
-
-        self.nu = config.nu
-        self.nx = config.nx
-        self.dtype = torch.double
-        self.d = device
-        self.u_min, self.u_max = tensor_utils.ensure_tensor(self.d, self.dtype, *math_utils.get_bounds(u_min, u_max))
-        self.dynamics = dynamics
-        self.prediction_error = []
-        self.prev_predicted_x = None
-        self.prev_x = None
-
-        self.Q = tensor_utils.ensure_diagonal(Q, self.nx).to(device=self.d, dtype=self.dtype)
-        self.R = tensor_utils.ensure_diagonal(R, self.nu).to(device=self.d, dtype=self.dtype)
-        self.terminal_cost_multiplier = terminal_cost_multiplier
-
-    def _state_cost(self, state):
-        diff = self.compare_to_goal(state, torch.tensor(self.goal, dtype=state.dtype, device=state.device))
-        return linalg.batch_quadratic_product(diff, self.Q)
-
-    def _running_cost(self, state, action):
-        return self._state_cost(state) + linalg.batch_quadratic_product(action, self.R)
-
-    def _terminal_cost(self, state):
-        return self.terminal_cost_multiplier * self._state_cost(state)
-
-    @abc.abstractmethod
-    def _mpc_command(self, obs):
-        pass
-
-    def reset(self):
-        error = torch.cat(self.prediction_error)
-        median, _ = error.median(0)
-        logger.info("median relative error %s", median)
-        self.prediction_error = []
-        self.prev_predicted_x = None
-
-    def command(self, obs):
-        obs = tensor_utils.ensure_tensor(self.d, self.dtype, obs)
-        if self.prev_predicted_x is not None:
-            diff_predicted = self.compare_to_goal(obs.view(1, -1), self.prev_predicted_x)
-            diff_actual = self.compare_to_goal(obs.view(1, -1), self.prev_x)
-            relative_residual = diff_predicted / diff_actual
-            # ignore along since it can be 0
-            self.prediction_error.append(relative_residual[:, :3].abs())
-
-        u = self._mpc_command(obs)
-        if self.u_max is not None:
-            u = math_utils.clip(u, self.u_min, self.u_max)
-
-        self.prev_predicted_x = self.dynamics(obs.view(1, -1), u.view(1, -1))
-        self.prev_x = obs
-        return u
-
-
-class GlobalCEM(QRCostOptimalController):
-    def __init__(self, *args, mpc_opts=None, **kwargs):
-        if mpc_opts is None:
-            mpc_opts = {}
-        super().__init__(*args, **kwargs)
-        self.mpc = cem.CEM(self.dynamics, self._running_cost, self.nx, self.nu, u_min=self.u_min, u_max=self.u_max,
-                           device=self.d, terminal_state_cost=self._terminal_cost, **mpc_opts)
-
-    def _mpc_command(self, obs):
-        return self.mpc.command(obs)
-
-
-class GlobalMPPI(QRCostOptimalController):
-    def __init__(self, *args, use_bounds=True, mpc_opts=None, **kwargs):
-        if mpc_opts is None:
-            mpc_opts = {}
-        super().__init__(*args, **kwargs)
-        # if not given we give it a default value
-        noise_sigma = mpc_opts.pop('noise_sigma', None)
-        if noise_sigma is None:
-            if torch.is_tensor(self.u_max):
-                noise_sigma = torch.diag(self.u_max)
-            else:
-                noise_mult = self.u_max if self.u_max is not None else 1
-                noise_sigma = torch.eye(self.nu, dtype=self.dtype) * noise_mult
-        # there's interesting behaviour for MPPI if we don't pass in bounds - it'll be optimistic and try to exploit
-        # regions in the dynamics where we don't know the effects of control
-        if use_bounds:
-            u_min, u_max = self.u_min, self.u_max
-        else:
-            u_min, u_max = None, None
-        self.mpc = mppi.MPPI(self.dynamics, self._running_cost, self.nx, u_min=u_min, u_max=u_max,
-                             noise_sigma=noise_sigma, device=self.d, terminal_state_cost=self._terminal_cost,
-                             **mpc_opts)
-
-    def reset(self):
-        super(GlobalMPPI, self).reset()
-        self.mpc.reset()
-
-    def _mpc_command(self, obs):
-        return self.mpc.command(obs)
-
-    def get_rollouts(self, obs):
-        U = self.mpc.U
-        T = U.shape[0]
-        states = torch.zeros((T + 1, self.nx), dtype=U.dtype, device=U.device)
-        states[0] = torch.from_numpy(obs).to(dtype=U.dtype, device=U.device)
-        for t in range(T):
-            states[t + 1] = self.dynamics(states[t].view(1, -1), U[t].view(1, -1))
-        return states[1:].cpu().numpy()

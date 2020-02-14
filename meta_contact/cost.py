@@ -9,14 +9,13 @@ class CostQROnlineTorch:
         self.R = R
         self.eetgt = target
         self.compare_to_goal = compare_to_goal
-        self.final_penalty = 1.0  # weight = sum of remaining weight * final penalty
 
     def __call__(self, X, U=None, terminal=False):
         X = self.compare_to_goal(X, self.eetgt)
-        l = linalg.batch_quadratic_product(X, self.Q)
+        loss = linalg.batch_quadratic_product(X, self.Q)
         if not terminal:
-            l += linalg.batch_quadratic_product(U, self.R)
-        return l
+            loss += linalg.batch_quadratic_product(U, self.R)
+        return loss
 
     def eval(self, X, U, t, jac=None):
         """
