@@ -700,6 +700,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         p.applyExternalForce(self.blockId, -1, [fn, ft, 0], [-_MAX_ALONG, self.along * _MAX_ALONG, 0], p.LINK_FRAME)
         p.stepSimulation()
 
+        info = np.zeros((100, 4, 2))
         logger.info("before observe contact")
         self._observe_contact()
         for t in range(20):
@@ -710,6 +711,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
                 logger.info(len(contactInfo))
                 for i, contact in enumerate(contactInfo):
                     logger.info("%2d F %.2f f1 %.2f f2 %.2f", t * 5 + tt, contact[9], contact[10], contact[12])
+                    info[t * 5 + tt, i] = (contact[10], contact[12])
                 p.stepSimulation()
 
         # apply the sliding along side after the push settles down
@@ -719,7 +721,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         for _ in range(20):
             p.stepSimulation()
 
-        cost, done, info = self._observe_finished_action(old_state, action)
+        cost, done, _ = self._observe_finished_action(old_state, action)
 
         return np.copy(self.state), -cost, done, info
 

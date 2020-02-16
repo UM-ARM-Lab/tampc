@@ -248,11 +248,31 @@ def run_direct_push():
     env.draw_user_text('run direct push')
     ctrl = controller.PreDeterminedController([(0.0, 1, 0.2) for _ in range(N)])
     # record how many steps of pushing to reach 1m
+    contacts = []
     obs = env.reset()
-    while True:
+    for _ in range(N):
         action = ctrl.command(obs)
-        obs, _, _, _ = env.step(action)
-        time.sleep(0.3)
+        obs, _, _, contact = env.step(action)
+        contacts.append(contact)
+        # time.sleep(0.3)
+
+    contacts = np.stack(contacts)
+    friction_dirs = ['(0,1,0)', '(1,0,0)']
+    plt.ioff()
+    # average over the steps, look at how the forces differ over time for the different contact points
+    f, axes = plt.subplots(2, 1, sharex=True)
+    for d, ax in zip(friction_dirs, axes):
+        ax.set_ylabel('lateral friction in {}'.format(d))
+    axes[0].set_xlabel('sim step (wait for quasi-static)')
+    t = list(range(contacts.shape[1]))
+    for pt in range(contacts.shape[2]):
+        for friction_dir in range(contacts.shape[3]):
+            friction = np.mean(contacts[:, :, pt, friction_dir], axis=0)
+            std = np.std(contacts[:, :, pt, friction_dir], axis=0)
+            axes[friction_dir].plot(t, friction, label='pt {}'.format(pt, friction_dir))
+            axes[friction_dir].fill_between(t, friction - std, friction + std, alpha=0.2)
+    plt.legend()
+    plt.show()
 
 
 if __name__ == "__main__":
