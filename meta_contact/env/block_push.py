@@ -103,11 +103,24 @@ def _draw_debug_2d_line(line_unique_id, start, diff, color=(0, 0, 0), size=2, sc
 
 def _draw_contact_point(line_unique_id, contact, flip=True):
     start = contact[5]
-    # TODO need to invert for plane-block not sure why
     dir = list(c * -1 if flip else 1 for c in contact[7])
     force = contact[9]
     dir[2] *= 0.3
     return _draw_debug_2d_line(line_unique_id, start, dir, size=force, scale=0.1 * force, color=(1, 0, 0))
+
+
+def _draw_contact_friction(line_unique_ids, contact):
+    start = list(contact[5])
+    start[2] = _BLOCK_HEIGHT
+    # friction along y
+    scale = 0.2
+    fy = contact[10]
+    line_unique_ids[0] = _draw_debug_2d_line(line_unique_ids[0], start, [fy * v for v in contact[11]], size=fy,
+                                             scale=scale, color=(1, 0, 0))
+    # friction along x
+    fx = contact[12]
+    line_unique_ids[1] = _draw_debug_2d_line(line_unique_ids[1], start, [fx * v for v in contact[13]], size=fx,
+                                             scale=scale, color=(1, 0, 0))
 
 
 class PushLoader(load_utils.DataLoader):
@@ -211,6 +224,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self._rollout_debug_lines = {}
         self._error_debug_lines = {'pose': [-1, -1], 'line': -1}
         self._contact_debug_lines = {}
+        self._friction_debug_lines = {}
         self._debug_text = -1
         self._user_debug_text = {}
         self._camera_pos = None
@@ -384,8 +398,9 @@ class PushAgainstWallEnv(MyPybulletEnv):
         contactInfo = p.getContactPoints(self.blockId, self.planeId)
         # TODO use observe contact immediately after first push step rather than at the end of it
         for i, contact in enumerate(contactInfo):
-            name = 'p{}'.format(i)
-            self._contact_debug_lines[name] = _draw_contact_point(self._contact_debug_lines.get(name, -1), contact)
+            if i not in self._friction_debug_lines:
+                self._friction_debug_lines[i] = [-1, -1]
+            _draw_contact_friction(self._friction_debug_lines[i], contact)
         if self.level > 0:
             # get reaction force on pusher TODO generalize this
             contactInfo = p.getContactPoints(self.blockId, self.walls[0])
@@ -702,17 +717,18 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
 
         info = np.zeros((100, 4, 2))
         logger.info("before observe contact")
-        self._observe_contact()
         for t in range(20):
             # also move the pusher along visually
             self._keep_pusher_adjacent()
             for tt in range(5):
+                self._observe_contact()
                 contactInfo = p.getContactPoints(self.planeId, self.blockId)
                 logger.info(len(contactInfo))
                 for i, contact in enumerate(contactInfo):
                     logger.info("%2d F %.2f f1 %.2f f2 %.2f", t * 5 + tt, contact[9], contact[10], contact[12])
                     info[t * 5 + tt, i] = (contact[10], contact[12])
                 p.stepSimulation()
+                time.sleep(0.01)
 
         # apply the sliding along side after the push settles down
         self.along = np.clip(old_state[3] + d_along, -1, 1)

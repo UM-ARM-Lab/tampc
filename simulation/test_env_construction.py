@@ -237,10 +237,10 @@ def tune_direct_push():
 
 
 def run_direct_push():
-    N = 20
+    N = 5
     init_block_pos = [0., 0.18]
     init_block_yaw = -1.4
-    env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=0,
+    env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=0, log_video=True,
                                               init_block=init_block_pos, init_yaw=init_block_yaw, environment_level=0)
     # env = block_push.PushWithForceIndirectlyEnv(mode=p.GUI, init_pusher=-0,
     #                                           init_block=init_block_pos, init_yaw=init_block_yaw, environment_level=1)
@@ -250,10 +250,10 @@ def run_direct_push():
     # record how many steps of pushing to reach 1m
     contacts = []
     obs = env.reset()
-    for _ in range(N):
+    while True:
         action = ctrl.command(obs)
         obs, _, _, contact = env.step(action)
-        contacts.append(contact)
+        # contacts.append(contact)
         # time.sleep(0.3)
 
     contacts = np.stack(contacts)
@@ -267,8 +267,9 @@ def run_direct_push():
     t = list(range(contacts.shape[1]))
     for pt in range(contacts.shape[2]):
         for friction_dir in range(contacts.shape[3]):
-            friction = np.mean(contacts[:, :, pt, friction_dir], axis=0)
-            std = np.std(contacts[:, :, pt, friction_dir], axis=0)
+            pts = contacts[20:, :, pt, friction_dir]
+            friction = np.mean(pts, axis=0)
+            std = np.std(pts, axis=0)
             axes[friction_dir].plot(t, friction, label='pt {}'.format(pt, friction_dir))
             axes[friction_dir].fill_between(t, friction - std, friction + std, alpha=0.2)
     plt.legend()
