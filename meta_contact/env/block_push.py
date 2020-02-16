@@ -27,7 +27,7 @@ class BlockFace:
 # TODO This is specific to this pusher and block; how to generalize this?
 _MAX_ALONG = 0.075 + 0.1  # half length of block
 _BLOCK_HEIGHT = 0.05
-DIST_FOR_JUST_TOUCHING = _MAX_ALONG + 0.021 - 0.00001
+DIST_FOR_JUST_TOUCHING = _MAX_ALONG + 0.021 - 0.00001 + 0.002
 
 
 def pusher_pos_for_touching(block_pos, block_yaw, from_center=DIST_FOR_JUST_TOUCHING, face=BlockFace.LEFT,
@@ -95,9 +95,19 @@ def _draw_debug_2d_pose(line_unique_ids, pose, color=(0, 0, 0), length=0.15 / 2,
 
 
 def _draw_debug_2d_line(line_unique_id, start, diff, color=(0, 0, 0), size=2, scale=0.4):
-    return p.addUserDebugLine(start, np.add(start, [diff[0] * scale, diff[1] * scale, 0]),
-                              color, size,
+    return p.addUserDebugLine(start, np.add(start, [diff[0] * scale, diff[1] * scale,
+                                                    diff[2] * scale if len(diff) is 3 else 0]),
+                              color, lineWidth=size,
                               replaceItemUniqueId=line_unique_id)
+
+
+def _draw_contact_point(line_unique_id, contact, flip=True):
+    start = contact[5]
+    # TODO need to invert for plane-block not sure why
+    dir = list(c * -1 if flip else 1 for c in contact[7])
+    force = contact[9]
+    dir[2] *= 0.3
+    return _draw_debug_2d_line(line_unique_id, start, dir, size=force, scale=0.1 * force, color=(1, 0, 0))
 
 
 class PushLoader(load_utils.DataLoader):
@@ -200,6 +210,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self._traj_debug_lines = []
         self._rollout_debug_lines = {}
         self._error_debug_lines = {'pose': [-1, -1], 'line': -1}
+        self._contact_debug_lines = {}
         self._debug_text = -1
         self._user_debug_text = {}
         self._camera_pos = None
@@ -211,9 +222,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
         self._setup_experiment()
         # start at rest
-        while not self._static_environment():
-            for _ in range(30):
-                p.stepSimulation()
+        for _ in range(1000):
+            p.stepSimulation()
         self.state = self._obs()
 
     @staticmethod
@@ -370,13 +380,24 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
     def _observe_contact(self):
         info = {'contact_force': 0, 'contact_count': 0}
-        contactInfo = p.getContactPoints(self.pusherId, self.blockId)
-        if len(contactInfo) > 0:
-            f_c_temp = 0
-            for i in range(len(contactInfo)):
-                f_c_temp += contactInfo[i][9]
-            info['contact_force'] = f_c_temp
-            info['contact_count'] = len(contactInfo)
+        # push of plane onto block
+        contactInfo = p.getContactPoints(self.blockId, self.planeId)
+        # TODO use observe contact immediately after first push step rather than at the end of it
+        for i, contact in enumerate(contactInfo):
+            name = 'p{}'.format(i)
+            self._contact_debug_lines[name] = _draw_contact_point(self._contact_debug_lines.get(name, -1), contact)
+        if self.level > 0:
+            # get reaction force on pusher TODO generalize this
+            contactInfo = p.getContactPoints(self.blockId, self.walls[0])
+            for i, contact in enumerate(contactInfo):
+                name = 'w{}'.format(i)
+                self._contact_debug_lines[name] = _draw_contact_point(self._contact_debug_lines.get(name, -1), contact)
+        # if len(contactInfo) > 0:
+        #     f_c_temp = 0
+        #     for i in range(len(contactInfo)):
+        #         f_c_temp += contactInfo[i][9]
+        #     info['contact_force'] = f_c_temp
+        #     info['contact_count'] = len(contactInfo)
         return info
 
     STATIC_VELOCITY_THRESHOLD = 5e-5
@@ -457,7 +478,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
     def _observe_finished_action(self, old_state, action):
         # get the net contact force between robot and block
-        info = self._observe_contact()
+        # info = self._observe_contact()
+        info = None
         self.state = np.array(self._obs())
         # track trajectory
         prev_block = self.get_block_pose(old_state)
@@ -501,9 +523,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.pusherConstraint = p.createConstraint(self.pusherId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
                                                    self.initPusherPos)
         # start at rest
-        while not self._static_environment():
-            for _ in range(50):
-                p.stepSimulation()
+        for _ in range(1000):
+            p.stepSimulation()
         self.state = self._obs()
         _draw_debug_2d_pose(self._init_block_debug_lines, self.get_block_pose(self._obs()), color=(0, 1, 0))
         return np.copy(self.state)
@@ -678,10 +699,17 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         # apply force on the left face of the block at along
         p.applyExternalForce(self.blockId, -1, [fn, ft, 0], [-_MAX_ALONG, self.along * _MAX_ALONG, 0], p.LINK_FRAME)
         p.stepSimulation()
-        for _ in range(20):
+
+        logger.info("before observe contact")
+        self._observe_contact()
+        for t in range(20):
             # also move the pusher along visually
             self._keep_pusher_adjacent()
-            for _ in range(5):
+            for tt in range(5):
+                contactInfo = p.getContactPoints(self.planeId, self.blockId)
+                logger.info(len(contactInfo))
+                for i, contact in enumerate(contactInfo):
+                    logger.info("%2d F %.2f f1 %.2f f2 %.2f", t * 5 + tt, contact[9], contact[10], contact[12])
                 p.stepSimulation()
 
         # apply the sliding along side after the push settles down
@@ -698,6 +726,91 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
     @staticmethod
     def state_names():
         return ['x block (m)', 'y block (m)', 'block rotation (rads)', 'pusher along face (m)']
+
+
+class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
+    """
+    Pusher in this env is abstracted and always sticks to the block; control is how much to slide along the side of the
+    block, the magnitude of force to push with, and the angle to push wrt the block
+    """
+
+    # def __init__(self, init_pusher=0, **kwargs):
+    #     super().__init__(init_pusher=init_pusher, face=BlockFace.LEFT, **kwargs)
+
+    def _setup_experiment(self):
+        super()._setup_experiment()
+        # renable collision
+        p.setCollisionFilterPair(self.pusherId, self.blockId, -1, -1, 1)
+        if self.pusherConstraint is not None:
+            p.removeConstraint(self.pusherConstraint)
+            self.pusherConstraint = None
+
+    def _observe_contact(self):
+        info = super(PushWithForceIndirectlyEnv, self)._observe_contact()
+        # get reaction force on pusher
+        contactInfo = p.getContactPoints(self.pusherId, self.blockId)
+        for i, contact in enumerate(contactInfo):
+            name = 'e{}'.format(i)
+            self._contact_debug_lines[name] = _draw_contact_point(self._contact_debug_lines.get(name, -1), contact,
+                                                                  flip=False)
+        return info
+
+    def step(self, action):
+        if self.pusherConstraint is not None:
+            p.removeConstraint(self.pusherConstraint)
+            self.pusherConstraint = None
+        old_state = self._obs()
+        # normalize action such that the input can be within a fixed range
+        # first action is difference in along
+        d_along = action[0] * self.MAX_SLIDE
+        # TODO consider having u as fn and ft
+        # second action is push magnitude
+        f_mag = max(0, action[1] * self.MAX_FORCE)
+        # third option is push angle (0 being perpendicular to face)
+        f_dir = np.clip(action[2], -1, 1) * self.MAX_PUSH_ANGLE
+        self._draw_action(f_mag, f_dir + old_state[2])
+
+        state = self._obs()
+        pos = pusher_pos_for_touching(state[:2], state[2], from_center=DIST_FOR_JUST_TOUCHING, face=self.face,
+                                      along_face=self.along * _MAX_ALONG)
+        z = self.initPusherPos[2]
+        eePos = np.concatenate((pos, (z,)))
+        # reset to have same orientation as block
+        _, block_orientation = p.getBasePositionAndOrientation(self.blockId)
+        p.resetBasePositionAndOrientation(self.pusherId, eePos, block_orientation)
+        # execute action on pusher
+        ft = math.sin(f_dir) * f_mag
+        fn = math.cos(f_dir) * f_mag
+        # apply force on the left face of the block at along
+        p.applyExternalForce(self.pusherId, -1, [fn, ft, 0], [0, 0, 0], p.LINK_FRAME)
+        p.stepSimulation()
+
+        seen_contact = False
+        self._observe_contact()
+        for _ in range(20):
+            if not seen_contact:
+                contactInfo = p.getContactPoints(self.pusherId, self.blockId)
+                for i, contact in enumerate(contactInfo):
+                    seen_contact = True
+                    name = 'e{}'.format(i)
+                    self._contact_debug_lines[name] = _draw_contact_point(self._contact_debug_lines.get(name, -1),
+                                                                          contact,
+                                                                          flip=False)
+            # also move the pusher along visually
+            # self._keep_pusher_adjacent()
+            for _ in range(5):
+                p.stepSimulation()
+
+        # apply the sliding along side after the push settles down
+        self.along = np.clip(old_state[3] + d_along, -1, 1)
+        # self._keep_pusher_adjacent()
+
+        for _ in range(20):
+            p.stepSimulation()
+
+        cost, done, info = self._observe_finished_action(old_state, action)
+
+        return np.copy(self.state), -cost, done, info
 
 
 class InteractivePush(simulation.Simulation):
