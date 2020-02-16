@@ -1400,6 +1400,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
         'horizon': 35,
         'u_init': torch.tensor([0, 0.5, 0], dtype=torch.double, device=d),
         'sample_null_action': False,
+        'step_dependent_dynamics': True,
     }
     if online_adapt:
         dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, env.state_difference, local_mix_weight=1.0,
