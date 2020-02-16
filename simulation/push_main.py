@@ -608,7 +608,6 @@ class PartialPassthroughTransform(CompressionRewardTransform):
     """Don't pass through all of x to g, since it could just learn to map v to u"""
 
     def __init__(self, ds, device, *args, nv=4, **kwargs):
-        # TODO how to partition x such that the part that's not selected for z gets passed through?
         config = load_data.DataConfig()
         config.nx = 2
         config.ny = nv * ds.config.nx  # matrix output (original nx, ignore sincos)
@@ -669,59 +668,36 @@ class PartitionBlock(torch.nn.Module):
 class LearnedPartialPassthroughTransform(CompressionRewardTransform):
     """Don't pass through all of x to g; learn which parts to pass to g and which to h"""
 
-    def __init__(self, ds, device, *args, nz=4, nv=4, **kwargs):
-        config = load_data.DataConfig()
-        config.nx = ds.config.nx
-        config.ny = ds.config.nx
-        self.split_size = 2
-        # self.x_partition = torch.randn(ds.config.nx, dtype=torch.double, device=device, requires_grad=True)
-        self.x_partition = PartitionBlock(ds.config.nx, ds.config.nx, self.split_size).to(device=device,
-                                                                                          dtype=torch.double)
-        # try setting true parameters
-        # self.x_partition = torch.tensor([10, 10, -10, 10], dtype=torch.double, device=device, requires_grad=False)
-
-        self.true_partition = torch.tensor([1, 1, 0, 1], device=device, dtype=torch.double)
+    def __init__(self, ds, device, *args, nz=4, nv=4, reduced_decoder_input_dim=2, **kwargs):
+        self.reduced_decoder_input_dim = reduced_decoder_input_dim
+        self.x_extractor = torch.nn.Linear(ds.config.nx, self.reduced_decoder_input_dim).to(device=device,
+                                                                                            dtype=torch.double)
 
         config = load_data.DataConfig()
-        config.nx = ds.config.nx - self.split_size
-        config.ny = nv * ds.config.nx  # matrix output (original nx, ignore sincos)
+        config.nx = self.reduced_decoder_input_dim
+        config.ny = nv * ds.config.nx
         self.partial_decoder = model.DeterministicUser(
             make.make_sequential_network(config, h_units=(16, 32)).to(device=device))
 
-        self.encoder = torch.nn.Linear(self.split_size + ds.config.nu, nz, bias=False).to(device=device,
-                                                                                          dtype=torch.double)
         super().__init__(ds, device, *args, nz=nz, nv=nv, **kwargs)
 
     def _name_prefix(self):
-        return 'partition_passthrough'
-
-    def xu_to_z(self, state, action):
-        if len(state.shape) < 2:
-            state = state.reshape(1, -1)
-            action = action.reshape(1, -1)
-
-        # more general parameterized versions where we select which components to take
-        encoder_partition = self.x_partition(state, 0)
-        xu = torch.cat((encoder_partition, action), dim=1)
-        z = self.encoder(xu)
-        return z
+        return 'extract_passthrough_{}'.format(self.reduced_decoder_input_dim)
 
     def parameters(self):
-        return list(self.partial_decoder.model.parameters()) + list(self.encoder.parameters()) + list(
-            self.linear_model_producer.model.parameters()) + list(self.x_partition.parameters())
+        return list(self.partial_decoder.model.parameters()) + list(self.z_selector.parameters()) + list(
+            self.linear_model_producer.model.parameters()) + list(self.x_extractor.parameters())
 
     def _model_state_dict(self):
         d = super()._model_state_dict()
         d['pd'] = self.partial_decoder.model.state_dict()
-        d['partition'] = self.x_partition.state_dict()
-        d['enc'] = self.encoder.state_dict()
+        d['extract'] = self.x_extractor.state_dict()
         return d
 
     def _load_model_state_dict(self, saved_state_dict):
         super()._load_model_state_dict(saved_state_dict)
         self.partial_decoder.model.load_state_dict(saved_state_dict['pd'])
-        self.x_partition.load_state_dict(saved_state_dict['partition'])
-        self.encoder.load_state_dict(saved_state_dict['enc'])
+        self.x_extractor.load_state_dict(saved_state_dict['extract'])
 
     def get_dx(self, x, v):
         if len(x.shape) == 1:
@@ -729,27 +705,10 @@ class LearnedPartialPassthroughTransform(CompressionRewardTransform):
             v = v.view(1, -1)
 
         B, nx = x.shape
-        decoder_partition = self.x_partition(x, 1)
-        linear_tsf = self.partial_decoder.sample(decoder_partition).view(B, nx, self.nv)
+        extracted_from_x = self.x_extractor(x)
+        linear_tsf = self.partial_decoder.sample(extracted_from_x).view(B, nx, self.nv)
         dx = linalg.batch_batch_product(v, linear_tsf)
         return dx
-
-    # def evaluate_validation(self, writer):
-    #     losses = super().evaluate_validation(writer)
-    #     if writer is not None:
-    #         with torch.no_grad():
-    #             encoder_partition = torch.sigmoid(self.x_partition)
-    #             # the first two components (x,y) don't matter to encoder or decoder
-    #             ep = encoder_partition[2:]
-    #             tp = self.true_partition[2:]
-    #             cs = torch.nn.functional.cosine_similarity(ep, tp, dim=0).item()
-    #             dist = torch.norm(ep - tp).item()
-    #
-    #             logger.debug("step %d partition cos sim %f dist %f", self.step, cs, dist)
-    #
-    #             writer.add_scalar('cosine_similarity/partition', cs, self.step)
-    #             writer.add_scalar('param_diff/partition', dist, self.step)
-    #     return losses
 
 
 class GroundTruthWithCompression(CompressionRewardTransform):
@@ -1300,7 +1259,7 @@ class UseTransform:
 
 
 def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False, online_adapt=True,
-                  prior_class: typing.Type[prior.OnlineDynamicsPrior]=prior.NNPrior):
+                  prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
     seed = 1
     plot_model_error = False
     enforce_model_rollout = False
@@ -1453,16 +1412,16 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else "{}_{}".format(transform_names[use_tsf],
                                                                                 pm.__class__.__name__)
     # expensive evaluation
-    # evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921])
+    evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921])
 
-    name = "{}_{}".format(ctrl.__class__.__name__, name)
-    env.draw_user_text(name, 14, left_offset=-1.5)
-    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=False, stop_when_done=False)
-    seed = rand.seed()
-    sim.run(seed)
-    logger.info("last run cost %f", np.sum(sim.last_run_cost))
-    plt.ioff()
-    plt.show()
+    # name = "{}_{}".format(ctrl.__class__.__name__, name)
+    # env.draw_user_text(name, 14, left_offset=-1.5)
+    # sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=False, stop_when_done=False)
+    # seed = rand.seed()
+    # sim.run(seed)
+    # logger.info("last run cost %f", np.sum(sim.last_run_cost))
+    # plt.ioff()
+    # plt.show()
 
     env.close()
 
@@ -1609,9 +1568,9 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
     # invariant_tsf = AblationNoPassthrough(ds, d, **common_opts, **kwargs)
     # invariant_tsf = LinearRelaxEncoderTransform(ds, d, **common_opts, **kwargs)
     # invariant_tsf = CompressionRewardTransform(ds, d, **common_opts, **kwargs)
-    invariant_tsf = GroundTruthWithCompression(ds, d, **common_opts, **kwargs)
+    # invariant_tsf = GroundTruthWithCompression(ds, d, **common_opts, **kwargs)
     # invariant_tsf = PartialPassthroughTransform(ds, d, **common_opts, **kwargs)
-    # invariant_tsf = LearnedPartialPassthroughTransform(ds, d, **common_opts, **kwargs)
+    invariant_tsf = LearnedPartialPassthroughTransform(ds, d, **common_opts, **kwargs)
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
@@ -1632,14 +1591,14 @@ def learn_model(seed=1, name="", transform_name="", train_epochs=600, batch_N=50
 
 
 if __name__ == "__main__":
-    level = 1
+    level = 0
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
-    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=False)
-    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
+    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=False)
+    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
     test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
     test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
-    test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True, prior_class=prior.NoPrior)
-    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True, prior_class=prior.NoPrior)
+    # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True, prior_class=prior.NoPrior)
+    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True, prior_class=prior.NoPrior)
 
     # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=False)
     # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=True)
@@ -1660,7 +1619,7 @@ if __name__ == "__main__":
     # test_dynamics(level, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=False)
     # test_dynamics(level, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=True)
     # test_online_model()
-    # for seed in range(5):
-    # learn_invariant(seed=0, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
+    # for seed in range(1,5):
+    #     learn_invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
     # for seed in range(5):
     #     learn_model(seed=seed, transform_name="knn_regularization_s{}".format(seed), name="cov_reg")
