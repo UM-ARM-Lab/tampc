@@ -716,7 +716,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
                 for key, value in step_info.items():
                     info[key].append(value)
                 p.stepSimulation()
-                if self.sim_step_wait:
+                if self.mode is p.GUI and self.sim_step_wait:
                     time.sleep(self.sim_step_wait)
 
         info = {key: np.stack(value, axis=0) for key, value in info.items() if len(value)}
@@ -726,7 +726,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
 
         for _ in range(20):
             p.stepSimulation()
-            if self.sim_step_wait:
+            if self.mode is p.GUI and self.sim_step_wait:
                 time.sleep(self.sim_step_wait)
 
         cost, done = self._observe_finished_action(old_state, action)
