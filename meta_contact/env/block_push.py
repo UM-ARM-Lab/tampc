@@ -383,17 +383,14 @@ class PushAgainstWallEnv(MyPybulletEnv):
             info['bp'][i] = (contact[10], contact[12])
 
         if self.level > 0:
-            # get reaction force on pusher TODO generalize this
+            # assume at most 4 contact points
+            info['bw'] = np.zeros(4)
+            # get reaction force on pusher TODO calculate then generalize this
             contactInfo = p.getContactPoints(self.blockId, self.walls[0])
             for i, contact in enumerate(contactInfo):
                 name = 'w{}'.format(i)
                 self._contact_debug_lines[name] = _draw_contact_point(self._contact_debug_lines.get(name, -1), contact)
-        # if len(contactInfo) > 0:
-        #     f_c_temp = 0
-        #     for i in range(len(contactInfo)):
-        #         f_c_temp += contactInfo[i][9]
-        #     info['contact_force'] = f_c_temp
-        #     info['contact_count'] = len(contactInfo)
+                info['bw'][i] = contact[9]
         return info
 
     STATIC_VELOCITY_THRESHOLD = 5e-5
@@ -703,7 +700,8 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
             self._keep_pusher_adjacent()
             for tt in range(5):
                 step_info = self._observe_contact()
-                info['bp'].append(step_info['bp'])
+                for key, value in step_info.items():
+                    info[key].append(value)
                 p.stepSimulation()
                 time.sleep(0.1)
 
@@ -729,9 +727,6 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
     Pusher in this env is abstracted and always sticks to the block; control is how much to slide along the side of the
     block, the magnitude of force to push with, and the angle to push wrt the block
     """
-
-    # def __init__(self, init_pusher=0, **kwargs):
-    #     super().__init__(init_pusher=init_pusher, face=BlockFace.LEFT, **kwargs)
 
     def _setup_experiment(self):
         super()._setup_experiment()

@@ -237,43 +237,74 @@ def tune_direct_push():
 
 
 def run_direct_push():
-    N = 5
+    N = 20
     init_block_pos = [0., 0.18]
     init_block_yaw = -1.4
     env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=0, log_video=True,
-                                              init_block=init_block_pos, init_yaw=init_block_yaw, environment_level=0)
+                                              init_block=init_block_pos, init_yaw=init_block_yaw, environment_level=1)
     # env = block_push.PushWithForceIndirectlyEnv(mode=p.GUI, init_pusher=-0,
     #                                           init_block=init_block_pos, init_yaw=init_block_yaw, environment_level=1)
 
     env.draw_user_text('run direct push')
     ctrl = controller.PreDeterminedController([(0.0, 1, 0.2) for _ in range(N)])
     # record how many steps of pushing to reach 1m
-    contacts = []
+    contacts = {'bp': [], 'bw': []}
     obs = env.reset()
-    while True:
+    for _ in range(N):
         action = ctrl.command(obs)
         obs, _, _, contact = env.step(action)
-        # contacts.append(contact)
+        for key, value in contact.items():
+            contacts[key].append(value)
         # time.sleep(0.3)
 
-    contacts = np.stack(contacts)
-    friction_dirs = ['(0,1,0)', '(1,0,0)']
+    contacts = {key: np.stack(value, axis=0) for key, value in contacts.items()}
     plt.ioff()
-    # average over the steps, look at how the forces differ over time for the different contact points
-    f, axes = plt.subplots(2, 1, sharex=True)
-    for d, ax in zip(friction_dirs, axes):
-        ax.set_ylabel('lateral friction in {}'.format(d))
-    axes[0].set_xlabel('sim step (wait for quasi-static)')
-    t = list(range(contacts.shape[1]))
-    for pt in range(contacts.shape[2]):
-        for friction_dir in range(contacts.shape[3]):
-            pts = contacts[20:, :, pt, friction_dir]
-            friction = np.mean(pts, axis=0)
-            std = np.std(pts, axis=0)
-            axes[friction_dir].plot(t, friction, label='pt {}'.format(pt, friction_dir))
-            axes[friction_dir].fill_between(t, friction - std, friction + std, alpha=0.2)
-    plt.legend()
-    plt.show()
+
+    # # log friction averaged over time steps
+    # friction_log = contacts['bp']
+    # friction_dirs = ['(0,1,0)', '(1,0,0)']
+    # # average over the steps, look at how the forces differ over time for the different contact points
+    # f, axes = plt.subplots(2, 1, sharex=True)
+    # for d, ax in zip(friction_dirs, axes):
+    #     ax.set_ylabel('lateral friction in {}'.format(d))
+    # axes[0].set_xlabel('sim step (wait for quasi-static)')
+    # t = list(range(friction_log.shape[1]))
+    # for pt in range(friction_log.shape[2]):
+    #     for friction_dir in range(friction_log.shape[3]):
+    #         pts = friction_log[:, :, pt, friction_dir]
+    #         friction = np.mean(pts, axis=0)
+    #         std = np.std(pts, axis=0)
+    #         axes[friction_dir].plot(t, friction, label='pt {}'.format(pt, friction_dir))
+    #         axes[friction_dir].fill_between(t, friction - std, friction + std, alpha=0.2)
+    # plt.legend()
+
+    # log contact with wall for each time step
+    # contact_log = contacts['bw']
+    # contact_loc = ['bot', 'top', 'rbot', 'rtop']
+    # # average over the steps, look at how the forces differ over time for the different contact points
+    # time_steps = contact_log.shape[0]
+    # f, axes = plt.subplots(2, 2, sharex=True)
+    # axes = axes.flatten()
+    # for d, ax in zip(contact_loc, axes):
+    #     ax.set_ylabel('wall contact {}'.format(d))
+    # axes[0].set_xlabel('sim step (wait for quasi-static)')
+    # t = list(range(contact_log.shape[1]))
+    # for pt in range(contact_log.shape[2]):
+    #     pts = contact_log[10:, :, pt]
+    #     m = np.mean(pts, axis=0)
+    #     low = np.percentile(pts, 25, axis=0)
+    #     high = np.percentile(pts, 75, axis=0)
+    #     # std = np.std(pts, axis=0)
+    #     axes[pt].plot(t, m)
+    #     # axes[pt].fill_between(t, m - std, m + std, alpha=0.2)
+    #     axes[pt].fill_between(t, low, high, alpha=0.2)
+    #     # for tt in range(time_steps):
+    #     #     pts = contact_log[tt, :, pt]
+    #     #     axes[pt].plot(t, pts, label='t {}'.format(tt),
+    #     #                   color=(0.8 * tt / time_steps, 0.8 * tt / time_steps, tt / time_steps))
+    # plt.legend()
+    #
+    # plt.show()
 
 
 if __name__ == "__main__":
