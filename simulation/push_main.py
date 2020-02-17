@@ -1439,9 +1439,10 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
 
     name = "{}_{}".format(ctrl.__class__.__name__, name)
     env.draw_user_text(name, 14, left_offset=-1.5)
-    env.sim_step_wait = 0.01
-    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=False, stop_when_done=False)
+    # env.sim_step_wait = 0.01
+    sim = block_push.InteractivePush(env, ctrl, num_frames=300, plot=False, save=True, stop_when_done=False)
     seed = rand.seed()
+    env.draw_user_text("try {}".format(seed), 2)
     sim.run(seed)
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
     plt.ioff()
@@ -1660,12 +1661,12 @@ def learn_model(seed=1, name="", transform_name="", train_epochs=600, batch_N=50
 
 
 if __name__ == "__main__":
-    level = 0
+    level = 1
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
-    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=False)
-    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
-    test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
-    test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
+    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=False)
+    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
+    # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
+    # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
     # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True, prior_class=prior.NoPrior)
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True, prior_class=prior.NoPrior)
 

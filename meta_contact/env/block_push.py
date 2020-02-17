@@ -104,7 +104,7 @@ def _draw_debug_2d_line(line_unique_id, start, diff, color=(0, 0, 0), size=2, sc
 def _draw_contact_point(line_unique_id, contact, flip=True):
     start = contact[5]
     dir = list(c * -1 if flip else 1 for c in contact[7])
-    force = contact[9]
+    force = abs(contact[9])
     dir[2] *= 0.3
     return _draw_debug_2d_line(line_unique_id, start, dir, size=force, scale=0.1 * force, color=(1, 0, 0))
 
