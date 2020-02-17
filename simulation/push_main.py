@@ -1329,6 +1329,7 @@ def get_controller_options(env):
         'compare_to_goal': env.state_difference,
         'device': d,
         'terminal_cost_multiplier': 50,
+        'adjust_model_pred_with_prev_error': True, # TODO doesn't actually well in freespace right now
     }
     mpc_opts = {
         'num_samples': 10000,
