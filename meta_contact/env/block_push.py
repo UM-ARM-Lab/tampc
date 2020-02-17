@@ -204,10 +204,9 @@ class PushAgainstWallEnv(MyPybulletEnv):
     ny = 3
 
     def __init__(self, goal=(1.0, 0.), init_pusher=(-0.25, 0), init_block=(0., 0.), init_yaw=0.,
-                 environment_level=0, max_move_step=None, **kwargs):
+                 environment_level=0, **kwargs):
         super().__init__(**kwargs)
         self.initRestFrames = 50
-        self.max_move_step = max_move_step
         self.level = environment_level
 
         # initial config
@@ -359,27 +358,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         return state[2:5]
 
     def _move_pusher(self, end):
-        if self.max_move_step is None:
-            p.changeConstraint(self.pusherConstraint, end, maxForce=200)
-        else:
-            # linearly interpolate to position from current position
-            start = self._observe_pusher()
-            move_dir = np.subtract(end, start)
-            # normalize move direction so we're moving a fixed amount each time
-            moves_required = np.linalg.norm(move_dir) / self.max_move_step
-            move_step = move_dir / moves_required
-            while moves_required > 0:
-                if moves_required <= 1:
-                    this_end = end
-                else:
-                    this_end = np.add(start, move_step)
-
-                p.changeConstraint(self.pusherConstraint, this_end, maxForce=300)
-                for _ in range(5):
-                    p.stepSimulation()
-
-                start = this_end
-                moves_required -= 1
+        p.changeConstraint(self.pusherConstraint, end, maxForce=200)
 
     def _observe_block(self):
         blockPose = p.getBasePositionAndOrientation(self.blockId)
