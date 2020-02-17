@@ -277,8 +277,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
         pose = self.get_block_pose(self.state)
         pose[2] = _BLOCK_HEIGHT
         # draw line from current pose to predicted pose
-        self._error_debug_lines['line'] = _draw_debug_2d_line(self._error_debug_lines['line'], pose, pred_pose - pose,
-                                                              c, scale=20)
+        self._error_debug_lines['line'] = _draw_debug_2d_line(self._error_debug_lines['line'], pose,
+                                                              (pred_pose - pose)[:2], c, scale=20)
         logger.info(np.linalg.norm((pred_pose - pose)[:2]))
 
     def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
