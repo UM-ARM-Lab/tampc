@@ -204,10 +204,20 @@ class PushAgainstWallEnv(MyPybulletEnv):
     ny = 3
 
     def __init__(self, goal=(1.0, 0.), init_pusher=(-0.25, 0), init_block=(0., 0.), init_yaw=0.,
-                 environment_level=0, **kwargs):
+                 environment_level=0, sim_step_wait=None, **kwargs):
+        """
+        :param goal:
+        :param init_pusher:
+        :param init_block:
+        :param init_yaw:
+        :param environment_level: what obstacles should show up in the environment
+        :param sim_step_wait: how many seconds to wait between each sim step to show intermediate states
+        (0.01 seems reasonable for visualization)
+        :param kwargs:
+        """
         super().__init__(**kwargs)
-        self.initRestFrames = 50
         self.level = environment_level
+        self.sim_step_wait = sim_step_wait
 
         # initial config
         self.goal = None
@@ -706,6 +716,8 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
                 for key, value in step_info.items():
                     info[key].append(value)
                 p.stepSimulation()
+                if self.sim_step_wait:
+                    time.sleep(self.sim_step_wait)
 
         info = {key: np.stack(value, axis=0) for key, value in info.items() if len(value)}
         # apply the sliding along side after the push settles down
@@ -714,6 +726,8 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
 
         for _ in range(20):
             p.stepSimulation()
+            if self.sim_step_wait:
+                time.sleep(self.sim_step_wait)
 
         cost, done = self._observe_finished_action(old_state, action)
 
@@ -738,14 +752,15 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
             p.removeConstraint(self.pusherConstraint)
             self.pusherConstraint = None
 
-    def _observe_contact(self):
+    def _observe_contact(self, visualize=True):
         info = super(PushWithForceIndirectlyEnv, self)._observe_contact()
         # get reaction force on pusher
         contactInfo = p.getContactPoints(self.pusherId, self.blockId)
         for i, contact in enumerate(contactInfo):
             name = 'e{}'.format(i)
-            self._contact_debug_lines[name] = _draw_contact_point(self._contact_debug_lines.get(name, -1), contact,
-                                                                  flip=False)
+            if visualize:
+                self._contact_debug_lines[name] = _draw_contact_point(self._contact_debug_lines.get(name, -1), contact,
+                                                                      flip=False)
         return info
 
     def step(self, action):

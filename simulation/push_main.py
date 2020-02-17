@@ -24,7 +24,7 @@ from meta_contact.controller import online_controller
 from meta_contact.env import block_push
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO,
+logging.basicConfig(level=logging.DEBUG,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
                     datefmt='%m-%d %H:%M:%S')
 logging.getLogger('matplotlib.font_manager').disabled = True
@@ -1435,16 +1435,17 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else "{}_{}".format(tsf_name,
                                                                                 pm.__class__.__name__)
     # expensive evaluation
-    evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921])
+    # evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921])
 
-    # name = "{}_{}".format(ctrl.__class__.__name__, name)
-    # env.draw_user_text(name, 14, left_offset=-1.5)
-    # sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=False, stop_when_done=False)
-    # seed = rand.seed()
-    # sim.run(seed)
-    # logger.info("last run cost %f", np.sum(sim.last_run_cost))
-    # plt.ioff()
-    # plt.show()
+    name = "{}_{}".format(ctrl.__class__.__name__, name)
+    env.draw_user_text(name, 14, left_offset=-1.5)
+    env.sim_step_wait = 0.01
+    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=False, stop_when_done=False)
+    seed = rand.seed()
+    sim.run(seed)
+    logger.info("last run cost %f", np.sum(sim.last_run_cost))
+    plt.ioff()
+    plt.show()
 
     env.close()
 
