@@ -129,7 +129,7 @@ class PushLoader(load_utils.DataLoader):
 
     def _apply_masks(self, d, x, y):
         """Handle common logic regardless of x and y"""
-        cc = d['contact'][1:]
+        # cc = d['contact'][1:]
         u = d['U'][:-1]
         # potentially many trajectories, get rid of buffer state in between
         mask = d['mask']
@@ -144,7 +144,7 @@ class PushLoader(load_utils.DataLoader):
             # (xu, pxu)
             xu = np.column_stack((xu[1:], xu[:-1]))
             y = y[1:]
-            cc = cc[1:]
+            # cc = cc[1:]
 
             mask = mask[1:-1]
         else:
@@ -153,11 +153,11 @@ class PushLoader(load_utils.DataLoader):
         mask = mask.reshape(-1) != 0
 
         xu = xu[mask]
-        cc = cc[mask]
+        # cc = cc[mask]
         y = y[mask]
 
         self.config.load_data_info(x, u, y, xu)
-        return xu, y, cc
+        return xu, y, np.ones(y.shape[0])
 
     def _process_file_raw_data(self, d):
         x = d['X']
@@ -841,13 +841,10 @@ class InteractivePush(simulation.Simulation):
         self.traj = np.zeros((self.num_frames, self.env.nx))
         self.u = np.zeros((self.num_frames, self.env.nu))
         self.time = np.arange(0, self.num_frames * self.sim_step_s, self.sim_step_s)
-        self.contactForce = np.zeros((self.num_frames,))
-        self.contactCount = np.zeros_like(self.contactForce)
         return simulation.ReturnMeaning.SUCCESS
 
     def _truncate_data(self, frame):
-        self.traj, self.u, self.time, self.contactForce, self.contactCount = (data[:frame] for data in (
-            self.traj, self.u, self.time, self.contactForce, self.contactCount))
+        self.traj, self.u, self.time = (data[:frame] for data in (self.traj, self.u, self.time))
 
     def _run_experiment(self):
         self.last_run_cost = []
@@ -876,8 +873,7 @@ class InteractivePush(simulation.Simulation):
             self.last_run_cost.append(cost)
             self.u[simTime, :] = action
             self.traj[simTime + 1, :] = obs
-            self.contactForce[simTime] = info['contact_force']
-            self.contactCount[simTime] = info['contact_count']
+            # TODO update contact information to new content
 
             if done and self.stop_when_done:
                 logger.debug("done and stopping at step %d", simTime)
@@ -906,15 +902,13 @@ class InteractivePush(simulation.Simulation):
     def _export_data_dict(self):
         # output (1 step prediction; only need block state)
         X = self.traj
-        contact_flag = self.contactCount > 0
-        contact_flag = contact_flag.reshape(-1, 1)
         # mark the end of the trajectory (the last time is not valid)
         mask = np.ones(X.shape[0], dtype=int)
         mask[-1] = 0
-        return {'X': X, 'U': self.u, 'contact': contact_flag, 'mask': mask.reshape(-1, 1)}
+        return {'X': X, 'U': self.u, 'mask': mask.reshape(-1, 1)}
 
     def start_plot_runs(self):
-        axis_name = self.env.state_names() + ['contact force (N)', 'contact count']
+        axis_name = self.env.state_names()
         state_dim = self.traj.shape[1] + 2
         assert state_dim == len(axis_name)
         ctrl_dim = self.u.shape[1]
@@ -937,8 +931,6 @@ class InteractivePush(simulation.Simulation):
 
         for i in range(self.traj.shape[1]):
             self.axes[i].plot(self.traj[:, i])
-        self.axes[self.traj.shape[1]].plot(self.contactForce)
-        self.axes[self.traj.shape[1] + 1].step(self.time, self.contactCount)
         self.fig.canvas.draw()
         for i in range(self.u.shape[1]):
             self.au[i].plot(self.u[:, i])
