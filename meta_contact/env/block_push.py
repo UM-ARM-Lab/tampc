@@ -393,14 +393,16 @@ class PushAgainstWallEnv(MyPybulletEnv):
         return pusherPose[0]
 
     def _observe_contact(self):
-        info = {'contact_force': 0, 'contact_count': 0}
+        # assume there's 4 contact points between block and plane
+        info = {'bp': np.zeros((4, 2))}
         # push of plane onto block
         contactInfo = p.getContactPoints(self.blockId, self.planeId)
-        # TODO use observe contact immediately after first push step rather than at the end of it
         for i, contact in enumerate(contactInfo):
             if i not in self._friction_debug_lines:
                 self._friction_debug_lines[i] = [-1, -1]
             _draw_contact_friction(self._friction_debug_lines[i], contact)
+            info['bp'][i] = (contact[10], contact[12])
+
         if self.level > 0:
             # get reaction force on pusher TODO generalize this
             contactInfo = p.getContactPoints(self.blockId, self.walls[0])
@@ -440,6 +442,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
     def _move_and_wait(self, eePos):
         # execute the action
         self._move_pusher(eePos)
+        p.stepSimulation()
+        info = self._observe_contact()
         # handle trying to go into wall (if we don't succeed)
         # we use a force insufficient for going into the wall
         while not self._reached_command(eePos):
@@ -452,6 +456,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         while not self._static_environment():
             for _ in range(50):
                 p.stepSimulation()
+        return info
 
     @staticmethod
     def state_difference(state, other_state):
@@ -485,16 +490,13 @@ class PushAgainstWallEnv(MyPybulletEnv):
         eePos = [old_state[0] + d[0], old_state[1] + d[1], z]
 
         # execute the action
-        self._move_and_wait(eePos)
-
-        cost, done, info = self._observe_finished_action(old_state, action)
+        info = self._move_and_wait(eePos)
+        cost, done = self._observe_finished_action(old_state, action)
 
         return np.copy(self.state), -cost, done, info
 
     def _observe_finished_action(self, old_state, action):
         # get the net contact force between robot and block
-        # info = self._observe_contact()
-        info = None
         self.state = np.array(self._obs())
         # track trajectory
         prev_block = self.get_block_pose(old_state)
@@ -511,7 +513,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
         self._debug_text = self._draw_text('{0:.3f}'.format(cost), self._debug_text, 0)
 
-        return cost, done, info
+        return cost, done
 
     def draw_user_text(self, text, location_index=1, left_offset=1):
         if location_index is 0:
@@ -634,9 +636,9 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         eePos = np.concatenate((pos, (z,)))
 
         # execute the action
-        self._move_and_wait(eePos)
+        info = self._move_and_wait(eePos)
 
-        cost, done, info = self._observe_finished_action(old_state, action)
+        cost, done = self._observe_finished_action(old_state, action)
 
         return np.copy(self.state), -cost, done, info
 
@@ -715,21 +717,18 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         p.applyExternalForce(self.blockId, -1, [fn, ft, 0], [-_MAX_ALONG, self.along * _MAX_ALONG, 0], p.LINK_FRAME)
         p.stepSimulation()
 
-        info = np.zeros((100, 4, 2))
+        info = {'bp': [], 'bw': []}
         logger.info("before observe contact")
         for t in range(20):
             # also move the pusher along visually
             self._keep_pusher_adjacent()
             for tt in range(5):
-                self._observe_contact()
-                contactInfo = p.getContactPoints(self.planeId, self.blockId)
-                logger.info(len(contactInfo))
-                for i, contact in enumerate(contactInfo):
-                    logger.info("%2d F %.2f f1 %.2f f2 %.2f", t * 5 + tt, contact[9], contact[10], contact[12])
-                    info[t * 5 + tt, i] = (contact[10], contact[12])
+                step_info = self._observe_contact()
+                info['bp'].append(step_info['bp'])
                 p.stepSimulation()
-                time.sleep(0.01)
+                time.sleep(0.1)
 
+        info = {key: np.stack(value, axis=0) for key, value in info.items() if len(value)}
         # apply the sliding along side after the push settles down
         self.along = np.clip(old_state[3] + d_along, -1, 1)
         self._keep_pusher_adjacent()
@@ -737,7 +736,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         for _ in range(20):
             p.stepSimulation()
 
-        cost, done, _ = self._observe_finished_action(old_state, action)
+        cost, done = self._observe_finished_action(old_state, action)
 
         return np.copy(self.state), -cost, done, info
 
@@ -804,7 +803,7 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
         p.stepSimulation()
 
         seen_contact = False
-        self._observe_contact()
+        info = self._observe_contact()
         for _ in range(20):
             if not seen_contact:
                 contactInfo = p.getContactPoints(self.pusherId, self.blockId)
@@ -826,7 +825,7 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
         for _ in range(20):
             p.stepSimulation()
 
-        cost, done, info = self._observe_finished_action(old_state, action)
+        cost, done = self._observe_finished_action(old_state, action)
 
         return np.copy(self.state), -cost, done, info
 
