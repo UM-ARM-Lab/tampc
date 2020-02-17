@@ -103,8 +103,12 @@ def get_easy_env(mode=p.GUI, level=0, log_video=False):
     return env
 
 
+def get_device():
+    return torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+
+
 def get_free_space_env_init(seed=1, **kwargs):
-    d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    d = get_device()
     env = get_easy_env(kwargs.pop('mode', p.DIRECT), **kwargs)
 
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
@@ -114,13 +118,13 @@ def get_free_space_env_init(seed=1, **kwargs):
     return d, env, config, ds
 
 
-def get_preprocessor_for_invariant_tsf(invariant_tsf):
-    # evaluate tsf on validation set
-    losses = invariant_tsf.evaluate_validation(None)
-    logger.info("tsf on validation %s",
-                "  ".join(
-                    ["{} {:.5f}".format(name, loss.mean().cpu().item()) if loss is not None else "" for name, loss in
-                     zip(invariant_tsf.loss_names(), losses)]))
+def get_preprocessor_for_invariant_tsf(invariant_tsf, evaluate_transform=True):
+    if evaluate_transform:
+        losses = invariant_tsf.evaluate_validation(None)
+        logger.info("tsf on validation %s",
+                    "  ".join(
+                        ["{} {:.5f}".format(name, loss.mean().cpu().item()) if loss is not None else "" for name, loss
+                         in zip(invariant_tsf.loss_names(), losses)]))
 
     # wrap the transform as a data preprocessor
     preprocessor = preprocess.Compose(
@@ -128,6 +132,27 @@ def get_preprocessor_for_invariant_tsf(invariant_tsf):
          preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
 
     return preprocessor
+
+
+def get_full_controller_name(pm, ctrl, tsf_name):
+    name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else "{}_{}".format(tsf_name, pm.__class__.__name__)
+    name = "{}_{}".format(ctrl.__class__.__name__, name)
+    return name
+
+
+def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics):
+    d = get_device()
+    if prior_class is prior.NNPrior:
+        mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(ds.config).to(device=d)), ds,
+                           name="dynamics_{}".format(tsf_name))
+
+        pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(),
+                                     train_epochs=600)
+    elif prior_class is prior.NoPrior:
+        pm = prior.NoPrior()
+    else:
+        pm = prior_class.from_data(ds)
+    return pm
 
 
 def translation_generator():
@@ -1292,7 +1317,7 @@ def get_transform(env, ds, use_tsf):
     return transforms[use_tsf], transform_names[use_tsf]
 
 
-def update_ds_with_transform(env, ds, use_tsf):
+def update_ds_with_transform(env, ds, use_tsf, **kwargs):
     invariant_tsf, tsf_name = get_transform(env, ds, use_tsf)
 
     if invariant_tsf:
@@ -1301,7 +1326,7 @@ def update_ds_with_transform(env, ds, use_tsf):
                 invariant_tsf.get_last_checkpoint()):
             raise RuntimeError("Transform {} should be learned before using".format(invariant_tsf.name))
 
-        preprocessor = get_preprocessor_for_invariant_tsf(invariant_tsf)
+        preprocessor = get_preprocessor_for_invariant_tsf(invariant_tsf, **kwargs)
     else:
         # use minmax scaling if we're not using an invariant transform (baseline)
         preprocessor = preprocess.PytorchTransformer(preprocess.MinMaxScaler())
@@ -1329,7 +1354,7 @@ def get_controller_options(env):
         'compare_to_goal': env.state_difference,
         'device': d,
         'terminal_cost_multiplier': 50,
-        'adjust_model_pred_with_prev_error': True, # TODO doesn't actually well in freespace right now
+        'adjust_model_pred_with_prev_error': True,  # TODO doesn't actually well in freespace right now
     }
     mpc_opts = {
         'num_samples': 10000,
@@ -1362,7 +1387,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     seed = 1
     plot_model_error = False
     enforce_model_rollout = False
-    d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    d = get_device()
     env = get_easy_env(p.GUI, level=level, log_video=True)
 
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
@@ -1373,16 +1398,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
 
     untransformed_config, tsf_name = update_ds_with_transform(env, ds, use_tsf)
 
-    if prior_class is prior.NNPrior:
-        mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
-                           name="dynamics_{}".format(tsf_name))
-
-        pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(),
-                                     train_epochs=600)
-    elif prior_class is prior.NoPrior:
-        pm = prior.NoPrior()
-    else:
-        pm = prior_class.from_data(ds)
+    pm = get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics)
 
     # test that the model predictions are relatively symmetric for positive and negative along
     if isinstance(env, block_push.PushAgainstWallStickyEnv) and isinstance(pm, prior.NNPrior):
@@ -1393,8 +1409,8 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
         u = torch.tensor([0, 1, 0], dtype=torch.double, device=d)
         # do rollouts
         for i in range(N - 1):
-            x_top[i + 1] = mw.predict(torch.cat((x_top[i], u)).view(1, -1))
-            x_bot[i + 1] = mw.predict(torch.cat((x_bot[i], u)).view(1, -1))
+            x_top[i + 1] = pm.dyn_net.predict(torch.cat((x_top[i], u)).view(1, -1))
+            x_bot[i + 1] = pm.dyn_net.predict(torch.cat((x_bot[i], u)).view(1, -1))
         try:
             # check sign of the last states
             x = x_top[N - 1]
@@ -1417,7 +1433,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     if plot_model_error:
         XU, Y, _ = ds.validation_set()
         Y = Y.cpu().numpy()
-        Yhatn = mw.user.sample(XU).cpu().detach().numpy()
+        Yhatn = pm.dyn_net.user.sample(XU).cpu().detach().numpy()
         E = Yhatn - Y
         # relative error (compared to the mean magnitude)
         Er = E / np.mean(np.abs(Y), axis=0)
@@ -1432,12 +1448,10 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
         plt.show()
 
     ctrl = get_controller(env, pm, ds, untransformed_config, online_adapt)
-    name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else "{}_{}".format(tsf_name,
-                                                                                pm.__class__.__name__)
+    name = get_full_controller_name(pm, ctrl, tsf_name)
     # expensive evaluation
     # evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921])
 
-    name = "{}_{}".format(ctrl.__class__.__name__, name)
     env.draw_user_text(name, 14, left_offset=-1.5)
     # env.sim_step_wait = 0.01
     sim = block_push.InteractivePush(env, ctrl, num_frames=300, plot=False, save=True, stop_when_done=False)
@@ -1454,37 +1468,35 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
 def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM,
                                                    prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
     seed = 1
-    d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    d = get_device()
     env = get_easy_env(p.GUI, level=1, log_video=True)
 
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config, device=d)
 
     logger.info("initial random seed %d", rand.seed(seed))
-    untransformed_config, tsf_name = update_ds_with_transform(env, ds, use_tsf)
+    untransformed_config, tsf_name = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
 
-    # TODO remove prior / reduce weight of it
-    if prior_class is prior.NNPrior:
-        mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
-                           name="dynamics_{}".format(tsf_name))
-        pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=600)
-    elif prior_class is prior.NoPrior:
-        pm = prior.NoPrior()
-    else:
-        pm = prior_class.from_data(ds)
+    # TODO remove prior / reduce weight of it?
+    pm = get_loaded_prior(prior_class, ds, tsf_name, False)
 
-    # TODO get some data when we're next to a wall and use it fit a local model
+    # get some data when we're next to a wall and use it fit a local model
+    # TODO don't use all of the data; use just the part that's stuck against a wall?
+    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
+    ds_wall = block_push.PushDataSource(env, data_dir="push_wall_recovery_online.mat", validation_ratio=0.1,
+                                        config=config, device=d)
+    update_ds_with_transform(env, ds_wall, use_tsf, evaluate_transform=False)
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     # TODO decide how much to update the local model
-    dynamics = online_model.OnlineDynamicsModel(0.01, pm, ds, env.state_difference, local_mix_weight=1.0,
+    dynamics = online_model.OnlineDynamicsModel(0., pm, ds_wall, env.state_difference, local_mix_weight=1.0,
                                                 sigreg=1e-10)
     ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
                                         constrain_state=constrain_state, mpc_opts=mpc_opts)
-    name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else "{}_{}".format(tsf_name, pm.__class__.__name__)
+
+    name = get_full_controller_name(pm, ctrl, tsf_name)
 
     # TODO set up the block next to the wall
-    name = "{}_{}".format(ctrl.__class__.__name__, name)
     env.draw_user_text(name, 14, left_offset=-1.5)
     sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=False, stop_when_done=False)
     seed = rand.seed()
@@ -1506,7 +1518,6 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     env.draw_user_text('center {}'.format(translation), 2)
     sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=False, save=False)
 
-    name = "{}_{}".format(ctrl.__class__.__name__, name)
     env.draw_user_text(name, 14, left_offset=-1.5)
     writer = SummaryWriter(flush_secs=20, comment=name)
 
@@ -1663,8 +1674,11 @@ def learn_model(seed=1, name="", transform_name="", train_epochs=600, batch_N=50
 if __name__ == "__main__":
     level = 1
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
-    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=False)
-    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
+
+    test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
+
+    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=False)
+    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
     # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
     # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
     # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True, prior_class=prior.NoPrior)
