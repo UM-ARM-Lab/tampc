@@ -115,12 +115,13 @@ def _draw_contact_friction(line_unique_ids, contact):
     # friction along y
     scale = 0.2
     fy = contact[10]
-    line_unique_ids[0] = _draw_debug_2d_line(line_unique_ids[0], start, [fy * v for v in contact[11]], size=fy,
-                                             scale=scale, color=(1, 0, 0))
+    c = (1, 0.4, 0.7)
+    line_unique_ids[0] = _draw_debug_2d_line(line_unique_ids[0], start, [-fy * v for v in contact[11]], size=abs(fy),
+                                             scale=scale, color=c)
     # friction along x
     fx = contact[12]
-    line_unique_ids[1] = _draw_debug_2d_line(line_unique_ids[1], start, [fx * v for v in contact[13]], size=fx,
-                                             scale=scale, color=(1, 0, 0))
+    line_unique_ids[1] = _draw_debug_2d_line(line_unique_ids[1], start, [-fx * v for v in contact[13]], size=abs(fx),
+                                             scale=scale, color=c)
 
 
 class PushLoader(load_utils.DataLoader):
