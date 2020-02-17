@@ -1501,7 +1501,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     """Fixed set of benchmark tasks to do control over, with the total reward for each task collected and reported"""
     num_frames = 150
     env.set_camera_position(translation)
-    env.draw_user_text('center {}'.format(translation), 1)
+    env.draw_user_text('center {}'.format(translation), 2)
     sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=False, save=False)
 
     name = "{}_{}".format(ctrl.__class__.__name__, name)
@@ -1555,15 +1555,15 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
         init_block_pos = np.add(init_block_pos, translation)
         goal_pos = np.add(np.random.uniform(-0.6, 0.6, 2), translation)
         env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher, goal=goal_pos)
-        env.draw_user_text('task {}'.format(task_seed), 2)
+        env.draw_user_text('task {}'.format(task_seed), 3)
         logger.info("task %d init block %s goal %s", task_seed, init_block_pos, goal_pos)
 
         task_costs = np.zeros((num_frames, tries))
 
         for i, try_seed in enumerate(try_seeds[t]):
             rand.seed(try_seed)
-            env.draw_user_text('try {}'.format(try_seed), 3)
-            env.draw_user_text('success {}/{}'.format(int(torch.sum(successes[t])), tries), 4)
+            env.draw_user_text('try {}'.format(try_seed), 4)
+            env.draw_user_text('success {}/{}'.format(int(torch.sum(successes[t])), tries), 5)
             sim.run(try_seed)
             logger.info("task %d try %d run cost %f", task_seed, try_seed, sum(sim.last_run_cost))
             total_costs[t, i] = sum(sim.last_run_cost)

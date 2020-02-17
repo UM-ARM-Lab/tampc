@@ -245,7 +245,7 @@ def run_direct_push():
     # env = block_push.PushWithForceIndirectlyEnv(mode=p.GUI, init_pusher=-0,
     #                                           init_block=init_block_pos, init_yaw=init_block_yaw, environment_level=1)
 
-    env.draw_user_text('run direct push')
+    env.draw_user_text('run direct push', 2)
     ctrl = controller.PreDeterminedController([(0.0, 1, 0.2) for _ in range(N)])
     # record how many steps of pushing to reach 1m
     contacts = {'bp': [], 'bw': []}

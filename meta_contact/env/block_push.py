@@ -706,7 +706,6 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
                 for key, value in step_info.items():
                     info[key].append(value)
                 p.stepSimulation()
-                time.sleep(0.1)
 
         info = {key: np.stack(value, axis=0) for key, value in info.items() if len(value)}
         # apply the sliding along side after the push settles down
@@ -851,6 +850,7 @@ class InteractivePush(simulation.Simulation):
         obs = self._reset_sim()
         for simTime in range(self.num_frames - 1):
             self.traj[simTime, :] = obs
+            self.env.draw_user_text("{}".format(simTime), 1)
 
             start = time.perf_counter()
 
