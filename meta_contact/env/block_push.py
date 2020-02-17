@@ -371,7 +371,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         pusherPose = p.getBasePositionAndOrientation(self.pusherId)
         return pusherPose[0]
 
-    def _observe_contact(self):
+    def _observe_contact(self, visualize=True):
         # assume there's 4 contact points between block and plane
         info = {'bp': np.zeros((4, 2))}
         # push of plane onto block
@@ -379,7 +379,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
         for i, contact in enumerate(contactInfo):
             if i not in self._friction_debug_lines:
                 self._friction_debug_lines[i] = [-1, -1]
-            _draw_contact_friction(self._friction_debug_lines[i], contact)
+            if visualize:
+                _draw_contact_friction(self._friction_debug_lines[i], contact)
             info['bp'][i] = (contact[10], contact[12])
 
         if self.level > 0:
@@ -389,8 +390,10 @@ class PushAgainstWallEnv(MyPybulletEnv):
             contactInfo = p.getContactPoints(self.blockId, self.walls[0])
             for i, contact in enumerate(contactInfo):
                 name = 'w{}'.format(i)
-                self._contact_debug_lines[name] = _draw_contact_point(self._contact_debug_lines.get(name, -1), contact)
                 info['bw'][i] = contact[9]
+                if visualize:
+                    self._contact_debug_lines[name] = _draw_contact_point(self._contact_debug_lines.get(name, -1),
+                                                                          contact)
         return info
 
     STATIC_VELOCITY_THRESHOLD = 5e-5
