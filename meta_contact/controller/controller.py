@@ -162,7 +162,15 @@ class MPC(Controller):
         # extract the last state; assume if given 3 dimensions then it's (B x T x nx)
         if len(state.shape) is 3:
             state = state[:, -1, :]
-        return self.terminal_cost_multiplier * self.cost(state, action, terminal=True)
+        state_loss = self.terminal_cost_multiplier * self.cost(state, action, terminal=True)
+        # TODO specific to block pushing (want final pose to point towards goal) - should push to inherited class
+        diff = self.compare_to_goal(state, self.goal)
+        angle_to_goal = torch.atan2(-diff[:, 1], -diff[:, 0])
+        # between 0 and 10
+        orientation_loss = math_utils.angular_diff_batch(angle_to_goal, state[:, 2]) ** 2
+        # decrease orientation loss if we're close to the goal
+        orientation_loss *= state_loss / 10
+        return state_loss + orientation_loss
 
     @abc.abstractmethod
     def _command(self, obs):
