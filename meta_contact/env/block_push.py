@@ -103,9 +103,8 @@ def _draw_debug_2d_line(line_unique_id, start, diff, color=(0, 0, 0), size=2, sc
 
 def _draw_contact_point(line_unique_id, contact, flip=True):
     start = contact[5]
-    dir = list(c * -1 if flip else 1 for c in contact[7])
+    dir = list(c * -1 if flip else c * 1 for c in contact[7])
     force = abs(contact[9])
-    dir[2] *= 0.3
     return _draw_debug_2d_line(line_unique_id, start, dir, size=force, scale=0.1 * force, color=(1, 0, 0))
 
 
@@ -768,9 +767,9 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
         if self.pusherConstraint is not None:
             p.removeConstraint(self.pusherConstraint)
             self.pusherConstraint = None
-        old_state = self._obs()
         # normalize action such that the input can be within a fixed range
         # first action is difference in along
+        old_state = self._obs()
         d_along = action[0] * self.MAX_SLIDE
         # TODO consider having u as fn and ft
         # second action is push magnitude
@@ -792,23 +791,34 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
         fn = math.cos(f_dir) * f_mag
         # apply force on the left face of the block at along
         p.applyExternalForce(self.pusherId, -1, [fn, ft, 0], [0, 0, 0], p.LINK_FRAME)
+
+        # MAX_MOVE = 0.005
+        # dx = action[0] * MAX_MOVE
+        # dy = action[1] * MAX_MOVE
+        # z = self.initPusherPos[2]
+        # old_state = self._observe_pusher()
+        # eePos = [old_state[0] + dx, old_state[1] + dy, z]
+        # self._move_pusher(eePos)
+
         p.stepSimulation()
 
-        seen_contact = False
         info = self._observe_contact()
+        max_contact = 0
         for _ in range(20):
-            if not seen_contact:
-                contactInfo = p.getContactPoints(self.pusherId, self.blockId)
-                for i, contact in enumerate(contactInfo):
-                    seen_contact = True
-                    name = 'e{}'.format(i)
-                    self._contact_debug_lines[name] = _draw_contact_point(self._contact_debug_lines.get(name, -1),
-                                                                          contact,
-                                                                          flip=False)
             # also move the pusher along visually
             # self._keep_pusher_adjacent()
             for _ in range(5):
+                contactInfo = p.getContactPoints(self.pusherId, self.blockId)
+                for i, contact in enumerate(contactInfo):
+                    if contact[9] > max_contact:
+                        max_contact = contact[9]
+                        name = 'e{}'.format(i)
+                        self._contact_debug_lines[name] = _draw_contact_point(self._contact_debug_lines.get(name, -1),
+                                                                              contact,
+                                                                              flip=False)
                 p.stepSimulation()
+                if self.mode is p.GUI and self.sim_step_wait:
+                    time.sleep(self.sim_step_wait)
 
         # apply the sliding along side after the push settles down
         self.along = np.clip(old_state[3] + d_along, -1, 1)

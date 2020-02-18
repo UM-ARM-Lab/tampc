@@ -237,17 +237,18 @@ def tune_direct_push():
 
 
 def run_direct_push():
-    N = 80
+    N = 100
     init_block_pos = [0., 0.18]
     init_block_yaw = -1.4
-    env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=-1, log_video=True,
-                                              init_block=init_block_pos, init_yaw=init_block_yaw, environment_level=1)
-    # env = block_push.PushWithForceIndirectlyEnv(mode=p.GUI, init_pusher=-0,
+    # env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=-1, log_video=True,
     #                                           init_block=init_block_pos, init_yaw=init_block_yaw, environment_level=1)
+    env = block_push.PushWithForceIndirectlyEnv(mode=p.GUI, init_pusher=-1, log_video=True,
+                                              init_block=init_block_pos, init_yaw=init_block_yaw, environment_level=0)
 
     # env.sim_step_wait = 0.01
     env.draw_user_text('run direct push', 2)
     ctrl = controller.PreDeterminedController([(0.0, 1, -1) for _ in range(N)])
+    # ctrl = controller.PreDeterminedController([(1, -1, 0) for _ in range(N)])
     # record how many steps of pushing to reach 1m
     contacts = {'bp': [], 'bw': []}
     obs = env.reset()
