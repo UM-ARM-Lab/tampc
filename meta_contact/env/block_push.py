@@ -94,32 +94,45 @@ def _draw_debug_2d_pose(line_unique_ids, pose, color=(0, 0, 0), length=0.15 / 2,
                                             color, 2, replaceItemUniqueId=line_unique_ids[1])
 
 
-def _draw_debug_2d_line(line_unique_id, start, diff, color=(0, 0, 0), size=2, scale=0.4):
+def _draw_debug_2d_line(line_unique_id, start, diff, color=(0, 0, 0), size=2., scale=0.4):
     return p.addUserDebugLine(start, np.add(start, [diff[0] * scale, diff[1] * scale,
                                                     diff[2] * scale if len(diff) is 3 else 0]),
                               color, lineWidth=size,
                               replaceItemUniqueId=line_unique_id)
 
 
-def _draw_contact_point(line_unique_id, contact, flip=True):
+def _draw_contact_point(line_unique_ids, contact, flip=True):
+    while len(line_unique_ids) < 4:
+        line_unique_ids.append(-1)
     start = contact[5]
-    dir = list(c * -1 if flip else c * 1 for c in contact[7])
+    direction = list(c * -1 if flip else c * 1 for c in contact[7])
     force = abs(contact[9])
-    return _draw_debug_2d_line(line_unique_id, start, dir, size=force, scale=0.1 * force, color=(1, 0, 0))
+    dv = [force * v for v in direction]
+    line_unique_ids[2] = _draw_debug_2d_line(line_unique_ids[2], start, dv, size=force, scale=0.1,
+                                             color=(1, 0, 0))
+    # combined normal vector (adding lateral friction)
+    fy = contact[10]
+    dy = [fy * v for v in contact[11]]
+    fx = contact[12]
+    dx = [fx * v for v in contact[13]]
+    dv_all = [sum(i) for i in zip(dv, dy, dx)]
+    line_unique_ids[3] = _draw_debug_2d_line(line_unique_ids[3], start, dv_all, size=np.linalg.norm(dv_all), scale=0.1,
+                                             color=(1, 1, 0))
+    _draw_contact_friction(line_unique_ids, contact)
 
 
 def _draw_contact_friction(line_unique_ids, contact):
     start = list(contact[5])
     start[2] = _BLOCK_HEIGHT
     # friction along y
-    scale = 0.2
+    scale = 0.1
     fy = contact[10]
     c = (1, 0.4, 0.7)
-    line_unique_ids[0] = _draw_debug_2d_line(line_unique_ids[0], start, [-fy * v for v in contact[11]], size=abs(fy),
+    line_unique_ids[0] = _draw_debug_2d_line(line_unique_ids[0], start, [fy * v for v in contact[11]], size=abs(fy),
                                              scale=scale, color=c)
     # friction along x
     fx = contact[12]
-    line_unique_ids[1] = _draw_debug_2d_line(line_unique_ids[1], start, [-fx * v for v in contact[13]], size=abs(fx),
+    line_unique_ids[1] = _draw_debug_2d_line(line_unique_ids[1], start, [fx * v for v in contact[13]], size=abs(fx),
                                              scale=scale, color=c)
 
 
@@ -402,8 +415,9 @@ class PushAgainstWallEnv(MyPybulletEnv):
                 name = 'w{}'.format(i)
                 info['bw'][i] = contact[9]
                 if visualize:
-                    self._contact_debug_lines[name] = _draw_contact_point(self._contact_debug_lines.get(name, -1),
-                                                                          contact)
+                    if name not in self._contact_debug_lines:
+                        self._contact_debug_lines[name] = [-1, -1, -1]
+                    _draw_contact_point(self._contact_debug_lines[name], contact)
         return info
 
     STATIC_VELOCITY_THRESHOLD = 5e-5
@@ -759,8 +773,9 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
         for i, contact in enumerate(contactInfo):
             name = 'e{}'.format(i)
             if visualize:
-                self._contact_debug_lines[name] = _draw_contact_point(self._contact_debug_lines.get(name, -1), contact,
-                                                                      flip=False)
+                if name not in self._contact_debug_lines:
+                    self._contact_debug_lines[name] = [-1, -1, -1]
+                _draw_contact_point(self._contact_debug_lines[name], contact, flip=False)
         return info
 
     def step(self, action):
@@ -810,12 +825,12 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
             for _ in range(5):
                 contactInfo = p.getContactPoints(self.pusherId, self.blockId)
                 for i, contact in enumerate(contactInfo):
-                    if contact[9] > max_contact:
+                    if abs(contact[9]) > abs(max_contact):
                         max_contact = contact[9]
                         name = 'e{}'.format(i)
-                        self._contact_debug_lines[name] = _draw_contact_point(self._contact_debug_lines.get(name, -1),
-                                                                              contact,
-                                                                              flip=False)
+                        if name not in self._contact_debug_lines:
+                            self._contact_debug_lines[name] = [-1, -1, -1]
+                        _draw_contact_point(self._contact_debug_lines[name], contact, flip=False)
                 p.stepSimulation()
                 if self.mode is p.GUI and self.sim_step_wait:
                     time.sleep(self.sim_step_wait)
