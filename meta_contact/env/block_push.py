@@ -386,7 +386,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         return state[2:5]
 
     def _move_pusher(self, end):
-        p.changeConstraint(self.pusherConstraint, end, maxForce=200)
+        p.changeConstraint(self.pusherConstraint, end, maxForce=20)
 
     def _observe_block(self):
         blockPose = p.getBasePositionAndOrientation(self.blockId)
@@ -795,6 +795,7 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
         if self.pusherConstraint is not None:
             p.removeConstraint(self.pusherConstraint)
             self.pusherConstraint = None
+
         # normalize action such that the input can be within a fixed range
         # first action is difference in along
         old_state = self._obs()
@@ -820,12 +821,12 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
         # apply force on the left face of the block at along
         p.applyExternalForce(self.pusherId, -1, [fn, ft, 0], [0, 0, 0], p.LINK_FRAME)
 
-        # MAX_MOVE = 0.005
-        # dx = action[0] * MAX_MOVE
-        # dy = action[1] * MAX_MOVE
+        # MAX_MOVE = 0.005/100
+        # dx, dy = math_utils.rotate_wrt_origin((fn, ft), state[2])
+        # dx *= MAX_MOVE
+        # dy *= MAX_MOVE
         # z = self.initPusherPos[2]
-        # old_state = self._observe_pusher()
-        # eePos = [old_state[0] + dx, old_state[1] + dy, z]
+        # eePos = [pos[0] + dx, pos[1] + dy, z]
         # self._move_pusher(eePos)
 
         p.stepSimulation()
