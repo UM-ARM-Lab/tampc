@@ -101,44 +101,51 @@ def _draw_debug_2d_line(line_unique_id, start, diff, color=(0, 0, 0), size=2., s
                               replaceItemUniqueId=line_unique_id)
 
 
+def _get_lateral_friction_forces(contact, flip=True):
+    force_sign = -1 if flip else 1
+    fy = force_sign * contact[10]
+    fyd = [fy * v for v in contact[11]]
+    fx = force_sign * contact[12]
+    fxd = [fx * v for v in contact[13]]
+    return fyd, fxd
+
+
+def _get_total_contact_force(contact, flip=True):
+    force_sign = -1 if flip else 1
+    force = force_sign * contact[9]
+    dv = [force * v for v in contact[7]]
+    fyd, fxd = _get_lateral_friction_forces(contact, flip)
+    f_all = [sum(i) for i in zip(dv, fyd, fxd)]
+    return f_all
+
+
 def _draw_contact_point(line_unique_ids, contact, flip=True):
     while len(line_unique_ids) < 4:
         line_unique_ids.append(-1)
-    force_sign = -1 if flip else 1
     start = contact[5]
-    force = force_sign * contact[9]
-    dv = [force * v for v in contact[7]]
+    f_all = _get_total_contact_force(contact, flip)
     # line_unique_ids[2] = _draw_debug_2d_line(line_unique_ids[2], start, dv, size=abs(force), scale=0.1,
     #                                          color=(1, 0, 0))
     # combined normal vector (adding lateral friction)
-    fy = force_sign * contact[10]
-    dy = [fy * v for v in contact[11]]
-    fx = force_sign * contact[12]
-    dx = [fx * v for v in contact[13]]
-    dv_all = [sum(i) for i in zip(dv, dy, dx)]
-    f_size = np.linalg.norm(dv_all)
+    f_size = np.linalg.norm(f_all)
     # project away z
-    dv_all[2] = 0
-    line_unique_ids[3] = _draw_debug_2d_line(line_unique_ids[3], start, dv_all, size=f_size, scale=0.03,
-                                             color=(1, 1, 0))
+    f_all[2] = 0
+    line_unique_ids[3] = _draw_debug_2d_line(line_unique_ids[3], start, f_all, size=f_size, scale=0.03, color=(1, 1, 0))
     # _draw_contact_friction(line_unique_ids, contact, flip)
     return f_size
 
 
 def _draw_contact_friction(line_unique_ids, contact, flip=True):
     start = list(contact[5])
-    force_sign = -1 if flip else 1
     start[2] = _BLOCK_HEIGHT
     # friction along y
     scale = 0.1
-    fy = force_sign * contact[10]
     c = (1, 0.4, 0.7)
-    line_unique_ids[0] = _draw_debug_2d_line(line_unique_ids[0], start, [fy * v for v in contact[11]], size=abs(fy),
-                                             scale=scale, color=c)
-    # friction along x
-    fx = force_sign * contact[12]
-    line_unique_ids[1] = _draw_debug_2d_line(line_unique_ids[1], start, [fx * v for v in contact[13]], size=abs(fx),
-                                             scale=scale, color=c)
+    fyd, fxd = _get_lateral_friction_forces(contact, flip)
+    line_unique_ids[0] = _draw_debug_2d_line(line_unique_ids[0], start, fyd, size=np.linalg.norm(fyd), scale=scale,
+                                             color=c)
+    line_unique_ids[1] = _draw_debug_2d_line(line_unique_ids[1], start, fxd, size=np.linalg.norm(fxd), scale=scale,
+                                             color=c)
 
 
 class PushLoader(load_utils.DataLoader):
@@ -406,29 +413,53 @@ class PushAgainstWallEnv(MyPybulletEnv):
         info = {'bp': np.zeros((4, 2))}
         # push of plane onto block
         contactInfo = p.getContactPoints(self.blockId, self.planeId)
+        # get reaction force on pusher TODO generalize this
+        reaction_force = [0, 0, 0]
         for i, contact in enumerate(contactInfo):
             if i not in self._friction_debug_lines:
                 self._friction_debug_lines[i] = [-1, -1]
             if visualize:
                 _draw_contact_friction(self._friction_debug_lines[i], contact)
             info['bp'][i] = (contact[10], contact[12])
+            fy, fx = _get_lateral_friction_forces(contact)
+            reaction_force = [sum(i) for i in zip(reaction_force, fy, fx)]
 
         if self.level > 0:
             # assume at most 4 contact points
             info['bw'] = np.zeros(4)
-            # get reaction force on pusher TODO calculate then generalize this
             contactInfo = p.getContactPoints(self.blockId, self.walls[0])
             for i, contact in enumerate(contactInfo):
                 name = 'w{}'.format(i)
                 info['bw'][i] = contact[9]
 
+                f_contact = _get_total_contact_force(contact)
+                reaction_force = [sum(i) for i in zip(reaction_force, f_contact)]
+
                 # only visualize the largest contact
                 if abs(contact[9]) > abs(self._largest_contact.get(name, 0)):
                     self._largest_contact[name] = contact[9]
-                    if visualize:
-                        if name not in self._contact_debug_lines:
-                            self._contact_debug_lines[name] = [-1, -1, -1]
-                        _draw_contact_point(self._contact_debug_lines[name], contact)
+                    # if visualize:
+                    #     if name not in self._contact_debug_lines:
+                    #         self._contact_debug_lines[name] = [-1, -1, -1]
+                    #     _draw_contact_point(self._contact_debug_lines[name], contact)
+
+        reaction_force[2] = 0
+        # save reaction force
+        info['r'] = reaction_force
+        # draw reaction force
+        if visualize:
+            name = 'r'
+            reaction_force_size = np.linalg.norm(reaction_force)
+            if reaction_force_size > self._largest_contact.get(name, 0):
+                start = self._observe_pusher()
+                self._largest_contact[name] = reaction_force_size
+                if name not in self._contact_debug_lines:
+                    self._contact_debug_lines[name] = -1
+                self._contact_debug_lines[name] = _draw_debug_2d_line(self._contact_debug_lines[name], start,
+                                                                      reaction_force,
+                                                                      size=reaction_force_size, scale=0.03,
+                                                                      color=(1, 0, 1))
+
         return info
 
     STATIC_VELOCITY_THRESHOLD = 5e-5
@@ -733,7 +764,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         p.applyExternalForce(self.blockId, -1, [fn, ft, 0], [-_MAX_ALONG, self.along * _MAX_ALONG, 0], p.LINK_FRAME)
         p.stepSimulation()
 
-        info = {'bp': [], 'bw': []}
+        info = {}
         logger.info("before observe contact")
         for t in range(20):
             for tt in range(5):
@@ -741,12 +772,15 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
                 self._keep_pusher_adjacent()
                 step_info = self._observe_contact()
                 for key, value in step_info.items():
+                    if key not in info:
+                        info[key] = []
                     info[key].append(value)
+
                 p.stepSimulation()
                 if self.mode is p.GUI and self.sim_step_wait:
                     time.sleep(self.sim_step_wait)
 
-        logger.info(self._largest_contact)
+        logger.debug(self._largest_contact)
 
         info = {key: np.stack(value, axis=0) for key, value in info.items() if len(value)}
         # apply the sliding along side after the push settles down
