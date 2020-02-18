@@ -236,6 +236,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         super().__init__(**kwargs)
         self.level = environment_level
         self.sim_step_wait = sim_step_wait
+        self.max_pusher_force = 200
 
         # initial config
         self.goal = None
@@ -387,7 +388,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         return state[2:5]
 
     def _move_pusher(self, end):
-        p.changeConstraint(self.pusherConstraint, end, maxForce=20)
+        p.changeConstraint(self.pusherConstraint, end, maxForce=self.max_pusher_force)
 
     def _observe_block(self):
         blockPose = p.getBasePositionAndOrientation(self.blockId)
@@ -735,9 +736,9 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         info = {'bp': [], 'bw': []}
         logger.info("before observe contact")
         for t in range(20):
-            # also move the pusher along visually
-            self._keep_pusher_adjacent()
             for tt in range(5):
+                # also move the pusher along visually
+                self._keep_pusher_adjacent()
                 step_info = self._observe_contact()
                 for key, value in step_info.items():
                     info[key].append(value)
@@ -776,9 +777,6 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
         super()._setup_experiment()
         # renable collision
         p.setCollisionFilterPair(self.pusherId, self.blockId, -1, -1, 1)
-        if self.pusherConstraint is not None:
-            p.removeConstraint(self.pusherConstraint)
-            self.pusherConstraint = None
 
     def _observe_contact(self, visualize=True):
         info = super(PushWithForceIndirectlyEnv, self)._observe_contact()
@@ -824,6 +822,7 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
         # apply force on the left face of the block at along
         p.applyExternalForce(self.pusherId, -1, [fn, ft, 0], [0, 0, 0], p.LINK_FRAME)
 
+        # self.max_pusher_force = 20
         # MAX_MOVE = 0.005/100
         # dx, dy = math_utils.rotate_wrt_origin((fn, ft), state[2])
         # dx *= MAX_MOVE
