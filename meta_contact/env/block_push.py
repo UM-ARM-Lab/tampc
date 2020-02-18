@@ -104,38 +104,39 @@ def _draw_debug_2d_line(line_unique_id, start, diff, color=(0, 0, 0), size=2., s
 def _draw_contact_point(line_unique_ids, contact, flip=True):
     while len(line_unique_ids) < 4:
         line_unique_ids.append(-1)
+    force_sign = -1 if flip else 1
     start = contact[5]
-    direction = list(c * -1 if flip else c * 1 for c in contact[7])
-    force = abs(contact[9])
-    dv = [force * v for v in direction]
-    # line_unique_ids[2] = _draw_debug_2d_line(line_unique_ids[2], start, dv, size=force, scale=0.1,
+    force = force_sign * contact[9]
+    dv = [force * v for v in contact[7]]
+    # line_unique_ids[2] = _draw_debug_2d_line(line_unique_ids[2], start, dv, size=abs(force), scale=0.1,
     #                                          color=(1, 0, 0))
     # combined normal vector (adding lateral friction)
-    fy = contact[10]
+    fy = force_sign * contact[10]
     dy = [fy * v for v in contact[11]]
-    fx = contact[12]
+    fx = force_sign * contact[12]
     dx = [fx * v for v in contact[13]]
     dv_all = [sum(i) for i in zip(dv, dy, dx)]
     f_size = np.linalg.norm(dv_all)
     # project away z
     dv_all[2] = 0
-    line_unique_ids[3] = _draw_debug_2d_line(line_unique_ids[3], start, dv_all, size=f_size, scale=0.1,
+    line_unique_ids[3] = _draw_debug_2d_line(line_unique_ids[3], start, dv_all, size=f_size, scale=0.03,
                                              color=(1, 1, 0))
-    # _draw_contact_friction(line_unique_ids, contact)
+    # _draw_contact_friction(line_unique_ids, contact, flip)
     return f_size
 
 
-def _draw_contact_friction(line_unique_ids, contact):
+def _draw_contact_friction(line_unique_ids, contact, flip=True):
     start = list(contact[5])
+    force_sign = -1 if flip else 1
     start[2] = _BLOCK_HEIGHT
     # friction along y
     scale = 0.1
-    fy = contact[10]
+    fy = force_sign * contact[10]
     c = (1, 0.4, 0.7)
     line_unique_ids[0] = _draw_debug_2d_line(line_unique_ids[0], start, [fy * v for v in contact[11]], size=abs(fy),
                                              scale=scale, color=c)
     # friction along x
-    fx = contact[12]
+    fx = force_sign * contact[12]
     line_unique_ids[1] = _draw_debug_2d_line(line_unique_ids[1], start, [fx * v for v in contact[13]], size=abs(fx),
                                              scale=scale, color=c)
 
@@ -743,6 +744,8 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
                 p.stepSimulation()
                 if self.mode is p.GUI and self.sim_step_wait:
                     time.sleep(self.sim_step_wait)
+
+        logger.info(self._largest_contact)
 
         info = {key: np.stack(value, axis=0) for key, value in info.items() if len(value)}
         # apply the sliding along side after the push settles down
