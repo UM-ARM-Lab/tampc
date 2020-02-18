@@ -108,17 +108,21 @@ def _draw_contact_point(line_unique_ids, contact, flip=True):
     direction = list(c * -1 if flip else c * 1 for c in contact[7])
     force = abs(contact[9])
     dv = [force * v for v in direction]
-    line_unique_ids[2] = _draw_debug_2d_line(line_unique_ids[2], start, dv, size=force, scale=0.1,
-                                             color=(1, 0, 0))
+    # line_unique_ids[2] = _draw_debug_2d_line(line_unique_ids[2], start, dv, size=force, scale=0.1,
+    #                                          color=(1, 0, 0))
     # combined normal vector (adding lateral friction)
     fy = contact[10]
     dy = [fy * v for v in contact[11]]
     fx = contact[12]
     dx = [fx * v for v in contact[13]]
     dv_all = [sum(i) for i in zip(dv, dy, dx)]
-    line_unique_ids[3] = _draw_debug_2d_line(line_unique_ids[3], start, dv_all, size=np.linalg.norm(dv_all), scale=0.1,
+    f_size = np.linalg.norm(dv_all)
+    # project away z
+    dv_all[2] = 0
+    line_unique_ids[3] = _draw_debug_2d_line(line_unique_ids[3], start, dv_all, size=f_size, scale=0.1,
                                              color=(1, 1, 0))
-    _draw_contact_friction(line_unique_ids, contact)
+    # _draw_contact_friction(line_unique_ids, contact)
+    return f_size
 
 
 def _draw_contact_friction(line_unique_ids, contact):
@@ -246,6 +250,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self._rollout_debug_lines = {}
         self._error_debug_lines = {'pose': [-1, -1], 'line': -1}
         self._contact_debug_lines = {}
+        self._largest_contact = {}
         self._friction_debug_lines = {}
         self._debug_text = -1
         self._user_debug_text = {}
@@ -414,10 +419,14 @@ class PushAgainstWallEnv(MyPybulletEnv):
             for i, contact in enumerate(contactInfo):
                 name = 'w{}'.format(i)
                 info['bw'][i] = contact[9]
-                if visualize:
-                    if name not in self._contact_debug_lines:
-                        self._contact_debug_lines[name] = [-1, -1, -1]
-                    _draw_contact_point(self._contact_debug_lines[name], contact)
+
+                # only visualize the largest contact
+                if abs(contact[9]) > abs(self._largest_contact.get(name, 0)):
+                    self._largest_contact[name] = contact[9]
+                    if visualize:
+                        if name not in self._contact_debug_lines:
+                            self._contact_debug_lines[name] = [-1, -1, -1]
+                        _draw_contact_point(self._contact_debug_lines[name], contact)
         return info
 
     STATIC_VELOCITY_THRESHOLD = 5e-5
@@ -501,6 +510,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
     def _observe_finished_action(self, old_state, action):
         # get the net contact force between robot and block
         self.state = np.array(self._obs())
+        # clear contact information so we can reuse it for next step
+        self._largest_contact = {}
         # track trajectory
         prev_block = self.get_block_pose(old_state)
         new_block = self.get_block_pose(self.state)
@@ -772,10 +783,12 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
         contactInfo = p.getContactPoints(self.pusherId, self.blockId)
         for i, contact in enumerate(contactInfo):
             name = 'e{}'.format(i)
-            if visualize:
+            if abs(contact[9]) > abs(self._largest_contact.get(name, 0)):
+                self._largest_contact[name] = contact[9]
                 if name not in self._contact_debug_lines:
                     self._contact_debug_lines[name] = [-1, -1, -1]
                 _draw_contact_point(self._contact_debug_lines[name], contact, flip=False)
+
         return info
 
     def step(self, action):
@@ -816,25 +829,20 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
         # self._move_pusher(eePos)
 
         p.stepSimulation()
-
-        info = self._observe_contact()
-        max_contact = 0
+        info = {'bp': [], 'bw': []}
         for _ in range(20):
             # also move the pusher along visually
             # self._keep_pusher_adjacent()
             for _ in range(5):
-                contactInfo = p.getContactPoints(self.pusherId, self.blockId)
-                for i, contact in enumerate(contactInfo):
-                    if abs(contact[9]) > abs(max_contact):
-                        max_contact = contact[9]
-                        name = 'e{}'.format(i)
-                        if name not in self._contact_debug_lines:
-                            self._contact_debug_lines[name] = [-1, -1, -1]
-                        _draw_contact_point(self._contact_debug_lines[name], contact, flip=False)
+                step_info = self._observe_contact()
+                for key, value in step_info.items():
+                    info[key].append(value)
                 p.stepSimulation()
                 if self.mode is p.GUI and self.sim_step_wait:
                     time.sleep(self.sim_step_wait)
 
+        info = {key: np.stack(value, axis=0) for key, value in info.items() if len(value)}
+        logger.info('normal {}'.format(self._largest_contact))
         # apply the sliding along side after the push settles down
         self.along = np.clip(old_state[3] + d_along, -1, 1)
         # self._keep_pusher_adjacent()
