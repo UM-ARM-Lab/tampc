@@ -1354,7 +1354,8 @@ def get_controller_options(env):
         'compare_to_goal': env.state_difference,
         'device': d,
         'terminal_cost_multiplier': 50,
-        'adjust_model_pred_with_prev_error': True,  # TODO doesn't actually well in freespace right now
+        'adjust_model_pred_with_prev_error': True,
+        'use_orientation_terminal_cost': False,
     }
     mpc_opts = {
         'num_samples': 10000,
@@ -1396,7 +1397,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
 
     logger.info("initial random seed %d", rand.seed(seed))
 
-    untransformed_config, tsf_name = update_ds_with_transform(env, ds, use_tsf)
+    untransformed_config, tsf_name = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
 
     pm = get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics)
 
@@ -1455,7 +1456,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     env.draw_user_text(name, 14, left_offset=-1.5)
     # env.sim_step_wait = 0.01
     sim = block_push.InteractivePush(env, ctrl, num_frames=300, plot=False, save=True, stop_when_done=False)
-    seed = rand.seed()
+    seed = rand.seed(2)
     env.draw_user_text("try {}".format(seed), 2)
     sim.run(seed)
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
@@ -1463,6 +1464,14 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     plt.show()
 
     env.close()
+
+
+class HardCodedContactDynamicsWrapper:
+    def __init__(self, dynamics):
+        self.nominal_dynamics = dynamics
+
+    def __call__(self, state, u):
+        return self.nominal_dynamics(state, u)
 
 
 def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM,
@@ -1482,17 +1491,21 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
     # get some data when we're next to a wall and use it fit a local model
     # TODO don't use all of the data; use just the part that's stuck against a wall?
-    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-    ds_wall = block_push.PushDataSource(env, data_dir="push_wall_recovery_online.mat", validation_ratio=0.1,
-                                        config=config, device=d)
-    update_ds_with_transform(env, ds_wall, use_tsf, evaluate_transform=False)
+    # config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
+    # ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_wall_recovery_online.mat", validation_ratio=0.1,
+    #                                     config=config, device=d)
+    # update_ds_with_transform(env, ds_wall, use_tsf, evaluate_transform=False)
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
+    common_wrapper_opts['adjust_model_pred_with_prev_error'] = True
     # TODO decide how much to update the local model
-    dynamics = online_model.OnlineDynamicsModel(0., pm, ds_wall, env.state_difference, local_mix_weight=1.0,
-                                                sigreg=1e-10)
-    ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
-                                        constrain_state=constrain_state, mpc_opts=mpc_opts)
+    # dynamics = online_model.OnlineDynamicsModel(0., pm, ds_wall, env.state_difference, local_mix_weight=1.0,
+    #                                             sigreg=1e-10)
+    # ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
+    #                                     constrain_state=constrain_state, mpc_opts=mpc_opts)
+    # TODO try hardcoded to see if controller will do what we want given the hypothesized model predictions
+    dynamics = HardCodedContactDynamicsWrapper(pm.dyn_net)
+    ctrl = controller.MPPI(dynamics, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
 
     name = get_full_controller_name(pm, ctrl, tsf_name)
 
