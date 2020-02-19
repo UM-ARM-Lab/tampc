@@ -124,7 +124,8 @@ class PreDeterminedController(Controller):
 
 class MPC(Controller):
     def __init__(self, dynamics, config, Q=1, R=1, compare_to_goal=torch.sub, u_min=None, u_max=None, device='cpu',
-                 terminal_cost_multiplier=0., adjust_model_pred_with_prev_error=False):
+                 terminal_cost_multiplier=0., adjust_model_pred_with_prev_error=False,
+                 use_orientation_terminal_cost=False):
         super().__init__(compare_to_goal)
 
         self.nu = config.nu
@@ -136,6 +137,7 @@ class MPC(Controller):
             self.u_min, self.u_max = tensor_utils.ensure_tensor(self.d, self.dtype, self.u_min, self.u_max)
         self.dynamics = dynamics
         self.adjust_model_pred_with_prev_error = adjust_model_pred_with_prev_error
+        self.use_orientation_terminal_cost = use_orientation_terminal_cost
 
         # cost
         self.Q = tensor_utils.ensure_diagonal(Q, self.nx).to(device=self.d, dtype=self.dtype)
@@ -163,14 +165,17 @@ class MPC(Controller):
         if len(state.shape) is 3:
             state = state[:, -1, :]
         state_loss = self.terminal_cost_multiplier * self.cost(state, action, terminal=True)
+        total_loss = state_loss
         # TODO specific to block pushing (want final pose to point towards goal) - should push to inherited class
-        diff = self.compare_to_goal(state, self.goal)
-        angle_to_goal = torch.atan2(-diff[:, 1], -diff[:, 0])
-        # between 0 and 10
-        orientation_loss = math_utils.angular_diff_batch(angle_to_goal, state[:, 2]) ** 2
-        # decrease orientation loss if we're close to the goal
-        orientation_loss *= state_loss / 10
-        return state_loss + orientation_loss
+        if self.use_orientation_terminal_cost:
+            diff = self.compare_to_goal(state, self.goal)
+            angle_to_goal = torch.atan2(-diff[:, 1], -diff[:, 0])
+            # between 0 and 10
+            orientation_loss = math_utils.angular_diff_batch(angle_to_goal, state[:, 2]) ** 2
+            # decrease orientation loss if we're close to the goal
+            orientation_loss *= state_loss / 10
+            total_loss = state_loss + orientation_loss
+        return total_loss
 
     @abc.abstractmethod
     def _command(self, obs):

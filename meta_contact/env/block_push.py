@@ -302,11 +302,12 @@ class PushAgainstWallEnv(MyPybulletEnv):
         c = (0.5, 0, 0.5)
         _draw_debug_2d_pose(self._error_debug_lines['pose'], pred_pose, c)
         pose = self.get_block_pose(self.state)
+        # use size to represent error in rotation
+        angle_diff = abs(math_utils.angular_diff(pred_pose[2], pose[2]))
         pose[2] = _BLOCK_HEIGHT
         # draw line from current pose to predicted pose
         self._error_debug_lines['line'] = _draw_debug_2d_line(self._error_debug_lines['line'], pose,
-                                                              (pred_pose - pose)[:2], c, scale=20)
-        logger.info(np.linalg.norm((pred_pose - pose)[:2]))
+                                                              (pred_pose - pose)[:2], c, scale=20, size=angle_diff * 50)
 
     def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
         """Change task configuration; assumes only goal position is specified #TOOD relax assumption"""
