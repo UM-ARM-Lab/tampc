@@ -1471,7 +1471,11 @@ class HardCodedContactDynamicsWrapper:
         self.nominal_dynamics = dynamics
 
     def __call__(self, state, u):
-        return self.nominal_dynamics(state, u)
+        nominal_next_state = self.nominal_dynamics(state, u)
+        # pushing up at high along doesn't change position
+        affected = (state[:, 3] > 0.3) & (u[:, 2] > 0.)
+        nominal_next_state[affected, :2] = state[affected, :2]
+        return nominal_next_state
 
 
 def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM,
