@@ -213,6 +213,8 @@ class MPC(Controller):
             relative_residual = self.diff_predicted / diff_actual
             # ignore along since it can be 0
             self.prediction_error.append(relative_residual[:, :3].abs())
+            # try correcting for slide along
+            self.diff_predicted[:, -1] = 0
 
         u = self._command(obs)
         if self.u_max is not None:
