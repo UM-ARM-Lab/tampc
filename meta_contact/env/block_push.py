@@ -445,6 +445,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
                     #     _draw_contact_point(self._contact_debug_lines[name], contact)
 
         reaction_force[2] = 0
+        # TODO process and pass reaction force onto controller
         # save reaction force
         info['r'] = reaction_force
         # draw reaction force
@@ -766,7 +767,6 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         p.stepSimulation()
 
         info = {}
-        logger.info("before observe contact")
         for t in range(20):
             for tt in range(5):
                 # also move the pusher along visually
@@ -780,8 +780,6 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
                 p.stepSimulation()
                 if self.mode is p.GUI and self.sim_step_wait:
                     time.sleep(self.sim_step_wait)
-
-        logger.debug(self._largest_contact)
 
         info = {key: np.stack(value, axis=0) for key, value in info.items() if len(value)}
         # apply the sliding along side after the push settles down
