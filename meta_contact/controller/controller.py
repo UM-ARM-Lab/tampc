@@ -36,8 +36,8 @@ class Controller(abc.ABC):
         self.goal = goal
 
     @abc.abstractmethod
-    def command(self, obs):
-        """Given current observation, command an action"""
+    def command(self, obs, info=None):
+        """Given current observation and misc info, command an action"""
 
     def get_rollouts(self, obs):
         """Return what the predicted states for the selected action sequence is applied on obs"""
@@ -50,7 +50,7 @@ class ArtificialController(Controller):
         self.block_width = 0.075
         self.push_magnitude = push_magnitude
 
-    def command(self, obs):
+    def command(self, obs, info=None):
         x, y, xb, yb, yaw = obs
         to_goal = np.subtract(self.goal[2:4], (xb, yb))
         desired_pusher_pos = np.subtract((xb, yb), to_goal / np.linalg.norm(to_goal) * self.block_width)
@@ -69,7 +69,7 @@ class RandomController(Controller):
         self.random_angular_std = random_angular_std
         self.fixed_angular_bias = (np.random.random() - 0.5) * random_bias_magnitude
 
-    def command(self, obs):
+    def command(self, obs, info=None):
         x, y, xb, yb, yaw = obs
         to_block = np.subtract((xb, yb), (x, y))
         u = math_utils.rotate_wrt_origin(to_block / np.linalg.norm(to_block) * np.random.rand() * self.push_magnitude,
@@ -89,7 +89,7 @@ class RandomStraightController(Controller):
         self.u = math_utils.rotate_wrt_origin(to_block / np.linalg.norm(to_block),
                                               np.random.randn() * random_angular_std)
 
-    def command(self, obs):
+    def command(self, obs, info=None):
         return np.multiply(self.u, np.random.rand() * self.push_magnitude)
 
 
@@ -102,7 +102,7 @@ class FullRandomController(Controller):
         self.u_min = u_min
         self.u_max = u_max
 
-    def command(self, obs):
+    def command(self, obs, info=None):
         u = np.random.uniform(low=self.u_min, high=self.u_max, size=self.nu)
         # logger.debug(obs)
         return u
@@ -114,7 +114,7 @@ class PreDeterminedController(Controller):
         self.u = controls
         self.j = 0
 
-    def command(self, obs):
+    def command(self, obs, info=None):
         if self.j >= len(self.u):
             return np.zeros_like(self.u[self.j - 1])
         u = self.u[self.j]
@@ -205,7 +205,8 @@ class MPC(Controller):
         self.prev_predicted_x = None
         self.diff_predicted = None
 
-    def command(self, obs):
+    def command(self, obs, info=None):
+        # TODO use info to create context vector with model error
         obs = tensor_utils.ensure_tensor(self.d, self.dtype, obs)
         if self.prev_predicted_x is not None:
             self.diff_predicted = self.compare_to_goal(obs.view(1, -1), self.prev_predicted_x)
