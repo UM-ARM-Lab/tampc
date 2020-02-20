@@ -1423,12 +1423,13 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
             assert x[2] > 0  # yaw increased (rotated cw)
             assert abs(x[3] - x_bot[0, 3]) < 0.1  # along hasn't changed much
         except AssertionError as e:
+            logger.error(e)
+            logger.error(x_top)
             # either fail or just warn that it's an error
             if enforce_model_rollout:
                 raise e
             else:
-                logger.error(e)
-                logger.info(x_top)
+                pass
 
     # plot model prediction
     if plot_model_error:
