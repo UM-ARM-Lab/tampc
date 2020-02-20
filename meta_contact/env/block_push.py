@@ -256,7 +256,6 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.initPusherPos = None
         self.initBlockPos = None
         self.initBlockYaw = None
-        self.set_task_config(goal, init_pusher, init_block, init_yaw)
 
         # debugging objects
         self._goal_debug_lines = [-1, -1]
@@ -287,6 +286,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.Q = np.diag([0, 0, 1, 1, 0])
         self.R = np.diag([1 for _ in range(self.nu)])
 
+        self.set_task_config(goal, init_pusher, init_block, init_yaw)
         self._setup_experiment()
         # start at rest
         for _ in range(1000):
