@@ -259,12 +259,15 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self._rollout_debug_lines = {}
         self._error_debug_lines = {'pose': [-1, -1], 'line': -1}
         self._contact_debug_lines = {}
-        self._largest_contact = {}
         self._friction_debug_lines = {}
         self._debug_text = -1
         self._user_debug_text = {}
         self._camera_pos = None
         self.set_task_config(goal, init_pusher, init_block, init_yaw)
+
+        # info
+        self._largest_contact = {}
+        self._reaction_force = None
 
         # quadratic cost
         self.Q = np.diag([0, 0, 1, 1, 0])
@@ -414,7 +417,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         info = {'bp': np.zeros((4, 2))}
         # push of plane onto block
         contactInfo = p.getContactPoints(self.blockId, self.planeId)
-        # get reaction force on pusher TODO generalize this
+        # get reaction force on pusher
         reaction_force = [0, 0, 0]
         for i, contact in enumerate(contactInfo):
             if i not in self._friction_debug_lines:
@@ -428,6 +431,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         if self.level > 0:
             # assume at most 4 contact points
             info['bw'] = np.zeros(4)
+            # TODO handle other walls
             contactInfo = p.getContactPoints(self.blockId, self.walls[0])
             for i, contact in enumerate(contactInfo):
                 name = 'w{}'.format(i)
@@ -445,7 +449,6 @@ class PushAgainstWallEnv(MyPybulletEnv):
                     #     _draw_contact_point(self._contact_debug_lines[name], contact)
 
         reaction_force[2] = 0
-        # TODO process and pass reaction force onto controller
         # save reaction force
         info['r'] = reaction_force
         # draw reaction force
@@ -455,6 +458,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
             if reaction_force_size > self._largest_contact.get(name, 0):
                 start = self._observe_pusher()
                 self._largest_contact[name] = reaction_force_size
+                self._reaction_force = reaction_force
                 if name not in self._contact_debug_lines:
                     self._contact_debug_lines[name] = -1
                 self._contact_debug_lines[name] = _draw_debug_2d_line(self._contact_debug_lines[name], start,
@@ -462,6 +466,12 @@ class PushAgainstWallEnv(MyPybulletEnv):
                                                                       size=reaction_force_size, scale=0.03,
                                                                       color=(1, 0, 1))
 
+        return info
+
+    def _aggregate_contact_info(self, info):
+        info = {key: np.stack(value, axis=0) for key, value in info.items() if len(value)}
+        info['reaction'] = self._reaction_force
+        self._reaction_force = None
         return info
 
     STATIC_VELOCITY_THRESHOLD = 5e-5
@@ -781,7 +791,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
                 if self.mode is p.GUI and self.sim_step_wait:
                     time.sleep(self.sim_step_wait)
 
-        info = {key: np.stack(value, axis=0) for key, value in info.items() if len(value)}
+        info = self._aggregate_contact_info(info)
         # apply the sliding along side after the push settles down
         self.along = np.clip(old_state[3] + d_along, -1, 1)
         self._keep_pusher_adjacent()
@@ -877,7 +887,7 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
                 if self.mode is p.GUI and self.sim_step_wait:
                     time.sleep(self.sim_step_wait)
 
-        info = {key: np.stack(value, axis=0) for key, value in info.items() if len(value)}
+        info = self._aggregate_contact_info(info)
         logger.info('normal {}'.format(self._largest_contact))
         # apply the sliding along side after the push settles down
         self.along = np.clip(old_state[3] + d_along, -1, 1)
@@ -933,13 +943,14 @@ class InteractivePush(simulation.Simulation):
     def _run_experiment(self):
         self.last_run_cost = []
         obs = self._reset_sim()
+        info = None
         for simTime in range(self.num_frames - 1):
             self.traj[simTime, :] = obs
             self.env.draw_user_text("{}".format(simTime), 1)
 
             start = time.perf_counter()
 
-            action = self.ctrl.command(obs)
+            action = self.ctrl.command(obs, info)
             # plot expected state rollouts from this point
             if self.visualize_rollouts:
                 self.env.visualize_rollouts(self.ctrl.get_rollouts(obs))
