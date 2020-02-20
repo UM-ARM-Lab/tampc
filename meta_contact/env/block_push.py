@@ -266,6 +266,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.set_task_config(goal, init_pusher, init_block, init_yaw)
 
         # info
+        self._contact_info = {}
         self._largest_contact = {}
         self._reaction_force = None
 
@@ -466,12 +467,16 @@ class PushAgainstWallEnv(MyPybulletEnv):
                                                                       size=reaction_force_size, scale=0.03,
                                                                       color=(1, 0, 1))
 
-        return info
+        for key, value in info.items():
+            if key not in self._contact_info:
+                self._contact_info[key] = []
+            self._contact_info[key].append(value)
 
-    def _aggregate_contact_info(self, info):
-        info = {key: np.stack(value, axis=0) for key, value in info.items() if len(value)}
+    def _aggregate_contact_info(self):
+        info = {key: np.stack(value, axis=0) for key, value in self._contact_info.items() if len(value)}
         info['reaction'] = self._reaction_force
         self._reaction_force = None
+        self._contact_info = {}
         return info
 
     STATIC_VELOCITY_THRESHOLD = 5e-5
@@ -500,7 +505,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         # execute the action
         self._move_pusher(eePos)
         p.stepSimulation()
-        info = self._observe_contact()
+        self._observe_contact()
         # handle trying to go into wall (if we don't succeed)
         # we use a force insufficient for going into the wall
         while not self._reached_command(eePos):
@@ -513,7 +518,6 @@ class PushAgainstWallEnv(MyPybulletEnv):
         while not self._static_environment():
             for _ in range(50):
                 p.stepSimulation()
-        return info
 
     @staticmethod
     def state_difference(state, other_state):
@@ -547,10 +551,10 @@ class PushAgainstWallEnv(MyPybulletEnv):
         eePos = [old_state[0] + d[0], old_state[1] + d[1], z]
 
         # execute the action
-        info = self._move_and_wait(eePos)
+        self._move_and_wait(eePos)
         cost, done = self._observe_finished_action(old_state, action)
 
-        return np.copy(self.state), -cost, done, info
+        return np.copy(self.state), -cost, done, self._aggregate_contact_info()
 
     def _observe_finished_action(self, old_state, action):
         # get the net contact force between robot and block
@@ -695,11 +699,11 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         eePos = np.concatenate((pos, (z,)))
 
         # execute the action
-        info = self._move_and_wait(eePos)
+        self._move_and_wait(eePos)
 
         cost, done = self._observe_finished_action(old_state, action)
 
-        return np.copy(self.state), -cost, done, info
+        return np.copy(self.state), -cost, done, self._aggregate_contact_info()
 
     @staticmethod
     def state_names():
@@ -776,22 +780,17 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         p.applyExternalForce(self.blockId, -1, [fn, ft, 0], [-_MAX_ALONG, self.along * _MAX_ALONG, 0], p.LINK_FRAME)
         p.stepSimulation()
 
-        info = {}
         for t in range(20):
             for tt in range(5):
                 # also move the pusher along visually
                 self._keep_pusher_adjacent()
-                step_info = self._observe_contact()
-                for key, value in step_info.items():
-                    if key not in info:
-                        info[key] = []
-                    info[key].append(value)
+                self._observe_contact()
 
                 p.stepSimulation()
                 if self.mode is p.GUI and self.sim_step_wait:
                     time.sleep(self.sim_step_wait)
 
-        info = self._aggregate_contact_info(info)
+        info = self._aggregate_contact_info()
         # apply the sliding along side after the push settles down
         self.along = np.clip(old_state[3] + d_along, -1, 1)
         self._keep_pusher_adjacent()
@@ -822,7 +821,7 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
         p.setCollisionFilterPair(self.pusherId, self.blockId, -1, -1, 1)
 
     def _observe_contact(self, visualize=True):
-        info = super(PushWithForceIndirectlyEnv, self)._observe_contact()
+        super(PushWithForceIndirectlyEnv, self)._observe_contact()
         # get reaction force on pusher
         contactInfo = p.getContactPoints(self.pusherId, self.blockId)
         for i, contact in enumerate(contactInfo):
@@ -832,8 +831,6 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
                 if name not in self._contact_debug_lines:
                     self._contact_debug_lines[name] = [-1, -1, -1]
                 _draw_contact_point(self._contact_debug_lines[name], contact, flip=False)
-
-        return info
 
     def step(self, action):
         if self.pusherConstraint is not None:
@@ -875,19 +872,16 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
         # self._move_pusher(eePos)
 
         p.stepSimulation()
-        info = {'bp': [], 'bw': []}
         for _ in range(20):
             # also move the pusher along visually
             # self._keep_pusher_adjacent()
             for _ in range(5):
-                step_info = self._observe_contact()
-                for key, value in step_info.items():
-                    info[key].append(value)
+                self._observe_contact()
                 p.stepSimulation()
                 if self.mode is p.GUI and self.sim_step_wait:
                     time.sleep(self.sim_step_wait)
 
-        info = self._aggregate_contact_info(info)
+        info = self._aggregate_contact_info()
         logger.info('normal {}'.format(self._largest_contact))
         # apply the sliding along side after the push settles down
         self.along = np.clip(old_state[3] + d_along, -1, 1)
