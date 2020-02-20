@@ -19,7 +19,7 @@ class OnlineDynamicsModel(object):
     """
 
     def __init__(self, gamma, online_prior: prior.OnlineDynamicsPrior, ds, state_difference, local_mix_weight=1.,
-                 device='cpu', sigreg=1e-5):
+                 device='cpu', sigreg=1e-5, slice_to_use=None):
         """
         :param gamma: How fast to update our empirical local model, with 1 being to completely forget the previous model
         every time we get new data
@@ -48,7 +48,7 @@ class OnlineDynamicsModel(object):
         self.prior_trust_coefficient = 0.1  # the lower it is the more we trust the prior; 0 means only ever use prior
         self.sigma, self.mu, self.xxt = None, None, None
         # Initial values
-        self.init_sigma, self.init_mu = prior.gaussian_params_from_datasource(ds)
+        self.init_sigma, self.init_mu = prior.gaussian_params_from_datasource(ds, slice_to_use)
         self.init_xxt = self.init_sigma + torch.ger(self.init_mu, self.init_mu)
         self.reset()
 

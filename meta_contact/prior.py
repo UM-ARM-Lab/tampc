@@ -26,10 +26,12 @@ def xux_from_dataset(ds):
     return XUX
 
 
-def gaussian_params_from_datasource(ds):
+def gaussian_params_from_datasource(ds, slice_to_use=None):
     """Take what we're given in terms of XU,Y, and let the dynamics model handle how that translates to next state"""
     XU, Y, _ = ds.training_set()
     data = torch.cat((XU, Y), dim=1)
+    if slice_to_use:
+        data = data[slice_to_use]
     mu = data.mean(0)
     sigma = linalg.cov(data, rowvar=False)
     assert sigma.shape[0] == data.shape[1]
