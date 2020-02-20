@@ -227,6 +227,7 @@ class DebugVisualization:
     FRICTION = 0
     WALL_ON_BLOCK = 1
     REACTION_ON_PUSHER = 2
+    ACTION = 3
 
 
 class PushAgainstWallEnv(MyPybulletEnv):
@@ -272,7 +273,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self._debug_visualizations = {
             DebugVisualization.FRICTION: False,
             DebugVisualization.REACTION_ON_PUSHER: True,
-            DebugVisualization.WALL_ON_BLOCK: False
+            DebugVisualization.WALL_ON_BLOCK: False,
+            DebugVisualization.ACTION: True,
         }
         if debug_visualizations is not None:
             self._debug_visualizations.update(debug_visualizations)
@@ -783,7 +785,8 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         f_mag = max(0, action[1] * self.MAX_FORCE)
         # third option is push angle (0 being perpendicular to face)
         f_dir = np.clip(action[2], -1, 1) * self.MAX_PUSH_ANGLE
-        self._draw_action(f_mag, f_dir + old_state[2])
+        if self._debug_visualizations[DebugVisualization.ACTION]:
+            self._draw_action(f_mag, f_dir + old_state[2])
 
         # execute action
         ft = math.sin(f_dir) * f_mag
@@ -858,7 +861,8 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
         f_mag = max(0, action[1] * self.MAX_FORCE)
         # third option is push angle (0 being perpendicular to face)
         f_dir = np.clip(action[2], -1, 1) * self.MAX_PUSH_ANGLE
-        self._draw_action(f_mag, f_dir + old_state[2])
+        if self._debug_visualizations[DebugVisualization.ACTION]:
+            self._draw_action(f_mag, f_dir + old_state[2])
 
         state = self._obs()
         pos = pusher_pos_for_touching(state[:2], state[2], from_center=DIST_FOR_JUST_TOUCHING, face=self.face,
