@@ -223,13 +223,19 @@ class PushLoaderRestricted(PushLoader):
         return xu, y, cc
 
 
+class DebugVisualization:
+    FRICTION = 0
+    WALL_ON_BLOCK = 1
+    REACTION_ON_PUSHER = 2
+
+
 class PushAgainstWallEnv(MyPybulletEnv):
     nu = 2
     nx = 5
     ny = 3
 
     def __init__(self, goal=(1.0, 0.), init_pusher=(-0.25, 0), init_block=(0., 0.), init_yaw=0.,
-                 environment_level=0, sim_step_wait=None, **kwargs):
+                 environment_level=0, sim_step_wait=None, debug_visualizations=None, **kwargs):
         """
         :param goal:
         :param init_pusher:
@@ -250,6 +256,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.initPusherPos = None
         self.initBlockPos = None
         self.initBlockYaw = None
+        self.set_task_config(goal, init_pusher, init_block, init_yaw)
 
         # debugging objects
         self._goal_debug_lines = [-1, -1]
@@ -263,7 +270,13 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self._debug_text = -1
         self._user_debug_text = {}
         self._camera_pos = None
-        self.set_task_config(goal, init_pusher, init_block, init_yaw)
+        self._debug_visualizations = {
+            DebugVisualization.FRICTION: False,
+            DebugVisualization.REACTION_ON_PUSHER: True,
+            DebugVisualization.WALL_ON_BLOCK: False
+        }
+        if debug_visualizations is not None:
+            self._debug_visualizations.update(debug_visualizations)
 
         # info
         self._contact_info = {}
@@ -423,7 +436,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         for i, contact in enumerate(contactInfo):
             if i not in self._friction_debug_lines:
                 self._friction_debug_lines[i] = [-1, -1]
-            if visualize:
+            if visualize and self._debug_visualizations[DebugVisualization.FRICTION]:
                 _draw_contact_friction(self._friction_debug_lines[i], contact)
             info['bp'][i] = (contact[10], contact[12])
             fy, fx = _get_lateral_friction_forces(contact)
@@ -444,22 +457,21 @@ class PushAgainstWallEnv(MyPybulletEnv):
                 # only visualize the largest contact
                 if abs(contact[9]) > abs(self._largest_contact.get(name, 0)):
                     self._largest_contact[name] = contact[9]
-                    # if visualize:
-                    #     if name not in self._contact_debug_lines:
-                    #         self._contact_debug_lines[name] = [-1, -1, -1]
-                    #     _draw_contact_point(self._contact_debug_lines[name], contact)
+                    if visualize and self._debug_visualizations[DebugVisualization.WALL_ON_BLOCK]:
+                        if name not in self._contact_debug_lines:
+                            self._contact_debug_lines[name] = [-1, -1, -1]
+                        _draw_contact_point(self._contact_debug_lines[name], contact)
 
         reaction_force[2] = 0
         # save reaction force
-        info['r'] = reaction_force
-        # draw reaction force
-        if visualize:
-            name = 'r'
-            reaction_force_size = np.linalg.norm(reaction_force)
-            if reaction_force_size > self._largest_contact.get(name, 0):
+        name = 'r'
+        info[name] = reaction_force
+        reaction_force_size = np.linalg.norm(reaction_force)
+        if reaction_force_size > self._largest_contact.get(name, 0):
+            self._largest_contact[name] = reaction_force_size
+            self._reaction_force = reaction_force
+            if visualize and self._debug_visualizations[DebugVisualization.REACTION_ON_PUSHER]:
                 start = self._observe_pusher()
-                self._largest_contact[name] = reaction_force_size
-                self._reaction_force = reaction_force
                 if name not in self._contact_debug_lines:
                     self._contact_debug_lines[name] = -1
                 self._contact_debug_lines[name] = _draw_debug_2d_line(self._contact_debug_lines[name], start,
