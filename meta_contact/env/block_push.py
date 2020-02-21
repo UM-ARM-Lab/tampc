@@ -154,7 +154,7 @@ class PushLoader(load_utils.DataLoader):
 
     def _apply_masks(self, d, x, y):
         """Handle common logic regardless of x and y"""
-        # cc = d['contact'][1:]
+        r = d['reaction'][1:]
         u = d['U'][:-1]
         # potentially many trajectories, get rid of buffer state in between
         mask = d['mask']
@@ -169,7 +169,7 @@ class PushLoader(load_utils.DataLoader):
             # (xu, pxu)
             xu = np.column_stack((xu[1:], xu[:-1]))
             y = y[1:]
-            # cc = cc[1:]
+            r = r[1:]
 
             mask = mask[1:-1]
         else:
@@ -178,11 +178,11 @@ class PushLoader(load_utils.DataLoader):
         mask = mask.reshape(-1) != 0
 
         xu = xu[mask]
-        # cc = cc[mask]
+        r = r[mask]
         y = y[mask]
 
         self.config.load_data_info(x, u, y, xu)
-        return xu, y, np.ones(y.shape[0])
+        return xu, y, r
 
     def _process_file_raw_data(self, d):
         x = d['X']
@@ -196,9 +196,9 @@ class PushLoader(load_utils.DataLoader):
         else:
             y = x[1:, state_col_offset:]
 
-        xu, y, cc = self._apply_masks(d, x, y)
+        xu, y, r = self._apply_masks(d, x, y)
 
-        return xu, y, cc
+        return xu, y, r
 
 
 class PushLoaderRestricted(PushLoader):
@@ -525,8 +525,6 @@ class PushAgainstWallEnv(MyPybulletEnv):
         while not self._reached_command(eePos):
             for _ in range(50):
                 p.stepSimulation()
-        # if rest == self.initRestFrames:
-        #     logger.warning("Ran out of steps push")
 
         # wait until simulation becomes static
         while not self._static_environment():
@@ -944,11 +942,13 @@ class InteractivePush(simulation.Simulation):
         # pre-define the trajectory/force vectors
         self.traj = np.zeros((self.num_frames, self.env.nx))
         self.u = np.zeros((self.num_frames, self.env.nu))
+        self.reaction_force = np.zeros((self.num_frames, 3))
         self.time = np.arange(0, self.num_frames * self.sim_step_s, self.sim_step_s)
         return simulation.ReturnMeaning.SUCCESS
 
     def _truncate_data(self, frame):
-        self.traj, self.u, self.time = (data[:frame] for data in (self.traj, self.u, self.time))
+        self.traj, self.u, self.reaction_force, self.time = (data[:frame] for data in
+                                                             (self.traj, self.u, self.reaction_force, self.time))
 
     def _run_experiment(self):
         self.last_run_cost = []
@@ -979,7 +979,8 @@ class InteractivePush(simulation.Simulation):
             self.last_run_cost.append(cost)
             self.u[simTime, :] = action
             self.traj[simTime + 1, :] = obs
-            # TODO update contact information to new content
+            # reaction force felt as we apply this action
+            self.reaction_force[simTime, :] = info['reaction']
 
             if done and self.stop_when_done:
                 logger.debug("done and stopping at step %d", simTime)
@@ -988,18 +989,6 @@ class InteractivePush(simulation.Simulation):
 
         terminal_cost, done = self.env.evaluate_cost(self.traj[-1])
         self.last_run_cost.append(terminal_cost * self.terminal_cost_multiplier)
-
-        # confirm dynamics is as expected
-        # if self.env.level == 0:
-        #     xy = self.traj[:, :self.env.nu]
-        #     nxy = xy + self.u
-        #     du = np.linalg.norm(nxy[:-1] - xy[1:], axis=1)
-        #     if np.any(du > 2e-3):
-        #         logger.error(du)
-        #         raise RuntimeError("Dynamics not behaving as expected")
-
-        # contact force mask - get rid of trash in the beginning
-        # self.contactForce[:300] = 0
 
         assert len(self.last_run_cost) == self.u.shape[0]
 
@@ -1011,7 +1000,7 @@ class InteractivePush(simulation.Simulation):
         # mark the end of the trajectory (the last time is not valid)
         mask = np.ones(X.shape[0], dtype=int)
         mask[-1] = 0
-        return {'X': X, 'U': self.u, 'mask': mask.reshape(-1, 1)}
+        return {'X': X, 'U': self.u, 'reaction': self.reaction_force, 'mask': mask.reshape(-1, 1)}
 
     def start_plot_runs(self):
         axis_name = self.env.state_names()
