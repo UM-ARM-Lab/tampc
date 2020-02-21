@@ -1500,13 +1500,13 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
     # get some data when we're next to a wall and use it fit a local model
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-    # ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_recovery_online.mat", validation_ratio=0.,
-    #                                     config=config, device=d)
-    # bug_trap_slice = slice(15, 70)
-
-    ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_no_recovery.mat", validation_ratio=0.,
+    ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_recovery_online.mat", validation_ratio=0.,
                                         config=config, device=d)
-    bug_trap_slice = slice(15, 100)
+    bug_trap_slice = slice(15, 70)
+
+    # ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_no_recovery.mat", validation_ratio=0.,
+    #                                     config=config, device=d)
+    # bug_trap_slice = slice(15, 100)
 
     original_config, _ = update_ds_with_transform(env, ds_wall, use_tsf, evaluate_transform=False)
 
@@ -1528,36 +1528,66 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     params = dynamics._get_batch_dynamics(None, None, cx, cu)
     yhat_linear = online_model._batch_evaluate_dynamics(cx, cu, *params)
 
+    yhat_interpolates = []
+    mix_weights = [0, 0.33333, 1, 3, 1000]
+    for w in mix_weights:
+        dynamics.empsig_N = w
+        params = dynamics._get_batch_dynamics(None, None, cx, cu)
+        yhat_interpolates.append(online_model._batch_evaluate_dynamics(cx, cu, *params).cpu().numpy())
+
     yhat_linear_online = torch.zeros_like(yhat_linear)
-    px, pu = None, None
-    for i in range(xu.shape[0] - 1):
-        cx = xu[i, :config.nx]
-        cu = xu[i, config.nx:]
-        if px is not None:
-            px, pu = px.view(1, -1), pu.view(1, -1)
-        params = dynamics._get_batch_dynamics(px, pu, cx.view(1,-1), cu.view(1,-1))
-        yhat_linear_online[i] = online_model._batch_evaluate_dynamics(cx.view(1,-1), cu.view(1,-1), *params)
-        # update linear dynamics (don't use their API since we're already transformed)
-        xux = torch.cat((cx, cu, y[i]))
-        gamma = dynamics.gamma
-        dynamics.mu = dynamics.mu * (1 - gamma) + xux * (gamma)
-        dynamics.xxt = dynamics.xxt * (1 - gamma) + torch.ger(xux, xux) * gamma
-        dynamics.xxt = 0.5 * (dynamics.xxt + dynamics.xxt.t())
-        dynamics.sigma = dynamics.xxt - torch.ger(dynamics.mu, dynamics.mu)
-        px, pu = cx, cu
+    # px, pu = None, None
+    # for i in range(xu.shape[0] - 1):
+    #     cx = xu[i, :config.nx]
+    #     cu = xu[i, config.nx:]
+    #     if px is not None:
+    #         px, pu = px.view(1, -1), pu.view(1, -1)
+    #     params = dynamics._get_batch_dynamics(px, pu, cx.view(1,-1), cu.view(1,-1))
+    #     yhat_linear_online[i] = online_model._batch_evaluate_dynamics(cx.view(1,-1), cu.view(1,-1), *params)
+    #     # update linear dynamics (don't use their API since we're already transformed)
+    #     xux = torch.cat((cx, cu, y[i]))
+    #     gamma = dynamics.gamma
+    #     dynamics.mu = dynamics.mu * (1 - gamma) + xux * (gamma)
+    #     dynamics.xxt = dynamics.xxt * (1 - gamma) + torch.ger(xux, xux) * gamma
+    #     dynamics.xxt = 0.5 * (dynamics.xxt + dynamics.xxt.t())
+    #     dynamics.sigma = dynamics.xxt - torch.ger(dynamics.mu, dynamics.mu)
+    #     px, pu = cx, cu
 
     XU, Y, Yhat_freespace, Yhat_linear, Yhat_linear_online, reaction_forces = (v.cpu().numpy() for v in (
         xu, y, yhat_freespace, yhat_linear, yhat_linear_online, reaction_forces))
 
-    f, axes = plt.subplots(config.ny, 1, sharex=True)
     ylabels = ['$dx_b$', '$dy_b$', '$d\\theta$', '$dp$']
+    f, axes = plt.subplots(config.ny, 1, sharex=True)
     for i in range(config.ny):
-        axes[i].plot(t, Y[:, i])
-        axes[i].plot(t, Yhat_freespace[:, i])
-        axes[i].plot(t, Yhat_linear[:, i])
+        axes[i].plot(t, Y[:, i], label='truth')
+        axes[i].plot(t, Yhat_freespace[:, i], label='nominal')
+        axes[i].plot(t, Yhat_linear[:, i], label='linear fit')
         # axes[i].plot(t, Yhat_linear_online[:, i])
+
         axes[i].set_ylabel(ylabels[i])
-    axes[-1].legend(['truth', 'freespace prediction', 'linear fit', 'linear online'])
+    axes[-1].legend()
+
+    # see how interpolation is done
+    plt.figure()
+    dim_to_view = 2
+    for j, w in enumerate(mix_weights):
+        prior_weight = 1 / (1 + w)
+        plt.plot(t, yhat_interpolates[j][:, dim_to_view], label='prior proportion {:.2f}'.format(prior_weight),
+                 color=(1 - prior_weight, 0.5, prior_weight))
+    plt.ylabel(ylabels[dim_to_view])
+    plt.title('interpolate in parameter space')
+    plt.legend()
+
+    # interpolate directly in y space
+    plt.figure()
+    for j, w in enumerate(mix_weights):
+        prior_weight = 1 / (1 + w)
+        yhat_direct_interpolate = prior_weight * Yhat_freespace + (1 - prior_weight) * Yhat_linear
+        plt.plot(t, yhat_direct_interpolate[:, dim_to_view], label='prior proportion {:.2f}'.format(prior_weight),
+                 color=(1 - prior_weight, 0.5, prior_weight))
+    plt.ylabel(ylabels[dim_to_view])
+    plt.title('interpolate in output space')
+    plt.legend()
 
     f, axes = plt.subplots(config.nx + 1, 1, sharex=True)
     xlabels = ['$p$', '$dp$', '$f$', '$\\beta$']
