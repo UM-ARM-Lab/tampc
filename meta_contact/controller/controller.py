@@ -151,6 +151,7 @@ class MPC(Controller):
         self.prev_x = None
         self.prev_u = None
         self.diff_predicted = None
+        self.context = None
 
     def set_goal(self, goal):
         goal = torch.tensor(goal, dtype=self.dtype, device=self.d)
@@ -204,9 +205,9 @@ class MPC(Controller):
         self.prediction_error = []
         self.prev_predicted_x = None
         self.diff_predicted = None
+        self.context = None
 
     def command(self, obs, info=None):
-        # TODO use info to create context vector with model error
         obs = tensor_utils.ensure_tensor(self.d, self.dtype, obs)
         if self.prev_predicted_x is not None:
             self.diff_predicted = self.compare_to_goal(obs.view(1, -1), self.prev_predicted_x)
@@ -216,7 +217,8 @@ class MPC(Controller):
             self.prediction_error.append(relative_residual[:, :3].abs())
             # try correcting for slide along
             self.diff_predicted[:, -1] = 0
-
+        # TODO use info to create context vector with model error
+        self.context = [info, self.diff_predicted]
         u = self._command(obs)
         if self.u_max is not None:
             u = math_utils.clip(u, self.u_min, self.u_max)
