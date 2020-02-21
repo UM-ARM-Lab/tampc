@@ -2,6 +2,7 @@ import torch
 from arm_pytorch_utilities import linalg
 from meta_contact import model
 from meta_contact import prior
+from torch.distributions.multivariate_normal import MultivariateNormal
 import logging
 
 logger = logging.getLogger(__name__)
@@ -18,16 +19,20 @@ class OnlineDynamicsModel(object):
     Currently all the batch API takes torch tensors as input/output while all the single API takes numpy arrays
     """
 
-    def __init__(self, gamma, online_prior: prior.OnlineDynamicsPrior, ds, state_difference, local_mix_weight=1.,
-                 device='cpu', sigreg=1e-5, slice_to_use=None):
+    def __init__(self, gamma, online_prior: prior.OnlineDynamicsPrior, ds, state_difference,
+                 xu_characteristic_length=1., device='cpu', sigreg=1e-5, slice_to_use=None, local_mix_weight_scale=1.,
+                 const_local_mix_weight=None):
         """
         :param gamma: How fast to update our empirical local model, with 1 being to completely forget the previous model
         every time we get new data
         :param online_prior: A global prior model that is linearizable (can get Jacobian)
         :param ds: Some data source
         :param state_difference: Function (nx, nx) -> nx getting a - b in state space (order matters!)
-        :param local_mix_weight: Weight of mixing empirical local model with prior model; relative to n0 and m of the
-        prior model, which are typically 1, so use 1 for equal weighting
+        :param xu_characteristic_length: Like for GPs, define what does close in xu space mean; higher value means
+        distance drops off faster
+        :param local_mix_weight_scale: How much to scale the local weights
+        :param const_local_mix_weight: Weight of mixing empirical local model with prior model; relative to n0 and
+        m of the prior model, which are typically 1, so use 1 for equal weighting
         :param sigreg: How much to regularize conditioning of dynamics from p(x,u,x') to p(x'|x,u)
         """
         self.gamma = gamma
@@ -39,7 +44,12 @@ class OnlineDynamicsModel(object):
 
         self.nx = ds.config.nx
         self.nu = ds.config.nu
-        self.empsig_N = local_mix_weight
+
+        # mixing parameters
+        self.empsig_N = const_local_mix_weight
+        self.local_weight_scale = local_mix_weight_scale
+        self.characteristic_length = xu_characteristic_length
+
         self.emp_error = None
         self.prior_error = None
         # device the prior model is on
@@ -126,9 +136,19 @@ class OnlineDynamicsModel(object):
         xu, pxu, xux = _cat_xu(px, pu, cx, cu)
         Phi, mu0, m, n0 = self.prior.get_batch_params(self.nx, self.nu, xu, pxu, xux)
 
+        # marginalize joint gaussian of (x,u,x') to get (x,u) then use likelihood of cx, cu as local mix weight
+        if self.empsig_N is None:
+            xu_slice = slice(self.nx + self.nu)
+            mu_xu = self.mu[xu_slice]
+            sigma_xu = self.sigma[xu_slice, xu_slice]
+            d = MultivariateNormal(mu_xu, sigma_xu)
+            local_weight = torch.exp(d.log_prob(xu) * self.characteristic_length)
+        else:
+            local_weight = torch.ones(cx.shape[0], device=self.d, dtype=cx.dtype) * self.empsig_N
         # mix prior and empirical distribution
         # TODO decrease empsig_N with increasing horizon (trust global model more for more distant points)
-        sigma, mu = prior.batch_mix_distribution(self.sigma, self.mu, self.empsig_N, Phi, mu0, m, n0)
+        sigma, mu = prior.batch_mix_distribution(self.sigma, self.mu,
+                                                 local_weight.view(-1, 1) * self.local_weight_scale, Phi, mu0, m, n0)
         return _batch_conditioned_dynamics(self.nx, self.nu, sigma, mu, self.sigreg)
 
     def _make_2d_tensor(self, *args):

@@ -283,5 +283,6 @@ def batch_mix_distribution(emp_sigma, emp_mu, N, Phi, mu0, m, n0):
     """Mix current empirical normal with normal inverse-Wishart prior, giving a normal distribution with batch prior"""
     mu = (N * emp_mu + mu0 * m) / (N + m)
     d = emp_mu - mu0
-    sigma = (N * emp_sigma + Phi + ((N * m) / (N + m)) * linalg.batch_outer_product(d, d)) / (N + n0)
+    N_ = N.unsqueeze(2)  # suitable for multiplying matrices
+    sigma = (N_ * emp_sigma + Phi + ((N * m) / (N + m)).unsqueeze(2) * linalg.batch_outer_product(d, d)) / (N_ + n0)
     return sigma, mu
