@@ -49,6 +49,7 @@ class OnlineDynamicsModel(object):
         self.empsig_N = const_local_mix_weight
         self.local_weight_scale = local_mix_weight_scale
         self.characteristic_length = xu_characteristic_length
+        self.local_weights = None
 
         self.emp_error = None
         self.prior_error = None
@@ -64,6 +65,9 @@ class OnlineDynamicsModel(object):
 
     def reset(self):
         self.sigma, self.mu, self.xxt = self.init_sigma.clone(), self.init_mu.clone(), self.init_xxt.clone()
+        self.local_weights = None
+        self.emp_error = None
+        self.prior_error = None
 
     def evaluate_error(self, px, pu, cx, cu):
         """After updating dynamics and using that dynamics to plan an action,
@@ -142,13 +146,14 @@ class OnlineDynamicsModel(object):
             mu_xu = self.mu[xu_slice]
             sigma_xu = self.sigma[xu_slice, xu_slice]
             d = MultivariateNormal(mu_xu, sigma_xu)
-            local_weight = torch.exp(d.log_prob(xu) * self.characteristic_length)
+            self.local_weight = torch.exp(d.log_prob(xu) * self.characteristic_length)
         else:
-            local_weight = torch.ones(cx.shape[0], device=self.d, dtype=cx.dtype) * self.empsig_N
+            self.local_weight = torch.ones(cx.shape[0], device=self.d, dtype=cx.dtype) * self.empsig_N
         # mix prior and empirical distribution
         # TODO decrease empsig_N with increasing horizon (trust global model more for more distant points)
         sigma, mu = prior.batch_mix_distribution(self.sigma, self.mu,
-                                                 local_weight.view(-1, 1) * self.local_weight_scale, Phi, mu0, m, n0)
+                                                 self.local_weight.view(-1, 1) * self.local_weight_scale, Phi, mu0, m,
+                                                 n0)
         return _batch_conditioned_dynamics(self.nx, self.nu, sigma, mu, self.sigreg)
 
     def _make_2d_tensor(self, *args):
