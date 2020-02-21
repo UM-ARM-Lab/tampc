@@ -1496,16 +1496,19 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config, device=d)
     untransformed_config, tsf_name = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
     pm = get_loaded_prior(prior_class, ds, tsf_name, False)
+    pm.mix_prior_strength = 0
 
     # get some data when we're next to a wall and use it fit a local model
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     # ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_recovery_online.mat", validation_ratio=0.,
     #                                     config=config, device=d)
     # bug_trap_slice = slice(15, 70)
+
     ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_no_recovery.mat", validation_ratio=0.,
                                         config=config, device=d)
     bug_trap_slice = slice(15, 100)
-    update_ds_with_transform(env, ds_wall, use_tsf, evaluate_transform=False)
+
+    original_config, _ = update_ds_with_transform(env, ds_wall, use_tsf, evaluate_transform=False)
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     common_wrapper_opts['adjust_model_pred_with_prev_error'] = False
@@ -1514,15 +1517,37 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
     # visualize data and linear fit onto it
     t = np.arange(bug_trap_slice.start, bug_trap_slice.stop)
-    XU, Y, reaction_forces = (v.cpu().numpy()[bug_trap_slice] for v in ds_wall.training_set())
-    xu = torch.from_numpy(XU).to(device=d, dtype=torch.double)
-    Yhat_freespace = pm.dyn_net.user.sample(xu).cpu().detach().numpy()
+    xu, y, reaction_forces = (v[bug_trap_slice] for v in ds_wall.training_set())
+
+    yhat_freespace = pm.dyn_net.user.sample(xu)
 
     # don't use all of the data; use just the part that's stuck against a wall?
-    dynamics = online_model.OnlineDynamicsModel(0., pm, ds_wall, env.state_difference, local_mix_weight=1.0,
+    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds_wall, env.state_difference, local_mix_weight=10000.0,
                                                 sigreg=1e-10, slice_to_use=bug_trap_slice)
-    Yhat_linear = dynamics.predict(None, None, xu[:, :config.nx], xu[:, config.nx:],
-                                   already_transformed=True).cpu().numpy()
+    cx, cu = xu[:, :config.nx], xu[:, config.nx:]
+    params = dynamics._get_batch_dynamics(None, None, cx, cu)
+    yhat_linear = online_model._batch_evaluate_dynamics(cx, cu, *params)
+
+    yhat_linear_online = torch.zeros_like(yhat_linear)
+    px, pu = None, None
+    for i in range(xu.shape[0] - 1):
+        cx = xu[i, :config.nx]
+        cu = xu[i, config.nx:]
+        if px is not None:
+            px, pu = px.view(1, -1), pu.view(1, -1)
+        params = dynamics._get_batch_dynamics(px, pu, cx.view(1,-1), cu.view(1,-1))
+        yhat_linear_online[i] = online_model._batch_evaluate_dynamics(cx.view(1,-1), cu.view(1,-1), *params)
+        # update linear dynamics (don't use their API since we're already transformed)
+        xux = torch.cat((cx, cu, y[i]))
+        gamma = dynamics.gamma
+        dynamics.mu = dynamics.mu * (1 - gamma) + xux * (gamma)
+        dynamics.xxt = dynamics.xxt * (1 - gamma) + torch.ger(xux, xux) * gamma
+        dynamics.xxt = 0.5 * (dynamics.xxt + dynamics.xxt.t())
+        dynamics.sigma = dynamics.xxt - torch.ger(dynamics.mu, dynamics.mu)
+        px, pu = cx, cu
+
+    XU, Y, Yhat_freespace, Yhat_linear, Yhat_linear_online, reaction_forces = (v.cpu().numpy() for v in (
+        xu, y, yhat_freespace, yhat_linear, yhat_linear_online, reaction_forces))
 
     f, axes = plt.subplots(config.ny, 1, sharex=True)
     ylabels = ['$dx_b$', '$dy_b$', '$d\\theta$', '$dp$']
@@ -1530,8 +1555,9 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
         axes[i].plot(t, Y[:, i])
         axes[i].plot(t, Yhat_freespace[:, i])
         axes[i].plot(t, Yhat_linear[:, i])
+        # axes[i].plot(t, Yhat_linear_online[:, i])
         axes[i].set_ylabel(ylabels[i])
-    axes[-1].legend(['truth', 'freespace prediction', 'linear fit'])
+    axes[-1].legend(['truth', 'freespace prediction', 'linear fit', 'linear online'])
 
     f, axes = plt.subplots(config.nx + 1, 1, sharex=True)
     xlabels = ['$p$', '$dp$', '$f$', '$\\beta$']
@@ -1541,7 +1567,6 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     axes[-1].plot(t, np.linalg.norm(reaction_forces, axis=1))
     axes[-1].set_ylabel('|reaction force|')
 
-    # TODO dynamics might be more linear in learned transform space
     plt.show()
     env.close()
     return
