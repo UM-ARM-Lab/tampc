@@ -1467,56 +1467,93 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     env.close()
 
 
-class HardCodedContactDynamicsWrapper:
-    def __init__(self, dynamics):
-        self.nominal_dynamics = dynamics
-
-    def __call__(self, state, u):
-        nominal_next_state = self.nominal_dynamics(state, u)
-        # pushing up at high along doesn't change position
+class HardCodedContactControllerWrapper(controller.MPPI):
+    def _apply_dynamics(self, state, u, t=0):
+        next_state = self.dynamics(state, u)
         affected = (state[:, 3] > 0.3) & (u[:, 2] > 0.)
-        nominal_next_state[affected, :2] = state[affected, :2]
-        return nominal_next_state
+        # pushing up at high along doesn't change position
+        next_state[affected, :2] = state[affected, :2]
+        # push with high contact force also doesn't change position very much
+        if self.context[0] is not None:
+            reaction_force = self.context[0]['reaction']
+            if np.linalg.norm(reaction_force) > 100:
+                # TODO consider changing only those that have low angle?
+                affected = abs(u[:, 2]) < 0.7
+                next_state[affected, :2] = state[affected, :2]
+        return self._adjust_next_state(next_state, u, t)
 
 
 def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM,
                                                    prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
     seed = 1
     d = get_device()
-    env = get_easy_env(p.GUI, level=1, log_video=True)
+    # env = get_easy_env(p.GUI, level=1, log_video=True)
+    env = get_easy_env(p.DIRECT)
+
+    logger.info("initial random seed %d", rand.seed(seed))
 
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config, device=d)
-
-    logger.info("initial random seed %d", rand.seed(seed))
     untransformed_config, tsf_name = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
-
-    # TODO remove prior / reduce weight of it?
     pm = get_loaded_prior(prior_class, ds, tsf_name, False)
 
     # get some data when we're next to a wall and use it fit a local model
-    # TODO don't use all of the data; use just the part that's stuck against a wall?
-    # config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-    # ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_wall_recovery_online.mat", validation_ratio=0.1,
+    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
+    # ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_recovery_online.mat", validation_ratio=0.,
     #                                     config=config, device=d)
-    # update_ds_with_transform(env, ds_wall, use_tsf, evaluate_transform=False)
+    # bug_trap_slice = slice(15, 70)
+    ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_no_recovery.mat", validation_ratio=0.,
+                                        config=config, device=d)
+    bug_trap_slice = slice(15, 100)
+    update_ds_with_transform(env, ds_wall, use_tsf, evaluate_transform=False)
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
-    common_wrapper_opts['adjust_model_pred_with_prev_error'] = True
-    # TODO decide how much to update the local model
-    # dynamics = online_model.OnlineDynamicsModel(0., pm, ds_wall, env.state_difference, local_mix_weight=1.0,
-    #                                             sigreg=1e-10)
+    common_wrapper_opts['adjust_model_pred_with_prev_error'] = False
     # ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
     #                                     constrain_state=constrain_state, mpc_opts=mpc_opts)
-    # TODO try hardcoded to see if controller will do what we want given the hypothesized model predictions
-    dynamics = HardCodedContactDynamicsWrapper(pm.dyn_net)
-    ctrl = controller.MPPI(dynamics, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
+
+    # visualize data and linear fit onto it
+    t = np.arange(bug_trap_slice.start, bug_trap_slice.stop)
+    XU, Y, reaction_forces = (v.cpu().numpy()[bug_trap_slice] for v in ds_wall.training_set())
+    xu = torch.from_numpy(XU).to(device=d, dtype=torch.double)
+    Yhat_freespace = pm.dyn_net.user.sample(xu).cpu().detach().numpy()
+
+    # don't use all of the data; use just the part that's stuck against a wall?
+    dynamics = online_model.OnlineDynamicsModel(0., pm, ds_wall, env.state_difference, local_mix_weight=1.0,
+                                                sigreg=1e-10, slice_to_use=bug_trap_slice)
+    Yhat_linear = dynamics.predict(None, None, xu[:, :config.nx], xu[:, config.nx:],
+                                   already_transformed=True).cpu().numpy()
+
+    f, axes = plt.subplots(config.ny, 1, sharex=True)
+    ylabels = ['$dx_b$', '$dy_b$', '$d\\theta$', '$dp$']
+    for i in range(config.ny):
+        axes[i].plot(t, Y[:, i])
+        axes[i].plot(t, Yhat_freespace[:, i])
+        axes[i].plot(t, Yhat_linear[:, i])
+        axes[i].set_ylabel(ylabels[i])
+    axes[-1].legend(['truth', 'freespace prediction', 'linear fit'])
+
+    f, axes = plt.subplots(config.nx + 1, 1, sharex=True)
+    xlabels = ['$p$', '$dp$', '$f$', '$\\beta$']
+    for i in range(config.nx):
+        axes[i].plot(t, XU[:, i])
+        axes[i].set_ylabel(xlabels[i])
+    axes[-1].plot(t, np.linalg.norm(reaction_forces, axis=1))
+    axes[-1].set_ylabel('|reaction force|')
+
+    # TODO dynamics might be more linear in learned transform space
+    plt.show()
+    env.close()
+    return
+
+    # try hardcoded to see if controller will do what we want given the hypothesized model predictions
+    ctrl = controller.MPPI(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
+    # ctrl = HardCodedContactControllerWrapper(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
 
     name = get_full_controller_name(pm, ctrl, tsf_name)
 
-    # TODO set up the block next to the wall
     env.draw_user_text(name, 14, left_offset=-1.5)
-    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=False, stop_when_done=False)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=True, stop_when_done=False)
     seed = rand.seed()
     sim.run(seed)
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
