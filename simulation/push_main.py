@@ -1496,7 +1496,6 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config, device=d)
     untransformed_config, tsf_name = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
     pm = get_loaded_prior(prior_class, ds, tsf_name, False)
-    pm.mix_prior_strength = 0
 
     # get some data when we're next to a wall and use it fit a local model
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
@@ -1522,8 +1521,8 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     yhat_freespace = pm.dyn_net.user.sample(xu)
 
     # don't use all of the data; use just the part that's stuck against a wall?
-    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds_wall, env.state_difference, local_mix_weight=10000.0,
-                                                sigreg=1e-10, slice_to_use=bug_trap_slice)
+    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds_wall, env.state_difference, local_mix_weight_scale=1000,
+                                                sigreg=1e-10, slice_to_use=bug_trap_slice, device=d)
     cx, cu = xu[:, :config.nx], xu[:, config.nx:]
     params = dynamics._get_batch_dynamics(None, None, cx, cu)
     yhat_linear = online_model._batch_evaluate_dynamics(cx, cu, *params)
@@ -1568,34 +1567,34 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     axes[-1].legend()
 
     # see how interpolation is done
-    plt.figure()
-    dim_to_view = 2
-    for j, w in enumerate(mix_weights):
-        prior_weight = 1 / (1 + w)
-        plt.plot(t, yhat_interpolates[j][:, dim_to_view], label='prior proportion {:.2f}'.format(prior_weight),
-                 color=(1 - prior_weight, 0.5, prior_weight))
-    plt.ylabel(ylabels[dim_to_view])
-    plt.title('interpolate in parameter space')
-    plt.legend()
-
-    # interpolate directly in y space
-    plt.figure()
-    for j, w in enumerate(mix_weights):
-        prior_weight = 1 / (1 + w)
-        yhat_direct_interpolate = prior_weight * Yhat_freespace + (1 - prior_weight) * Yhat_linear
-        plt.plot(t, yhat_direct_interpolate[:, dim_to_view], label='prior proportion {:.2f}'.format(prior_weight),
-                 color=(1 - prior_weight, 0.5, prior_weight))
-    plt.ylabel(ylabels[dim_to_view])
-    plt.title('interpolate in output space')
-    plt.legend()
-
-    f, axes = plt.subplots(config.nx + 1, 1, sharex=True)
-    xlabels = ['$p$', '$dp$', '$f$', '$\\beta$']
-    for i in range(config.nx):
-        axes[i].plot(t, XU[:, i])
-        axes[i].set_ylabel(xlabels[i])
-    axes[-1].plot(t, np.linalg.norm(reaction_forces, axis=1))
-    axes[-1].set_ylabel('|reaction force|')
+    # plt.figure()
+    # dim_to_view = 2
+    # for j, w in enumerate(mix_weights):
+    #     prior_weight = 1 / (1 + w)
+    #     plt.plot(t, yhat_interpolates[j][:, dim_to_view], label='prior proportion {:.2f}'.format(prior_weight),
+    #              color=(1 - prior_weight, 0.5, prior_weight))
+    # plt.ylabel(ylabels[dim_to_view])
+    # plt.title('interpolate in parameter space')
+    # plt.legend()
+    #
+    # # interpolate directly in y space
+    # plt.figure()
+    # for j, w in enumerate(mix_weights):
+    #     prior_weight = 1 / (1 + w)
+    #     yhat_direct_interpolate = prior_weight * Yhat_freespace + (1 - prior_weight) * Yhat_linear
+    #     plt.plot(t, yhat_direct_interpolate[:, dim_to_view], label='prior proportion {:.2f}'.format(prior_weight),
+    #              color=(1 - prior_weight, 0.5, prior_weight))
+    # plt.ylabel(ylabels[dim_to_view])
+    # plt.title('interpolate in output space')
+    # plt.legend()
+    #
+    # f, axes = plt.subplots(config.nx + 1, 1, sharex=True)
+    # xlabels = ['$p$', '$dp$', '$f$', '$\\beta$']
+    # for i in range(config.nx):
+    #     axes[i].plot(t, XU[:, i])
+    #     axes[i].set_ylabel(xlabels[i])
+    # axes[-1].plot(t, np.linalg.norm(reaction_forces, axis=1))
+    # axes[-1].set_ylabel('|reaction force|')
 
     plt.show()
     env.close()
