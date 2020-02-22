@@ -17,9 +17,10 @@ from arm_pytorch_utilities.make_data import datasource
 
 gym_log.set_level(gym_log.INFO)
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO,
+logging.basicConfig(level=logging.DEBUG,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
                     datefmt='%m-%d %H:%M:%S')
+logging.getLogger('matplotlib.font_manager').disabled = True
 
 
 class PregeneratedDataset(datasource.DataSource):
@@ -46,19 +47,48 @@ class PregeneratedDataset(datasource.DataSource):
         self._val = self._train
 
 
+relearn_dynamics = False
 rand.seed(0)
 # training data for nominal model
 N = 200
 x = torch.rand(N) * 10
+x, _ = torch.sort(x)
 e = torch.randn(N) * 0.1
 y = torch.sin(x) + e
 
-plt.scatter(x.numpy(), y.numpy())
-plt.show()
-
-mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(ds.config).to(device=d)), ds,
-                   name="dynamics_{}".format(tsf_name))
+config = load_data.DataConfig(predict_difference=False, predict_all_dims=True, y_in_x_space=False)
+ds = PregeneratedDataset(x.view(-1, 1), torch.zeros(x.shape[0], 0), y.view(-1, 1), config=config)
+mw = model.NetworkModelWrapper(
+    model.DeterministicUser(
+        make.make_sequential_network(ds.config, h_units=(16, 16), activation_factory=torch.nn.Tanh).to(
+            dtype=x.dtype)), ds,
+    name="mix_nominal")
 
 pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(),
-                             train_epochs=600)
+                             train_epochs=3000)
 
+# make nominal predictions
+yhat = pm.dyn_net.predict(x.view(-1, 1))
+
+plt.scatter(x.numpy(), y.numpy())
+plt.plot(x.numpy(), yhat.numpy())
+plt.xlabel('x')
+plt.ylabel('y')
+plt.title('nominal data and model')
+plt.show()
+
+# local data
+N = 30
+xx = torch.rand(N) * 3 + 3
+xx, _ = torch.sort(xx)
+e = torch.randn(N) * 0.1
+c = 1
+yy = -0.2 * xx + c + e
+
+plt.scatter(x.numpy(), y.numpy(), alpha=0.2)
+plt.plot(x.numpy(), yhat.numpy(), alpha=0.2)
+plt.scatter(xx.numpy(), yy.numpy())
+plt.xlabel('x')
+plt.ylabel('y')
+plt.title('local data')
+plt.show()
