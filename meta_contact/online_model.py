@@ -21,7 +21,7 @@ class OnlineDynamicsModel(object):
 
     def __init__(self, gamma, online_prior: prior.OnlineDynamicsPrior, ds, state_difference,
                  xu_characteristic_length=1., device='cpu', sigreg=1e-5, slice_to_use=None, local_mix_weight_scale=1.,
-                 const_local_mix_weight=None):
+                 const_local_mix_weight=True):
         """
         :param gamma: How fast to update our empirical local model, with 1 being to completely forget the previous model
         every time we get new data
@@ -46,7 +46,7 @@ class OnlineDynamicsModel(object):
         self.nu = ds.config.nu
 
         # mixing parameters
-        self.empsig_N = const_local_mix_weight
+        self.const_local_weight = const_local_mix_weight
         self.local_weight_scale = local_mix_weight_scale
         self.characteristic_length = xu_characteristic_length
         self.local_weights = None
@@ -141,16 +141,15 @@ class OnlineDynamicsModel(object):
         Phi, mu0, m, n0 = self.prior.get_batch_params(self.nx, self.nu, xu, pxu, xux)
 
         # marginalize joint gaussian of (x,u,x') to get (x,u) then use likelihood of cx, cu as local mix weight
-        if self.empsig_N is None:
+        if not self.const_local_weight:
             xu_slice = slice(self.nx + self.nu)
             mu_xu = self.mu[xu_slice]
             sigma_xu = self.sigma[xu_slice, xu_slice]
             d = MultivariateNormal(mu_xu, sigma_xu)
             self.local_weight = torch.exp(d.log_prob(xu) * self.characteristic_length)
         else:
-            self.local_weight = torch.ones(cx.shape[0], device=self.d, dtype=cx.dtype) * self.empsig_N
+            self.local_weight = torch.ones(cx.shape[0], device=self.d, dtype=cx.dtype)
         # mix prior and empirical distribution
-        # TODO decrease empsig_N with increasing horizon (trust global model more for more distant points)
         sigma, mu = prior.batch_mix_distribution(self.sigma, self.mu,
                                                  self.local_weight.view(-1, 1) * self.local_weight_scale, Phi, mu0, m,
                                                  n0)

@@ -1189,7 +1189,8 @@ def test_online_model():
     pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=600)
 
     # we can evaluate just prior dynamics by mixing with N=0 (no weight for empirical data)
-    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, env.state_difference, local_mix_weight=0, sigreg=1e-10)
+    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, env.state_difference, local_mix_weight_scale=0,
+                                                sigreg=1e-10)
 
     # evaluate linearization by comparing error from applying model directly vs applying linearized model
     xuv, yv, _ = ds.original_validation_set()
@@ -1212,7 +1213,7 @@ def test_online_model():
     divergence = torch.zeros_like(errors)
     # debug updating linear model and using non-0 weight (error should increase with distance from update)
     for i, weight in enumerate(mix_weights):
-        dynamics.empsig_N = weight
+        dynamics.const_local_weight = weight
         yhat2 = dynamics.predict(None, None, xv, uv)
         errors[i] = torch.mean(torch.norm((yhat2 - yv), dim=1))
         divergence[i] = torch.mean(torch.norm((yhat2 - yhat1), dim=1))
@@ -1227,7 +1228,7 @@ def test_online_model():
 
     horizon = 3
     dynamics.gamma = 0.1
-    dynamics.empsig_N = 1.0
+    dynamics.const_local_weight = 1.0
     compare_against_last_updated = False
     errors = torch.zeros((N, 3))
     GLOBAL = 0
@@ -1260,7 +1261,8 @@ def test_online_model():
     plt.plot(errors[:, BEFORE] / errors[:, GLOBAL])
     plt.plot(errors[:, AFTER] / errors[:, GLOBAL])
     plt.title(
-        'local error after update for horizon {} gamma {} weight {}'.format(horizon, dynamics.gamma, dynamics.empsig_N))
+        'local error after update for horizon {} gamma {} weight {}'.format(horizon, dynamics.gamma,
+                                                                            dynamics.const_local_weight))
     plt.xlabel('step')
     plt.ylabel('relative error to global model')
     plt.yscale('log')
@@ -1373,7 +1375,7 @@ def get_controller_options(env):
 def get_controller(env, pm, ds, untransformed_config, online_adapt=True):
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     if online_adapt:
-        dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, env.state_difference, local_mix_weight=1.0,
+        dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, env.state_difference, local_mix_weight_scale=1.0,
                                                     sigreg=1e-10)
         ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
                                             constrain_state=constrain_state, mpc_opts=mpc_opts)
@@ -1522,7 +1524,8 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
     # don't use all of the data; use just the part that's stuck against a wall?
     dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds_wall, env.state_difference, local_mix_weight_scale=1000,
-                                                sigreg=1e-10, slice_to_use=bug_trap_slice, device=d)
+                                                const_local_mix_weight=True, sigreg=1e-10, slice_to_use=bug_trap_slice,
+                                                device=d)
     cx, cu = xu[:, :config.nx], xu[:, config.nx:]
     params = dynamics._get_batch_dynamics(None, None, cx, cu)
     yhat_linear = online_model._batch_evaluate_dynamics(cx, cu, *params)
@@ -1530,7 +1533,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     yhat_interpolates = []
     mix_weights = [0, 0.33333, 1, 3, 1000]
     for w in mix_weights:
-        dynamics.empsig_N = w
+        dynamics.local_mix_weight_scale = w
         params = dynamics._get_batch_dynamics(None, None, cx, cu)
         yhat_interpolates.append(online_model._batch_evaluate_dynamics(cx, cu, *params).cpu().numpy())
 
