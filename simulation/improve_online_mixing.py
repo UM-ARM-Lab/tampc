@@ -53,11 +53,12 @@ rand.seed(0)
 N = 200
 x = torch.rand(N) * 10
 x, _ = torch.sort(x)
+u = torch.zeros(x.shape[0], 0)
 e = torch.randn(N) * 0.1
 y = torch.sin(x) + e
 
 config = load_data.DataConfig(predict_difference=False, predict_all_dims=True, y_in_x_space=False)
-ds = PregeneratedDataset(x.view(-1, 1), torch.zeros(x.shape[0], 0), y.view(-1, 1), config=config)
+ds = PregeneratedDataset(x.view(-1, 1), u, y.view(-1, 1), config=config)
 mw = model.NetworkModelWrapper(
     model.DeterministicUser(
         make.make_sequential_network(ds.config, h_units=(16, 16), activation_factory=torch.nn.Tanh).to(
@@ -70,25 +71,60 @@ pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get
 # make nominal predictions
 yhat = pm.dyn_net.predict(x.view(-1, 1))
 
-plt.scatter(x.numpy(), y.numpy())
-plt.plot(x.numpy(), yhat.numpy())
-plt.xlabel('x')
-plt.ylabel('y')
-plt.title('nominal data and model')
-plt.show()
+# plt.scatter(x.numpy(), y.numpy())
+# plt.plot(x.numpy(), yhat.numpy())
+# plt.xlabel('x')
+# plt.ylabel('y')
+# plt.title('nominal data and model')
+# plt.show()
 
 # local data
 N = 30
 xx = torch.rand(N) * 3 + 3
 xx, _ = torch.sort(xx)
+uu = torch.zeros(xx.shape[0], 0)
 e = torch.randn(N) * 0.1
 c = 1
 yy = -0.2 * xx + c + e
 
+config = load_data.DataConfig(predict_difference=False, predict_all_dims=True, y_in_x_space=False)
+ds_local = PregeneratedDataset(xx.view(-1, 1), uu, yy.view(-1, 1), config=config)
+
+# fit local model (if we hand assigned mixing weights)
+dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds_local, torch.sub, local_mix_weight_scale=1000,
+                                            const_local_mix_weight=True)
+yhat_linear_fit = dynamics.predict(None, None, x.view(-1, 1), u)
+
+dynamics.local_weight_scale = 10.
+yhat_baseline_mix = dynamics.predict(None, None, x.view(-1, 1), u)
+
+dynamics.local_weight_scale = 1.
+yhat_baseline_mix2 = dynamics.predict(None, None, x.view(-1, 1), u)
+
+dynamics.const_local_weight = False
+dynamics.local_weight_scale = 50.
+dynamics.characteristic_length = 0.8
+yhat_new1 = dynamics.predict(None, None, x.view(-1, 1), u)
+
+# plt.scatter(x.numpy(), y.numpy(), alpha=0.2)
+# plt.plot(x.numpy(), yhat.numpy(), alpha=0.2)
+# plt.scatter(xx.numpy(), yy.numpy())
+# plt.plot(x.numpy(), yhat_linear_fit.numpy(), label='linear fit')
+# plt.xlabel('x')
+# plt.ylabel('y')
+# plt.title('local data and models')
+# plt.legend()
+# plt.show()
+
 plt.scatter(x.numpy(), y.numpy(), alpha=0.2)
 plt.plot(x.numpy(), yhat.numpy(), alpha=0.2)
-plt.scatter(xx.numpy(), yy.numpy())
+plt.scatter(xx.numpy(), yy.numpy(), alpha=0.2)
+plt.plot(x.numpy(), yhat_linear_fit.numpy(), label='linear fit', alpha=0.2)
+# plt.plot(x.numpy(), yhat_baseline_mix.numpy(), label='baseline fit high w')
+# plt.plot(x.numpy(), yhat_baseline_mix2.numpy(), label='baseline fit low w')
+plt.plot(x.numpy(), yhat_new1.numpy(), label='our fit')
 plt.xlabel('x')
 plt.ylabel('y')
-plt.title('local data')
+plt.title('local data and models')
+plt.legend()
 plt.show()
