@@ -943,12 +943,14 @@ class InteractivePush(simulation.Simulation):
         self.traj = np.zeros((self.num_frames, self.env.nx))
         self.u = np.zeros((self.num_frames, self.env.nu))
         self.reaction_force = np.zeros((self.num_frames, 3))
+        self.model_error = np.zeros_like(self.traj)
         self.time = np.arange(0, self.num_frames * self.sim_step_s, self.sim_step_s)
         return simulation.ReturnMeaning.SUCCESS
 
     def _truncate_data(self, frame):
-        self.traj, self.u, self.reaction_force, self.time = (data[:frame] for data in
-                                                             (self.traj, self.u, self.reaction_force, self.time))
+        self.traj, self.u, self.reaction_force, self.model_error, self.time = (data[:frame] for data in
+                                                                               (self.traj, self.u, self.reaction_force,
+                                                                                self.model_error, self.time))
 
     def _run_experiment(self):
         self.last_run_cost = []
@@ -973,14 +975,17 @@ class InteractivePush(simulation.Simulation):
             logger.debug("cost %.2f took %.3fs done %d action %-20s obs %s", cost, time.perf_counter() - start, done,
                          np.round(action, 2), obs)
 
-            if self.visualize_rollouts and isinstance(self.ctrl, controller.MPC):
-                self.env.visualize_prediction_error(self.ctrl.prev_predicted_x.view(-1).cpu().numpy())
-
             self.last_run_cost.append(cost)
             self.u[simTime, :] = action
             self.traj[simTime + 1, :] = obs
             # reaction force felt as we apply this action
             self.reaction_force[simTime, :] = info['reaction']
+            if isinstance(self.ctrl, controller.MPC):
+                # model error from the previous prediction step (can only evaluate it at the current step)
+                if self.ctrl.diff_predicted is not None:
+                    self.model_error[simTime, :] = self.ctrl.diff_predicted.cpu().numpy()
+                if self.visualize_rollouts:
+                    self.env.visualize_prediction_error(self.ctrl.prev_predicted_x.view(-1).cpu().numpy())
 
             if done and self.stop_when_done:
                 logger.debug("done and stopping at step %d", simTime)
@@ -1000,7 +1005,13 @@ class InteractivePush(simulation.Simulation):
         # mark the end of the trajectory (the last time is not valid)
         mask = np.ones(X.shape[0], dtype=int)
         mask[-1] = 0
-        return {'X': X, 'U': self.u, 'reaction': self.reaction_force, 'mask': mask.reshape(-1, 1)}
+        u_norm = np.linalg.norm(self.u, axis=1)
+        # shift by 1 since the control at t-1 affects the model error at t
+        u_norm = np.roll(u_norm, 1).reshape(-1, 1)
+        scaled_model_error = np.divide(self.model_error, u_norm, out=np.zeros_like(self.model_error), where=u_norm != 0)
+        return {'X': X, 'U': self.u, 'reaction': self.reaction_force, 'model error': self.model_error,
+                'scaled model error': scaled_model_error,
+                'mask': mask.reshape(-1, 1)}
 
     def start_plot_runs(self):
         axis_name = self.env.state_names()
