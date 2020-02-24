@@ -155,6 +155,9 @@ class PushLoader(load_utils.DataLoader):
     def _apply_masks(self, d, x, y):
         """Handle common logic regardless of x and y"""
         r = d['reaction'][1:]
+        e = d['model error'][1:]
+        r = np.column_stack((r, e))
+
         u = d['U'][:-1]
         # potentially many trajectories, get rid of buffer state in between
         mask = d['mask']

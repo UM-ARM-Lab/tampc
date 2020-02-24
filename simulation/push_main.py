@@ -1376,7 +1376,8 @@ def get_controller(env, pm, ds, untransformed_config, online_adapt=True):
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     if online_adapt:
         dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, env.state_difference, local_mix_weight_scale=1.0,
-                                                    sigreg=1e-10)
+                                                    const_local_mix_weight=True,
+                                                    sigreg=1e-10, device=common_wrapper_opts['device'])
         ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
                                             constrain_state=constrain_state, mpc_opts=mpc_opts)
     else:
@@ -1503,9 +1504,9 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     # TODO should we just use transition data, or also include the data inside of bug trap?
     # get some data when we're next to a wall and use it fit a local model
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-    ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_recovery_online.mat", validation_ratio=0.,
+    ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_recovery_global.mat", validation_ratio=0.,
                                         config=config, device=d)
-    bug_trap_slice = slice(15, 90)
+    bug_trap_slice = slice(4, 65)
 
     # ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_no_recovery.mat", validation_ratio=0.,
     #                                     config=config, device=d)
@@ -1520,7 +1521,9 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
     # visualize data and linear fit onto it
     t = np.arange(bug_trap_slice.start, bug_trap_slice.stop)
-    xu, y, reaction_forces = (v[bug_trap_slice] for v in ds_wall.training_set())
+    xu, y, info = (v[bug_trap_slice] for v in ds_wall.training_set())
+    reaction_forces = info[:, :3]
+    model_errors = info[:, 3:]
 
     yhat_freespace = pm.dyn_net.user.sample(xu)
 
@@ -1602,13 +1605,15 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     # plt.title('interpolate in output space')
     # plt.legend()
 
-    f, axes = plt.subplots(config.nx + 1, 1, sharex=True)
+    f, axes = plt.subplots(config.nx + 2, 1, sharex=True)
     xlabels = ['$p$', '$dp$', '$f$', '$\\beta$']
     for i in range(config.nx):
         axes[i].plot(t, XU[:, i])
         axes[i].set_ylabel(xlabels[i])
-    axes[-1].plot(t, np.linalg.norm(reaction_forces, axis=1))
-    axes[-1].set_ylabel('|reaction force|')
+    axes[-2].plot(t, np.linalg.norm(reaction_forces, axis=1))
+    axes[-2].set_ylabel('|r|')
+    axes[-1].plot(t, np.linalg.norm(model_errors.cpu().numpy(), axis=1))
+    axes[-1].set_ylabel('|e|')
 
     plt.show()
     env.close()
