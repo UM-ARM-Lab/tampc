@@ -1523,8 +1523,8 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     yhat_freespace = pm.dyn_net.user.sample(xu)
 
     # don't use all of the data; use just the part that's stuck against a wall?
-    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds_wall, env.state_difference, local_mix_weight_scale=1000,
-                                                const_local_mix_weight=True, sigreg=1e-10, slice_to_use=bug_trap_slice,
+    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds_wall, env.state_difference, local_mix_weight_scale=40,
+                                                const_local_mix_weight=False, sigreg=1e-10, slice_to_use=bug_trap_slice,
                                                 device=d)
     cx, cu = xu[:, :config.nx], xu[:, config.nx:]
     params = dynamics._get_batch_dynamics(None, None, cx, cu)
@@ -1533,7 +1533,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     yhat_interpolates = []
     mix_weights = [0, 0.33333, 1, 3, 1000]
     for w in mix_weights:
-        dynamics.local_mix_weight_scale = w
+        dynamics.local_weight_scale = w
         params = dynamics._get_batch_dynamics(None, None, cx, cu)
         yhat_interpolates.append(online_model._batch_evaluate_dynamics(cx, cu, *params).cpu().numpy())
 
