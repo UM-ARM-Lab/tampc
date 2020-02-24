@@ -1499,11 +1499,13 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     untransformed_config, tsf_name = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
     pm = get_loaded_prior(prior_class, ds, tsf_name, False)
 
+    # use data of transition out of bug trap rather than just inside the bug trap
+    # TODO should we just use transition data, or also include the data inside of bug trap?
     # get some data when we're next to a wall and use it fit a local model
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_recovery_online.mat", validation_ratio=0.,
                                         config=config, device=d)
-    bug_trap_slice = slice(15, 70)
+    bug_trap_slice = slice(15, 90)
 
     # ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_no_recovery.mat", validation_ratio=0.,
     #                                     config=config, device=d)
@@ -1522,20 +1524,28 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
     yhat_freespace = pm.dyn_net.user.sample(xu)
 
+    # TODO evaluate model prediction outside of fitted range to see if it will revert back to nominal model
     # don't use all of the data; use just the part that's stuck against a wall?
-    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds_wall, env.state_difference, local_mix_weight_scale=40,
-                                                const_local_mix_weight=False, sigreg=1e-10, slice_to_use=bug_trap_slice,
+    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds_wall, env.state_difference, local_mix_weight_scale=1000,
+                                                const_local_mix_weight=True, sigreg=1e-10, slice_to_use=bug_trap_slice,
                                                 device=d)
     cx, cu = xu[:, :config.nx], xu[:, config.nx:]
+    # an actual linear fit on data
     params = dynamics._get_batch_dynamics(None, None, cx, cu)
     yhat_linear = online_model._batch_evaluate_dynamics(cx, cu, *params)
 
+    # our mixed model
+    dynamics.const_local_weight = False
+    dynamics.local_weight_scale = 10
+    params = dynamics._get_batch_dynamics(None, None, cx, cu)
+    yhat_linear_mix = online_model._batch_evaluate_dynamics(cx, cu, *params)
+
     yhat_interpolates = []
-    mix_weights = [0, 0.33333, 1, 3, 1000]
-    for w in mix_weights:
-        dynamics.local_weight_scale = w
-        params = dynamics._get_batch_dynamics(None, None, cx, cu)
-        yhat_interpolates.append(online_model._batch_evaluate_dynamics(cx, cu, *params).cpu().numpy())
+    # mix_weights = [0, 0.33333, 1, 3, 1000]
+    # for w in mix_weights:
+    #     dynamics.local_weight_scale = w
+    #     params = dynamics._get_batch_dynamics(None, None, cx, cu)
+    #     yhat_interpolates.append(online_model._batch_evaluate_dynamics(cx, cu, *params).cpu().numpy())
 
     yhat_linear_online = torch.zeros_like(yhat_linear)
     # px, pu = None, None
@@ -1561,9 +1571,10 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     ylabels = ['$dx_b$', '$dy_b$', '$d\\theta$', '$dp$']
     f, axes = plt.subplots(config.ny, 1, sharex=True)
     for i in range(config.ny):
-        axes[i].plot(t, Y[:, i], label='truth')
-        axes[i].plot(t, Yhat_freespace[:, i], label='nominal')
-        axes[i].plot(t, Yhat_linear[:, i], label='linear fit')
+        axes[i].scatter(t, Y[:, i], label='truth', alpha=0.2)
+        axes[i].plot(t, Yhat_freespace[:, i], label='nominal', alpha=0.5)
+        axes[i].plot(t, Yhat_linear[:, i], label='linear fit', alpha=0.5)
+        axes[i].plot(t, yhat_linear_mix[:, i].cpu().numpy(), label='mix')
         # axes[i].plot(t, Yhat_linear_online[:, i])
 
         axes[i].set_ylabel(ylabels[i])
@@ -1590,14 +1601,14 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     # plt.ylabel(ylabels[dim_to_view])
     # plt.title('interpolate in output space')
     # plt.legend()
-    #
-    # f, axes = plt.subplots(config.nx + 1, 1, sharex=True)
-    # xlabels = ['$p$', '$dp$', '$f$', '$\\beta$']
-    # for i in range(config.nx):
-    #     axes[i].plot(t, XU[:, i])
-    #     axes[i].set_ylabel(xlabels[i])
-    # axes[-1].plot(t, np.linalg.norm(reaction_forces, axis=1))
-    # axes[-1].set_ylabel('|reaction force|')
+
+    f, axes = plt.subplots(config.nx + 1, 1, sharex=True)
+    xlabels = ['$p$', '$dp$', '$f$', '$\\beta$']
+    for i in range(config.nx):
+        axes[i].plot(t, XU[:, i])
+        axes[i].set_ylabel(xlabels[i])
+    axes[-1].plot(t, np.linalg.norm(reaction_forces, axis=1))
+    axes[-1].set_ylabel('|reaction force|')
 
     plt.show()
     env.close()
