@@ -105,8 +105,8 @@ config = load_data.DataConfig(predict_difference=False, predict_all_dims=True, y
 ds_local = PregeneratedDataset(xx.view(-1, 1), uu, yy.view(-1, 1), config=config)
 
 # linear local model (if we hand assigned mixing weights)
-dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds_local, torch.sub, local_mix_weight_scale=1000,
-                                            const_local_mix_weight=True)
+dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds_local, torch.sub, local_mix_weight_scale=1000,
+                                              const_local_mix_weight=True)
 yhat_linear_fit = dynamics.predict(None, None, x.view(-1, 1), u)
 
 dynamics.local_weight_scale = 10.
@@ -125,7 +125,7 @@ yhat_new1 = dynamics.predict(None, None, x.view(-1, 1), u)
 likelihood = gpytorch.likelihoods.GaussianLikelihood()
 train_x = xx
 train_y = yy
-model = GPWithNominalModelMean(train_x, train_y, likelihood, pm.dyn_net.predict)
+model = GPWithNominalModelMean(train_x, train_y, likelihood, pm.dyn_net._batch_apply_model)
 training_iter = 50
 
 # Find optimal model hyperparameters
@@ -153,9 +153,25 @@ for i in range(training_iter):
 # Get into evaluation (predictive posterior) mode
 model.eval()
 likelihood.eval()
-with torch.no_grad(), gpytorch.settings.fast_pred_var():
-    f_pred = model(x)
-    observed_pred = likelihood(f_pred)
+import time
+import numpy as np
+
+Ns = np.logspace(1, 4)
+timed = []
+for N in Ns:
+    x = torch.rand(int(N)) * 10
+    x, _ = torch.sort(x)
+    start = time.time()
+    with gpytorch.settings.fast_pred_var():
+        f_pred = model(x)
+        observed_pred = likelihood(f_pred)
+    elapsed = time.time() - start
+    logger.info("{:.4f}s for {} x: {:.6f}s per item".format(elapsed, x.shape[0], elapsed / x.shape[0]))
+    timed.append(elapsed / x.shape[0])
+
+plt.semilogx(Ns, timed)
+plt.show()
+exit()
 
 # plt.scatter(x.numpy(), y.numpy(), alpha=0.2)
 # plt.plot(x.numpy(), yhat.numpy(), alpha=0.2)
