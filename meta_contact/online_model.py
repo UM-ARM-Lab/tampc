@@ -5,11 +5,92 @@ from meta_contact import prior
 from torch.distributions.multivariate_normal import MultivariateNormal
 import logging
 import gpytorch
+import abc
 
 logger = logging.getLogger(__name__)
 
 
-class OnlineDynamicsModel(object):
+class OnlineDynamicsModel(abc.ABC):
+    """Different way of mixing local and nominal model; use nominal as mean"""
+
+    def __init__(self, ds, state_difference, device=torch.device("cpu")):
+        self.ds = ds
+        self.advance = model.advance_state(ds.original_config(), use_np=False)
+        self.state_difference = state_difference
+
+        self.nx = ds.config.nx
+        self.nu = ds.config.nu
+
+        # device the prior model is on
+        self.d = device
+
+    @abc.abstractmethod
+    def reset(self):
+        """Clear state of model"""
+
+    def update(self, px, pu, cx):
+        """Update local model with new (x,u,x') data point in original space"""
+        y = self.state_difference(cx, px) if self.ds.original_config().predict_difference else cx
+        if self.ds.preprocessor:
+            x, u, y = self._make_2d_tensor(px, pu, y)
+            xu = torch.cat((x, u), dim=1)
+            xu, y, _ = self.ds.preprocessor.tsf.transform(xu, y)
+            px = xu[:, :self.nx].view(-1)
+            pu = xu[:, self.nx:].view(-1)
+            y = y.view(-1)
+        # TODO call child update function here
+        self._update(px, pu, y)
+
+    @abc.abstractmethod
+    def _update(self, px, pu, y):
+        """Do update with (x,u,y) data point in transformed space"""
+
+    def _make_2d_tensor(self, *args):
+        if args[0] is None:
+            return args
+        oned = len(args[0].shape) is 1
+        if not torch.is_tensor(args[0]):
+            args = (torch.from_numpy(value).to(device=self.d) if value is not None else None for value in args)
+        if oned:
+            args = (value.view(1, -1) if value is not None else None for value in args)
+        return args
+
+    def _apply_transform(self, x, u):
+        if x is None:
+            return x, u
+        xu = torch.cat((x, u), dim=1)
+        xu = self.ds.preprocessor.transform_x(xu)
+        x = xu[:, :self.nx]
+        u = xu[:, self.nx:]
+        return x, u
+
+    def predict(self, px, pu, cx, cu, already_transformed=False):
+        """
+        Predict next state; will return with the same dimensions as cx
+        :return: B x N x nx or N x nx next states
+        """
+        ocx = cx  # original state
+        cx, cu, px, pu = self._make_2d_tensor(cx, cu, px, pu)
+        # transform if necessary (ensure dynamics is evaluated only in transformed space)
+        if self.ds.preprocessor and not already_transformed:
+            cx, cu = self._apply_transform(cx, cu)
+            px, pu = self._apply_transform(px, pu)
+
+        y = self._dynamics_in_transformed_space(px, pu, cx, cu)
+
+        if self.ds.preprocessor:
+            y = self.ds.preprocessor.invert_transform(y, ocx)
+
+        next_state = self.advance(ocx, y)
+
+        return next_state
+
+    @abc.abstractmethod
+    def _dynamics_in_transformed_space(self, cx, cu, px, pu):
+        """Return y in transformed space"""
+
+
+class OnlineLinearizeMixing(OnlineDynamicsModel):
     """ Moving average estimate of locally linear dynamics from https://arxiv.org/pdf/1509.06841.pdf
 
     Note gamma here is (1-gamma) described in the paper, so high gamma forgets quicker.
@@ -21,8 +102,8 @@ class OnlineDynamicsModel(object):
     """
 
     def __init__(self, gamma, online_prior: prior.OnlineDynamicsPrior, ds, state_difference,
-                 xu_characteristic_length=1., device='cpu', sigreg=1e-5, slice_to_use=None, local_mix_weight_scale=1.,
-                 const_local_mix_weight=True):
+                 xu_characteristic_length=1., sigreg=1e-5, slice_to_use=None, local_mix_weight_scale=1.,
+                 const_local_mix_weight=True, **kwargs):
         """
         :param gamma: How fast to update our empirical local model, with 1 being to completely forget the previous model
         every time we get new data
@@ -36,15 +117,10 @@ class OnlineDynamicsModel(object):
         m of the prior model, which are typically 1, so use 1 for equal weighting
         :param sigreg: How much to regularize conditioning of dynamics from p(x,u,x') to p(x'|x,u)
         """
+        super().__init__(ds, state_difference, **kwargs)
         self.gamma = gamma
         self.prior = online_prior
         self.sigreg = sigreg  # Covariance regularization (adds sigreg*eye(N))
-        self.ds = ds
-        self.advance = model.advance_state(ds.original_config(), use_np=False)
-        self.state_difference = state_difference
-
-        self.nx = ds.config.nx
-        self.nu = ds.config.nu
 
         # mixing parameters
         self.const_local_weight = const_local_mix_weight
@@ -54,8 +130,6 @@ class OnlineDynamicsModel(object):
 
         self.emp_error = None
         self.prior_error = None
-        # device the prior model is on
-        self.d = device
 
         self.prior_trust_coefficient = 0.1  # the lower it is the more we trust the prior; 0 means only ever use prior
         self.sigma, self.mu, self.xxt = None, None, None
@@ -110,19 +184,7 @@ class OnlineDynamicsModel(object):
         # # high gamma means to trust empirical model (paper uses 1-rho, but this makes more sense)
         # self.gamma = self.prior_trust_coefficient / rho
 
-    def update(self, px, pu, cx):
-        """ Perform a moving average update on the current dynamics """
-        # our internal dynamics could be on dx or x', so convert x' to whatever our model works with
-        y = self.state_difference(cx, px) if self.ds.original_config().predict_difference else cx
-        # convert xux to transformed coordinates
-        if self.ds.preprocessor:
-            x, u, y = self._make_2d_tensor(px, pu, y)
-            xu = torch.cat((x, u), dim=1)
-            xu, y, _ = self.ds.preprocessor.tsf.transform(xu, y)
-            px = xu[:, :self.nx].view(-1)
-            pu = xu[:, self.nx:].view(-1)
-            y = y.view(-1)
-        # should be (zi, zo) in transformed space
+    def _update(self, px, pu, y):
         xux = torch.cat((px, pu, y))
 
         gamma = self.gamma
@@ -156,46 +218,10 @@ class OnlineDynamicsModel(object):
                                                  n0)
         return _batch_conditioned_dynamics(self.nx, self.nu, sigma, mu, self.sigreg)
 
-    def _make_2d_tensor(self, *args):
-        if args[0] is None:
-            return args
-        oned = len(args[0].shape) is 1
-        if not torch.is_tensor(args[0]):
-            args = (torch.from_numpy(value).to(device=self.d) if value is not None else None for value in args)
-        if oned:
-            args = (value.view(1, -1) if value is not None else None for value in args)
-        return args
-
-    def _apply_transform(self, x, u):
-        if x is None:
-            return x, u
-        xu = torch.cat((x, u), dim=1)
-        xu = self.ds.preprocessor.transform_x(xu)
-        x = xu[:, :self.nx]
-        u = xu[:, self.nx:]
-        return x, u
-
-    def predict(self, px, pu, cx, cu, already_transformed=False):
-        """
-        Predict next state; will return with the same dimensions as cx
-        :return: B x N x nx or N x nx next states
-        """
-        ocx = cx  # original state
-        cx, cu, px, pu = self._make_2d_tensor(cx, cu, px, pu)
-        # transform if necessary (ensure dynamics is evaluated only in transformed space)
-        if self.ds.preprocessor and not already_transformed:
-            cx, cu = self._apply_transform(cx, cu)
-            px, pu = self._apply_transform(px, pu)
-
+    def _dynamics_in_transformed_space(self, px, pu, cx, cu):
         params = self._get_batch_dynamics(px, pu, cx, cu)
         y = _batch_evaluate_dynamics(cx, cu, *params)
-
-        if self.ds.preprocessor:
-            y = self.ds.preprocessor.invert_transform(y, ocx)
-
-        next_state = self.advance(ocx, y)
-
-        return next_state
+        return y
 
 
 class MixingGP(gpytorch.models.ExactGP):
@@ -217,18 +243,12 @@ class MixingGP(gpytorch.models.ExactGP):
         return gpytorch.distributions.MultitaskMultivariateNormal(mean_x, covar_x)
 
 
-class OnlineGPModel:
+class OnlineGPMixing(OnlineDynamicsModel):
     """Different way of mixing local and nominal model; use nominal as mean"""
 
-    def __init__(self, nominal_model, ds, state_difference, max_data_points=50, device=torch.device("cpu"),
-                 training_iter=50):
+    def __init__(self, nominal_model, ds, state_difference, max_data_points=50, training_iter=50, **kwargs):
+        super().__init__(ds, state_difference, **kwargs)
         self.prior = nominal_model
-        self.ds = ds
-        self.advance = model.advance_state(ds.original_config(), use_np=False)
-        self.state_difference = state_difference
-
-        self.nx = ds.config.nx
-        self.nu = ds.config.nu
 
         # TODO set initial data
         # actually keep track of data used to fit rather than doing recursive
@@ -242,9 +262,6 @@ class OnlineGPModel:
 
         # mixing parameters
         self.last_prediction = None
-
-        # device the prior model is on
-        self.d = device
 
         # Initial values
         self.reset()
@@ -260,14 +277,9 @@ class OnlineGPModel:
             {'params': self.gp.parameters()},
         ])
 
-    def update(self, px, pu, cx):
-        """Shift the training points of the GP"""
-        y = self.state_difference(cx, px) if self.ds.original_config().predict_difference else cx
-        x, u, y = self._make_2d_tensor(px, pu, y)
-        xu = torch.cat((x, u), dim=1)
-        if self.ds.preprocessor:
-            xu, y, _ = self.ds.preprocessor.tsf.transform(xu, y)
-
+    def _update(self, px, pu, y):
+        xu = torch.cat((px.view(1, -1), pu.view(1, -1)), dim=1)
+        y = y.view(1, -1)
         if self.xu.shape[0] < self.max_data_points:
             self.xu = torch.cat((self.xu, xu), dim=0)
             self.y = torch.cat((self.y, y), dim=0)
@@ -298,48 +310,12 @@ class OnlineGPModel:
         self.gp.eval()
         self.likelihood.eval()
 
-    def _make_2d_tensor(self, *args):
-        if args[0] is None:
-            return args
-        oned = len(args[0].shape) is 1
-        if not torch.is_tensor(args[0]):
-            args = (torch.from_numpy(value).to(device=self.d) if value is not None else None for value in args)
-        if oned:
-            args = (value.view(1, -1) if value is not None else None for value in args)
-        return args
-
-    def _apply_transform(self, x, u):
-        if x is None:
-            return x, u
-        xu = torch.cat((x, u), dim=1)
-        xu = self.ds.preprocessor.transform_x(xu)
-        x = xu[:, :self.nx]
-        u = xu[:, self.nx:]
-        return x, u
-
-    def predict(self, px, pu, cx, cu, already_transformed=False):
-        """
-        Predict next state; will return with the same dimensions as cx
-        :return: B x N x nx or N x nx next states
-        """
-        ocx = cx  # original state
-        cx, cu, px, pu = self._make_2d_tensor(cx, cu, px, pu)
-        # transform if necessary (ensure dynamics is evaluated only in transformed space)
-        if self.ds.preprocessor and not already_transformed:
-            cx, cu = self._apply_transform(cx, cu)
-
-        with torch.no_grad(), gpytorch.settings.fast_pred_var():
-            xu = torch.cat((cx, cu), dim=1)
-            self.last_prediction = self.likelihood(self.gp(xu))
-            # TODO not using covariance, but could plot them with .confidence_region()
-            y = self.last_prediction.mean
-
-        if self.ds.preprocessor:
-            y = self.ds.preprocessor.invert_transform(y, ocx)
-
-        next_state = self.advance(ocx, y)
-
-        return next_state
+    def _dynamics_in_transformed_space(self, px, pu, cx, cu):
+        xu = torch.cat((cx, cu), dim=1)
+        self.last_prediction = self.likelihood(self.gp(xu))
+        # TODO not using covariance, but could plot them with .confidence_region()
+        y = self.last_prediction.mean
+        return y
 
 
 def _cat_xu(px, pu, cx, cu):

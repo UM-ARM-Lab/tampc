@@ -37,9 +37,9 @@ class OnlineController(controller.MPC):
         if self.u_max is not None:
             u = math_utils.clip(u, self.u_min, self.u_max)
 
-        self.dynamics.evaluate_error(self.prev_x, self.prev_u, x, u)
-        # if self.prevu is not None:  # smooth
-        #    u = 0.5*u+0.5*self.prevu
+        if isinstance(self.dynamics, online_model.OnlineLinearizeMixing):
+            self.dynamics.evaluate_error(self.prev_x, self.prev_u, x, u)
+
         self.u_history.append(u)
 
         return u

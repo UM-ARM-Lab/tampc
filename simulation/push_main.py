@@ -1189,8 +1189,8 @@ def test_online_model():
     pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=600)
 
     # we can evaluate just prior dynamics by mixing with N=0 (no weight for empirical data)
-    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, env.state_difference, local_mix_weight_scale=0,
-                                                sigreg=1e-10)
+    dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds, env.state_difference, local_mix_weight_scale=0,
+                                                  sigreg=1e-10)
 
     # evaluate linearization by comparing error from applying model directly vs applying linearized model
     xuv, yv, _ = ds.original_validation_set()
@@ -1375,9 +1375,9 @@ def get_controller_options(env):
 def get_controller(env, pm, ds, untransformed_config, online_adapt=True):
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     if online_adapt:
-        dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, env.state_difference, local_mix_weight_scale=1.0,
-                                                    const_local_mix_weight=True,
-                                                    sigreg=1e-10, device=common_wrapper_opts['device'])
+        dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds, env.state_difference, local_mix_weight_scale=1.0,
+                                                      const_local_mix_weight=True,
+                                                      sigreg=1e-10, device=common_wrapper_opts['device'])
         ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
                                             constrain_state=constrain_state, mpc_opts=mpc_opts)
     else:
@@ -1529,19 +1529,18 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
     # TODO evaluate model prediction outside of fitted range to see if it will revert back to nominal model
     # don't use all of the data; use just the part that's stuck against a wall?
-    dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds_wall, env.state_difference, local_mix_weight_scale=1000,
-                                                const_local_mix_weight=True, sigreg=1e-10, slice_to_use=bug_trap_slice,
-                                                device=d)
+    dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds_wall, env.state_difference, local_mix_weight_scale=1000,
+                                                  const_local_mix_weight=True, sigreg=1e-10,
+                                                  slice_to_use=bug_trap_slice,
+                                                  device=d)
     cx, cu = xu[:, :config.nx], xu[:, config.nx:]
     # an actual linear fit on data
-    params = dynamics._get_batch_dynamics(None, None, cx, cu)
-    yhat_linear = online_model._batch_evaluate_dynamics(cx, cu, *params)
+    yhat_linear = dynamics._dynamics_in_transformed_space(None, None, cx, cu)
 
     # our mixed model
     dynamics.const_local_weight = False
     dynamics.local_weight_scale = 10
-    params = dynamics._get_batch_dynamics(None, None, cx, cu)
-    yhat_linear_mix = online_model._batch_evaluate_dynamics(cx, cu, *params)
+    yhat_linear_mix = dynamics._dynamics_in_transformed_space(None, None, cx, cu)
 
     yhat_interpolates = []
     # mix_weights = [0, 0.33333, 1, 3, 1000]
