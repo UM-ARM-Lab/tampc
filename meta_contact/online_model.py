@@ -280,9 +280,8 @@ class OnlineGPMixing(OnlineDynamicsModel):
         self.y = self.init_y.clone()
         self.likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=self.ds.config.ny).to(
             device=self.d, dtype=self.dtype)
-        # TODO try different ranks
         self.gp = MixingGP(self.xu, self.y, self.likelihood, self.prior.get_batch_predictions,
-                           rank=self.ds.config.ny).to(device=self.d,
+                           rank=1).to(device=self.d,
                                                       dtype=self.dtype)
         self.optimizer = torch.optim.Adam([
             {'params': self.gp.parameters()},
@@ -301,7 +300,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
             self.y = torch.roll(self.y, -1, dims=0)
             self.y[-1] = y
 
-        self.gp.set_train_data(self.xu, self.y)
+        self.gp.set_train_data(self.xu, self.y, strict=False)
         self._fit_params()
 
     def _fit_params(self):
