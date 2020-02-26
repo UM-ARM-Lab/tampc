@@ -4,6 +4,7 @@ from meta_contact import model
 from meta_contact import prior
 from torch.distributions.multivariate_normal import MultivariateNormal
 import logging
+import gpytorch
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +189,150 @@ class OnlineDynamicsModel(object):
 
         params = self._get_batch_dynamics(px, pu, cx, cu)
         y = _batch_evaluate_dynamics(cx, cu, *params)
+
+        if self.ds.preprocessor:
+            y = self.ds.preprocessor.invert_transform(y, ocx)
+
+        next_state = self.advance(ocx, y)
+
+        return next_state
+
+
+class MixingGP(gpytorch.models.ExactGP):
+    def __init__(self, train_x, train_y, likelihood, nominal_model, rank=1):
+        super(MixingGP, self).__init__(train_x, train_y, likelihood)
+        self.nominal_model = nominal_model
+        ny = train_y.shape[1]
+        # TODO use priors and constraints on the kernels
+        self.mean_module = gpytorch.means.MultitaskMean(
+            gpytorch.means.ZeroMean(), num_tasks=ny
+        )
+        self.covar_module = gpytorch.kernels.MultitaskKernel(
+            gpytorch.kernels.RBFKernel(), num_tasks=ny, rank=rank
+        )
+
+    def forward(self, x):
+        mean_x = self.mean_module(x) + self.nominal_model(x)
+        covar_x = self.covar_module(x)
+        return gpytorch.distributions.MultitaskMultivariateNormal(mean_x, covar_x)
+
+
+class OnlineGPModel:
+    """Different way of mixing local and nominal model; use nominal as mean"""
+
+    def __init__(self, nominal_model, ds, state_difference, max_data_points=50, device=torch.device("cpu"),
+                 training_iter=50):
+        self.prior = nominal_model
+        self.ds = ds
+        self.advance = model.advance_state(ds.original_config(), use_np=False)
+        self.state_difference = state_difference
+
+        self.nx = ds.config.nx
+        self.nu = ds.config.nu
+
+        # TODO set initial data
+        # actually keep track of data used to fit rather than doing recursive
+        self.max_data_points = max_data_points
+        self.xu = None
+        self.y = None
+        self.likelihood = None
+        self.gp = None
+        self.optimizer = None
+        self.training_iter = training_iter
+
+        # mixing parameters
+        self.last_prediction = None
+
+        # device the prior model is on
+        self.d = device
+
+        # Initial values
+        self.reset()
+
+    def reset(self):
+        self.xu = torch.zeros((0, self.ds.config.input_dim()), device=self.d, dtype=torch.double)
+        self.y = torch.zeros((0, self.ds.config.ny), device=self.d, dtype=torch.double)
+        self.likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=self.ds.config.ny).to(
+            device=self.d)
+        # TODO try different ranks
+        self.gp = MixingGP(self.xu, self.y, self.likelihood, self.prior).to(device=self.d)
+        self.optimizer = torch.optim.Adam([
+            {'params': self.gp.parameters()},
+        ])
+
+    def update(self, px, pu, cx):
+        """Shift the training points of the GP"""
+        y = self.state_difference(cx, px) if self.ds.original_config().predict_difference else cx
+        x, u, y = self._make_2d_tensor(px, pu, y)
+        xu = torch.cat((x, u), dim=1)
+        if self.ds.preprocessor:
+            xu, y, _ = self.ds.preprocessor.tsf.transform(xu, y)
+
+        if self.xu.shape[0] < self.max_data_points:
+            self.xu = torch.cat((self.xu, xu), dim=0)
+            self.y = torch.cat((self.y, y), dim=0)
+        else:
+            self.xu = torch.roll(self.xu, -1, dims=0)
+            self.xu[-1] = xu
+            self.y = torch.roll(self.y, -1, dims=0)
+            self.y[-1] = y
+
+        self.gp.set_training_data(self.xu, self.y)
+        self._fit_params()
+
+    def _fit_params(self):
+        # tune hyperparameters to new data
+        self.gp.train()
+        self.likelihood.train()
+        mll = gpytorch.mlls.ExactMarginalLogLikelihood(self.likelihood, self.gp)
+
+        # TODO for refits, don't have to train for as many iterations due to data being close to before
+        for i in range(self.training_iter):
+            self.optimizer.zero_grad()
+            output = self.gp(self.xu)
+            loss = -mll(output, self.y)
+            loss.backward()
+            logger.debug('Iter %d/%d - Loss: %.3f' % (i + 1, self.training_iter, loss.item()))
+            self.optimizer.step()
+
+        self.gp.eval()
+        self.likelihood.eval()
+
+    def _make_2d_tensor(self, *args):
+        if args[0] is None:
+            return args
+        oned = len(args[0].shape) is 1
+        if not torch.is_tensor(args[0]):
+            args = (torch.from_numpy(value).to(device=self.d) if value is not None else None for value in args)
+        if oned:
+            args = (value.view(1, -1) if value is not None else None for value in args)
+        return args
+
+    def _apply_transform(self, x, u):
+        if x is None:
+            return x, u
+        xu = torch.cat((x, u), dim=1)
+        xu = self.ds.preprocessor.transform_x(xu)
+        x = xu[:, :self.nx]
+        u = xu[:, self.nx:]
+        return x, u
+
+    def predict(self, px, pu, cx, cu, already_transformed=False):
+        """
+        Predict next state; will return with the same dimensions as cx
+        :return: B x N x nx or N x nx next states
+        """
+        ocx = cx  # original state
+        cx, cu, px, pu = self._make_2d_tensor(cx, cu, px, pu)
+        # transform if necessary (ensure dynamics is evaluated only in transformed space)
+        if self.ds.preprocessor and not already_transformed:
+            cx, cu = self._apply_transform(cx, cu)
+
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            xu = torch.cat((cx, cu), dim=1)
+            self.last_prediction = self.likelihood(self.gp(xu))
+            # TODO not using covariance, but could plot them with .confidence_region()
+            y = self.last_prediction.mean
 
         if self.ds.preprocessor:
             y = self.ds.preprocessor.invert_transform(y, ocx)
