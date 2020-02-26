@@ -54,6 +54,10 @@ class OnlineDynamicsPrior:
         """Get normal inverse-Wishart prior parameters for batch of data (first dimension is batch) evaluated at each
         (pxu, xu)"""
 
+    def get_batch_predictions(self, xu):
+        """As an alternative to returning conjugate prior parameters, make predictions directly in transformed space"""
+        raise RuntimeError("{} doesn't implement direct predictions".format(self.__class__.__name__))
+
 
 def batch_mix_prior(nnF, strength=1.0):
     """
@@ -106,18 +110,18 @@ class NNPrior(OnlineDynamicsPrior):
         self.mix_prior_strength = mix_strength
         self.full_context = mw.ds.config.expanded_input
 
-    def _predict(self, *args):
+    def get_batch_predictions(self, xu):
         # should use private method because everything is already transformed
-        return self.dyn_net._batch_apply_model(*args)
+        return self.dyn_net._batch_apply_model(xu)
 
     def get_batch_params(self, nx, nu, xu, pxu, xux):
         # feed pxu and xu to network (full contextual network)
         full_input = torch.cat((xu, pxu), 1) if self.full_context else xu
         # jacobian of xu' wrt xu and pxu, need to strip the pxu columns
-        F = grad.batch_jacobian(self._predict, full_input)
+        F = grad.batch_jacobian(self.get_batch_predictions, full_input)
         # first columns are xu, latter columns are pxu
         F = F[:, :, :nx + nu]
-        xp = self._predict(full_input)
+        xp = self.get_batch_predictions(full_input)
         # build \bar{Sigma} (nn_Phi) and \bar{mu} (nnf)
         nn_Phi, nnf = batch_mix_prior(F, strength=self.mix_prior_strength)
         # NOTE nnf is not used
