@@ -1533,7 +1533,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
                                                   const_local_mix_weight=True, sigreg=1e-10,
                                                   slice_to_use=bug_trap_slice,
                                                   device=d)
-    dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=bug_trap_slice, device=d)
+    dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=bug_trap_slice, device=d, training_iter=100)
     cx, cu = xu[:, :config.nx], xu[:, config.nx:]
     # an actual linear fit on data
     yhat_linear = dynamics._dynamics_in_transformed_space(None, None, cx, cu)
@@ -1568,12 +1568,15 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
     ylabels = ['$dx_b$', '$dy_b$', '$d\\theta$', '$dp$']
     f, axes = plt.subplots(config.ny, 1, sharex=True)
+    lower, upper = dynamics_gp.last_prediction.confidence_region()
     for i in range(config.ny):
         axes[i].scatter(t, Y[:, i], label='truth', alpha=0.2)
         axes[i].plot(t, Yhat_freespace[:, i], label='nominal', alpha=0.5)
-        axes[i].plot(t, Yhat_linear[:, i], label='linear fit', alpha=0.5)
-        axes[i].plot(t, yhat_linear_mix[:, i].cpu().numpy(), label='mix')
+        # axes[i].plot(t, Yhat_linear[:, i], label='linear fit', alpha=0.5)
+        # axes[i].plot(t, yhat_linear_mix[:, i].cpu().numpy(), label='mix')
+
         axes[i].plot(t, yhat_gp[:, i].cpu().numpy(), label='gp')
+        axes[i].fill_between(t, lower[:, i].cpu().numpy(), upper[:, i].cpu().numpy(), alpha=0.3)
         # axes[i].plot(t, Yhat_linear_online[:, i])
 
         axes[i].set_ylabel(ylabels[i])

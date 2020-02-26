@@ -286,7 +286,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
                                                       dtype=self.dtype)
         self.optimizer = torch.optim.Adam([
             {'params': self.gp.parameters()},
-        ])
+        ], lr=0.1)
         self._fit_params()
 
     def _update(self, px, pu, y):
@@ -305,6 +305,8 @@ class OnlineGPMixing(OnlineDynamicsModel):
         self._fit_params()
 
     def _fit_params(self):
+        import time
+        start = time.time()
         # tune hyperparameters to new data
         self.gp.train()
         self.likelihood.train()
@@ -321,6 +323,8 @@ class OnlineGPMixing(OnlineDynamicsModel):
 
         self.gp.eval()
         self.likelihood.eval()
+        elapsed = time.time() - start
+        logger.debug('training took %.4fs', elapsed)
 
     def _dynamics_in_transformed_space(self, px, pu, cx, cu):
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
