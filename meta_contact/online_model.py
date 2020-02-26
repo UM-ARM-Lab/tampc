@@ -23,6 +23,7 @@ class OnlineDynamicsModel(abc.ABC):
 
         # device the prior model is on
         self.d = device
+        self.dtype = torch.double
 
     @abc.abstractmethod
     def reset(self):
@@ -38,7 +39,6 @@ class OnlineDynamicsModel(abc.ABC):
             px = xu[:, :self.nx].view(-1)
             pu = xu[:, self.nx:].view(-1)
             y = y.view(-1)
-        # TODO call child update function here
         self._update(px, pu, y)
 
     @abc.abstractmethod
@@ -246,11 +246,12 @@ class MixingGP(gpytorch.models.ExactGP):
 class OnlineGPMixing(OnlineDynamicsModel):
     """Different way of mixing local and nominal model; use nominal as mean"""
 
-    def __init__(self, nominal_model, ds, state_difference, max_data_points=50, training_iter=50, **kwargs):
+    def __init__(self, prior: prior.OnlineDynamicsPrior, ds, state_difference, max_data_points=50, training_iter=50,
+                 slice_to_use=None,
+                 **kwargs):
         super().__init__(ds, state_difference, **kwargs)
-        self.prior = nominal_model
+        self.prior = prior
 
-        # TODO set initial data
         # actually keep track of data used to fit rather than doing recursive
         self.max_data_points = max_data_points
         self.xu = None
@@ -263,19 +264,30 @@ class OnlineGPMixing(OnlineDynamicsModel):
         # mixing parameters
         self.last_prediction = None
 
+        if slice_to_use is not None:
+            xu, y, _ = self.ds.training_set()
+            self.init_xu = xu[slice_to_use]
+            self.init_y = y[slice_to_use]
+        else:
+            self.init_xu = torch.zeros((0, self.ds.config.input_dim()), device=self.d, dtype=self.dtype)
+            self.init_y = torch.zeros((0, self.ds.config.ny), device=self.d, dtype=self.dtype)
+
         # Initial values
         self.reset()
 
     def reset(self):
-        self.xu = torch.zeros((0, self.ds.config.input_dim()), device=self.d, dtype=torch.double)
-        self.y = torch.zeros((0, self.ds.config.ny), device=self.d, dtype=torch.double)
+        self.xu = self.init_xu.clone()
+        self.y = self.init_y.clone()
         self.likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=self.ds.config.ny).to(
-            device=self.d)
+            device=self.d, dtype=self.dtype)
         # TODO try different ranks
-        self.gp = MixingGP(self.xu, self.y, self.likelihood, self.prior).to(device=self.d)
+        self.gp = MixingGP(self.xu, self.y, self.likelihood, self.prior.get_batch_predictions,
+                           rank=self.ds.config.ny).to(device=self.d,
+                                                      dtype=self.dtype)
         self.optimizer = torch.optim.Adam([
             {'params': self.gp.parameters()},
         ])
+        self._fit_params()
 
     def _update(self, px, pu, y):
         xu = torch.cat((px.view(1, -1), pu.view(1, -1)), dim=1)
@@ -289,7 +301,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
             self.y = torch.roll(self.y, -1, dims=0)
             self.y[-1] = y
 
-        self.gp.set_training_data(self.xu, self.y)
+        self.gp.set_train_data(self.xu, self.y)
         self._fit_params()
 
     def _fit_params(self):
@@ -311,11 +323,12 @@ class OnlineGPMixing(OnlineDynamicsModel):
         self.likelihood.eval()
 
     def _dynamics_in_transformed_space(self, px, pu, cx, cu):
-        xu = torch.cat((cx, cu), dim=1)
-        self.last_prediction = self.likelihood(self.gp(xu))
-        # TODO not using covariance, but could plot them with .confidence_region()
-        y = self.last_prediction.mean
-        return y
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            xu = torch.cat((cx, cu), dim=1)
+            self.last_prediction = self.likelihood(self.gp(xu))
+            # not using covariance, but could plot them with .confidence_region()
+            y = self.last_prediction.mean
+            return y
 
 
 def _cat_xu(px, pu, cx, cu):

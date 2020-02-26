@@ -1533,6 +1533,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
                                                   const_local_mix_weight=True, sigreg=1e-10,
                                                   slice_to_use=bug_trap_slice,
                                                   device=d)
+    dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=bug_trap_slice, device=d)
     cx, cu = xu[:, :config.nx], xu[:, config.nx:]
     # an actual linear fit on data
     yhat_linear = dynamics._dynamics_in_transformed_space(None, None, cx, cu)
@@ -1542,12 +1543,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     dynamics.local_weight_scale = 10
     yhat_linear_mix = dynamics._dynamics_in_transformed_space(None, None, cx, cu)
 
-    yhat_interpolates = []
-    # mix_weights = [0, 0.33333, 1, 3, 1000]
-    # for w in mix_weights:
-    #     dynamics.local_weight_scale = w
-    #     params = dynamics._get_batch_dynamics(None, None, cx, cu)
-    #     yhat_interpolates.append(online_model._batch_evaluate_dynamics(cx, cu, *params).cpu().numpy())
+    yhat_gp = dynamics_gp._dynamics_in_transformed_space(None, None, cx, cu)
 
     yhat_linear_online = torch.zeros_like(yhat_linear)
     # px, pu = None, None
@@ -1577,32 +1573,11 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
         axes[i].plot(t, Yhat_freespace[:, i], label='nominal', alpha=0.5)
         axes[i].plot(t, Yhat_linear[:, i], label='linear fit', alpha=0.5)
         axes[i].plot(t, yhat_linear_mix[:, i].cpu().numpy(), label='mix')
+        axes[i].plot(t, yhat_gp[:, i].cpu().numpy(), label='gp')
         # axes[i].plot(t, Yhat_linear_online[:, i])
 
         axes[i].set_ylabel(ylabels[i])
     axes[-1].legend()
-
-    # see how interpolation is done
-    # plt.figure()
-    # dim_to_view = 2
-    # for j, w in enumerate(mix_weights):
-    #     prior_weight = 1 / (1 + w)
-    #     plt.plot(t, yhat_interpolates[j][:, dim_to_view], label='prior proportion {:.2f}'.format(prior_weight),
-    #              color=(1 - prior_weight, 0.5, prior_weight))
-    # plt.ylabel(ylabels[dim_to_view])
-    # plt.title('interpolate in parameter space')
-    # plt.legend()
-    #
-    # # interpolate directly in y space
-    # plt.figure()
-    # for j, w in enumerate(mix_weights):
-    #     prior_weight = 1 / (1 + w)
-    #     yhat_direct_interpolate = prior_weight * Yhat_freespace + (1 - prior_weight) * Yhat_linear
-    #     plt.plot(t, yhat_direct_interpolate[:, dim_to_view], label='prior proportion {:.2f}'.format(prior_weight),
-    #              color=(1 - prior_weight, 0.5, prior_weight))
-    # plt.ylabel(ylabels[dim_to_view])
-    # plt.title('interpolate in output space')
-    # plt.legend()
 
     f, axes = plt.subplots(config.nx + 2, 1, sharex=True)
     xlabels = ['$p$', '$dp$', '$f$', '$\\beta$']
