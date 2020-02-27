@@ -5,7 +5,7 @@ from arm_pytorch_utilities import math_utils
 from meta_contact import online_model
 from meta_contact.controller import controller
 
-LOGGER = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class OnlineController(controller.MPC):
@@ -70,12 +70,21 @@ class OnlineMPC(OnlineController):
             state = state.view(1, -1)
             u = u.view(1, -1)
 
+        # import time
+        # start = time.time()
+
         # TODO the MPC method doesn't give dynamics px and pu (different from our prevx and prevu)
         # verified against non-batch calculations
         next_state = self.dynamics.predict(None, None, state, u)
+        # predict_time = time.time()
         next_state = self._adjust_next_state(next_state, u, t)
+        # adjust_time = time.time()
 
         next_state = self.constrain_state(next_state)
+
+        # final_time = time.time()
+        # logger.debug("dynamics %d predict %.4fs adjust %.4fs constrain %.4fs", state.shape[0], predict_time - start, adjust_time - predict_time, final_time - adjust_time)
+
         return next_state
 
     def _compute_action(self, x):
