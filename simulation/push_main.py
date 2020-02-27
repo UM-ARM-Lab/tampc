@@ -136,7 +136,7 @@ def get_preprocessor_for_invariant_tsf(invariant_tsf, evaluate_transform=True):
 
 def get_full_controller_name(pm, ctrl, tsf_name):
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else "{}_{}".format(tsf_name, pm.__class__.__name__)
-    name = "{}_{}".format(ctrl.__class__.__name__, name)
+    name = "{}_{}_{}".format(ctrl.__class__.__name__, ctrl.dynamics.__class__.__name__, name)
     return name
 
 
@@ -1372,22 +1372,35 @@ def get_controller_options(env):
     return common_wrapper_opts, mpc_opts
 
 
-def get_controller(env, pm, ds, untransformed_config, online_adapt=True):
+class OnlineAdapt:
+    NONE = 0
+    LINEARIZE_LIKELIHOOD = 1
+    GP_KERNEL = 2
+
+
+def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.GP_KERNEL):
     common_wrapper_opts, mpc_opts = get_controller_options(env)
-    if online_adapt:
-        dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds, env.state_difference, local_mix_weight_scale=1.0,
-                                                      const_local_mix_weight=True,
-                                                      sigreg=1e-10, device=common_wrapper_opts['device'])
+    d = common_wrapper_opts['device']
+    if online_adapt is not OnlineAdapt.NONE:
+        if online_adapt is OnlineAdapt.LINEARIZE_LIKELIHOOD:
+            dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds, env.state_difference,
+                                                          local_mix_weight_scale=10.0,
+                                                          const_local_mix_weight=False, sigreg=1e-10, device=d)
+        elif online_adapt is OnlineAdapt.GP_KERNEL:
+            dynamics = online_model.OnlineGPMixing(pm, ds, env.state_difference, device=d)
+        else:
+            raise RuntimeError("Unrecognized online adaption value {}".format(online_adapt))
+        # TODO figure out why GP mixing does poorly with constraint
         ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
-                                            constrain_state=constrain_state, mpc_opts=mpc_opts)
+                                            mpc_opts=mpc_opts)
     else:
         ctrl = controller.MPPI(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
 
     return ctrl
 
 
-def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False, online_adapt=True,
-                  prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
+def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False,
+                  prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior, **kwargs):
     seed = 1
     plot_model_error = False
     enforce_model_rollout = False
@@ -1395,7 +1408,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     env = get_easy_env(p.GUI, level=level, log_video=True)
 
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-    # TODO always using freespace data for now
+    # use nominal/freespace model
     ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config, device=d)
 
     logger.info("initial random seed %d", rand.seed(seed))
@@ -1452,20 +1465,20 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
             plt.ylabel("$e_{}$".format(i))
         plt.show()
 
-    ctrl = get_controller(env, pm, ds, untransformed_config, online_adapt)
+    ctrl = get_controller(env, pm, ds, untransformed_config, **kwargs)
     name = get_full_controller_name(pm, ctrl, tsf_name)
     # expensive evaluation
-    # evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921])
+    evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921])
 
-    env.draw_user_text(name, 14, left_offset=-1.5)
-    # env.sim_step_wait = 0.01
-    sim = block_push.InteractivePush(env, ctrl, num_frames=300, plot=False, save=True, stop_when_done=False)
-    seed = rand.seed(2)
-    env.draw_user_text("try {}".format(seed), 2)
-    sim.run(seed)
-    logger.info("last run cost %f", np.sum(sim.last_run_cost))
-    plt.ioff()
-    plt.show()
+    # env.draw_user_text(name, 14, left_offset=-1.5)
+    # # env.sim_step_wait = 0.01
+    # sim = block_push.InteractivePush(env, ctrl, num_frames=300, plot=False, save=True, stop_when_done=False)
+    # seed = rand.seed(2)
+    # env.draw_user_text("try {}".format(seed), 2)
+    # sim.run(seed)
+    # logger.info("last run cost %f", np.sum(sim.last_run_cost))
+    # plt.ioff()
+    # plt.show()
 
     env.close()
 
@@ -1784,13 +1797,13 @@ def learn_model(seed=1, name="", transform_name="", train_epochs=600, batch_N=50
 
 
 if __name__ == "__main__":
-    level = 1
+    level = 0
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
 
-    test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
+    # test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
-    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=False)
-    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True)
+    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE)
+    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD)
     # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
     # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
     # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True, prior_class=prior.NoPrior)
