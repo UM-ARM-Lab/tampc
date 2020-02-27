@@ -148,6 +148,8 @@ class OnlineLinearizeMixing(OnlineDynamicsModel):
     def evaluate_error(self, px, pu, cx, cu):
         """After updating dynamics and using that dynamics to plan an action,
         evaluate the error of empirical and prior dynamics"""
+        # TODO not used for anything for now
+        return
         # can't evaluate if it's the first action
         if px is None:
             self.emp_error = self.prior_error = None
@@ -204,15 +206,7 @@ class OnlineLinearizeMixing(OnlineDynamicsModel):
         xu, pxu, xux = _cat_xu(px, pu, cx, cu)
         Phi, mu0, m, n0 = self.prior.get_batch_params(self.nx, self.nu, xu, pxu, xux)
 
-        # marginalize joint gaussian of (x,u,x') to get (x,u) then use likelihood of cx, cu as local mix weight
-        if not self.const_local_weight:
-            xu_slice = slice(self.nx + self.nu)
-            mu_xu = self.mu[xu_slice]
-            sigma_xu = self.sigma[xu_slice, xu_slice]
-            d = MultivariateNormal(mu_xu, sigma_xu)
-            self.local_weight = torch.exp(d.log_prob(xu) * self.characteristic_length)
-        else:
-            self.local_weight = torch.ones(cx.shape[0], device=self.d, dtype=cx.dtype)
+        self.local_weight = self.get_local_weight(xu)
         # mix prior and empirical distribution
         sigma, mu = prior.batch_mix_distribution(self.sigma, self.mu,
                                                  self.local_weight.view(-1, 1) * self.local_weight_scale, Phi, mu0, m,
@@ -223,6 +217,18 @@ class OnlineLinearizeMixing(OnlineDynamicsModel):
         params = self._get_batch_dynamics(px, pu, cx, cu)
         y = _batch_evaluate_dynamics(cx, cu, *params)
         return y
+
+    def get_local_weight(self, xu):
+        # marginalize joint gaussian of (x,u,x') to get (x,u) then use likelihood of cx, cu as local mix weight
+        if not self.const_local_weight:
+            xu_slice = slice(self.nx + self.nu)
+            mu_xu = self.mu[xu_slice]
+            sigma_xu = self.sigma[xu_slice, xu_slice]
+            d = MultivariateNormal(mu_xu, sigma_xu)
+            local_weight = torch.exp(d.log_prob(xu) / self.characteristic_length)
+        else:
+            local_weight = torch.ones(xu.shape[0], device=self.d, dtype=xu.dtype)
+        return local_weight
 
 
 class MixingFullGP(gpytorch.models.ExactGP):
