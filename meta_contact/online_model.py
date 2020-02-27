@@ -247,7 +247,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
     """Different way of mixing local and nominal model; use nominal as mean"""
 
     def __init__(self, prior: prior.OnlineDynamicsPrior, ds, state_difference, max_data_points=50, training_iter=50,
-                 slice_to_use=None,
+                 slice_to_use=None, partial_refit=True,
                  **kwargs):
         super().__init__(ds, state_difference, **kwargs)
         self.prior = prior
@@ -260,33 +260,34 @@ class OnlineGPMixing(OnlineDynamicsModel):
         self.gp = None
         self.optimizer = None
         self.training_iter = training_iter
+        self.partial_refit = partial_refit
 
         # mixing parameters
         self.last_prediction = None
 
-        if slice_to_use is not None:
-            xu, y, _ = self.ds.training_set()
-            self.init_xu = xu[slice_to_use]
-            self.init_y = y[slice_to_use]
-        else:
-            self.init_xu = torch.zeros((0, self.ds.config.input_dim()), device=self.d, dtype=self.dtype)
-            self.init_y = torch.zeros((0, self.ds.config.ny), device=self.d, dtype=self.dtype)
-
+        if slice_to_use is None:
+            slice_to_use = slice(max_data_points)
+        xu, y, _ = self.ds.training_set()
+        self.init_xu = xu[slice_to_use]
+        self.init_y = y[slice_to_use]
         # Initial values
         self.reset()
 
     def reset(self):
         self.xu = self.init_xu.clone()
         self.y = self.init_y.clone()
+        self._recreate_gp()
+        self._fit_params(self.training_iter)
+
+    def _recreate_gp(self):
         self.likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=self.ds.config.ny).to(
             device=self.d, dtype=self.dtype)
         self.gp = MixingGP(self.xu, self.y, self.likelihood, self.prior.get_batch_predictions,
                            rank=1).to(device=self.d,
-                                                      dtype=self.dtype)
+                                      dtype=self.dtype)
         self.optimizer = torch.optim.Adam([
             {'params': self.gp.parameters()},
         ], lr=0.1)
-        self._fit_params()
 
     def _update(self, px, pu, y):
         xu = torch.cat((px.view(1, -1), pu.view(1, -1)), dim=1)
@@ -300,10 +301,16 @@ class OnlineGPMixing(OnlineDynamicsModel):
             self.y = torch.roll(self.y, -1, dims=0)
             self.y[-1] = y
 
-        self.gp.set_train_data(self.xu, self.y, strict=False)
-        self._fit_params()
+        # try refitting from previous parameters (fewer iterations)
+        if self.partial_refit:
+            self.gp.set_train_data(self.xu, self.y, strict=False)
+            self._fit_params(self.training_iter // 10)
+        else:
+            # refit from scratch
+            self._recreate_gp()
+            self._fit_params(self.training_iter)
 
-    def _fit_params(self):
+    def _fit_params(self, training_iter):
         import time
         start = time.time()
         # tune hyperparameters to new data
@@ -311,13 +318,12 @@ class OnlineGPMixing(OnlineDynamicsModel):
         self.likelihood.train()
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(self.likelihood, self.gp)
 
-        # TODO for refits, don't have to train for as many iterations due to data being close to before
-        for i in range(self.training_iter):
+        for i in range(training_iter):
             self.optimizer.zero_grad()
             output = self.gp(self.xu)
             loss = -mll(output, self.y)
             loss.backward()
-            logger.debug('Iter %d/%d - Loss: %.3f' % (i + 1, self.training_iter, loss.item()))
+            logger.debug('Iter %d/%d - Loss: %.3f' % (i + 1, training_iter, loss.item()))
             self.optimizer.step()
 
         self.gp.eval()
