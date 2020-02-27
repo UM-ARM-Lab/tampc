@@ -1506,11 +1506,11 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_recovery_global.mat", validation_ratio=0.,
                                         config=config, device=d)
-    bug_trap_slice = slice(4, 65)
+    test_slice = slice(4, 100)
 
     # ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_no_recovery.mat", validation_ratio=0.,
     #                                     config=config, device=d)
-    # bug_trap_slice = slice(15, 100)
+    # test_slice = slice(15, 100)
 
     original_config, _ = update_ds_with_transform(env, ds_wall, use_tsf, evaluate_transform=False)
 
@@ -1520,20 +1520,23 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     #                                     constrain_state=constrain_state, mpc_opts=mpc_opts)
 
     # visualize data and linear fit onto it
-    t = np.arange(bug_trap_slice.start, bug_trap_slice.stop)
-    xu, y, info = (v[bug_trap_slice] for v in ds_wall.training_set())
+    t = np.arange(test_slice.start, test_slice.stop)
+    xu, y, info = (v[test_slice] for v in ds_wall.training_set())
     reaction_forces = info[:, :3]
     model_errors = info[:, 3:]
 
     yhat_freespace = pm.dyn_net.user.sample(xu)
 
+    # first bug trap around 15-50
+    train_slice = slice(15, 55)
     # TODO evaluate model prediction outside of fitted range to see if it will revert back to nominal model
     # don't use all of the data; use just the part that's stuck against a wall?
     dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds_wall, env.state_difference, local_mix_weight_scale=1000,
                                                   const_local_mix_weight=True, sigreg=1e-10,
-                                                  slice_to_use=bug_trap_slice,
+                                                  slice_to_use=train_slice,
                                                   device=d)
-    dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=bug_trap_slice, device=d, training_iter=100)
+    dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice,
+                                              device=d, training_iter=100)
     cx, cu = xu[:, :config.nx], xu[:, config.nx:]
     # an actual linear fit on data
     yhat_linear = dynamics._dynamics_in_transformed_space(None, None, cx, cu)
@@ -1544,41 +1547,45 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     yhat_linear_mix = dynamics._dynamics_in_transformed_space(None, None, cx, cu)
 
     yhat_gp = dynamics_gp._dynamics_in_transformed_space(None, None, cx, cu)
+    with torch.no_grad():
+        lower, upper = dynamics_gp.last_prediction.confidence_region()
 
     yhat_linear_online = torch.zeros_like(yhat_linear)
-    # px, pu = None, None
-    # for i in range(xu.shape[0] - 1):
-    #     cx = xu[i, :config.nx]
-    #     cu = xu[i, config.nx:]
-    #     if px is not None:
-    #         px, pu = px.view(1, -1), pu.view(1, -1)
-    #     params = dynamics._get_batch_dynamics(px, pu, cx.view(1,-1), cu.view(1,-1))
-    #     yhat_linear_online[i] = online_model._batch_evaluate_dynamics(cx.view(1,-1), cu.view(1,-1), *params)
-    #     # update linear dynamics (don't use their API since we're already transformed)
-    #     xux = torch.cat((cx, cu, y[i]))
-    #     gamma = dynamics.gamma
-    #     dynamics.mu = dynamics.mu * (1 - gamma) + xux * (gamma)
-    #     dynamics.xxt = dynamics.xxt * (1 - gamma) + torch.ger(xux, xux) * gamma
-    #     dynamics.xxt = 0.5 * (dynamics.xxt + dynamics.xxt.t())
-    #     dynamics.sigma = dynamics.xxt - torch.ger(dynamics.mu, dynamics.mu)
-    #     px, pu = cx, cu
+    yhat_gp_online = torch.zeros_like(yhat_gp)
+    lower_online = torch.zeros_like(lower)
+    upper_online = torch.zeros_like(upper)
+    px, pu = None, None
+    for i in range(xu.shape[0] - 1):
+        cx = xu[i, :config.nx]
+        cu = xu[i, config.nx:]
+        if px is not None:
+            px, pu = px.view(1, -1), pu.view(1, -1)
+        yhat_linear_online[i] = dynamics._dynamics_in_transformed_space(px, pu, cx.view(1, -1), cu.view(1, -1))
+        yhat_gp_online[i] = dynamics_gp._dynamics_in_transformed_space(px, pu, cx.view(1, -1), cu.view(1, -1))
+        with torch.no_grad():
+            lower_online[i], upper_online[i] = dynamics_gp.last_prediction.confidence_region()
+        dynamics._update(cx, cu, y[i])
+        dynamics_gp._update(cx, cu, y[i])
+        px, pu = cx, cu
 
     XU, Y, Yhat_freespace, Yhat_linear, Yhat_linear_online, reaction_forces = (v.cpu().numpy() for v in (
         xu, y, yhat_freespace, yhat_linear, yhat_linear_online, reaction_forces))
 
     ylabels = ['$dx_b$', '$dy_b$', '$d\\theta$', '$dp$']
     f, axes = plt.subplots(config.ny, 1, sharex=True)
-    lower, upper = dynamics_gp.last_prediction.confidence_region()
     for i in range(config.ny):
         axes[i].scatter(t, Y[:, i], label='truth', alpha=0.2)
-        axes[i].plot(t, Yhat_freespace[:, i], label='nominal', alpha=0.5)
-        # axes[i].plot(t, Yhat_linear[:, i], label='linear fit', alpha=0.5)
-        # axes[i].plot(t, yhat_linear_mix[:, i].cpu().numpy(), label='mix')
+        axes[i].plot(t, Yhat_freespace[:, i], label='nominal', alpha=0.4, linewidth=3)
 
         axes[i].plot(t, yhat_gp[:, i].cpu().numpy(), label='gp')
         axes[i].fill_between(t, lower[:, i].cpu().numpy(), upper[:, i].cpu().numpy(), alpha=0.3)
-        # axes[i].plot(t, Yhat_linear_online[:, i])
+        axes[i].plot(t, yhat_gp_online[:, i].cpu().numpy(), label='online gp')
+        axes[i].fill_between(t, lower_online[:, i].cpu().numpy(), upper_online[:, i].cpu().numpy(), alpha=0.3)
 
+        # axes[i].plot(t, Yhat_linear[:, i], label='linear fit', alpha=0.5)
+        # axes[i].plot(t, yhat_linear_mix[:, i].cpu().numpy(), label='mix')
+        # axes[i].plot(t, Yhat_linear_online[:, i], label='online mix')
+        axes[i].set_ybound(-0.2, 1.2)
         axes[i].set_ylabel(ylabels[i])
     axes[-1].legend()
 
