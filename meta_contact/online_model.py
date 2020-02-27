@@ -69,6 +69,7 @@ class OnlineDynamicsModel(abc.ABC):
         Predict next state; will return with the same dimensions as cx
         :return: B x N x nx or N x nx next states
         """
+
         ocx = cx  # original state
         cx, cu, px, pu = self._make_2d_tensor(cx, cu, px, pu)
         # transform if necessary (ensure dynamics is evaluated only in transformed space)
@@ -246,7 +247,7 @@ class MixingGP(gpytorch.models.ExactGP):
 class OnlineGPMixing(OnlineDynamicsModel):
     """Different way of mixing local and nominal model; use nominal as mean"""
 
-    def __init__(self, prior: prior.OnlineDynamicsPrior, ds, state_difference, max_data_points=50, training_iter=50,
+    def __init__(self, prior: prior.OnlineDynamicsPrior, ds, state_difference, max_data_points=50, training_iter=100,
                  slice_to_use=None, partial_refit=True,
                  **kwargs):
         super().__init__(ds, state_difference, **kwargs)
@@ -311,8 +312,8 @@ class OnlineGPMixing(OnlineDynamicsModel):
             self._fit_params(self.training_iter)
 
     def _fit_params(self, training_iter):
-        import time
-        start = time.time()
+        # import time
+        # start = time.time()
         # tune hyperparameters to new data
         self.gp.train()
         self.likelihood.train()
@@ -323,13 +324,13 @@ class OnlineGPMixing(OnlineDynamicsModel):
             output = self.gp(self.xu)
             loss = -mll(output, self.y)
             loss.backward()
-            logger.debug('Iter %d/%d - Loss: %.3f' % (i + 1, training_iter, loss.item()))
+            # logger.debug('Iter %d/%d - Loss: %.3f' % (i + 1, training_iter, loss.item()))
             self.optimizer.step()
 
         self.gp.eval()
         self.likelihood.eval()
-        elapsed = time.time() - start
-        logger.debug('training took %.4fs', elapsed)
+        # elapsed = time.time() - start
+        # logger.debug('training took %.4fs', elapsed)
 
     def _dynamics_in_transformed_space(self, px, pu, cx, cu):
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
