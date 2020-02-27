@@ -24,7 +24,7 @@ from meta_contact.controller import online_controller
 from meta_contact.env import block_push
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG,
+logging.basicConfig(level=logging.INFO,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
                     datefmt='%m-%d %H:%M:%S')
 logging.getLogger('matplotlib.font_manager').disabled = True
@@ -136,7 +136,10 @@ def get_preprocessor_for_invariant_tsf(invariant_tsf, evaluate_transform=True):
 
 def get_full_controller_name(pm, ctrl, tsf_name):
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else "{}_{}".format(tsf_name, pm.__class__.__name__)
-    name = "{}_{}_{}".format(ctrl.__class__.__name__, ctrl.dynamics.__class__.__name__, name)
+    class_names = "{}_{}".format(ctrl.__class__.__name__, ctrl.dynamics.__class__.__name__)
+    if isinstance(ctrl.dynamics, online_model.OnlineGPMixing) and not ctrl.dynamics.use_independent_outputs:
+        class_names += "_full"
+    name = "{}_{}".format(class_names, name)
     return name
 
 
@@ -1360,7 +1363,7 @@ def get_controller_options(env):
         'use_orientation_terminal_cost': False,
     }
     mpc_opts = {
-        'num_samples': 10000,
+        'num_samples': 1000,
         'noise_sigma': torch.diag(sigma),
         'noise_mu': torch.tensor([0, 0.5, 0], dtype=torch.double, device=d),
         'lambda_': 1,
@@ -1387,7 +1390,8 @@ def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.G
                                                           local_mix_weight_scale=10.0,
                                                           const_local_mix_weight=False, sigreg=1e-10, device=d)
         elif online_adapt is OnlineAdapt.GP_KERNEL:
-            dynamics = online_model.OnlineGPMixing(pm, ds, env.state_difference, device=d)
+            dynamics = online_model.OnlineGPMixing(pm, ds, env.state_difference, device=d, max_data_points=50,
+                                                   use_independent_outputs=False)
         else:
             raise RuntimeError("Unrecognized online adaption value {}".format(online_adapt))
         # TODO figure out why GP mixing does poorly with constraint
@@ -1519,7 +1523,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_recovery_global.mat", validation_ratio=0.,
                                         config=config, device=d)
-    test_slice = slice(4, 100)
+    test_slice = slice(4, 200)
 
     # ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_no_recovery.mat", validation_ratio=0.,
     #                                     config=config, device=d)
@@ -1527,10 +1531,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
     original_config, _ = update_ds_with_transform(env, ds_wall, use_tsf, evaluate_transform=False)
 
-    common_wrapper_opts, mpc_opts = get_controller_options(env)
-    common_wrapper_opts['adjust_model_pred_with_prev_error'] = False
-    # ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
-    #                                     constrain_state=constrain_state, mpc_opts=mpc_opts)
+
 
     # visualize data and linear fit onto it
     t = np.arange(test_slice.start, test_slice.stop)
@@ -1544,24 +1545,28 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     train_slice = slice(15, 55)
     # TODO evaluate model prediction outside of fitted range to see if it will revert back to nominal model
     # don't use all of the data; use just the part that's stuck against a wall?
-    dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds_wall, env.state_difference, local_mix_weight_scale=1000,
+    dynamics = online_model.OnlineLinearizeMixing(0.0, pm, ds_wall, env.state_difference, local_mix_weight_scale=1000,
                                                   const_local_mix_weight=True, sigreg=1e-10,
                                                   slice_to_use=train_slice,
                                                   device=d)
     dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice,
-                                              device=d, training_iter=100)
+                                              device=d, training_iter=100, use_independent_outputs=True)
     cx, cu = xu[:, :config.nx], xu[:, config.nx:]
     # an actual linear fit on data
     yhat_linear = dynamics._dynamics_in_transformed_space(None, None, cx, cu)
 
     # our mixed model
     dynamics.const_local_weight = False
-    dynamics.local_weight_scale = 10
+    dynamics.local_weight_scale = 50
+    dynamics.characteristic_length = 10
     yhat_linear_mix = dynamics._dynamics_in_transformed_space(None, None, cx, cu)
+    weight_linear_mix = dynamics.get_local_weight(xu)
+    # scale max for display
+    weight_linear_mix /= torch.max(weight_linear_mix) * 2
 
     yhat_gp = dynamics_gp._dynamics_in_transformed_space(None, None, cx, cu)
     with torch.no_grad():
-        lower, upper = dynamics_gp.last_prediction.confidence_region()
+        lower, upper = dynamics_gp.get_confidence_region()
 
     yhat_linear_online = torch.zeros_like(yhat_linear)
     yhat_gp_online = torch.zeros_like(yhat_gp)
@@ -1574,48 +1579,68 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
         if px is not None:
             px, pu = px.view(1, -1), pu.view(1, -1)
         yhat_linear_online[i] = dynamics._dynamics_in_transformed_space(px, pu, cx.view(1, -1), cu.view(1, -1))
-        yhat_gp_online[i] = dynamics_gp._dynamics_in_transformed_space(px, pu, cx.view(1, -1), cu.view(1, -1))
-        with torch.no_grad():
-            lower_online[i], upper_online[i] = dynamics_gp.last_prediction.confidence_region()
+        # yhat_gp_online[i] = dynamics_gp._dynamics_in_transformed_space(px, pu, cx.view(1, -1), cu.view(1, -1))
+        # with torch.no_grad():
+        #     lower_online[i], upper_online[i] = dynamics_gp.get_confidence_region()
         dynamics._update(cx, cu, y[i])
-        dynamics_gp._update(cx, cu, y[i])
+        # dynamics_gp._update(cx, cu, y[i])
         px, pu = cx, cu
 
     XU, Y, Yhat_freespace, Yhat_linear, Yhat_linear_online, reaction_forces = (v.cpu().numpy() for v in (
         xu, y, yhat_freespace, yhat_linear, yhat_linear_online, reaction_forces))
 
     ylabels = ['$dx_b$', '$dy_b$', '$d\\theta$', '$dp$']
-    f, axes = plt.subplots(config.ny, 1, sharex=True)
-    for i in range(config.ny):
-        axes[i].scatter(t, Y[:, i], label='truth', alpha=0.2)
-        axes[i].plot(t, Yhat_freespace[:, i], label='nominal', alpha=0.4, linewidth=3)
+    to_plot_y_dims = [0, 2]
+    f, axes = plt.subplots(len(to_plot_y_dims) + 1, 1, sharex=True)
+    for i, dim in enumerate(to_plot_y_dims):
+        axes[i].scatter(t, Y[:, dim], label='truth', alpha=0.2)
+        axes[i].plot(t, Yhat_freespace[:, dim], label='nominal', alpha=0.4, linewidth=3)
 
-        axes[i].plot(t, yhat_gp[:, i].cpu().numpy(), label='gp')
-        axes[i].fill_between(t, lower[:, i].cpu().numpy(), upper[:, i].cpu().numpy(), alpha=0.3)
-        axes[i].plot(t, yhat_gp_online[:, i].cpu().numpy(), label='online gp')
-        axes[i].fill_between(t, lower_online[:, i].cpu().numpy(), upper_online[:, i].cpu().numpy(), alpha=0.3)
+        axes[i].plot(t, yhat_gp[:, dim].cpu().numpy(), label='gp')
+        # axes[i].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, i].cpu().numpy(), alpha=0.3)
+        # axes[i].plot(t, yhat_gp_online[:, dim].cpu().numpy(), label='online gp')
+        # axes[i].fill_between(t, lower_online[:, dim].cpu().numpy(), upper_online[:, i].cpu().numpy(), alpha=0.3)
 
-        # axes[i].plot(t, Yhat_linear[:, i], label='linear fit', alpha=0.5)
-        # axes[i].plot(t, yhat_linear_mix[:, i].cpu().numpy(), label='mix')
-        # axes[i].plot(t, Yhat_linear_online[:, i], label='online mix')
+        # axes[i].plot(t, Yhat_linear[:, dim], label='linear fit', alpha=0.5)
+        m = yhat_linear_mix[:, dim].cpu().numpy()
+        w = weight_linear_mix.cpu().numpy()
+        axes[i].plot(t, m, label='mix')
+        axes[i].fill_between(t, m - w, m + w, alpha=0.2, color='g')
+        # axes[i].plot(t, Yhat_linear_online[:, dim], label='online mix')
         axes[i].set_ybound(-0.2, 1.2)
-        axes[i].set_ylabel(ylabels[i])
-    axes[-1].legend()
+        axes[i].set_ylabel(ylabels[dim])
+    axes[0].legend()
+    axes[-1].plot(t, np.linalg.norm(reaction_forces, axis=1))
+    axes[-1].set_ylabel('|r|')
 
-    f, axes = plt.subplots(config.nx + 2, 1, sharex=True)
-    xlabels = ['$p$', '$dp$', '$f$', '$\\beta$']
-    for i in range(config.nx):
-        axes[i].plot(t, XU[:, i])
-        axes[i].set_ylabel(xlabels[i])
-    axes[-2].plot(t, np.linalg.norm(reaction_forces, axis=1))
-    axes[-2].set_ylabel('|r|')
-    axes[-1].plot(t, np.linalg.norm(model_errors.cpu().numpy(), axis=1))
-    axes[-1].set_ylabel('|e|')
+    # f, axes = plt.subplots(config.nx + 2, 1, sharex=True)
+    # xlabels = ['$p$', '$dp$', '$f$', '$\\beta$']
+    # for i in range(config.nx):
+    #     axes[i].plot(t, XU[:, i])
+    #     axes[i].set_ylabel(xlabels[i])
+    # axes[-2].plot(t, np.linalg.norm(reaction_forces, axis=1))
+    # axes[-2].set_ylabel('|r|')
+    # axes[-1].plot(t, np.linalg.norm(model_errors.cpu().numpy(), axis=1))
+    # axes[-1].set_ylabel('|e|')
+
+    e = (yhat_linear_mix - y).norm(dim=1)
+    logger.info('linear mix scale %f length %f mse %.4f', dynamics.local_weight_scale, dynamics.characteristic_length,
+                e.median())
+    e = (yhat_linear_online - y).norm(dim=1)
+    logger.info('linear online %.4f', e.median())
+    e = (yhat_linear - y).norm(dim=1)
+    logger.info('linear mse %.4f', e.median())
+    e = (yhat_freespace - y).norm(dim=1)
+    logger.info('nominal mse %.4f', e.median())
 
     plt.show()
     env.close()
     return
 
+    common_wrapper_opts, mpc_opts = get_controller_options(env)
+    common_wrapper_opts['adjust_model_pred_with_prev_error'] = False
+    # ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
+    #                                     constrain_state=constrain_state, mpc_opts=mpc_opts)
     # try hardcoded to see if controller will do what we want given the hypothesized model predictions
     ctrl = controller.MPPI(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
     # ctrl = HardCodedContactControllerWrapper(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
@@ -1797,13 +1822,14 @@ def learn_model(seed=1, name="", transform_name="", train_epochs=600, batch_N=50
 
 
 if __name__ == "__main__":
-    level = 0
+    level = 1
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
 
-    # test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
+    test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
+    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD)
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE)
-    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD)
+    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.GP_KERNEL)
     # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
     # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
     # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True, prior_class=prior.NoPrior)
