@@ -1543,7 +1543,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
         dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice,
                                                   device=d, training_iter=100, use_independent_outputs=True)
         config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-        ds_test = block_push.PushDataSource(env, data_dir="pushing/recovery_policy_with_mixed_model.mat", validation_ratio=0.,
+        ds_test = block_push.PushDataSource(env, data_dir="pushing/push_recovery_global.mat", validation_ratio=0.,
                                             config=config, device=d)
         ds_test.update_preprocessor(preprocessor)
         # visualize data and linear fit onto it
@@ -1616,8 +1616,10 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
         axes[0].legend()
         axes[-2].plot(t, np.linalg.norm(reaction_forces, axis=1))
         axes[-2].set_ylabel('|r|')
+        axes[-2].set_ybound(0., 500)
         axes[-1].plot(t, np.linalg.norm(model_errors.cpu().numpy(), axis=1))
         axes[-1].set_ylabel('|e|')
+        axes[-1].set_ybound(0., .2)
 
         # f, axes = plt.subplots(config.nx + 2, 1, sharex=True)
         # xlabels = ['$p$', '$dp$', '$f$', '$\\beta$']
