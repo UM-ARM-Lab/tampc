@@ -1340,7 +1340,7 @@ def update_ds_with_transform(env, ds, use_tsf, **kwargs):
         #                                    preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
     # update the datasource to use transformed data
     untransformed_config = ds.update_preprocessor(preprocessor)
-    return untransformed_config, tsf_name
+    return untransformed_config, tsf_name, preprocessor
 
 
 def get_controller_options(env):
@@ -1416,7 +1416,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
 
     logger.info("initial random seed %d", rand.seed(seed))
 
-    untransformed_config, tsf_name = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
+    untransformed_config, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
 
     pm = get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics)
 
@@ -1505,16 +1505,16 @@ class HardCodedContactControllerWrapper(controller.MPPI):
 def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM,
                                                    prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
     seed = 1
-    plot_model_eval = False
+    plot_model_eval = True
     d = get_device()
-    env = get_easy_env(p.GUI, level=1, log_video=True)
-    # env = get_easy_env(p.DIRECT)
+    # env = get_easy_env(p.GUI, level=1, log_video=True)
+    env = get_easy_env(p.DIRECT)
 
     logger.info("initial random seed %d", rand.seed(seed))
 
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config, device=d)
-    untransformed_config, tsf_name = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
+    untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
     pm = get_loaded_prior(prior_class, ds, tsf_name, False)
 
     # use data of transition out of bug trap rather than just inside the bug trap
@@ -1522,13 +1522,14 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_recovery_global.mat", validation_ratio=0.,
                                         config=config, device=d)
-    test_slice = slice(4, 200)
+    test_slice = slice(4, 190)
 
     # ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_no_recovery.mat", validation_ratio=0.,
     #                                     config=config, device=d)
     # test_slice = slice(15, 100)
 
-    original_config, _ = update_ds_with_transform(env, ds_wall, use_tsf, evaluate_transform=False)
+    # use same preprocessor
+    ds_wall.update_preprocessor(preprocessor)
 
     # first bug trap around 15-50
     train_slice = slice(15, 55)
@@ -1541,9 +1542,13 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     if plot_model_eval:
         dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice,
                                                   device=d, training_iter=100, use_independent_outputs=True)
+        config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
+        ds_test = block_push.PushDataSource(env, data_dir="pushing/recovery_policy_with_mixed_model.mat", validation_ratio=0.,
+                                            config=config, device=d)
+        ds_test.update_preprocessor(preprocessor)
         # visualize data and linear fit onto it
         t = np.arange(test_slice.start, test_slice.stop)
-        xu, y, info = (v[test_slice] for v in ds_wall.training_set())
+        xu, y, info = (v[test_slice] for v in ds_test.training_set())
         reaction_forces = info[:, :3]
         model_errors = info[:, 3:]
 
@@ -1590,7 +1595,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
         ylabels = ['$dx_b$', '$dy_b$', '$d\\theta$', '$dp$']
         to_plot_y_dims = [0, 2]
-        f, axes = plt.subplots(len(to_plot_y_dims) + 1, 1, sharex=True)
+        f, axes = plt.subplots(len(to_plot_y_dims) + 2, 1, sharex=True)
         for i, dim in enumerate(to_plot_y_dims):
             axes[i].scatter(t, Y[:, dim], label='truth', alpha=0.2)
             axes[i].plot(t, Yhat_freespace[:, dim], label='nominal', alpha=0.4, linewidth=3)
@@ -1609,8 +1614,10 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
             axes[i].set_ybound(-0.2, 1.2)
             axes[i].set_ylabel(ylabels[dim])
         axes[0].legend()
-        axes[-1].plot(t, np.linalg.norm(reaction_forces, axis=1))
-        axes[-1].set_ylabel('|r|')
+        axes[-2].plot(t, np.linalg.norm(reaction_forces, axis=1))
+        axes[-2].set_ylabel('|r|')
+        axes[-1].plot(t, np.linalg.norm(model_errors.cpu().numpy(), axis=1))
+        axes[-1].set_ylabel('|e|')
 
         # f, axes = plt.subplots(config.nx + 2, 1, sharex=True)
         # xlabels = ['$p$', '$dp$', '$f$', '$\\beta$']
@@ -1639,10 +1646,10 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     common_wrapper_opts['adjust_model_pred_with_prev_error'] = False
-    # ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
-    #                                     constrain_state=constrain_state, mpc_opts=mpc_opts)
+    ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
+                                        constrain_state=constrain_state, mpc_opts=mpc_opts)
     # try hardcoded to see if controller will do what we want given the hypothesized model predictions
-    ctrl = controller.MPPI(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
+    # ctrl = controller.MPPI(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
     # ctrl = HardCodedContactControllerWrapper(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
 
     name = get_full_controller_name(pm, ctrl, tsf_name)
