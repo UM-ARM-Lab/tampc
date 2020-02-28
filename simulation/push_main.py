@@ -1394,7 +1394,6 @@ def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.G
                                                    use_independent_outputs=False)
         else:
             raise RuntimeError("Unrecognized online adaption value {}".format(online_adapt))
-        # TODO figure out why GP mixing does poorly with constraint
         ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
                                             mpc_opts=mpc_opts)
     else:
@@ -1506,9 +1505,10 @@ class HardCodedContactControllerWrapper(controller.MPPI):
 def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM,
                                                    prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
     seed = 1
+    plot_model_eval = False
     d = get_device()
-    # env = get_easy_env(p.GUI, level=1, log_video=True)
-    env = get_easy_env(p.DIRECT)
+    env = get_easy_env(p.GUI, level=1, log_video=True)
+    # env = get_easy_env(p.DIRECT)
 
     logger.info("initial random seed %d", rand.seed(seed))
 
@@ -1518,7 +1518,6 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     pm = get_loaded_prior(prior_class, ds, tsf_name, False)
 
     # use data of transition out of bug trap rather than just inside the bug trap
-    # TODO should we just use transition data, or also include the data inside of bug trap?
     # get some data when we're next to a wall and use it fit a local model
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_recovery_global.mat", validation_ratio=0.,
@@ -1531,111 +1530,112 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
     original_config, _ = update_ds_with_transform(env, ds_wall, use_tsf, evaluate_transform=False)
 
-
-
-    # visualize data and linear fit onto it
-    t = np.arange(test_slice.start, test_slice.stop)
-    xu, y, info = (v[test_slice] for v in ds_wall.training_set())
-    reaction_forces = info[:, :3]
-    model_errors = info[:, 3:]
-
-    yhat_freespace = pm.dyn_net.user.sample(xu)
-
     # first bug trap around 15-50
     train_slice = slice(15, 55)
-    # TODO evaluate model prediction outside of fitted range to see if it will revert back to nominal model
     # don't use all of the data; use just the part that's stuck against a wall?
-    dynamics = online_model.OnlineLinearizeMixing(0.0, pm, ds_wall, env.state_difference, local_mix_weight_scale=1000,
-                                                  const_local_mix_weight=True, sigreg=1e-10,
-                                                  slice_to_use=train_slice,
-                                                  device=d)
-    dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice,
-                                              device=d, training_iter=100, use_independent_outputs=True)
-    cx, cu = xu[:, :config.nx], xu[:, config.nx:]
-    # an actual linear fit on data
-    yhat_linear = dynamics._dynamics_in_transformed_space(None, None, cx, cu)
+    dynamics = online_model.OnlineLinearizeMixing(0.0, pm, ds_wall, env.state_difference,
+                                                  local_mix_weight_scale=50, xu_characteristic_length=10,
+                                                  const_local_mix_weight=False, sigreg=1e-10,
+                                                  slice_to_use=train_slice, device=d)
 
-    # our mixed model
-    dynamics.const_local_weight = False
-    dynamics.local_weight_scale = 50
-    dynamics.characteristic_length = 10
-    yhat_linear_mix = dynamics._dynamics_in_transformed_space(None, None, cx, cu)
-    weight_linear_mix = dynamics.get_local_weight(xu)
-    # scale max for display
-    weight_linear_mix /= torch.max(weight_linear_mix) * 2
+    if plot_model_eval:
+        dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice,
+                                                  device=d, training_iter=100, use_independent_outputs=True)
+        # visualize data and linear fit onto it
+        t = np.arange(test_slice.start, test_slice.stop)
+        xu, y, info = (v[test_slice] for v in ds_wall.training_set())
+        reaction_forces = info[:, :3]
+        model_errors = info[:, 3:]
 
-    yhat_gp = dynamics_gp._dynamics_in_transformed_space(None, None, cx, cu)
-    with torch.no_grad():
-        lower, upper = dynamics_gp.get_confidence_region()
+        yhat_freespace = pm.dyn_net.user.sample(xu)
+        cx, cu = xu[:, :config.nx], xu[:, config.nx:]
+        # an actual linear fit on data
+        dynamics.const_local_weight = True
+        dynamics.local_weight_scale = 1000
+        yhat_linear = dynamics._dynamics_in_transformed_space(None, None, cx, cu)
 
-    yhat_linear_online = torch.zeros_like(yhat_linear)
-    yhat_gp_online = torch.zeros_like(yhat_gp)
-    lower_online = torch.zeros_like(lower)
-    upper_online = torch.zeros_like(upper)
-    px, pu = None, None
-    for i in range(xu.shape[0] - 1):
-        cx = xu[i, :config.nx]
-        cu = xu[i, config.nx:]
-        if px is not None:
-            px, pu = px.view(1, -1), pu.view(1, -1)
-        yhat_linear_online[i] = dynamics._dynamics_in_transformed_space(px, pu, cx.view(1, -1), cu.view(1, -1))
-        # yhat_gp_online[i] = dynamics_gp._dynamics_in_transformed_space(px, pu, cx.view(1, -1), cu.view(1, -1))
-        # with torch.no_grad():
-        #     lower_online[i], upper_online[i] = dynamics_gp.get_confidence_region()
-        dynamics._update(cx, cu, y[i])
-        # dynamics_gp._update(cx, cu, y[i])
-        px, pu = cx, cu
+        # our mixed model
+        dynamics.const_local_weight = False
+        dynamics.local_weight_scale = 50
+        dynamics.characteristic_length = 10
+        yhat_linear_mix = dynamics._dynamics_in_transformed_space(None, None, cx, cu)
+        weight_linear_mix = dynamics.get_local_weight(xu)
+        # scale max for display
+        weight_linear_mix /= torch.max(weight_linear_mix) * 2
 
-    XU, Y, Yhat_freespace, Yhat_linear, Yhat_linear_online, reaction_forces = (v.cpu().numpy() for v in (
-        xu, y, yhat_freespace, yhat_linear, yhat_linear_online, reaction_forces))
+        yhat_gp = dynamics_gp._dynamics_in_transformed_space(None, None, cx, cu)
+        with torch.no_grad():
+            lower, upper = dynamics_gp.get_confidence_region()
 
-    ylabels = ['$dx_b$', '$dy_b$', '$d\\theta$', '$dp$']
-    to_plot_y_dims = [0, 2]
-    f, axes = plt.subplots(len(to_plot_y_dims) + 1, 1, sharex=True)
-    for i, dim in enumerate(to_plot_y_dims):
-        axes[i].scatter(t, Y[:, dim], label='truth', alpha=0.2)
-        axes[i].plot(t, Yhat_freespace[:, dim], label='nominal', alpha=0.4, linewidth=3)
+        yhat_linear_online = torch.zeros_like(yhat_linear)
+        yhat_gp_online = torch.zeros_like(yhat_gp)
+        lower_online = torch.zeros_like(lower)
+        upper_online = torch.zeros_like(upper)
+        px, pu = None, None
+        for i in range(xu.shape[0] - 1):
+            cx = xu[i, :config.nx]
+            cu = xu[i, config.nx:]
+            if px is not None:
+                px, pu = px.view(1, -1), pu.view(1, -1)
+            yhat_linear_online[i] = dynamics._dynamics_in_transformed_space(px, pu, cx.view(1, -1), cu.view(1, -1))
+            # yhat_gp_online[i] = dynamics_gp._dynamics_in_transformed_space(px, pu, cx.view(1, -1), cu.view(1, -1))
+            # with torch.no_grad():
+            #     lower_online[i], upper_online[i] = dynamics_gp.get_confidence_region()
+            dynamics._update(cx, cu, y[i])
+            # dynamics_gp._update(cx, cu, y[i])
+            px, pu = cx, cu
 
-        axes[i].plot(t, yhat_gp[:, dim].cpu().numpy(), label='gp')
-        # axes[i].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, i].cpu().numpy(), alpha=0.3)
-        # axes[i].plot(t, yhat_gp_online[:, dim].cpu().numpy(), label='online gp')
-        # axes[i].fill_between(t, lower_online[:, dim].cpu().numpy(), upper_online[:, i].cpu().numpy(), alpha=0.3)
+        XU, Y, Yhat_freespace, Yhat_linear, Yhat_linear_online, reaction_forces = (v.cpu().numpy() for v in (
+            xu, y, yhat_freespace, yhat_linear, yhat_linear_online, reaction_forces))
 
-        # axes[i].plot(t, Yhat_linear[:, dim], label='linear fit', alpha=0.5)
-        m = yhat_linear_mix[:, dim].cpu().numpy()
-        w = weight_linear_mix.cpu().numpy()
-        axes[i].plot(t, m, label='mix')
-        axes[i].fill_between(t, m - w, m + w, alpha=0.2, color='g')
-        # axes[i].plot(t, Yhat_linear_online[:, dim], label='online mix')
-        axes[i].set_ybound(-0.2, 1.2)
-        axes[i].set_ylabel(ylabels[dim])
-    axes[0].legend()
-    axes[-1].plot(t, np.linalg.norm(reaction_forces, axis=1))
-    axes[-1].set_ylabel('|r|')
+        ylabels = ['$dx_b$', '$dy_b$', '$d\\theta$', '$dp$']
+        to_plot_y_dims = [0, 2]
+        f, axes = plt.subplots(len(to_plot_y_dims) + 1, 1, sharex=True)
+        for i, dim in enumerate(to_plot_y_dims):
+            axes[i].scatter(t, Y[:, dim], label='truth', alpha=0.2)
+            axes[i].plot(t, Yhat_freespace[:, dim], label='nominal', alpha=0.4, linewidth=3)
 
-    # f, axes = plt.subplots(config.nx + 2, 1, sharex=True)
-    # xlabels = ['$p$', '$dp$', '$f$', '$\\beta$']
-    # for i in range(config.nx):
-    #     axes[i].plot(t, XU[:, i])
-    #     axes[i].set_ylabel(xlabels[i])
-    # axes[-2].plot(t, np.linalg.norm(reaction_forces, axis=1))
-    # axes[-2].set_ylabel('|r|')
-    # axes[-1].plot(t, np.linalg.norm(model_errors.cpu().numpy(), axis=1))
-    # axes[-1].set_ylabel('|e|')
+            axes[i].plot(t, yhat_gp[:, dim].cpu().numpy(), label='gp')
+            # axes[i].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, i].cpu().numpy(), alpha=0.3)
+            # axes[i].plot(t, yhat_gp_online[:, dim].cpu().numpy(), label='online gp')
+            # axes[i].fill_between(t, lower_online[:, dim].cpu().numpy(), upper_online[:, i].cpu().numpy(), alpha=0.3)
 
-    e = (yhat_linear_mix - y).norm(dim=1)
-    logger.info('linear mix scale %f length %f mse %.4f', dynamics.local_weight_scale, dynamics.characteristic_length,
-                e.median())
-    e = (yhat_linear_online - y).norm(dim=1)
-    logger.info('linear online %.4f', e.median())
-    e = (yhat_linear - y).norm(dim=1)
-    logger.info('linear mse %.4f', e.median())
-    e = (yhat_freespace - y).norm(dim=1)
-    logger.info('nominal mse %.4f', e.median())
+            # axes[i].plot(t, Yhat_linear[:, dim], label='linear fit', alpha=0.5)
+            m = yhat_linear_mix[:, dim].cpu().numpy()
+            w = weight_linear_mix.cpu().numpy()
+            axes[i].plot(t, m, label='mix')
+            axes[i].fill_between(t, m - w, m + w, alpha=0.2, color='g')
+            # axes[i].plot(t, Yhat_linear_online[:, dim], label='online mix')
+            axes[i].set_ybound(-0.2, 1.2)
+            axes[i].set_ylabel(ylabels[dim])
+        axes[0].legend()
+        axes[-1].plot(t, np.linalg.norm(reaction_forces, axis=1))
+        axes[-1].set_ylabel('|r|')
 
-    plt.show()
-    env.close()
-    return
+        # f, axes = plt.subplots(config.nx + 2, 1, sharex=True)
+        # xlabels = ['$p$', '$dp$', '$f$', '$\\beta$']
+        # for i in range(config.nx):
+        #     axes[i].plot(t, XU[:, i])
+        #     axes[i].set_ylabel(xlabels[i])
+        # axes[-2].plot(t, np.linalg.norm(reaction_forces, axis=1))
+        # axes[-2].set_ylabel('|r|')
+        # axes[-1].plot(t, np.linalg.norm(model_errors.cpu().numpy(), axis=1))
+        # axes[-1].set_ylabel('|e|')
+
+        e = (yhat_linear_mix - y).norm(dim=1)
+        logger.info('linear mix scale %f length %f mse %.4f', dynamics.local_weight_scale,
+                    dynamics.characteristic_length,
+                    e.median())
+        e = (yhat_linear_online - y).norm(dim=1)
+        logger.info('linear online %.4f', e.median())
+        e = (yhat_linear - y).norm(dim=1)
+        logger.info('linear mse %.4f', e.median())
+        e = (yhat_freespace - y).norm(dim=1)
+        logger.info('nominal mse %.4f', e.median())
+
+        plt.show()
+        env.close()
+        return
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     common_wrapper_opts['adjust_model_pred_with_prev_error'] = False
