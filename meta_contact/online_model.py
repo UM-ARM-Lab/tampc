@@ -280,7 +280,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
     """Different way of mixing local and nominal model; use nominal as mean"""
 
     def __init__(self, prior: prior.OnlineDynamicsPrior, ds, state_difference, max_data_points=50, training_iter=100,
-                 slice_to_use=None, partial_refit=True, use_independent_outputs=False,
+                 slice_to_use=None, partial_refit=True, use_independent_outputs=False, allow_update=True,
                  **kwargs):
         super().__init__(ds, state_difference, **kwargs)
         self.prior = prior
@@ -295,6 +295,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
         self.training_iter = training_iter
         self.partial_refit = partial_refit
         self.use_independent_outputs = use_independent_outputs
+        self.allow_update = allow_update
 
         # mixing parameters
         self.last_prediction = None
@@ -334,6 +335,8 @@ class OnlineGPMixing(OnlineDynamicsModel):
         ], lr=0.1)
 
     def _update(self, px, pu, y):
+        if not self.allow_update:
+            return
         xu = torch.cat((px.view(1, -1), pu.view(1, -1)), dim=1)
         y = y.view(1, -1)
         if self.xu.shape[0] < self.max_data_points:
