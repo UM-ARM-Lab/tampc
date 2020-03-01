@@ -269,12 +269,18 @@ class MixingBatchGP(gpytorch.models.ExactGP):
         )
 
 
+class RefitGPStrategy:
+    RESET_DATA = 0
+    RECREATE_GP = 1  # keep data likelihood; refit hyperparameters is quick compared to likelihood
+    RECREATE_ALL = 2
+
+
 class OnlineGPMixing(OnlineDynamicsModel):
     """Different way of mixing local and nominal model; use nominal as mean"""
 
     def __init__(self, prior: prior.OnlineDynamicsPrior, ds, state_difference, max_data_points=50, training_iter=100,
-                 slice_to_use=None, partial_refit=True, use_independent_outputs=False, allow_update=True,
-                 sample=True, **kwargs):
+                 slice_to_use=None, refit_strategy=RefitGPStrategy.RECREATE_GP, use_independent_outputs=False,
+                 allow_update=True, sample=True, **kwargs):
         super().__init__(ds, state_difference, **kwargs)
         self.prior = prior
 
@@ -288,7 +294,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
 
         # GP parameters
         self.training_iter = training_iter
-        self.partial_refit = partial_refit
+        self.refit_strategy = refit_strategy
         self.use_independent_outputs = use_independent_outputs
         self.allow_update = allow_update
         self.sample_dynamics = sample
@@ -307,20 +313,23 @@ class OnlineGPMixing(OnlineDynamicsModel):
     def reset(self):
         self.xu = self.init_xu.clone()
         self.y = self.init_y.clone()
-        self._recreate_gp()
+        self._recreate_all()
         self._fit_params(self.training_iter)
 
-    def _recreate_gp(self):
+    def _recreate_all(self):
         self.likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=self.ds.config.ny).to(
             device=self.d, dtype=self.dtype)
+        self._recreate_gp()
+        self.optimizer = torch.optim.Adam([
+            {'params': self.gp.parameters()},
+        ], lr=0.1)
+
+    def _recreate_gp(self):
         if self.use_independent_outputs:
             self.gp = MixingBatchGP(self.xu, self.y, self.likelihood, self.prior.get_batch_predictions)
         else:
             self.gp = MixingFullGP(self.xu, self.y, self.likelihood, self.prior.get_batch_predictions, rank=1)
         self.gp = self.gp.to(device=self.d, dtype=self.dtype)
-        self.optimizer = torch.optim.Adam([
-            {'params': self.gp.parameters()},
-        ], lr=0.1)
 
     def _update(self, px, pu, y):
         if not self.allow_update:
@@ -336,16 +345,14 @@ class OnlineGPMixing(OnlineDynamicsModel):
             self.y = torch.roll(self.y, -1, dims=0)
             self.y[-1] = y
 
-        # try refitting from previous parameters (fewer iterations)
-        if self.partial_refit:
-            if self.use_independent_outputs:
-                self.gp.set_train_data(self.xu, self.y, strict=False)
-            else:
-                self.gp.set_train_data(self.xu, self.y, strict=False)
+        if self.refit_strategy is RefitGPStrategy.RESET_DATA:
+            self.gp.set_train_data(self.xu, self.y, strict=False)
+            self._fit_params(self.training_iter // 10)
+        elif self.refit_strategy is RefitGPStrategy.RECREATE_GP:
+            self._recreate_gp()
             self._fit_params(self.training_iter // 10)
         else:
-            # refit from scratch
-            self._recreate_gp()
+            self._recreate_all()
             self._fit_params(self.training_iter)
 
     def _fit_params(self, training_iter):

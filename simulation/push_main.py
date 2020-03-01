@@ -1610,8 +1610,8 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
             axes[i].plot(t, yhat_gp_mean[:, dim].cpu().numpy(), label='gp')
             axes[i].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, i].cpu().numpy(), alpha=0.3)
-            axes[i].scatter(np.tile(t, samples), gp_samples[:, :, dim].view(-1).cpu().numpy(), label='gp sample',
-                            marker='*', color='k', alpha=0.3)
+            # axes[i].scatter(np.tile(t, samples), gp_samples[:, :, dim].view(-1).cpu().numpy(), label='gp sample',
+            #                 marker='*', color='k', alpha=0.3)
             axes[i].plot(t, yhat_gp_online_mean[:, dim].cpu().numpy(), label='online gp')
             axes[i].fill_between(t, lower_online[:, dim].cpu().numpy(), upper_online[:, i].cpu().numpy(), alpha=0.3)
 
