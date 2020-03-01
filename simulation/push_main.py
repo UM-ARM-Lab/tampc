@@ -1535,7 +1535,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
                                                   slice_to_use=train_slice, device=d)
     dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice,
                                               allow_update=True,
-                                              device=d, training_iter=100, use_independent_outputs=True)
+                                              device=d, training_iter=150, use_independent_outputs=True)
 
     if plot_model_eval:
         config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
@@ -1568,9 +1568,16 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
         weight_linear_mix /= torch.max(weight_linear_mix) * 2
 
         yhat_gp = dynamics_gp._dynamics_in_transformed_space(None, None, cx, cu)
-        lower, upper, yhat_gp_mean = dynamics_gp.get_last_prediction_statistics()
+        yhat_gp_mean = dynamics_gp.mean()
         samples = 20
         gp_samples = dynamics_gp.sample(torch.Size([samples]))
+        # TODO gyptorch bug forces us to calculate var for only small batches at a time
+        max_sample_each_time = 50
+        lower, upper = torch.zeros_like(yhat_gp), torch.zeros_like(yhat_gp)
+        for i in range(0, cx.shape[0], max_sample_each_time):
+            b_slice = slice(i, i + max_sample_each_time)
+            dynamics_gp._make_prediction(cx[b_slice], cu[b_slice])
+            lower[b_slice], upper[b_slice], _ = dynamics_gp.get_last_prediction_statistics()
 
         yhat_linear_online = torch.zeros_like(yhat_linear)
         yhat_gp_online = torch.zeros_like(yhat_gp)
@@ -1584,11 +1591,11 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
             if px is not None:
                 px, pu = px.view(1, -1), pu.view(1, -1)
             yhat_linear_online[i] = dynamics._dynamics_in_transformed_space(px, pu, cx.view(1, -1), cu.view(1, -1))
-            # yhat_gp_online[i] = dynamics_gp._dynamics_in_transformed_space(px, pu, cx.view(1, -1), cu.view(1, -1))
-            # with torch.no_grad():
-            #     lower_online[i], upper_online[i], yhat_gp_online_mean[i] = dynamics_gp.get_last_prediction_statistics()
+            yhat_gp_online[i] = dynamics_gp._dynamics_in_transformed_space(px, pu, cx.view(1, -1), cu.view(1, -1))
+            with torch.no_grad():
+                lower_online[i], upper_online[i], yhat_gp_online_mean[i] = dynamics_gp.get_last_prediction_statistics()
             dynamics._update(cx, cu, y[i])
-            # dynamics_gp._update(cx, cu, y[i])
+            dynamics_gp._update(cx, cu, y[i])
             px, pu = cx, cu
 
         XU, Y, Yhat_freespace, Yhat_linear, Yhat_linear_online, reaction_forces = (v.cpu().numpy() for v in (
@@ -1605,14 +1612,14 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
             axes[i].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, i].cpu().numpy(), alpha=0.3)
             axes[i].scatter(np.tile(t, samples), gp_samples[:, :, dim].view(-1).cpu().numpy(), label='gp sample',
                             marker='*', color='k', alpha=0.3)
-            # axes[i].plot(t, yhat_gp_online[:, dim].cpu().numpy(), label='online gp')
-            # axes[i].fill_between(t, lower_online[:, dim].cpu().numpy(), upper_online[:, i].cpu().numpy(), alpha=0.3)
+            axes[i].plot(t, yhat_gp_online_mean[:, dim].cpu().numpy(), label='online gp')
+            axes[i].fill_between(t, lower_online[:, dim].cpu().numpy(), upper_online[:, i].cpu().numpy(), alpha=0.3)
 
             # axes[i].plot(t, Yhat_linear[:, dim], label='linear fit', alpha=0.5)
 
-            m = yhat_linear_mix[:, dim].cpu().numpy()
-            w = weight_linear_mix.cpu().numpy()
-            axes[i].plot(t, m, label='mix')
+            # m = yhat_linear_mix[:, dim].cpu().numpy()
+            # w = weight_linear_mix.cpu().numpy()
+            # axes[i].plot(t, m, label='mix')
             # axes[i].fill_between(t, m - w, m + w, alpha=0.2, color='g')
 
             # axes[i].plot(t, Yhat_linear_online[:, dim], label='online mix')
@@ -1647,6 +1654,9 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
         e = (yhat_gp - y).norm(dim=1)
         em = (yhat_gp_mean - y).norm(dim=1)
         logger.info('gp mse (sample) %.4f (mean) %.4f', e.median(), em.median())
+        e = (yhat_gp_online - y).norm(dim=1)
+        em = (yhat_gp_online_mean - y).norm(dim=1)
+        logger.info('gp online mse (sample) %.4f (mean) %.4f', e.median(), em.median())
         e = (yhat_freespace - y).norm(dim=1)
         logger.info('nominal mse %.4f', e.median())
 

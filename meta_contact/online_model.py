@@ -250,30 +250,23 @@ class MixingFullGP(gpytorch.models.ExactGP):
         return gpytorch.distributions.MultitaskMultivariateNormal(mean_x, covar_x)
 
 
-class MixingSingleGP(gpytorch.models.ExactGP):
-    def __init__(self, train_x, train_y, likelihood, output_index):
+class MixingBatchGP(gpytorch.models.ExactGP):
+    def __init__(self, train_x, train_y, likelihood, nominal_model):
         super().__init__(train_x, train_y, likelihood)
-        self.i = output_index
-        self.mean_module = gpytorch.means.ZeroMean()
-        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
+        self.nominal_model = nominal_model
+        ny = train_y.shape[1]
+        # zero mean
+        self.covar_module = gpytorch.kernels.ScaleKernel(
+            gpytorch.kernels.RBFKernel(batch_shape=torch.Size([ny])),
+            batch_shape=torch.Size([ny])
+        )
 
-    def forward(self, x, nominal_output):
-        mean_x = self.mean_module(x) + nominal_output(x, self.i)
+    def forward(self, x):
+        mean_x = self.nominal_model(x).transpose(0, 1)
         covar_x = self.covar_module(x)
-        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
-
-
-class NominalModelCache:
-    def __init__(self, prior):
-        self.prior = prior
-        self.res = {}
-
-    def __call__(self, x, i):
-        # use size of x as a proxy for whether we've created the result or not
-        N = x.shape[0]
-        if N not in self.res:
-            self.res[N] = self.prior.get_batch_predictions(x)
-        return self.res[N][:, i]
+        return gpytorch.distributions.MultitaskMultivariateNormal.from_batch_mvn(
+            gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+        )
 
 
 class OnlineGPMixing(OnlineDynamicsModel):
@@ -318,21 +311,13 @@ class OnlineGPMixing(OnlineDynamicsModel):
         self._fit_params(self.training_iter)
 
     def _recreate_gp(self):
+        self.likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=self.ds.config.ny).to(
+            device=self.d, dtype=self.dtype)
         if self.use_independent_outputs:
-            self.ls = []
-            self.gps = []
-            for i in range(self.ds.config.ny):
-                self.ls.append(gpytorch.likelihoods.GaussianLikelihood().to(device=self.d, dtype=self.dtype))
-                self.gps.append(
-                    MixingSingleGP(self.xu, self.y[:, i], self.ls[i], i).to(device=self.d, dtype=self.dtype))
-            self.likelihood = gpytorch.likelihoods.LikelihoodList(*self.ls)
-            self.gp = gpytorch.models.IndependentModelList(*self.gps)
+            self.gp = MixingBatchGP(self.xu, self.y, self.likelihood, self.prior.get_batch_predictions)
         else:
-            self.likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=self.ds.config.ny).to(
-                device=self.d, dtype=self.dtype)
-            self.gp = MixingFullGP(self.xu, self.y, self.likelihood, self.prior.get_batch_predictions,
-                                   rank=1).to(device=self.d,
-                                              dtype=self.dtype)
+            self.gp = MixingFullGP(self.xu, self.y, self.likelihood, self.prior.get_batch_predictions, rank=1)
+        self.gp = self.gp.to(device=self.d, dtype=self.dtype)
         self.optimizer = torch.optim.Adam([
             {'params': self.gp.parameters()},
         ], lr=0.1)
@@ -354,11 +339,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
         # try refitting from previous parameters (fewer iterations)
         if self.partial_refit:
             if self.use_independent_outputs:
-                self.gps = []
-                for i in range(self.ds.config.ny):
-                    self.gps.append(
-                        MixingSingleGP(self.xu, self.y[:, i], self.ls[i], i).to(device=self.d, dtype=self.dtype))
-                self.gp = gpytorch.models.IndependentModelList(*self.gps)
+                self.gp.set_train_data(self.xu, self.y, strict=False)
             else:
                 self.gp.set_train_data(self.xu, self.y, strict=False)
             self._fit_params(self.training_iter // 10)
@@ -373,20 +354,12 @@ class OnlineGPMixing(OnlineDynamicsModel):
         # tune hyperparameters to new data
         self.gp.train()
         self.likelihood.train()
-        if self.use_independent_outputs:
-            mll = gpytorch.mlls.SumMarginalLogLikelihood(self.likelihood, self.gp)
-        else:
-            mll = gpytorch.mlls.ExactMarginalLogLikelihood(self.likelihood, self.gp)
+        mll = gpytorch.mlls.ExactMarginalLogLikelihood(self.likelihood, self.gp)
 
         for i in range(training_iter):
             self.optimizer.zero_grad()
-            if self.use_independent_outputs:
-                nominal_output = NominalModelCache(self.prior)
-                output = self.gp(*self.gp.train_inputs, nominal_output=nominal_output)
-                loss = -mll(output, self.gp.train_targets)
-            else:
-                output = self.gp(self.xu)
-                loss = -mll(output, self.y)
+            output = self.gp(self.xu)
+            loss = -mll(output, self.y)
             loss.backward()
             logger.debug('Iter %d/%d - Loss: %.3f' % (i + 1, training_iter, loss.item()))
             self.optimizer.step()
@@ -399,41 +372,22 @@ class OnlineGPMixing(OnlineDynamicsModel):
     def _make_prediction(self, cx, cu):
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
             xu = torch.cat((cx, cu), dim=1)
-            if self.use_independent_outputs:
-                xs = [xu for _ in range(self.ds.config.ny)]
-                nominal_output = NominalModelCache(self.prior)
-                b = self.gp(*xs, nominal_output=nominal_output)
-                self.last_prediction = self.likelihood(*b)
-            else:
-                self.last_prediction = self.likelihood(self.gp(xu))
+            self.last_prediction = self.likelihood(self.gp(xu))
 
     def _dynamics_in_transformed_space(self, px, pu, cx, cu):
-        with torch.no_grad(), gpytorch.settings.fast_pred_var():
-            self._make_prediction(cx, cu)
-            return self.sample() if self.sample_dynamics else self.mean()
+        self._make_prediction(cx, cu)
+        return self.sample() if self.sample_dynamics else self.mean()
 
     def sample(self, sample_shape=torch.Size([])):
-        if self.use_independent_outputs:
-            y = torch.stack([v.sample(sample_shape) for v in self.last_prediction], dim=-1)
-        else:
-            y = self.last_prediction.sample(sample_shape)
-        return y
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            return self.last_prediction.sample(sample_shape)
 
     def mean(self):
-        if self.use_independent_outputs:
-            mean = torch.stack([v.mean for v in self.last_prediction], dim=1)
-        else:
-            mean = self.last_prediction.mean
-        return mean
+        return self.last_prediction.mean
 
     def get_last_prediction_statistics(self):
-        with torch.no_grad():
-            if self.use_independent_outputs:
-                confidence_regions = [v.confidence_region() for v in self.last_prediction]
-                lower = torch.stack([b[0] for b in confidence_regions], dim=1)
-                upper = torch.stack([b[1] for b in confidence_regions], dim=1)
-            else:
-                lower, upper = self.last_prediction.confidence_region()
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            lower, upper = self.last_prediction.confidence_region()
             return lower, upper, self.mean()
 
 
