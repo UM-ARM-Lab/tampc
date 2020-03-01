@@ -1387,7 +1387,7 @@ def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.G
     if online_adapt is not OnlineAdapt.NONE:
         if online_adapt is OnlineAdapt.LINEARIZE_LIKELIHOOD:
             dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds, env.state_difference,
-                                                          local_mix_weight_scale=10.0,
+                                                          local_mix_weight_scale=50.0, xu_characteristic_length=10,
                                                           const_local_mix_weight=False, sigreg=1e-10, device=d)
         elif online_adapt is OnlineAdapt.GP_KERNEL:
             dynamics = online_model.OnlineGPMixing(pm, ds, env.state_difference, device=d, max_data_points=50,
@@ -1505,10 +1505,10 @@ class HardCodedContactControllerWrapper(controller.MPPI):
 def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM,
                                                    prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
     seed = 1
-    plot_model_eval = True
+    plot_model_eval = False
     d = get_device()
-    # env = get_easy_env(p.GUI, level=1, log_video=True)
-    env = get_easy_env(p.DIRECT)
+    env = get_easy_env(p.GUI, level=1, log_video=True)
+    # env = get_easy_env(p.DIRECT)
 
     logger.info("initial random seed %d", rand.seed(seed))
 
@@ -1522,11 +1522,6 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_recovery_global.mat", validation_ratio=0.,
                                         config=config, device=d)
-    test_slice = slice(4, 190)
-
-    # ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_no_recovery.mat", validation_ratio=0.,
-    #                                     config=config, device=d)
-    # test_slice = slice(15, 100)
 
     # use same preprocessor
     ds_wall.update_preprocessor(preprocessor)
@@ -1538,14 +1533,17 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
                                                   local_mix_weight_scale=50, xu_characteristic_length=10,
                                                   const_local_mix_weight=False, sigreg=1e-10,
                                                   slice_to_use=train_slice, device=d)
+    # dynamics = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice, allow_update=True,
+    #                                        device=d, training_iter=100, use_independent_outputs=False)
 
     if plot_model_eval:
-        dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice,
-                                                  device=d, training_iter=100, use_independent_outputs=True)
         config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-        ds_test = block_push.PushDataSource(env, data_dir="pushing/push_recovery_global.mat", validation_ratio=0.,
+        ds_test = block_push.PushDataSource(env, data_dir="pushing/recovery_policy_with_mixed_model.mat",
+                                            validation_ratio=0.,
                                             config=config, device=d)
         ds_test.update_preprocessor(preprocessor)
+        test_slice = slice(4, 190)
+
         # visualize data and linear fit onto it
         t = np.arange(test_slice.start, test_slice.stop)
         xu, y, info = (v[test_slice] for v in ds_test.training_set())
