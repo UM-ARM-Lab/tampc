@@ -1,5 +1,7 @@
 import abc
 import logging
+import numpy as np
+import torch
 
 from arm_pytorch_utilities import math_utils
 from meta_contact import online_model
@@ -73,9 +75,18 @@ class OnlineMPC(OnlineController):
         # import time
         # start = time.time()
 
+        # TODO select model in a smarter way; currently we have a in-contact local model and otherwise use nominal model
         # TODO the MPC method doesn't give dynamics px and pu (different from our prevx and prevu)
-        # verified against non-batch calculations
-        next_state = self.dynamics.predict(None, None, state, u)
+        use_context_model = False
+        if self.context[0] is not None:
+            r = np.linalg.norm(self.context[0]['reaction'])
+            if r > 200:
+                use_context_model = True
+        if use_context_model:
+            next_state = self.dynamics.predict(None, None, state, u)
+        else:
+            next_state = self.dynamics.prior.dyn_net.predict(torch.cat((state, u), dim=1))
+
         # predict_time = time.time()
         next_state = self._adjust_next_state(next_state, u, t)
         # adjust_time = time.time()
