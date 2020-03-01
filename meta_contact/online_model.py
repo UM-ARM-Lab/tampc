@@ -354,9 +354,6 @@ class OnlineGPMixing(OnlineDynamicsModel):
         # try refitting from previous parameters (fewer iterations)
         if self.partial_refit:
             if self.use_independent_outputs:
-                # TODO decide method of refitting independent GPs
-                # for i in range(self.ds.config.ny):
-                #     self.gps[0].set_train_data(self.xu, self.y[:, i], strict=False)
                 self.gps = []
                 for i in range(self.ds.config.ny):
                     self.gps.append(
