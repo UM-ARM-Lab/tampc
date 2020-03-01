@@ -1505,10 +1505,10 @@ class HardCodedContactControllerWrapper(controller.MPPI):
 def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM,
                                                    prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
     seed = 1
-    plot_model_eval = False
+    plot_model_eval = True
     d = get_device()
-    env = get_easy_env(p.GUI, level=1, log_video=True)
-    # env = get_easy_env(p.DIRECT)
+    # env = get_easy_env(p.GUI, level=1, log_video=True)
+    env = get_easy_env(p.DIRECT)
 
     logger.info("initial random seed %d", rand.seed(seed))
 
@@ -1533,12 +1533,13 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
                                                   local_mix_weight_scale=50, xu_characteristic_length=10,
                                                   const_local_mix_weight=False, sigreg=1e-10,
                                                   slice_to_use=train_slice, device=d)
-    # dynamics = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice, allow_update=True,
-    #                                        device=d, training_iter=100, use_independent_outputs=False)
+    dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice,
+                                              allow_update=True,
+                                              device=d, training_iter=100, use_independent_outputs=True)
 
     if plot_model_eval:
         config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-        ds_test = block_push.PushDataSource(env, data_dir="pushing/recovery_policy_with_mixed_model.mat",
+        ds_test = block_push.PushDataSource(env, data_dir="pushing/push_recovery_global.mat",
                                             validation_ratio=0.,
                                             config=config, device=d)
         ds_test.update_preprocessor(preprocessor)
@@ -1567,13 +1568,15 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
         weight_linear_mix /= torch.max(weight_linear_mix) * 2
 
         yhat_gp = dynamics_gp._dynamics_in_transformed_space(None, None, cx, cu)
-        with torch.no_grad():
-            lower, upper = dynamics_gp.get_confidence_region()
+        lower, upper, yhat_gp_mean = dynamics_gp.get_last_prediction_statistics()
+        samples = 20
+        gp_samples = dynamics_gp.sample(torch.Size([samples]))
 
         yhat_linear_online = torch.zeros_like(yhat_linear)
         yhat_gp_online = torch.zeros_like(yhat_gp)
         lower_online = torch.zeros_like(lower)
         upper_online = torch.zeros_like(upper)
+        yhat_gp_online_mean = torch.zeros_like(yhat_gp_online)
         px, pu = None, None
         for i in range(xu.shape[0] - 1):
             cx = xu[i, :config.nx]
@@ -1583,7 +1586,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
             yhat_linear_online[i] = dynamics._dynamics_in_transformed_space(px, pu, cx.view(1, -1), cu.view(1, -1))
             # yhat_gp_online[i] = dynamics_gp._dynamics_in_transformed_space(px, pu, cx.view(1, -1), cu.view(1, -1))
             # with torch.no_grad():
-            #     lower_online[i], upper_online[i] = dynamics_gp.get_confidence_region()
+            #     lower_online[i], upper_online[i], yhat_gp_online_mean[i] = dynamics_gp.get_last_prediction_statistics()
             dynamics._update(cx, cu, y[i])
             # dynamics_gp._update(cx, cu, y[i])
             px, pu = cx, cu
@@ -1598,16 +1601,20 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
             axes[i].scatter(t, Y[:, dim], label='truth', alpha=0.2)
             axes[i].plot(t, Yhat_freespace[:, dim], label='nominal', alpha=0.4, linewidth=3)
 
-            axes[i].plot(t, yhat_gp[:, dim].cpu().numpy(), label='gp')
-            # axes[i].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, i].cpu().numpy(), alpha=0.3)
+            axes[i].plot(t, yhat_gp_mean[:, dim].cpu().numpy(), label='gp')
+            axes[i].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, i].cpu().numpy(), alpha=0.3)
+            axes[i].scatter(np.tile(t, samples), gp_samples[:, :, dim].view(-1).cpu().numpy(), label='gp sample',
+                            marker='*', color='k', alpha=0.3)
             # axes[i].plot(t, yhat_gp_online[:, dim].cpu().numpy(), label='online gp')
             # axes[i].fill_between(t, lower_online[:, dim].cpu().numpy(), upper_online[:, i].cpu().numpy(), alpha=0.3)
 
             # axes[i].plot(t, Yhat_linear[:, dim], label='linear fit', alpha=0.5)
+
             m = yhat_linear_mix[:, dim].cpu().numpy()
             w = weight_linear_mix.cpu().numpy()
             axes[i].plot(t, m, label='mix')
-            axes[i].fill_between(t, m - w, m + w, alpha=0.2, color='g')
+            # axes[i].fill_between(t, m - w, m + w, alpha=0.2, color='g')
+
             # axes[i].plot(t, Yhat_linear_online[:, dim], label='online mix')
             axes[i].set_ybound(-0.2, 1.2)
             axes[i].set_ylabel(ylabels[dim])
@@ -1637,6 +1644,9 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
         logger.info('linear online %.4f', e.median())
         e = (yhat_linear - y).norm(dim=1)
         logger.info('linear mse %.4f', e.median())
+        e = (yhat_gp - y).norm(dim=1)
+        em = (yhat_gp_mean - y).norm(dim=1)
+        logger.info('gp mse (sample) %.4f (mean) %.4f', e.median(), em.median())
         e = (yhat_freespace - y).norm(dim=1)
         logger.info('nominal mse %.4f', e.median())
 

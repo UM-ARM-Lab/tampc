@@ -281,7 +281,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
 
     def __init__(self, prior: prior.OnlineDynamicsPrior, ds, state_difference, max_data_points=50, training_iter=100,
                  slice_to_use=None, partial_refit=True, use_independent_outputs=False, allow_update=True,
-                 **kwargs):
+                 sample=True, **kwargs):
         super().__init__(ds, state_difference, **kwargs)
         self.prior = prior
 
@@ -292,12 +292,15 @@ class OnlineGPMixing(OnlineDynamicsModel):
         self.likelihood = None
         self.gp = None
         self.optimizer = None
+
+        # GP parameters
         self.training_iter = training_iter
         self.partial_refit = partial_refit
         self.use_independent_outputs = use_independent_outputs
         self.allow_update = allow_update
+        self.sample_dynamics = sample
 
-        # mixing parameters
+        # intermediate results
         self.last_prediction = None
 
         if slice_to_use is None:
@@ -351,6 +354,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
         # try refitting from previous parameters (fewer iterations)
         if self.partial_refit:
             if self.use_independent_outputs:
+                # TODO decide method of refitting independent GPs
                 # for i in range(self.ds.config.ny):
                 #     self.gps[0].set_train_data(self.xu, self.y[:, i], strict=False)
                 self.gps = []
@@ -395,7 +399,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
         elapsed = time.time() - start
         logger.debug('training took %.4fs', elapsed)
 
-    def _dynamics_in_transformed_space(self, px, pu, cx, cu):
+    def _make_prediction(self, cx, cu):
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
             xu = torch.cat((cx, cu), dim=1)
             if self.use_independent_outputs:
@@ -403,14 +407,29 @@ class OnlineGPMixing(OnlineDynamicsModel):
                 nominal_output = NominalModelCache(self.prior)
                 b = self.gp(*xs, nominal_output=nominal_output)
                 self.last_prediction = self.likelihood(*b)
-                y = torch.stack([v.mean for v in self.last_prediction], dim=1)
             else:
                 self.last_prediction = self.likelihood(self.gp(xu))
-                # not using covariance, but could plot them with .confidence_region()
-                y = self.last_prediction.mean
-            return y
 
-    def get_confidence_region(self):
+    def _dynamics_in_transformed_space(self, px, pu, cx, cu):
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            self._make_prediction(cx, cu)
+            return self.sample() if self.sample_dynamics else self.mean()
+
+    def sample(self, sample_shape=torch.Size([])):
+        if self.use_independent_outputs:
+            y = torch.stack([v.sample(sample_shape) for v in self.last_prediction], dim=-1)
+        else:
+            y = self.last_prediction.sample(sample_shape)
+        return y
+
+    def mean(self):
+        if self.use_independent_outputs:
+            mean = torch.stack([v.mean for v in self.last_prediction], dim=1)
+        else:
+            mean = self.last_prediction.mean
+        return mean
+
+    def get_last_prediction_statistics(self):
         with torch.no_grad():
             if self.use_independent_outputs:
                 confidence_regions = [v.confidence_region() for v in self.last_prediction]
@@ -418,7 +437,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
                 upper = torch.stack([b[1] for b in confidence_regions], dim=1)
             else:
                 lower, upper = self.last_prediction.confidence_region()
-            return lower, upper
+            return lower, upper, self.mean()
 
 
 def _cat_xu(px, pu, cx, cu):
