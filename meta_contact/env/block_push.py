@@ -856,10 +856,10 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
         # normalize action such that the input can be within a fixed range
         # first action is difference in along
         old_state = self._obs()
-        d_along = action[0] * self.MAX_SLIDE
+        d_along = np.clip(action[0], -1, 1) * self.MAX_SLIDE
         # TODO consider having u as fn and ft
         # second action is push magnitude
-        f_mag = max(0, action[1] * self.MAX_FORCE)
+        f_mag = np.clip(action[1], 0, 1) * self.MAX_FORCE
         # third option is push angle (0 being perpendicular to face)
         f_dir = np.clip(action[2], -1, 1) * self.MAX_PUSH_ANGLE
         if self._debug_visualizations[DebugVisualization.ACTION]:
