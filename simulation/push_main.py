@@ -136,9 +136,11 @@ def get_preprocessor_for_invariant_tsf(invariant_tsf, evaluate_transform=True):
 
 def get_full_controller_name(pm, ctrl, tsf_name):
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else "{}_{}".format(tsf_name, pm.__class__.__name__)
-    class_names = "{}_{}".format(ctrl.__class__.__name__, ctrl.dynamics.__class__.__name__)
-    if isinstance(ctrl.dynamics, online_model.OnlineGPMixing) and not ctrl.dynamics.use_independent_outputs:
-        class_names += "_full"
+    class_names = "{}".format(ctrl.__class__.__name__)
+    if isinstance(ctrl, controller.MPC):
+        class_names += "_{}".format(ctrl.dynamics.__class__.__name__)
+        if isinstance(ctrl.dynamics, online_model.OnlineGPMixing) and not ctrl.dynamics.use_independent_outputs:
+            class_names += "_full"
     name = "{}_{}".format(class_names, name)
     return name
 
@@ -1522,21 +1524,25 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     # use data of transition out of bug trap rather than just inside the bug trap
     # get some data when we're next to a wall and use it fit a local model
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
+    # data from previous policy that got out of bug trap
     ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_recovery_global.mat", validation_ratio=0.,
                                         config=config, device=d)
+    train_slice = slice(15, 55)
+    # data from predetermined policy for getting into and out of bug trap
+    # ds_wall = block_push.PushDataSource(env, data_dir="pushing/predetermined_bug_trap.mat", validation_ratio=0.,
+    #                                     config=config, device=d)
+    # train_slice = slice(20, 140)
 
     # use same preprocessor
     ds_wall.update_preprocessor(preprocessor)
 
-    # first bug trap around 15-50
-    train_slice = slice(15, 55)
     # don't use all of the data; use just the part that's stuck against a wall?
     dynamics = online_model.OnlineLinearizeMixing(0.0, pm, ds_wall, env.state_difference,
                                                   local_mix_weight_scale=50, xu_characteristic_length=10,
                                                   const_local_mix_weight=False, sigreg=1e-10,
                                                   slice_to_use=train_slice, device=d)
     dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice,
-                                              allow_update=False,
+                                              allow_update=False, sample=False,
                                               device=d, training_iter=150, use_independent_outputs=False)
 
     if plot_model_eval:
@@ -1612,8 +1618,8 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
             axes[i].plot(t, yhat_gp_mean[:, dim].cpu().numpy(), label='gp')
             axes[i].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, i].cpu().numpy(), alpha=0.3)
-            axes[i].scatter(np.tile(t, samples), gp_samples[:, :, dim].view(-1).cpu().numpy(), label='gp sample',
-                            marker='*', color='k', alpha=0.3)
+            # axes[i].scatter(np.tile(t, samples), gp_samples[:, :, dim].view(-1).cpu().numpy(), label='gp sample',
+            #                 marker='*', color='k', alpha=0.3)
             # axes[i].plot(t, yhat_gp_online_mean[:, dim].cpu().numpy(), label='online gp')
             # axes[i].fill_between(t, lower_online[:, dim].cpu().numpy(), upper_online[:, i].cpu().numpy(), alpha=0.3)
 
@@ -1668,10 +1674,26 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     common_wrapper_opts['adjust_model_pred_with_prev_error'] = False
-    ctrl = online_controller.OnlineMPPI(dynamics_gp, untransformed_config, **common_wrapper_opts,
+    ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
                                         constrain_state=constrain_state, mpc_opts=mpc_opts)
     # try hardcoded to see if controller will do what we want given the hypothesized model predictions
     # ctrl = controller.MPPI(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
+
+    # get data in and around the bug trap we want to avoid in the future
+    # u = []
+    # for _ in range(10):
+    #     u.append([0.7 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.6 + np.random.randn() * 0.4])
+    # for _ in range(10):
+    #     u.append([0.1 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.7 + np.random.randn() * 0.3])
+    # for _ in range(20):
+    #     u.append([-0.3 + np.random.randn() * 0.4, 0.6 + np.random.randn() * 0.4, 0.0 + np.random.randn() * 0.8])
+    # for _ in range(10):
+    #     u.append([-0.8 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, -0.2 + np.random.randn() * 0.4])
+    # for _ in range(74):
+    #     u.append([-0.3 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, -0.9 + np.random.randn() * 0.2])
+    # for _ in range(40):
+    #     u.append([0.2 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, 0.1 + np.random.randn() * 0.3])
+    # ctrl = controller.PreDeterminedController(np.array(u))
 
     name = get_full_controller_name(pm, ctrl, tsf_name)
 
