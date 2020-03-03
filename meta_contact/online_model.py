@@ -3,6 +3,7 @@ from arm_pytorch_utilities import linalg
 from meta_contact import model
 from meta_contact import prior
 from torch.distributions.multivariate_normal import MultivariateNormal
+from torch import distributions
 import logging
 import gpytorch
 import abc
@@ -387,7 +388,12 @@ class OnlineGPMixing(OnlineDynamicsModel):
 
     def sample(self, sample_shape=torch.Size([])):
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
-            return self.last_prediction.sample(sample_shape)
+            if self.use_independent_outputs:
+                return self.last_prediction.sample(sample_shape)
+            else:
+                # TODO this is the preferred way to sample; the batch indep implementation currently is bugged
+                p = distributions.Normal(self.last_prediction.mean, self.last_prediction.stddev)
+                return p.sample(sample_shape)
 
     def mean(self):
         return self.last_prediction.mean

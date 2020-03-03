@@ -24,7 +24,7 @@ from meta_contact.controller import online_controller
 from meta_contact.env import block_push
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO,
+logging.basicConfig(level=logging.DEBUG,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
                     datefmt='%m-%d %H:%M:%S')
 logging.getLogger('matplotlib.font_manager').disabled = True
@@ -1505,10 +1505,12 @@ class HardCodedContactControllerWrapper(controller.MPPI):
 def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM,
                                                    prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
     seed = 1
-    plot_model_eval = True
+    plot_model_eval = False
     d = get_device()
-    # env = get_easy_env(p.GUI, level=1, log_video=True)
-    env = get_easy_env(p.DIRECT)
+    if plot_model_eval:
+        env = get_easy_env(p.DIRECT)
+    else:
+        env = get_easy_env(p.GUI, level=1, log_video=True)
 
     logger.info("initial random seed %d", rand.seed(seed))
 
@@ -1534,8 +1536,8 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
                                                   const_local_mix_weight=False, sigreg=1e-10,
                                                   slice_to_use=train_slice, device=d)
     dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice,
-                                              allow_update=True,
-                                              device=d, training_iter=150, use_independent_outputs=True)
+                                              allow_update=False,
+                                              device=d, training_iter=150, use_independent_outputs=False)
 
     if plot_model_eval:
         config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
@@ -1610,10 +1612,10 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
             axes[i].plot(t, yhat_gp_mean[:, dim].cpu().numpy(), label='gp')
             axes[i].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, i].cpu().numpy(), alpha=0.3)
-            # axes[i].scatter(np.tile(t, samples), gp_samples[:, :, dim].view(-1).cpu().numpy(), label='gp sample',
-            #                 marker='*', color='k', alpha=0.3)
-            axes[i].plot(t, yhat_gp_online_mean[:, dim].cpu().numpy(), label='online gp')
-            axes[i].fill_between(t, lower_online[:, dim].cpu().numpy(), upper_online[:, i].cpu().numpy(), alpha=0.3)
+            axes[i].scatter(np.tile(t, samples), gp_samples[:, :, dim].view(-1).cpu().numpy(), label='gp sample',
+                            marker='*', color='k', alpha=0.3)
+            # axes[i].plot(t, yhat_gp_online_mean[:, dim].cpu().numpy(), label='online gp')
+            # axes[i].fill_between(t, lower_online[:, dim].cpu().numpy(), upper_online[:, i].cpu().numpy(), alpha=0.3)
 
             # axes[i].plot(t, Yhat_linear[:, dim], label='linear fit', alpha=0.5)
 
@@ -1666,11 +1668,10 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     common_wrapper_opts['adjust_model_pred_with_prev_error'] = False
-    ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
+    ctrl = online_controller.OnlineMPPI(dynamics_gp, untransformed_config, **common_wrapper_opts,
                                         constrain_state=constrain_state, mpc_opts=mpc_opts)
     # try hardcoded to see if controller will do what we want given the hypothesized model predictions
     # ctrl = controller.MPPI(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
-    # ctrl = HardCodedContactControllerWrapper(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
 
     name = get_full_controller_name(pm, ctrl, tsf_name)
 
