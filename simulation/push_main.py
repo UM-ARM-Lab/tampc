@@ -100,6 +100,7 @@ def collect_push_against_wall_recovery_data():
     sim.run(seed)
 
 
+# --- SHARED GETTERS
 def get_data_dir(level=0):
     return '{}{}.mat'.format(env_dir, level)
 
@@ -129,12 +130,18 @@ def get_device():
     return torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 
+def get_ds(env, data_dir, config=None, **kwargs):
+    d = get_device()
+    if config is None:
+        config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
+    ds = block_push.PushDataSource(env, data_dir=data_dir, config=config, device=d, **kwargs)
+    return ds, config
+
+
 def get_free_space_env_init(seed=1, **kwargs):
     d = get_device()
     env = get_easy_env(kwargs.pop('mode', p.DIRECT), **kwargs)
-
-    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-    ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config, device=d)
+    ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
 
     logger.info("initial random seed %d", rand.seed(seed))
     return d, env, config, ds
@@ -180,6 +187,65 @@ def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics):
     else:
         pm = prior_class.from_data(ds)
     return pm
+
+
+def get_controller_options(env):
+    d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    u_min, u_max = env.get_control_bounds()
+    Q = torch.diag(torch.tensor([10, 10, 0, 0.01], dtype=torch.double))
+    R = 0.01
+    # tune this so that we figure out to make u-turns
+    sigma = torch.ones(env.nu, dtype=torch.double, device=d) * 0.8
+    sigma[1] = 2
+    common_wrapper_opts = {
+        'Q': Q,
+        'R': R,
+        'u_min': u_min,
+        'u_max': u_max,
+        'compare_to_goal': env.state_difference,
+        'device': d,
+        'terminal_cost_multiplier': 50,
+        'adjust_model_pred_with_prev_error': True,
+        'use_orientation_terminal_cost': False,
+    }
+    mpc_opts = {
+        'num_samples': 1000,
+        'noise_sigma': torch.diag(sigma),
+        'noise_mu': torch.tensor([0, 0.5, 0], dtype=torch.double, device=d),
+        'lambda_': 1,
+        'horizon': 35,
+        'u_init': torch.tensor([0, 0.5, 0], dtype=torch.double, device=d),
+        'sample_null_action': False,
+        'step_dependent_dynamics': True,
+    }
+    return common_wrapper_opts, mpc_opts
+
+
+class OnlineAdapt:
+    NONE = 0
+    LINEARIZE_LIKELIHOOD = 1
+    GP_KERNEL = 2
+
+
+def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.GP_KERNEL):
+    common_wrapper_opts, mpc_opts = get_controller_options(env)
+    d = common_wrapper_opts['device']
+    if online_adapt is not OnlineAdapt.NONE:
+        if online_adapt is OnlineAdapt.LINEARIZE_LIKELIHOOD:
+            dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds, env.state_difference,
+                                                          local_mix_weight_scale=50.0, xu_characteristic_length=10,
+                                                          const_local_mix_weight=False, sigreg=1e-10, device=d)
+        elif online_adapt is OnlineAdapt.GP_KERNEL:
+            dynamics = online_model.OnlineGPMixing(pm, ds, env.state_difference, device=d, max_data_points=50,
+                                                   use_independent_outputs=False, sample=True)
+        else:
+            raise RuntimeError("Unrecognized online adaption value {}".format(online_adapt))
+        ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
+                                            mpc_opts=mpc_opts)
+    else:
+        ctrl = controller.MPPI(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
+
+    return ctrl
 
 
 def translation_generator():
@@ -1133,8 +1199,7 @@ def verify_coordinate_transform():
     # comparison tolerance
     tol = 2e-4
     env = get_easy_env(p.GUI)
-    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-    ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config)
+    ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
 
     tsf = coord_tsf_factory(env, ds)
 
@@ -1195,9 +1260,7 @@ def test_online_model():
     seed = 1
     d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     env = get_easy_env(p.DIRECT, level=0)
-
-    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-    ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config, device=d)
+    ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
 
     logger.info("initial random seed %d", rand.seed(seed))
 
@@ -1367,65 +1430,6 @@ def update_ds_with_transform(env, ds, use_tsf, **kwargs):
     return untransformed_config, tsf_name, preprocessor
 
 
-def get_controller_options(env):
-    d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    u_min, u_max = env.get_control_bounds()
-    Q = torch.diag(torch.tensor([10, 10, 0, 0.01], dtype=torch.double))
-    R = 0.01
-    # tune this so that we figure out to make u-turns
-    sigma = torch.ones(env.nu, dtype=torch.double, device=d) * 0.8
-    sigma[1] = 2
-    common_wrapper_opts = {
-        'Q': Q,
-        'R': R,
-        'u_min': u_min,
-        'u_max': u_max,
-        'compare_to_goal': env.state_difference,
-        'device': d,
-        'terminal_cost_multiplier': 50,
-        'adjust_model_pred_with_prev_error': True,
-        'use_orientation_terminal_cost': False,
-    }
-    mpc_opts = {
-        'num_samples': 1000,
-        'noise_sigma': torch.diag(sigma),
-        'noise_mu': torch.tensor([0, 0.5, 0], dtype=torch.double, device=d),
-        'lambda_': 1,
-        'horizon': 35,
-        'u_init': torch.tensor([0, 0.5, 0], dtype=torch.double, device=d),
-        'sample_null_action': False,
-        'step_dependent_dynamics': True,
-    }
-    return common_wrapper_opts, mpc_opts
-
-
-class OnlineAdapt:
-    NONE = 0
-    LINEARIZE_LIKELIHOOD = 1
-    GP_KERNEL = 2
-
-
-def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.GP_KERNEL):
-    common_wrapper_opts, mpc_opts = get_controller_options(env)
-    d = common_wrapper_opts['device']
-    if online_adapt is not OnlineAdapt.NONE:
-        if online_adapt is OnlineAdapt.LINEARIZE_LIKELIHOOD:
-            dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds, env.state_difference,
-                                                          local_mix_weight_scale=50.0, xu_characteristic_length=10,
-                                                          const_local_mix_weight=False, sigreg=1e-10, device=d)
-        elif online_adapt is OnlineAdapt.GP_KERNEL:
-            dynamics = online_model.OnlineGPMixing(pm, ds, env.state_difference, device=d, max_data_points=50,
-                                                   use_independent_outputs=False, sample=False)
-        else:
-            raise RuntimeError("Unrecognized online adaption value {}".format(online_adapt))
-        ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
-                                            mpc_opts=mpc_opts)
-    else:
-        ctrl = controller.MPPI(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
-
-    return ctrl
-
-
 def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False, override=False,
                   prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior, **kwargs):
     seed = 1
@@ -1434,9 +1438,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     d = get_device()
     env = get_easy_env(p.GUI, level=level, log_video=True)
 
-    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-    # use nominal/freespace model
-    ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config, device=d)
+    ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
 
     logger.info("initial random seed %d", rand.seed(seed))
 
@@ -1539,21 +1541,17 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
     logger.info("initial random seed %d", rand.seed(seed))
 
-    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-    ds = block_push.PushDataSource(env, data_dir=get_data_dir(0), validation_ratio=0.1, config=config, device=d)
+    ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
     untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
     pm = get_loaded_prior(prior_class, ds, tsf_name, False)
 
     # use data of transition out of bug trap rather than just inside the bug trap
     # get some data when we're next to a wall and use it fit a local model
-    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     # data from previous policy that got out of bug trap
-    ds_wall = block_push.PushDataSource(env, data_dir="pushing/push_recovery_global.mat", validation_ratio=0.,
-                                        config=config, device=d)
+    ds_wall, config = get_ds(env, "pushing/push_recovery_global.mat", validation_ratio=0.)
     train_slice = slice(15, 55)
     # data from predetermined policy for getting into and out of bug trap
-    # ds_wall = block_push.PushDataSource(env, data_dir="pushing/predetermined_bug_trap.mat", validation_ratio=0.,
-    #                                     config=config, device=d)
+    # ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
     # train_slice = slice(20, 140)
 
     # use same preprocessor
@@ -1569,10 +1567,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
                                               device=d, training_iter=150, use_independent_outputs=False)
 
     if plot_model_eval:
-        config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-        ds_test = block_push.PushDataSource(env, data_dir="pushing/push_recovery_global.mat",
-                                            validation_ratio=0.,
-                                            config=config, device=d)
+        ds_test, config = get_ds(env, "pushing/push_recovery_global.mat", validation_ratio=0.)
         ds_test.update_preprocessor(preprocessor)
         test_slice = slice(4, 190)
 
