@@ -1415,7 +1415,7 @@ def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.G
                                                           const_local_mix_weight=False, sigreg=1e-10, device=d)
         elif online_adapt is OnlineAdapt.GP_KERNEL:
             dynamics = online_model.OnlineGPMixing(pm, ds, env.state_difference, device=d, max_data_points=50,
-                                                   use_independent_outputs=False)
+                                                   use_independent_outputs=False, sample=False)
         else:
             raise RuntimeError("Unrecognized online adaption value {}".format(online_adapt))
         ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
@@ -1697,7 +1697,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     common_wrapper_opts['adjust_model_pred_with_prev_error'] = False
-    ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
+    ctrl = online_controller.OnlineMPPI(dynamics_gp, untransformed_config, **common_wrapper_opts,
                                         constrain_state=constrain_state, mpc_opts=mpc_opts)
     # try hardcoded to see if controller will do what we want given the hypothesized model predictions
     # ctrl = controller.MPPI(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)

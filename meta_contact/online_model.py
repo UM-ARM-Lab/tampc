@@ -333,6 +333,8 @@ class OnlineGPMixing(OnlineDynamicsModel):
         self.gp = self.gp.to(device=self.d, dtype=self.dtype)
 
     def _update(self, px, pu, y):
+        # clear last prediction so we don't accidentally use a stale prediction
+        self.last_prediction = None
         if not self.allow_update:
             return
         xu = torch.cat((px.view(1, -1), pu.view(1, -1)), dim=1)

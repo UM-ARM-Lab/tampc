@@ -244,7 +244,7 @@ class MPPI(MPC):
                 noise_sigma = torch.eye(self.nu, dtype=self.dtype) * noise_mult
         self.mpc = mppi.MPPI(self._apply_dynamics, self._running_cost, self.nx, u_min=self.u_min, u_max=self.u_max,
                              noise_sigma=noise_sigma, device=self.d, terminal_state_cost=self._terminal_cost,
-                             **mpc_opts)
+                             **mpc_opts, **self._mpc_opts())
 
     def reset(self):
         super().reset()
@@ -252,6 +252,10 @@ class MPPI(MPC):
 
     def _command(self, obs):
         return self.mpc.command(obs)
+
+    def _mpc_opts(self):
+        """For any inheriting class to supply options for contructing the MPC"""
+        return {}
 
     def get_rollouts(self, obs):
         return self.mpc.get_rollouts(torch.from_numpy(obs).to(dtype=self.dtype, device=self.d))[0].cpu().numpy()

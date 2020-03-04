@@ -3,7 +3,7 @@ import logging
 import numpy as np
 import torch
 
-from arm_pytorch_utilities import math_utils
+from arm_pytorch_utilities import math_utils, linalg
 from meta_contact import online_model
 from meta_contact.controller import controller
 
@@ -96,3 +96,25 @@ class OnlineMPC(OnlineController):
 class OnlineMPPI(OnlineMPC, controller.MPPI):
     def _command(self, obs):
         return OnlineMPC._command(self, obs)
+
+    def _mpc_opts(self):
+        opts = super()._mpc_opts()
+        # use variance cost if possible (when not sampling)
+        if isinstance(self.dynamics, online_model.OnlineGPMixing) and self.dynamics.sample_dynamics is False:
+            self.Q_variance = torch.eye(self.nx, device=self.d, dtype=self.dtype) * 2.
+            opts['dynamics_variance'] = self._dynamics_variance
+            opts['running_cost_variance'] = self._running_cost_variance
+        return opts
+
+    def _dynamics_variance(self, next_state):
+        import gpytorch
+        if self.dynamics.last_prediction is not None:
+            with torch.no_grad(), gpytorch.settings.fast_pred_var():
+                return self.dynamics.last_prediction.variance
+        return None
+
+    def _running_cost_variance(self, variance):
+        if variance is not None:
+            c = linalg.batch_quadratic_product(variance, self.Q_variance)
+            return c
+        return 0
