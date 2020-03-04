@@ -142,8 +142,11 @@ class InvariantTransform(LearnableParameterizedModel):
 
     def _get_separate_data_columns(self, data_set):
         XU, Y, _ = data_set
-        X, U = torch.split(XU, self.config.nx, dim=1)
+        X, U = self._split_xu(XU)
         return X, U, Y
+
+    def _split_xu(self, XU):
+        return torch.split(XU, self.config.nx, dim=1)
 
     def _is_in_neighbourhood(self, cur, candidate):
         return torch.norm(candidate - cur) < self.too_far_for_neighbour
@@ -173,7 +176,7 @@ class InvariantTransform(LearnableParameterizedModel):
 
     def _do_calculate_neighbourhood(self, XU, Y, labels, consider_only_continuous=False):
         # train from samples of ds that are close in euclidean space
-        X, U = torch.split(XU, self.config.nx, dim=1)
+        X, U = self._split_xu(XU)
         # can precalculate since XUY won't change during training and it's only dependent on these
         if consider_only_continuous:
             # assume training set is not shuffled, we can just look at adjacent datapoints sequentially

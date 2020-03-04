@@ -226,6 +226,30 @@ class PushLoaderRestricted(PushLoader):
         return xu, y, cc
 
 
+class PushLoaderWithReaction(PushLoaderRestricted):
+    """
+    Include reaction force as part of state that we need to predict
+    """
+
+    def _process_file_raw_data(self, d):
+        x = d['X']
+        # ignore force in z
+        r = d['reaction'][:, :2]
+        if self.config.predict_difference:
+            dpos = x[1:, :2] - x[:-1, :2]
+            dyaw = math_utils.angular_diff_batch(x[1:, 2], x[:-1, 2])
+            dalong = x[1:, 3] - x[:-1, 3]
+            dr = r[1:] - r[:-1]
+            y = np.concatenate((dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1), dr), axis=1)
+        else:
+            raise RuntimeError("Too hard to predict discontinuous normalized angles; use predict difference")
+
+        x = np.concatenate((x, r), axis=1)
+        xu, y, cc = self._apply_masks(d, x, y)
+
+        return xu, y, cc
+
+
 class DebugVisualization:
     FRICTION = 0
     WALL_ON_BLOCK = 1
@@ -1054,8 +1078,11 @@ class PushDataSource(datasource.FileDataSource):
                   PushAgainstWallStickyEnv: PushLoaderRestricted,
                   PushWithForceDirectlyEnv: PushLoaderRestricted}
 
-    def __init__(self, env, data_dir='pushing', **kwargs):
-        loader = self.loader_map.get(type(env), None)
-        if not loader:
-            raise RuntimeError("Unrecognized data source for env {}".format(env))
+    def __init__(self, env, data_dir='pushing', reaction_in_state=False, **kwargs):
+        if reaction_in_state:
+            loader = PushLoaderWithReaction
+        else:
+            loader = self.loader_map.get(type(env), None)
+            if not loader:
+                raise RuntimeError("Unrecognized data source for env {}".format(env))
         super().__init__(loader, data_dir, **kwargs)

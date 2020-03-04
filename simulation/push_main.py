@@ -134,7 +134,7 @@ def get_ds(env, data_dir, config=None, **kwargs):
     d = get_device()
     if config is None:
         config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-    ds = block_push.PushDataSource(env, data_dir=data_dir, config=config, device=d, **kwargs)
+    ds = block_push.PushDataSource(env, data_dir=data_dir, config=config, device=d, reaction_in_state=True, **kwargs)
     return ds, config
 
 
@@ -304,38 +304,56 @@ def constrain_state(state):
 # ------- Hand designed coordinate transform classes using architecture 2
 class HandDesignedCoordTransform(PusherTransform):
     def __init__(self, ds, nz, **kwargs):
+        # assume 4 states; anything after we should just passthrough
+        self.passthrough_states = ds.config.nx - 4
         # v is dx, dy, dyaw in body frame and d_along
-        super().__init__(ds, nz, 4, name='coord', **kwargs)
+        super().__init__(ds, nz + self.passthrough_states, 4 + self.passthrough_states, name='coord', **kwargs)
+
+    def _add_passthrough_states(self, z, x):
+        # we always use the last few dims for passthrough; so use the same for v
+        if self.passthrough_states:
+            z = torch.cat((z, x[:, -self.passthrough_states:].view(-1, self.passthrough_states)), dim=1)
+        return z
 
     def get_v(self, x, dx, z):
         return self.dx_to_v(x, dx)
+
+    def xu_to_z(self, state, action):
+        if len(state.shape) < 2:
+            state = state.reshape(1, -1)
+            action = action.reshape(1, -1)
+
+        # (along, d_along, push magnitude, push direction)
+        z = torch.cat((state[:, 3].view(-1, 1), action), dim=1)
+        z = self._add_passthrough_states(z, state)
+        return z
 
     def dx_to_v(self, x, dx):
         if len(x.shape) == 1:
             x = x.view(1, -1)
             dx = dx.view(1, -1)
-        N = dx.shape[0]
-        v = torch.zeros((N, self.nv), dtype=dx.dtype, device=dx.device)
         # convert world frame to body frame
-        v[:, :2] = math_utils.batch_rotate_wrt_origin(dx[:, :2], -x[:, 2])
+        dpos_body = math_utils.batch_rotate_wrt_origin(dx[:, :2], -x[:, 2])
         # second last element is dyaw, which also gets passed along directly
-        v[:, 2] = dx[:, 2]
+        dyaw = dx[:, 2]
         # last element is d_along, which gets passed along directly
-        v[:, 3] = dx[:, 3]
+        dalong = dx[:, 3]
+        v = torch.cat((dpos_body, dyaw.view(-1, 1), dalong.view(-1, 1)), dim=1)
+        v = self._add_passthrough_states(v, dx)
         return v
 
     def get_dx(self, x, v):
         if len(x.shape) == 1:
             x = x.view(1, -1)
             v = v.view(1, -1)
-        N = v.shape[0]
-        dx = torch.zeros((N, 4), dtype=v.dtype, device=v.device)
         # convert (dx, dy) from body frame back to world frame
-        dx[:, :2] = math_utils.batch_rotate_wrt_origin(v[:, :2], x[:, 2])
+        dpos_world = math_utils.batch_rotate_wrt_origin(v[:, :2], x[:, 2])
         # second last element is dyaw, which also gets passed along directly
-        dx[:, 2] = v[:, 2]
+        dyaw = v[:, 2]
         # last element is d_along, which gets passed along directly
-        dx[:, 3] = v[:, 3]
+        dalong = v[:, 3]
+        dx = torch.cat((dpos_world, dyaw.view(-1, 1), dalong.view(-1, 1)), dim=1)
+        dx = self._add_passthrough_states(dx, v)
         return dx
 
     def parameters(self):
@@ -365,33 +383,15 @@ class WorldBodyFrameTransformForStickyEnv(HandDesignedCoordTransform):
         # need along, d_along, and push magnitude; don't need block position or yaw
         super().__init__(ds, 3, **kwargs)
 
-    def xu_to_z(self, state, action):
-        if len(state.shape) < 2:
-            state = state.reshape(1, -1)
-            action = action.reshape(1, -1)
-
-        # (along, d_along, push magnitude)
-        z = torch.from_numpy(np.column_stack((state[:, -1], action)))
-        return z
-
 
 class WorldBodyFrameTransformForDirectPush(HandDesignedCoordTransform):
     def __init__(self, ds, **kwargs):
         # need along, d_along, push magnitude, and push direction; don't need block position or yaw
         super().__init__(ds, 4, **kwargs)
 
-    def xu_to_z(self, state, action):
-        if len(state.shape) < 2:
-            state = state.reshape(1, -1)
-            action = action.reshape(1, -1)
-
-        # (along, d_along, push magnitude, push direction)
-        # z = torch.from_numpy(np.column_stack((state[:, -1], action)))
-        z = torch.cat((state[:, -1].view(-1, 1), action), dim=1)
-        return z
-
 
 # ------- Learned transform classes using architecture 3
+# TODO handle passthrough states! (for now none of these should work with reaction force)
 class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform, PusherTransform):
     """Parameterize the coordinate transform such that it has to learn something"""
 
@@ -841,7 +841,7 @@ class GroundTruthWithCompression(CompressionRewardTransform):
             action = action.reshape(1, -1)
 
         # (along, d_along, push magnitude)
-        z = torch.cat((state[:, -1].view(-1, 1), action), dim=1)
+        z = torch.cat((state[:, 3].view(-1, 1), action), dim=1)
         return z
 
     def get_dx(self, x, v):
@@ -1532,7 +1532,7 @@ class HardCodedContactControllerWrapper(controller.MPPI):
 def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM,
                                                    prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
     seed = 1
-    plot_model_eval = False
+    plot_model_eval = True
     d = get_device()
     if plot_model_eval:
         env = get_easy_env(p.DIRECT)
