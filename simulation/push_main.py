@@ -78,6 +78,28 @@ def collect_touching_freespace_data(trials=20, trial_length=40, level=0):
     plt.show()
 
 
+def collect_push_against_wall_recovery_data():
+    # get data in and around the bug trap we want to avoid in the future
+    env = get_easy_env(p.DIRECT, 1)
+    u = []
+    for _ in range(10):
+        u.append([0.7 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.6 + np.random.randn() * 0.4])
+    for _ in range(10):
+        u.append([0.1 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.7 + np.random.randn() * 0.3])
+    for _ in range(20):
+        u.append([-0.3 + np.random.randn() * 0.4, 0.6 + np.random.randn() * 0.4, 0.0 + np.random.randn() * 0.8])
+    for _ in range(10):
+        u.append([-0.8 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, -0.2 + np.random.randn() * 0.4])
+    for _ in range(74):
+        u.append([-0.3 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, -0.9 + np.random.randn() * 0.2])
+    for _ in range(40):
+        u.append([0.2 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, 0.1 + np.random.randn() * 0.3])
+    ctrl = controller.PreDeterminedController(np.array(u))
+    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=True, stop_when_done=False)
+    seed = rand.seed(140891)
+    sim.run(seed)
+
+
 def get_data_dir(level=0):
     return '{}{}.mat'.format(env_dir, level)
 
@@ -1473,7 +1495,8 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     ctrl = get_controller(env, pm, ds, untransformed_config, **kwargs)
     name = get_full_controller_name(pm, ctrl, tsf_name)
     # expensive evaluation
-    evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921], override=override)
+    evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921],
+                        override=override)
 
     # env.draw_user_text(name, 14, left_offset=-1.5)
     # # env.sim_step_wait = 0.01
@@ -1678,22 +1701,6 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
                                         constrain_state=constrain_state, mpc_opts=mpc_opts)
     # try hardcoded to see if controller will do what we want given the hypothesized model predictions
     # ctrl = controller.MPPI(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
-
-    # get data in and around the bug trap we want to avoid in the future
-    # u = []
-    # for _ in range(10):
-    #     u.append([0.7 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.6 + np.random.randn() * 0.4])
-    # for _ in range(10):
-    #     u.append([0.1 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.7 + np.random.randn() * 0.3])
-    # for _ in range(20):
-    #     u.append([-0.3 + np.random.randn() * 0.4, 0.6 + np.random.randn() * 0.4, 0.0 + np.random.randn() * 0.8])
-    # for _ in range(10):
-    #     u.append([-0.8 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, -0.2 + np.random.randn() * 0.4])
-    # for _ in range(74):
-    #     u.append([-0.3 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, -0.9 + np.random.randn() * 0.2])
-    # for _ in range(40):
-    #     u.append([0.2 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, 0.1 + np.random.randn() * 0.3])
-    # ctrl = controller.PreDeterminedController(np.array(u))
 
     name = get_full_controller_name(pm, ctrl, tsf_name)
 
