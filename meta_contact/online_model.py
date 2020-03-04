@@ -385,8 +385,14 @@ class OnlineGPMixing(OnlineDynamicsModel):
             self.last_prediction = self.likelihood(self.gp(xu))
 
     def _dynamics_in_transformed_space(self, px, pu, cx, cu):
+        import time
+        start = time.time()
         self._make_prediction(cx, cu)
-        return self.sample() if self.sample_dynamics else self.mean()
+        pred_time = time.time()
+        y = self.sample() if self.sample_dynamics else self.mean()
+        final_time = time.time()
+        logger.debug("%.4fs pred %.4fs sample", pred_time - start, final_time - pred_time)
+        return y
 
     def sample(self, sample_shape=torch.Size([])):
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
