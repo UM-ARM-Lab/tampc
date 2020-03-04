@@ -230,7 +230,7 @@ class MPC(Controller):
 
 
 class MPPI(MPC):
-    def __init__(self, *args, use_bounds=True, mpc_opts=None, **kwargs):
+    def __init__(self, *args, mpc_opts=None, **kwargs):
         if mpc_opts is None:
             mpc_opts = {}
         super().__init__(*args, **kwargs)
@@ -242,13 +242,7 @@ class MPPI(MPC):
             else:
                 noise_mult = self.u_max if self.u_max is not None else 1
                 noise_sigma = torch.eye(self.nu, dtype=self.dtype) * noise_mult
-        # there's interesting behaviour for MPPI if we don't pass in bounds - it'll be optimistic and try to exploit
-        # regions in the dynamics where we don't know the effects of control
-        if use_bounds:
-            u_min, u_max = self.u_min, self.u_max
-        else:
-            u_min, u_max = None, None
-        self.mpc = mppi.MPPI(self._apply_dynamics, self._running_cost, self.nx, u_min=u_min, u_max=u_max,
+        self.mpc = mppi.MPPI(self._apply_dynamics, self._running_cost, self.nx, u_min=self.u_min, u_max=self.u_max,
                              noise_sigma=noise_sigma, device=self.d, terminal_state_cost=self._terminal_cost,
                              **mpc_opts)
 
