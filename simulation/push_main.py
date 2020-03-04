@@ -1404,7 +1404,7 @@ def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.G
     return ctrl
 
 
-def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False,
+def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False, override=False,
                   prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior, **kwargs):
     seed = 1
     plot_model_error = False
@@ -1473,7 +1473,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     ctrl = get_controller(env, pm, ds, untransformed_config, **kwargs)
     name = get_full_controller_name(pm, ctrl, tsf_name)
     # expensive evaluation
-    evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921])
+    evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921], override=override)
 
     # env.draw_user_text(name, 14, left_offset=-1.5)
     # # env.sim_step_wait = 0.01
@@ -1711,7 +1711,8 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controller.Controller, name,
                         tasks: typing.Union[list, int] = 10, tries=10,
                         start_seed=0,
-                        translation=(0, 0)):
+                        translation=(0, 0),
+                        override=False):
     """Fixed set of benchmark tasks to do control over, with the total reward for each task collected and reported"""
     num_frames = 150
     env.set_camera_position(translation)
@@ -1750,6 +1751,10 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
             runs[task_name] = {}
 
         saved = runs[task_name].get(name, None)
+        # throw out old data
+        if override:
+            saved = None
+
         if saved and len(saved) is 4:
             tc, ss, lc, ts = saved
         # new controller for this task or legacy saved results
