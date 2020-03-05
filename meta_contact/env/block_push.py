@@ -512,6 +512,11 @@ class PushAgainstWallEnv(MyPybulletEnv):
                                                                       size=reaction_force_size, scale=0.03,
                                                                       color=(1, 0, 1))
 
+        # block velocity
+        v, va = p.getBaseVelocity(self.blockId)
+        info['bv'] = np.linalg.norm(v)
+        info['bva'] = np.linalg.norm(va)
+
         for key, value in info.items():
             if key not in self._contact_info:
                 self._contact_info[key] = []
