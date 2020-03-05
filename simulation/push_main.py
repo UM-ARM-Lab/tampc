@@ -29,6 +29,8 @@ logging.basicConfig(level=logging.DEBUG,
                     datefmt='%m-%d %H:%M:%S')
 logging.getLogger('matplotlib.font_manager').disabled = True
 
+REACTION_IN_STATE = True
+
 
 def random_touching_start(env, w=block_push.DIST_FOR_JUST_TOUCHING):
     init_block_pos = (np.random.random((2,)) - 0.5)
@@ -42,7 +44,8 @@ def random_touching_start(env, w=block_push.DIST_FOR_JUST_TOUCHING):
         init_pusher = block_push.pusher_pos_for_touching(init_block_pos, init_block_yaw, from_center=w,
                                                          face=face,
                                                          along_face=along_face)
-    elif env_type == block_push.PushAgainstWallStickyEnv or env_type == block_push.PushWithForceDirectlyEnv:
+    elif env_type in (block_push.PushAgainstWallStickyEnv, block_push.PushWithForceDirectlyEnv,
+                      block_push.PushWithForceDirectlyReactionInStateEnv):
         init_pusher = np.random.uniform(-1, 1)
     else:
         raise RuntimeError("Unrecognized env type")
@@ -111,17 +114,23 @@ def get_easy_env(mode=p.GUI, level=0, log_video=False):
     init_block_yaw = 0
     init_pusher = 0
     goal_pos = [0.85, -0.35]
-    # env = interactive_block_pushing.PushAgainstWallEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher,
-    #                                                    init_block=init_block_pos, init_yaw=init_block_yaw,
-    #                                                    environment_level=level)
+    env_opts = {
+        'mode': mode,
+        'goal': goal_pos,
+        'init_pusher': init_pusher,
+        'log_video': log_video,
+        'init_block': init_block_pos,
+        'init_yaw': init_block_yaw,
+        'environment_level': level,
+    }
+    # env = interactive_block_pushing.PushAgainstWallEnv(**env_opts)
     # env_dir = 'pushing/no_restriction'
-    # env = block_push.PushAgainstWallStickyEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher, log_video=log_video,
-    #                                           init_block=init_block_pos, init_yaw=init_block_yaw,
-    #                                           environment_level=level)
+    # env = block_push.PushAgainstWallStickyEnv(**env_opts)
     # env_dir = 'pushing/sticky'
-    env = block_push.PushWithForceDirectlyEnv(mode=mode, goal=goal_pos, init_pusher=init_pusher, log_video=log_video,
-                                              init_block=init_block_pos, init_yaw=init_block_yaw,
-                                              environment_level=level)
+    if REACTION_IN_STATE:
+        env = block_push.PushWithForceDirectlyReactionInStateEnv(**env_opts)
+    else:
+        env = block_push.PushWithForceDirectlyEnv(**env_opts)
     env_dir = 'pushing/direct_force'
     return env
 
@@ -134,7 +143,7 @@ def get_ds(env, data_dir, config=None, **kwargs):
     d = get_device()
     if config is None:
         config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-    ds = block_push.PushDataSource(env, data_dir=data_dir, config=config, device=d, reaction_in_state=True, **kwargs)
+    ds = block_push.PushDataSource(env, data_dir=data_dir, config=config, device=d, **kwargs)
     return ds, config
 
 
@@ -192,7 +201,10 @@ def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics):
 def get_controller_options(env):
     d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     u_min, u_max = env.get_control_bounds()
-    Q = torch.diag(torch.tensor([10, 10, 0, 0.01], dtype=torch.double))
+    q = [10, 10, 0, 0.01]
+    if REACTION_IN_STATE:
+        q += [block_push.REACTION_Q_COST, block_push.REACTION_Q_COST]
+    Q = torch.diag(torch.tensor(q, dtype=torch.double))
     R = 0.01
     # tune this so that we figure out to make u-turns
     sigma = torch.ones(env.nu, dtype=torch.double, device=d) * 0.8
@@ -1188,7 +1200,8 @@ class AblationAllRegularizedTransform(AblationRemoveAllLinearityTransform):
 
 def coord_tsf_factory(env, *args, **kwargs):
     tsfs = {block_push.PushAgainstWallStickyEnv: WorldBodyFrameTransformForStickyEnv,
-            block_push.PushWithForceDirectlyEnv: WorldBodyFrameTransformForDirectPush}
+            block_push.PushWithForceDirectlyEnv: WorldBodyFrameTransformForDirectPush,
+            block_push.PushWithForceDirectlyReactionInStateEnv: WorldBodyFrameTransformForDirectPush}
     tsf_type = tsfs.get(type(env), None)
     if tsf_type is None:
         raise RuntimeError("No tsf specified for env type {}".format(type(env)))
@@ -1454,7 +1467,8 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     pm = get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics)
 
     # test that the model predictions are relatively symmetric for positive and negative along
-    if isinstance(env, block_push.PushAgainstWallStickyEnv) and isinstance(pm, prior.NNPrior):
+    if isinstance(env, block_push.PushAgainstWallStickyEnv) and isinstance(pm,
+                                                                           prior.NNPrior) and untransformed_config.nx is 4:
         N = 5
         x_top = torch.tensor([0, 0, 0, 1], dtype=torch.double, device=d).repeat(N, 1)
         x_bot = torch.tensor([0, 0, 0, -1], dtype=torch.double, device=d).repeat(N, 1)
@@ -1491,13 +1505,15 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
         E = Yhatn - Y
         # relative error (compared to the mean magnitude)
         Er = E / np.mean(np.abs(Y), axis=0)
+        # ylabels = ['$dx_b$', '$dy_b$', '$d\\theta$', '$dp$', '$r_x$', '$r_y$']
+        ylabels = ['d' + label for label in env.state_names()]
         for i in range(config.ny):
-            plt.subplot(4, 2, 2 * i + 1)
+            plt.subplot(config.ny, 2, 2 * i + 1)
             plt.plot(Y[:, i])
-            plt.ylabel("$y_{}$".format(i))
-            plt.subplot(4, 2, 2 * i + 2)
-            plt.plot(Er[:, i])
-            # plt.plot(E[:, i])
+            plt.ylabel(ylabels[i])
+            plt.subplot(config.ny, 2, 2 * i + 2)
+            # plt.plot(Er[:, i])
+            plt.plot(E[:, i])
             plt.ylabel("$e_{}$".format(i))
         plt.show()
 
@@ -1880,13 +1896,13 @@ def learn_model(use_tsf, seed=1, name="", train_epochs=600, batch_N=500):
 
 
 if __name__ == "__main__":
-    level = 1
+    level = 0
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
 
     # test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD)
-    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE)
+    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE)
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.GP_KERNEL)
     # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
     # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
@@ -1914,7 +1930,7 @@ if __name__ == "__main__":
     # test_online_model()
     # for seed in range(1,5):
     #     learn_invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
-    for seed in range(5):
-        learn_model(UseTransform.COORDINATE_TRANSFORM, seed=seed, name="reaction")
-    for seed in range(5):
-        learn_model(UseTransform.NO_TRANSFORM, seed=seed, name="reaction")
+    # for seed in range(5):
+    #     learn_model(UseTransform.COORDINATE_TRANSFORM, seed=seed, name="reaction")
+    # for seed in range(5):
+    #     learn_model(UseTransform.NO_TRANSFORM, seed=seed, name="reaction")

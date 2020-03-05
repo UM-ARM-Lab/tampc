@@ -217,8 +217,9 @@ class MPC(Controller):
             self.prediction_error.append(relative_residual[:, :3].abs())
             # try correcting for slide along
             self.diff_predicted[:, -1] = 0
-        # TODO use info to create context vector with model error
+
         self.context = [info, self.diff_predicted]
+
         u = self._command(obs)
         if self.u_max is not None:
             u = math_utils.clip(u, self.u_min, self.u_max)

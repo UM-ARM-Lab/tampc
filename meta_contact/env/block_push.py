@@ -322,6 +322,10 @@ class PushAgainstWallEnv(MyPybulletEnv):
             p.stepSimulation()
         self.state = self._obs()
 
+    def verify_cost_dims(self):
+        assert self.Q.shape[0] == self.nx
+        assert self.R.shape[0] == self.nu
+
     @staticmethod
     def get_control_bounds():
         # depends on the environment; these are the limits for StickyEnv
@@ -515,7 +519,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
     def _aggregate_contact_info(self):
         info = {key: np.stack(value, axis=0) for key, value in self._contact_info.items() if len(value)}
-        info['reaction'] = self._reaction_force
+        info['reaction'] = self._reaction_force[:2]
         self._reaction_force = None
         self._contact_info = {}
         return info
@@ -672,8 +676,6 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         # quadratic cost
         self.Q = np.diag([10, 10, 0, 0.01])
         self.R = np.diag([0.01 for _ in range(self.nu)])
-        assert self.Q.shape[0] == self.nx
-        assert self.R.shape[0] == self.nu
 
     @staticmethod
     def get_control_bounds():
@@ -830,7 +832,6 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
                 if self.mode is p.GUI and self.sim_step_wait:
                     time.sleep(self.sim_step_wait)
 
-        info = self._aggregate_contact_info()
         # apply the sliding along side after the push settles down
         self.along = np.clip(old_state[3] + d_along, -1, 1)
         self._keep_pusher_adjacent()
@@ -841,12 +842,60 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
                 time.sleep(self.sim_step_wait)
 
         cost, done = self._observe_finished_action(old_state, action)
+        info = self._aggregate_contact_info()
 
         return np.copy(self.state), -cost, done, info
 
     @staticmethod
     def state_names():
         return ['x block (m)', 'y block (m)', 'block rotation (rads)', 'pusher along face (m)']
+
+
+REACTION_Q_COST = 0.01
+
+
+class PushWithForceDirectlyReactionInStateEnv(PushWithForceDirectlyEnv):
+    """
+    Same as before, but have reaction force inside the state
+    """
+    nu = 3
+    nx = 6
+    ny = 6
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.Q = np.diag([10, 10, 0, 0.01, REACTION_Q_COST, REACTION_Q_COST])
+
+    @staticmethod
+    def state_difference(state, other_state):
+        if len(state.shape) == 1:
+            state = state.reshape(1, -1)
+        if len(other_state.shape) == 1:
+            other_state = other_state.reshape(1, -1)
+        dyaw = math_utils.angular_diff_batch(state[:, 2], other_state[:, 2])
+        dpos = state[:, :2] - other_state[:, :2]
+        dalong = state[:, 3] - other_state[:, 3]
+        dreaction = state[:, 4:6] - other_state[:, 4:6]
+        if torch.is_tensor(state):
+            diff = torch.cat((dpos, dyaw.view(-1, 1), dalong.view(-1, 1), dreaction), dim=1)
+        else:
+            diff = np.column_stack((dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1), dreaction))
+        return diff
+
+    def _set_goal(self, goal_pos):
+        # want 0 reaction force
+        self.goal = np.array(tuple(goal_pos) + (0, 0) + (0, 0))
+
+    def _obs(self):
+        state = super()._obs()
+        r = np.zeros(2) if self._reaction_force is None else self._reaction_force[:2]
+        state = np.concatenate((state, r))
+        return state
+
+    @staticmethod
+    def state_names():
+        # return ['x block (m)', 'y block (m)', 'block rotation (rads)', 'pusher along face (m)', 'Rx (N)', 'Ry (N)']
+        return ['$x_b$ (m)', '$y_b$ (m)', '$\\theta$ (rads)', '$p$ (m)', '$r_x$ (N)', '$r_y$ (N)']
 
 
 class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
@@ -889,8 +938,7 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
         if self._debug_visualizations[DebugVisualization.ACTION]:
             self._draw_action(f_mag, f_dir + old_state[2])
 
-        state = self._obs()
-        pos = pusher_pos_for_touching(state[:2], state[2], from_center=DIST_FOR_JUST_TOUCHING, face=self.face,
+        pos = pusher_pos_for_touching(old_state[:2], old_state[2], from_center=DIST_FOR_JUST_TOUCHING, face=self.face,
                                       along_face=self.along * _MAX_ALONG)
         z = self.initPusherPos[2]
         eePos = np.concatenate((pos, (z,)))
@@ -941,6 +989,7 @@ class InteractivePush(simulation.Simulation):
                  terminal_cost_multiplier=1, stop_when_done=True, visualize_rollouts=True, **kwargs):
 
         super(InteractivePush, self).__init__(save_dir=save_dir, num_frames=num_frames, config=cfg, **kwargs)
+        env.verify_cost_dims()
         self.mode = env.mode
         self.stop_when_done = stop_when_done
         self.visualize_rollouts = visualize_rollouts
@@ -969,7 +1018,7 @@ class InteractivePush(simulation.Simulation):
         # pre-define the trajectory/force vectors
         self.traj = np.zeros((self.num_frames, self.env.nx))
         self.u = np.zeros((self.num_frames, self.env.nu))
-        self.reaction_force = np.zeros((self.num_frames, 3))
+        self.reaction_force = np.zeros((self.num_frames, 2))
         self.model_error = np.zeros_like(self.traj)
         self.time = np.arange(0, self.num_frames * self.sim_step_s, self.sim_step_s)
         return simulation.ReturnMeaning.SUCCESS
@@ -1076,13 +1125,11 @@ class InteractivePush(simulation.Simulation):
 class PushDataSource(datasource.FileDataSource):
     loader_map = {PushAgainstWallEnv: PushLoader,
                   PushAgainstWallStickyEnv: PushLoaderRestricted,
-                  PushWithForceDirectlyEnv: PushLoaderRestricted}
+                  PushWithForceDirectlyEnv: PushLoaderRestricted,
+                  PushWithForceDirectlyReactionInStateEnv: PushLoaderWithReaction}
 
-    def __init__(self, env, data_dir='pushing', reaction_in_state=False, **kwargs):
-        if reaction_in_state:
-            loader = PushLoaderWithReaction
-        else:
-            loader = self.loader_map.get(type(env), None)
-            if not loader:
-                raise RuntimeError("Unrecognized data source for env {}".format(env))
+    def __init__(self, env, data_dir='pushing', **kwargs):
+        loader = self.loader_map.get(type(env), None)
+        if not loader:
+            raise RuntimeError("Unrecognized data source for env {}".format(env))
         super().__init__(loader, data_dir, **kwargs)
