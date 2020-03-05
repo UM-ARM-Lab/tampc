@@ -291,6 +291,13 @@ class PusherTransform(invariant.InvariantTransform):
                 self._record_metrics(writer, ls, suffix="/validation_{}_{}".format(dd[0], dd[1]))
         return losses
 
+    def _is_in_neighbourhood(self, cur, candidate):
+        return abs(cur[3] - candidate[3]) < self.too_far_for_neighbour
+
+    def _calculate_pairwise_dist(self, X, U):
+        relevant_xu = torch.cat((X[:, 3].view(-1, 1), U), dim=1)
+        return torch.cdist(relevant_xu, relevant_xu)
+
 
 def constrain_state(state):
     # yaw gets normalized
@@ -1862,19 +1869,13 @@ def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
     invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
-def learn_model(seed=1, name="", transform_name="", train_epochs=600, batch_N=500):
+def learn_model(use_tsf, seed=1, name="", train_epochs=600, batch_N=500):
     d, env, config, ds = get_free_space_env_init(seed)
 
-    invariant_tsf = Parameterized3BatchTransform(ds, d, too_far_for_neighbour=0.3, name=transform_name)
-    # we expect this transform to have been learned already
-    if not invariant_tsf.load(invariant_tsf.get_last_checkpoint()):
-        raise RuntimeError("transform {} need to be learned first - use learn_invariant")
-
-    preprocessor = get_preprocessor_for_invariant_tsf(invariant_tsf)
-    ds.update_preprocessor(preprocessor)
+    _, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf)
 
     mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
-                       name="dynamics_{}{}".format(transform_name, name))
+                       name="dynamics_{}{}_{}".format(tsf_name, name, seed))
     mw.learn_model(train_epochs, batch_N=batch_N)
 
 
@@ -1882,7 +1883,7 @@ if __name__ == "__main__":
     level = 1
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
 
-    test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
+    # test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD)
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE)
@@ -1913,5 +1914,7 @@ if __name__ == "__main__":
     # test_online_model()
     # for seed in range(1,5):
     #     learn_invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
-    # for seed in range(5):
-    #     learn_model(seed=seed, transform_name="knn_regularization_s{}".format(seed), name="cov_reg")
+    for seed in range(5):
+        learn_model(UseTransform.COORDINATE_TRANSFORM, seed=seed, name="reaction")
+    for seed in range(5):
+        learn_model(UseTransform.NO_TRANSFORM, seed=seed, name="reaction")

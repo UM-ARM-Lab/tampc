@@ -148,8 +148,12 @@ class InvariantTransform(LearnableParameterizedModel):
     def _split_xu(self, XU):
         return torch.split(XU, self.config.nx, dim=1)
 
+    # methods for calculating manual neighbourhoods that inheriting classes should override
     def _is_in_neighbourhood(self, cur, candidate):
         return torch.norm(candidate - cur) < self.too_far_for_neighbour
+
+    def _calculate_pairwise_dist(self, X, U):
+        return torch.cdist(X, X)
 
     def calculate_neighbours(self):
         """
@@ -163,16 +167,27 @@ class InvariantTransform(LearnableParameterizedModel):
             with open(fullname, 'rb') as f:
                 self.neighbourhood, self.neighbourhood_validation = pickle.load(f)
                 logger.info("loaded neighbourhood info from %s", fullname)
-                return
+        else:
+            self.neighbourhood = self._do_calculate_neighbourhood(*self.ds.training_set(),
+                                                                  consider_only_continuous=self.train_on_continuous_data)
+            self.neighbourhood_validation = self._do_calculate_neighbourhood(*self.ds.validation_set())
 
-        self.neighbourhood = self._do_calculate_neighbourhood(*self.ds.training_set(),
-                                                              consider_only_continuous=self.train_on_continuous_data)
-        self.neighbourhood_validation = self._do_calculate_neighbourhood(*self.ds.validation_set())
+            with open(fullname, 'wb') as f:
+                pickle.dump((self.neighbourhood, self.neighbourhood_validation), f)
+                logger.info("saved neighbourhood info to %s", fullname)
 
-        # analysis for neighbourhood size; useful for tuning hyperparameters
-        with open(fullname, 'wb') as f:
-            pickle.dump((self.neighbourhood, self.neighbourhood_validation), f)
-            logger.info("saved neighbourhood info to %s", fullname)
+        self._evaluate_neighbourhood(self.neighbourhood, consider_only_continuous=self.train_on_continuous_data)
+        self._evaluate_neighbourhood(self.neighbourhood_validation)
+
+    def _evaluate_neighbourhood(self, neighbourhood, consider_only_continuous=False):
+        if consider_only_continuous:
+            neighbourhood_size = torch.tensor([s.stop - s.start for s in neighbourhood], dtype=torch.double)
+        else:
+            neighbourhood_size = (neighbourhood > 0).sum(1)
+
+        logger.info("min neighbourhood size %d max %d median %d", neighbourhood_size.min(),
+                    neighbourhood_size.max(),
+                    neighbourhood_size.median())
 
     def _do_calculate_neighbourhood(self, XU, Y, labels, consider_only_continuous=False):
         # train from samples of ds that are close in euclidean space
@@ -200,10 +215,8 @@ class InvariantTransform(LearnableParameterizedModel):
                         break
                     ri += 1
                 neighbourhood.append(slice(li, ri))
-            neighbourhood_size = torch.tensor([s.stop - s.start for s in neighbourhood], dtype=torch.double)
         else:
-            # resort to calculating pairwise distance for all data points
-            dists = torch.cdist(X, X)
+            dists = self._calculate_pairwise_dist(X, U)
             dd = -(dists - self.too_far_for_neighbour)
 
             # avoid edge case of multiple elements at kth closest distance causing them to become 0
@@ -212,11 +225,7 @@ class InvariantTransform(LearnableParameterizedModel):
             # make neighbours weighted on dist to data (to be used in weighted least squares)
             weights = dd.clamp(min=0)
             neighbourhood = weights
-            neighbourhood_size = (neighbourhood > 0).sum(1)
 
-        logger.info("min neighbourhood size %d max %d median %d", neighbourhood_size.min(),
-                    neighbourhood_size.max(),
-                    neighbourhood_size.median())
         return neighbourhood
 
     def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
