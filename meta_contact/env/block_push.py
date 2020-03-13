@@ -233,8 +233,12 @@ class PushLoaderWithReaction(PushLoaderRestricted):
 
     def _process_file_raw_data(self, d):
         x = d['X']
+        if x.shape[1] > PushWithForceDirectlyEnv.nx:
+            x = x[:,:PushWithForceDirectlyEnv.nx]
+        # from testing, it's better if these guys are delayed 1 time step (to prevent breaking causality)
         # ignore force in z
         r = d['reaction'][:, :2]
+        r = np.roll(r, 1, 0)
         if self.config.predict_difference:
             dpos = x[1:, :2] - x[:-1, :2]
             dyaw = math_utils.angular_diff_batch(x[1:, 2], x[:-1, 2])
@@ -1066,8 +1070,8 @@ class InteractivePush(simulation.Simulation):
             action = np.array(action).flatten()
             obs, rew, done, info = self.env.step(action)
             cost = -rew
-            logger.debug("cost %.2f took %.3fs done %d action %-20s obs %s", cost, time.perf_counter() - start, done,
-                         np.round(action, 2), obs)
+            logger.debug("cost %-5.2f took %.3fs done %d action %-12s obs %s", cost, time.perf_counter() - start, done,
+                         np.round(action, 2), np.round(obs, 3))
 
             self.last_run_cost.append(cost)
             self.u[simTime, :] = action
@@ -1109,7 +1113,7 @@ class InteractivePush(simulation.Simulation):
 
     def start_plot_runs(self):
         axis_name = self.env.state_names()
-        state_dim = self.traj.shape[1] + 2
+        state_dim = self.traj.shape[1]
         assert state_dim == len(axis_name)
         ctrl_dim = self.u.shape[1]
 
