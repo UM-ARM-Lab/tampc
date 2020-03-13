@@ -887,6 +887,19 @@ class PushWithForceDirectlyReactionInStateEnv(PushWithForceDirectlyEnv):
             diff = np.column_stack((dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1), dreaction))
         return diff
 
+    def visualize_prediction_error(self, predicted_state):
+        super().visualize_prediction_error(predicted_state)
+        # visualize the predicted reaction force
+        r = predicted_state[4:6]
+        start = self._observe_pusher()
+        name = 'pr'
+        if name not in self._contact_debug_lines:
+            self._contact_debug_lines[name] = -1
+        self._contact_debug_lines[name] = _draw_debug_2d_line(self._contact_debug_lines[name], start,
+                                                              r,
+                                                              size=np.linalg.norm(r), scale=0.03,
+                                                              color=(0.5, 0, 0.5))
+
     def _set_goal(self, goal_pos):
         # want 0 reaction force
         self.goal = np.array(tuple(goal_pos) + (0, 0) + (0, 0))
