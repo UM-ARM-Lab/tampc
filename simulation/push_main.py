@@ -103,6 +103,16 @@ def collect_push_against_wall_recovery_data():
     sim.run(seed)
 
 
+def collect_single_long_trajectory():
+    # get data in and around the bug trap we want to avoid in the future
+    env = get_easy_env(p.GUI, 0)
+    u_min, u_max = env.get_control_bounds()
+    ctrl = controller.FullRandomController(env.nu, u_min, u_max)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=2000, plot=False, save=True, stop_when_done=False)
+    seed = rand.seed(11111)
+    sim.run(seed)
+
+
 # --- SHARED GETTERS
 def get_data_dir(level=0):
     return '{}{}.mat'.format(env_dir, level)
@@ -407,6 +417,24 @@ class WorldBodyFrameTransformForDirectPush(HandDesignedCoordTransform):
     def __init__(self, ds, **kwargs):
         # need along, d_along, push magnitude, and push direction; don't need block position or yaw
         super().__init__(ds, 4, **kwargs)
+
+
+class WorldBodyFrameTransformForReactionInState(HandDesignedCoordTransform):
+    def __init__(self, ds, **kwargs):
+        super().__init__(ds, 5, **kwargs)
+
+    def xu_to_z(self, state, action):
+        if len(state.shape) < 2:
+            state = state.reshape(1, -1)
+            action = action.reshape(1, -1)
+
+        # NOTE we could just as well make the model work for free-space if we rotate reaction force to be in body frame
+        # but then it wouldn't work for pushing against a wall since it's no longer rotationally invariant
+        # additionally need theta in z to estimate reaction force direction
+        # (theta, along, d_along, push magnitude, push direction)
+        z = torch.cat((state[:, 2:4], action), dim=1)
+        z = self._add_passthrough_states(z, state)
+        return z
 
 
 # ------- Learned transform classes using architecture 3
@@ -1201,7 +1229,7 @@ class AblationAllRegularizedTransform(AblationRemoveAllLinearityTransform):
 def coord_tsf_factory(env, *args, **kwargs):
     tsfs = {block_push.PushAgainstWallStickyEnv: WorldBodyFrameTransformForStickyEnv,
             block_push.PushWithForceDirectlyEnv: WorldBodyFrameTransformForDirectPush,
-            block_push.PushWithForceDirectlyReactionInStateEnv: WorldBodyFrameTransformForDirectPush}
+            block_push.PushWithForceDirectlyReactionInStateEnv: WorldBodyFrameTransformForReactionInState}
     tsf_type = tsfs.get(type(env), None)
     if tsf_type is None:
         raise RuntimeError("No tsf specified for env type {}".format(type(env)))
@@ -1889,6 +1917,7 @@ def learn_model(use_tsf, seed=1, name="", train_epochs=600, batch_N=500):
     d, env, config, ds = get_free_space_env_init(seed)
 
     _, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf)
+    # tsf_name = "none_at_all"
 
     mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
                        name="dynamics_{}{}_{}".format(tsf_name, name, seed))
@@ -1898,11 +1927,12 @@ def learn_model(use_tsf, seed=1, name="", train_epochs=600, batch_N=500):
 if __name__ == "__main__":
     level = 0
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
+    # collect_single_long_trajectory()
 
     # test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD)
-    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE)
+    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE)
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.GP_KERNEL)
     # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
     # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
@@ -1930,7 +1960,7 @@ if __name__ == "__main__":
     # test_online_model()
     # for seed in range(1,5):
     #     learn_invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
-    # for seed in range(5):
-    #     learn_model(UseTransform.COORDINATE_TRANSFORM, seed=seed, name="reaction")
+    for seed in range(1):
+        learn_model(UseTransform.COORDINATE_TRANSFORM, seed=seed, name="enough_info_for_reaction")
     # for seed in range(5):
     #     learn_model(UseTransform.NO_TRANSFORM, seed=seed, name="reaction")
