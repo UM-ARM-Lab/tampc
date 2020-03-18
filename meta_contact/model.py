@@ -224,6 +224,11 @@ class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
     def evaluate_validation(self):
         """Any additional evaluation on the validation set goes here"""
 
+    def evaluate_per_dim_sample_loss(self, X, Y):
+        Yhat = self.user.sample(X)
+        E = (Yhat - Y).abs()
+        return E.mean(dim=0)
+
     def learn_model(self, max_epoch, batch_N=500):
         self.XU, self.Y, self.labels = self.ds.training_set()
         self.XUv, self.Yv, self.labelsv = self.ds.validation_set()
@@ -251,8 +256,13 @@ class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
                     self.writer.add_scalar('loss/training', loss.mean(), self.step)
                     vloss = self.user.compute_validation_loss(self.XUv, self.Yv, self.ds)
                     self.writer.add_scalar('loss/validation', vloss.mean(), self.step)
+                    per_dim_vloss = self.evaluate_per_dim_sample_loss(self.XUv, self.Yv)
+                    for d in range(per_dim_vloss.shape[0]):
+                        self.writer.add_scalar('per_dim_mean_abs_diff/validation{}'.format(d), per_dim_vloss[d].item(),
+                                               self.step)
                     self.evaluate_validation()
-                    logger.debug("Epoch %d loss %f vloss %f", epoch, loss.mean().item(), vloss.mean().item())
+                    logger.debug("Epoch %d loss %f vloss %f %s", epoch, loss.mean().item(), vloss.mean().item(),
+                                 np.round(per_dim_vloss.cpu().numpy(), 3))
 
                 loss.mean().backward()
                 # torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
