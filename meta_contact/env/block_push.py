@@ -238,7 +238,6 @@ class PushLoaderWithReaction(PushLoaderRestricted):
         # from testing, it's better if these guys are delayed 1 time step (to prevent breaking causality)
         # ignore force in z
         r = d['reaction'][:, :2]
-        r = np.roll(r, 1, 0)
         if self.config.predict_difference:
             dpos = x[1:, :2] - x[:-1, :2]
             dyaw = math_utils.angular_diff_batch(x[1:, 2], x[:-1, 2])
@@ -655,6 +654,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.pusherConstraint = p.createConstraint(self.pusherId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
                                                    self.initPusherPos)
         # start at rest
+        self._reaction_force = None
         for _ in range(1000):
             p.stepSimulation()
         self.state = self._obs()
@@ -1076,8 +1076,8 @@ class InteractivePush(simulation.Simulation):
             self.last_run_cost.append(cost)
             self.u[simTime, :] = action
             self.traj[simTime + 1, :] = obs
-            # reaction force felt as we apply this action
-            self.reaction_force[simTime, :] = info['reaction']
+            # reaction force felt as we apply this action, as observed at the start of the next time step
+            self.reaction_force[simTime + 1, :] = info['reaction']
             if isinstance(self.ctrl, controller.MPC):
                 # model error from the previous prediction step (can only evaluate it at the current step)
                 if self.ctrl.diff_predicted is not None:
@@ -1102,6 +1102,9 @@ class InteractivePush(simulation.Simulation):
         X = self.traj
         # mark the end of the trajectory (the last time is not valid)
         mask = np.ones(X.shape[0], dtype=int)
+        # need to also throw out first step if predicting reaction force since there's no previous state
+        if isinstance(self.env, PushWithForceDirectlyReactionInStateEnv):
+            mask[0] = 0
         mask[-1] = 0
         u_norm = np.linalg.norm(self.u, axis=1)
         # shift by 1 since the control at t-1 affects the model error at t
