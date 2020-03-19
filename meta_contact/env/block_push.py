@@ -1028,6 +1028,8 @@ class InteractivePush(simulation.Simulation):
         self.axes = None
         self.fu = None
         self.au = None
+        self.fd = None
+        self.ad = None
 
     def _configure_physics_engine(self):
         return simulation.ReturnMeaning.SUCCESS
@@ -1127,9 +1129,12 @@ class InteractivePush(simulation.Simulation):
 
         self.fig, self.axes = plt.subplots(state_dim, 1)
         self.fu, self.au = plt.subplots(ctrl_dim, 1)
+        if self._predicts_state():
+            self.fd, self.ad = plt.subplots(state_dim, 1)
 
         for i in range(state_dim):
             self.axes[i].set_ylabel(axis_name[i])
+            self.ad[i].set_ylabel('d' + axis_name[i])
         for i in range(ctrl_dim):
             self.au[i].set_ylabel('$u_{}$'.format(i))
 
@@ -1146,6 +1151,7 @@ class InteractivePush(simulation.Simulation):
             self.axes[i].plot(self.traj[:, i], label='true')
             if self._predicts_state():
                 self.axes[i].scatter(t, self.pred_traj[1:, i], marker='*', color='k', label='predicted')
+                self.ad[i].plot(self.model_error[:, i])
         self.axes[0].legend()
         self.fig.canvas.draw()
         for i in range(self.u.shape[1]):
