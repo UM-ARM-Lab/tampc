@@ -1439,7 +1439,7 @@ def get_transform(env, ds, use_tsf):
                                                                                                       name="_s0"),
         UseTransform.PARAMETERIZED_ABLATE_NO_V: AblationDirectDynamics(ds, d, name="_s3"),
         UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM: GroundTruthWithCompression(ds, d, name="_s0"),
-        UseTransform.WITH_COMPRESSION_AND_PARTITION: LearnedPartialPassthroughTransform(ds, d, name="new_partition_s3"),
+        UseTransform.WITH_COMPRESSION_AND_PARTITION: LearnedPartialPassthroughTransform(ds, d, name="_s0"),
     }
     transform_names = {
         UseTransform.NO_TRANSFORM: 'none',
@@ -1484,7 +1484,10 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     plot_model_error = False
     enforce_model_rollout = False
     d = get_device()
-    env = get_easy_env(p.GUI, level=level, log_video=True)
+    if plot_model_error:
+        env = get_easy_env(p.DIRECT, level=level)
+    else:
+        env = get_easy_env(p.GUI, level=level, log_video=True)
 
     ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
 
@@ -1533,7 +1536,6 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
         E = Yhatn - Y
         # relative error (compared to the mean magnitude)
         Er = E / np.mean(np.abs(Y), axis=0)
-        # ylabels = ['$dx_b$', '$dy_b$', '$d\\theta$', '$dp$', '$r_x$', '$r_y$']
         ylabels = ['d' + label for label in env.state_names()]
         for i in range(config.ny):
             plt.subplot(config.ny, 2, 2 * i + 1)
@@ -1553,7 +1555,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
 
     # env.draw_user_text(name, 14, left_offset=-1.5)
     # # env.sim_step_wait = 0.01
-    # sim = block_push.InteractivePush(env, ctrl, num_frames=300, plot=False, save=True, stop_when_done=False)
+    # sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=True, save=True, stop_when_done=False)
     # seed = rand.seed(2)
     # env.draw_user_text("try {}".format(seed), 2)
     # sim.run(seed)
@@ -1932,7 +1934,7 @@ if __name__ == "__main__":
     # test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD)
-    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE)
+    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE)
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.GP_KERNEL)
     # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
     # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
@@ -1958,9 +1960,7 @@ if __name__ == "__main__":
     # test_dynamics(level, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=False)
     # test_dynamics(level, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=True)
     # test_online_model()
-    # for seed in range(1,5):
+    # for seed in range(1):
     #     learn_invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
-    for seed in range(1):
-        learn_model(UseTransform.COORDINATE_TRANSFORM, seed=seed, name="enough_info_for_reaction")
-    # for seed in range(5):
-    #     learn_model(UseTransform.NO_TRANSFORM, seed=seed, name="reaction")
+    # for seed in range(1):
+    #     learn_model(UseTransform.WITH_COMPRESSION_AND_PARTITION, seed=seed, name="per_dim_in_orig_space")

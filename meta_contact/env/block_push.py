@@ -234,7 +234,7 @@ class PushLoaderWithReaction(PushLoaderRestricted):
     def _process_file_raw_data(self, d):
         x = d['X']
         if x.shape[1] > PushWithForceDirectlyEnv.nx:
-            x = x[:,:PushWithForceDirectlyEnv.nx]
+            x = x[:, :PushWithForceDirectlyEnv.nx]
         # from testing, it's better if these guys are delayed 1 time step (to prevent breaking causality)
         # ignore force in z
         r = d['reaction'][:, :2]
@@ -1039,6 +1039,7 @@ class InteractivePush(simulation.Simulation):
     def _init_data(self):
         # pre-define the trajectory/force vectors
         self.traj = np.zeros((self.num_frames, self.env.nx))
+        self.pred_traj = np.zeros_like(self.traj)
         self.u = np.zeros((self.num_frames, self.env.nu))
         self.reaction_force = np.zeros((self.num_frames, 2))
         self.model_error = np.zeros_like(self.traj)
@@ -1076,6 +1077,7 @@ class InteractivePush(simulation.Simulation):
             self.last_run_cost.append(cost)
             self.u[simTime, :] = action
             self.traj[simTime + 1, :] = obs
+            self.pred_traj[simTime + 1, :] = self.ctrl.prev_predicted_x
             # reaction force felt as we apply this action, as observed at the start of the next time step
             self.reaction_force[simTime + 1, :] = info['reaction']
             if isinstance(self.ctrl, controller.MPC):
@@ -1120,8 +1122,8 @@ class InteractivePush(simulation.Simulation):
         assert state_dim == len(axis_name)
         ctrl_dim = self.u.shape[1]
 
-        self.fig, self.axes = plt.subplots(1, state_dim, figsize=(18, 5))
-        self.fu, self.au = plt.subplots(1, ctrl_dim)
+        self.fig, self.axes = plt.subplots(state_dim, 1)
+        self.fu, self.au = plt.subplots(ctrl_dim, 1)
 
         for i in range(state_dim):
             self.axes[i].set_xlabel(axis_name[i])
@@ -1136,8 +1138,11 @@ class InteractivePush(simulation.Simulation):
             self.start_plot_runs()
             time.sleep(0.05)
 
+        t = np.arange(1, self.pred_traj.shape[0])
         for i in range(self.traj.shape[1]):
-            self.axes[i].plot(self.traj[:, i])
+            self.axes[i].plot(self.traj[:, i], label='true')
+            self.axes[i].scatter(t, self.pred_traj[1:, i], marker='*', color='k', label='predicted')
+        self.axes[0].legend()
         self.fig.canvas.draw()
         for i in range(self.u.shape[1]):
             self.au[i].plot(self.u[:, i])
