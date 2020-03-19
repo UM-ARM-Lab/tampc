@@ -1129,9 +1129,9 @@ class InteractivePush(simulation.Simulation):
         self.fu, self.au = plt.subplots(ctrl_dim, 1)
 
         for i in range(state_dim):
-            self.axes[i].set_xlabel(axis_name[i])
+            self.axes[i].set_ylabel(axis_name[i])
         for i in range(ctrl_dim):
-            self.au[i].set_xlabel('$u_{}$'.format(i))
+            self.au[i].set_ylabel('$u_{}$'.format(i))
 
         plt.ion()
         plt.show()
