@@ -253,6 +253,7 @@ def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.G
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     d = common_wrapper_opts['device']
     if online_adapt is not OnlineAdapt.NONE:
+        common_wrapper_opts['always_use_online_model'] = True
         if online_adapt is OnlineAdapt.LINEARIZE_LIKELIHOOD:
             dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds, env.state_difference,
                                                           local_mix_weight_scale=50.0, xu_characteristic_length=10,
@@ -1933,8 +1934,8 @@ if __name__ == "__main__":
 
     # test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
-    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD)
-    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE)
+    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD)
+    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE)
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.GP_KERNEL)
     # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
     # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)

@@ -62,9 +62,10 @@ class OnlineMPC(OnlineController):
     Online controller with a pytorch based MPC method (CEM, MPPI)
     """
 
-    def __init__(self, *args, constrain_state=noop_constrain, **kwargs):
+    def __init__(self, *args, constrain_state=noop_constrain, always_use_online_model=False, **kwargs):
         self.constrain_state = constrain_state
         self.mpc = None
+        self.always_use_online_model = always_use_online_model
         super().__init__(*args, **kwargs)
 
     def _apply_dynamics(self, state, u, t=0):
@@ -74,7 +75,7 @@ class OnlineMPC(OnlineController):
 
         # TODO select model in a smarter way; currently we have a in-contact local model and otherwise use nominal model
         # TODO the MPC method doesn't give dynamics px and pu (different from our prevx and prevu)
-        use_local_model = False
+        use_local_model = self.always_use_online_model
         if self.context[0] is not None:
             r = np.linalg.norm(self.context[0]['reaction'])
             if r > 200:
