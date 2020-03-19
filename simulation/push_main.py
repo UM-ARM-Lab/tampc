@@ -83,7 +83,7 @@ def collect_touching_freespace_data(trials=20, trial_length=40, level=0):
 
 def collect_push_against_wall_recovery_data():
     # get data in and around the bug trap we want to avoid in the future
-    env = get_easy_env(p.DIRECT, 1)
+    env = get_easy_env(p.GUI, 1, log_video=True)
     u = []
     for _ in range(10):
         u.append([0.7 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.6 + np.random.randn() * 0.4])
@@ -1551,18 +1551,18 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     ctrl = get_controller(env, pm, ds, untransformed_config, **kwargs)
     name = get_full_controller_name(pm, ctrl, tsf_name)
     # expensive evaluation
-    evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921],
-                        override=override)
+    # evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921],
+    #                     override=override)
 
-    # env.draw_user_text(name, 14, left_offset=-1.5)
-    # # env.sim_step_wait = 0.01
-    # sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=True, save=True, stop_when_done=False)
-    # seed = rand.seed(2)
-    # env.draw_user_text("try {}".format(seed), 2)
-    # sim.run(seed)
-    # logger.info("last run cost %f", np.sum(sim.last_run_cost))
-    # plt.ioff()
-    # plt.show()
+    env.draw_user_text(name, 14, left_offset=-1.5)
+    # env.sim_step_wait = 0.01
+    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=True, save=True, stop_when_done=False)
+    seed = rand.seed(2)
+    env.draw_user_text("try {}".format(seed), 2)
+    sim.run(seed)
+    logger.info("last run cost %f", np.sum(sim.last_run_cost))
+    plt.ioff()
+    plt.show()
 
     env.close()
 
@@ -1602,11 +1602,11 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     # use data of transition out of bug trap rather than just inside the bug trap
     # get some data when we're next to a wall and use it fit a local model
     # data from previous policy that got out of bug trap
-    ds_wall, config = get_ds(env, "pushing/push_recovery_global.mat", validation_ratio=0.)
-    train_slice = slice(15, 55)
+    # ds_wall, config = get_ds(env, "pushing/push_recovery_global.mat", validation_ratio=0.)
+    # train_slice = slice(15, 55)
     # data from predetermined policy for getting into and out of bug trap
-    # ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
-    # train_slice = slice(20, 140)
+    ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
+    train_slice = slice(70, 150)
 
     # use same preprocessor
     ds_wall.update_preprocessor(preprocessor)
@@ -1621,15 +1621,15 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
                                               device=d, training_iter=150, use_independent_outputs=False)
 
     if plot_model_eval:
-        ds_test, config = get_ds(env, "pushing/push_recovery_global.mat", validation_ratio=0.)
+        ds_test, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
         ds_test.update_preprocessor(preprocessor)
-        test_slice = slice(4, 190)
+        test_slice = slice(0, 170)
 
         # visualize data and linear fit onto it
         t = np.arange(test_slice.start, test_slice.stop)
         xu, y, info = (v[test_slice] for v in ds_test.training_set())
-        reaction_forces = info[:, :3]
-        model_errors = info[:, 3:]
+        reaction_forces = info[:, :2]
+        model_errors = info[:, 2:]
 
         yhat_freespace = pm.dyn_net.user.sample(xu)
         cx, cu = xu[:, :config.nx], xu[:, config.nx:]
@@ -1681,15 +1681,15 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
         XU, Y, Yhat_freespace, Yhat_linear, Yhat_linear_online, reaction_forces = (v.cpu().numpy() for v in (
             xu, y, yhat_freespace, yhat_linear, yhat_linear_online, reaction_forces))
 
-        ylabels = ['$dx_b$', '$dy_b$', '$d\\theta$', '$dp$']
-        to_plot_y_dims = [0, 2]
-        f, axes = plt.subplots(len(to_plot_y_dims) + 2, 1, sharex=True)
+        axis_name = ['d{}'.format(name) for name in env.state_names()]
+        to_plot_y_dims = [0, 2, 4, 5]
+        f, axes = plt.subplots(len(to_plot_y_dims) + 1, 1, sharex=True)
         for i, dim in enumerate(to_plot_y_dims):
-            axes[i].scatter(t, Y[:, dim], label='truth', alpha=0.2)
+            axes[i].scatter(t, Y[:, dim], label='truth', alpha=0.4)
             axes[i].plot(t, Yhat_freespace[:, dim], label='nominal', alpha=0.4, linewidth=3)
 
             axes[i].plot(t, yhat_gp_mean[:, dim].cpu().numpy(), label='gp')
-            axes[i].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, i].cpu().numpy(), alpha=0.3)
+            axes[i].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, dim].cpu().numpy(), alpha=0.3)
             # axes[i].scatter(np.tile(t, samples), gp_samples[:, :, dim].view(-1).cpu().numpy(), label='gp sample',
             #                 marker='*', color='k', alpha=0.3)
             # axes[i].plot(t, yhat_gp_online_mean[:, dim].cpu().numpy(), label='online gp')
@@ -1703,15 +1703,22 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
             # axes[i].fill_between(t, m - w, m + w, alpha=0.2, color='g')
 
             # axes[i].plot(t, Yhat_linear_online[:, dim], label='online mix')
-            axes[i].set_ybound(-0.2, 1.2)
-            axes[i].set_ylabel(ylabels[dim])
+            if dim in [4, 5]:
+                # axes[i].set_ybound(-10, 10)
+                pass
+            else:
+                axes[i].set_ybound(-0.2, 1.2)
+            axes[i].set_ylabel(axis_name[dim])
+
         axes[0].legend()
-        axes[-2].plot(t, np.linalg.norm(reaction_forces, axis=1))
-        axes[-2].set_ylabel('|r|')
-        axes[-2].set_ybound(0., 500)
-        axes[-1].plot(t, np.linalg.norm(model_errors.cpu().numpy(), axis=1))
-        axes[-1].set_ylabel('|e|')
-        axes[-1].set_ybound(0., .2)
+        axes[-1].plot(t, np.linalg.norm(reaction_forces, axis=1))
+        axes[-1].set_ylabel('|r|')
+        axes[-1].set_ybound(0., 500)
+        axes[-1].axvspan(train_slice.start, train_slice.stop, alpha=0.3)
+        axes[-1].text((train_slice.start + train_slice.stop)*0.5, 20, 'local train interval')
+        # axes[-1].plot(t, np.linalg.norm(model_errors.cpu().numpy(), axis=1))
+        # axes[-1].set_ylabel('|e|')
+        # axes[-1].set_ybound(0., .2)
 
         # f, axes = plt.subplots(config.nx + 2, 1, sharex=True)
         # xlabels = ['$p$', '$dp$', '$f$', '$\\beta$']
@@ -1930,11 +1937,12 @@ def learn_model(use_tsf, seed=1, name="", train_epochs=600, batch_N=500):
 if __name__ == "__main__":
     level = 0
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
+    # collect_push_against_wall_recovery_data()
     # collect_single_long_trajectory()
 
-    # test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
+    test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
-    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD)
+    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD)
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE)
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.GP_KERNEL)
     # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
