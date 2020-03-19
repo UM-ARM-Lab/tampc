@@ -280,7 +280,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
     """Different way of mixing local and nominal model; use nominal as mean"""
 
     def __init__(self, prior: prior.OnlineDynamicsPrior, ds, state_difference, max_data_points=50, training_iter=100,
-                 slice_to_use=None, refit_strategy=RefitGPStrategy.RECREATE_GP, use_independent_outputs=False,
+                 slice_to_use=None, refit_strategy=RefitGPStrategy.RESET_DATA, use_independent_outputs=False,
                  allow_update=True, sample=True, **kwargs):
         super().__init__(ds, state_difference, **kwargs)
         self.prior = prior
@@ -292,6 +292,9 @@ class OnlineGPMixing(OnlineDynamicsModel):
         self.likelihood = None
         self.gp = None
         self.optimizer = None
+        # allow caller to keep track of our last fit (maybe need to adjust refit strategy)
+        self.last_loss = 0
+        self.last_loss_diff = 0
 
         # GP parameters
         self.training_iter = training_iter
@@ -321,9 +324,6 @@ class OnlineGPMixing(OnlineDynamicsModel):
         self.likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=self.ds.config.ny).to(
             device=self.d, dtype=self.dtype)
         self._recreate_gp()
-        self.optimizer = torch.optim.Adam([
-            {'params': self.gp.parameters()},
-        ], lr=0.1)
 
     def _recreate_gp(self):
         if self.use_independent_outputs:
@@ -331,6 +331,9 @@ class OnlineGPMixing(OnlineDynamicsModel):
         else:
             self.gp = MixingFullGP(self.xu, self.y, self.likelihood, self.prior.get_batch_predictions, rank=1)
         self.gp = self.gp.to(device=self.d, dtype=self.dtype)
+        self.optimizer = torch.optim.Adam([
+            {'params': self.gp.parameters()},
+        ], lr=0.1)
 
     def _update(self, px, pu, y):
         # clear last prediction so we don't accidentally use a stale prediction
@@ -353,7 +356,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
             self._fit_params(self.training_iter // 10)
         elif self.refit_strategy is RefitGPStrategy.RECREATE_GP:
             self._recreate_gp()
-            self._fit_params(self.training_iter // 10)
+            self._fit_params(self.training_iter // 3)
         else:
             self._recreate_all()
             self._fit_params(self.training_iter)
@@ -371,13 +374,15 @@ class OnlineGPMixing(OnlineDynamicsModel):
             output = self.gp(self.xu)
             loss = -mll(output, self.y)
             loss.backward()
-            logger.debug('Iter %d/%d - Loss: %.3f' % (i + 1, training_iter, loss.item()))
+            self.last_loss_diff = loss.item() - self.last_loss
+            self.last_loss = loss.item()
             self.optimizer.step()
 
         self.gp.eval()
         self.likelihood.eval()
         elapsed = time.time() - start
-        logger.debug('training took %.4fs', elapsed)
+        logger.debug('training %d iter took %.4fs loss %.3f last loss diff %.3f', training_iter, elapsed,
+                     self.last_loss, self.last_loss_diff)
 
     def _make_prediction(self, cx, cu):
         with torch.no_grad(), gpytorch.settings.fast_pred_var():

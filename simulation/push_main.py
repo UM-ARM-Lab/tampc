@@ -260,7 +260,8 @@ def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.G
                                                           const_local_mix_weight=False, sigreg=1e-10, device=d)
         elif online_adapt is OnlineAdapt.GP_KERNEL:
             dynamics = online_model.OnlineGPMixing(pm, ds, env.state_difference, device=d, max_data_points=50,
-                                                   use_independent_outputs=False, sample=True)
+                                                   use_independent_outputs=False, sample=True, training_iter=100,
+                                                   refit_strategy=online_model.RefitGPStrategy.RESET_DATA)
         else:
             raise RuntimeError("Unrecognized online adaption value {}".format(online_adapt))
         ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
@@ -1587,6 +1588,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
                                                    prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
     seed = 1
     plot_model_eval = True
+    plot_online_update = True
     d = get_device()
     if plot_model_eval:
         env = get_easy_env(p.DIRECT)
@@ -1617,7 +1619,8 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
                                                   const_local_mix_weight=False, sigreg=1e-10,
                                                   slice_to_use=train_slice, device=d)
     dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice,
-                                              allow_update=False, sample=False,
+                                              allow_update=plot_online_update, sample=False,
+                                              refit_strategy=online_model.RefitGPStrategy.RESET_DATA,
                                               device=d, training_iter=150, use_independent_outputs=False)
 
     if plot_model_eval:
@@ -1665,6 +1668,8 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
         upper_online = torch.zeros_like(upper)
         yhat_gp_online_mean = torch.zeros_like(yhat_gp_online)
         px, pu = None, None
+        gp_online_fit_loss = torch.zeros(yhat_gp.shape[0])
+        gp_online_fit_last_loss_diff = torch.zeros_like(gp_online_fit_loss)
         for i in range(xu.shape[0] - 1):
             cx = xu[i, :config.nx]
             cu = xu[i, config.nx:]
@@ -1677,6 +1682,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
             dynamics._update(cx, cu, y[i])
             dynamics_gp._update(cx, cu, y[i])
             px, pu = cx, cu
+            gp_online_fit_loss[i], gp_online_fit_last_loss_diff[i] = dynamics_gp.last_loss, dynamics_gp.last_loss_diff
 
         XU, Y, Yhat_freespace, Yhat_linear, Yhat_linear_online, reaction_forces = (v.cpu().numpy() for v in (
             xu, y, yhat_freespace, yhat_linear, yhat_linear_online, reaction_forces))
@@ -1692,8 +1698,11 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
             axes[i].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, dim].cpu().numpy(), alpha=0.3)
             # axes[i].scatter(np.tile(t, samples), gp_samples[:, :, dim].view(-1).cpu().numpy(), label='gp sample',
             #                 marker='*', color='k', alpha=0.3)
-            # axes[i].plot(t, yhat_gp_online_mean[:, dim].cpu().numpy(), label='online gp')
-            # axes[i].fill_between(t, lower_online[:, dim].cpu().numpy(), upper_online[:, i].cpu().numpy(), alpha=0.3)
+
+            if plot_online_update:
+                axes[i].plot(t, yhat_gp_online_mean[:, dim].cpu().numpy(), label='online gp')
+                axes[i].fill_between(t, lower_online[:, dim].cpu().numpy(), upper_online[:, dim].cpu().numpy(),
+                                     alpha=0.3)
 
             # axes[i].plot(t, Yhat_linear[:, dim], label='linear fit', alpha=0.5)
 
@@ -1715,20 +1724,17 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
         axes[-1].set_ylabel('|r|')
         axes[-1].set_ybound(0., 500)
         axes[-1].axvspan(train_slice.start, train_slice.stop, alpha=0.3)
-        axes[-1].text((train_slice.start + train_slice.stop)*0.5, 20, 'local train interval')
+        axes[-1].text((train_slice.start + train_slice.stop) * 0.5, 20, 'local train interval')
         # axes[-1].plot(t, np.linalg.norm(model_errors.cpu().numpy(), axis=1))
         # axes[-1].set_ylabel('|e|')
         # axes[-1].set_ybound(0., .2)
 
-        # f, axes = plt.subplots(config.nx + 2, 1, sharex=True)
-        # xlabels = ['$p$', '$dp$', '$f$', '$\\beta$']
-        # for i in range(config.nx):
-        #     axes[i].plot(t, XU[:, i])
-        #     axes[i].set_ylabel(xlabels[i])
-        # axes[-2].plot(t, np.linalg.norm(reaction_forces, axis=1))
-        # axes[-2].set_ylabel('|r|')
-        # axes[-1].plot(t, np.linalg.norm(model_errors.cpu().numpy(), axis=1))
-        # axes[-1].set_ylabel('|e|')
+        if plot_online_update:
+            f, axes = plt.subplots(2, 1, sharex=True)
+            axes[0].plot(gp_online_fit_loss)
+            axes[0].set_ylabel('online fit loss')
+            axes[1].plot(gp_online_fit_last_loss_diff)
+            axes[1].set_ylabel('loss last gradient')
 
         e = (yhat_linear_mix - y).norm(dim=1)
         logger.info('linear mix scale %f length %f mse %.4f', dynamics.local_weight_scale,
@@ -1945,29 +1951,7 @@ if __name__ == "__main__":
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD)
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE)
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.GP_KERNEL)
-    # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=False)
-    # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True)
-    # test_dynamics(level, use_tsf=UseTransform.NO_TRANSFORM, online_adapt=True, prior_class=prior.NoPrior)
-    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=True, prior_class=prior.NoPrior)
 
-    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=False)
-    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_1, online_adapt=True)
-    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_2, online_adapt=False)
-    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_2, online_adapt=True)
-    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_3, online_adapt=False)
-    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_3, online_adapt=True)
-    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_4, online_adapt=False)
-    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_4, online_adapt=True)
-    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_3_BATCH, online_adapt=False)
-    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_3_BATCH, online_adapt=True)
-    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER, online_adapt=False)
-    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER, online_adapt=True)
-    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=False, relearn_dynamics=True)
-    # test_dynamics(level, use_tsf=UseTransform.PARAMETERIZED_ABLATE_NO_V, online_adapt=True)
-    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=False)
-    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM, online_adapt=True)
-    # test_dynamics(level, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=False)
-    # test_dynamics(level, use_tsf=UseTransform.WITH_COMPRESSION_AND_PARTITION, online_adapt=True)
     # test_online_model()
     # for seed in range(1):
     #     learn_invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
