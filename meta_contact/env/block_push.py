@@ -1051,6 +1051,9 @@ class InteractivePush(simulation.Simulation):
                                                                                (self.traj, self.u, self.reaction_force,
                                                                                 self.model_error, self.time))
 
+    def _predicts_state(self):
+        return isinstance(self.ctrl, controller.MPC)
+
     def _run_experiment(self):
         self.last_run_cost = []
         obs = self._reset_sim()
@@ -1077,10 +1080,10 @@ class InteractivePush(simulation.Simulation):
             self.last_run_cost.append(cost)
             self.u[simTime, :] = action
             self.traj[simTime + 1, :] = obs
-            self.pred_traj[simTime + 1, :] = self.ctrl.prev_predicted_x
             # reaction force felt as we apply this action, as observed at the start of the next time step
             self.reaction_force[simTime + 1, :] = info['reaction']
-            if isinstance(self.ctrl, controller.MPC):
+            if self._predicts_state():
+                self.pred_traj[simTime + 1, :] = self.ctrl.prev_predicted_x.cpu().numpy()
                 # model error from the previous prediction step (can only evaluate it at the current step)
                 if self.ctrl.diff_predicted is not None:
                     self.model_error[simTime, :] = self.ctrl.diff_predicted.cpu().numpy()
@@ -1141,7 +1144,8 @@ class InteractivePush(simulation.Simulation):
         t = np.arange(1, self.pred_traj.shape[0])
         for i in range(self.traj.shape[1]):
             self.axes[i].plot(self.traj[:, i], label='true')
-            self.axes[i].scatter(t, self.pred_traj[1:, i], marker='*', color='k', label='predicted')
+            if self._predicts_state():
+                self.axes[i].scatter(t, self.pred_traj[1:, i], marker='*', color='k', label='predicted')
         self.axes[0].legend()
         self.fig.canvas.draw()
         for i in range(self.u.shape[1]):
