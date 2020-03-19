@@ -216,7 +216,7 @@ class MPC(Controller):
             # ignore along since it can be 0
             self.prediction_error.append(relative_residual[:, :3].abs())
             # try correcting for slide along
-            self.diff_predicted[:, -1] = 0
+            self.diff_predicted[:, 3] = 0
 
         self.context = [info, self.diff_predicted]
 
