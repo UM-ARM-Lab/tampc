@@ -224,9 +224,16 @@ class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
     def evaluate_validation(self):
         """Any additional evaluation on the validation set goes here"""
 
-    def evaluate_per_dim_sample_loss(self, X, Y):
-        Yhat = self.user.sample(X)
-        E = (Yhat - Y).abs()
+    def evaluate_per_dim_sample_loss(self, XUv, Yv, ds):
+        Yhat = self.user.sample(XUv)
+        if not ds.preprocessor:
+            E = (Yhat - Yv).abs()
+            return E.mean(dim=0)
+        XUv_orig, Yv_orig, _ = ds.original_validation_set()
+        # compare in original space
+        Xv_orig = XUv_orig[:, :ds.original_config().nx]
+        Yhat_orig = ds.preprocessor.invert_transform(Yhat, Xv_orig)
+        E = (Yhat_orig - Yv_orig).abs()
         return E.mean(dim=0)
 
     def learn_model(self, max_epoch, batch_N=500):
@@ -256,7 +263,7 @@ class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
                     self.writer.add_scalar('loss/training', loss.mean(), self.step)
                     vloss = self.user.compute_validation_loss(self.XUv, self.Yv, self.ds)
                     self.writer.add_scalar('loss/validation', vloss.mean(), self.step)
-                    per_dim_vloss = self.evaluate_per_dim_sample_loss(self.XUv, self.Yv)
+                    per_dim_vloss = self.evaluate_per_dim_sample_loss(self.XUv, self.Yv, self.ds)
                     for d in range(per_dim_vloss.shape[0]):
                         self.writer.add_scalar('per_dim_mean_abs_diff/validation{}'.format(d), per_dim_vloss[d].item(),
                                                self.step)
