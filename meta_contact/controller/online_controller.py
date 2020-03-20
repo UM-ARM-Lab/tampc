@@ -101,10 +101,10 @@ class OnlineMPPI(OnlineMPC, controller.MPPI):
     def _mpc_opts(self):
         opts = super()._mpc_opts()
         # use variance cost if possible (when not sampling)
-        if isinstance(self.dynamics, online_model.OnlineGPMixing) and self.dynamics.sample_dynamics is False:
-            self.Q_variance = torch.eye(self.nx, device=self.d, dtype=self.dtype) * 2.
-            opts['dynamics_variance'] = self._dynamics_variance
-            opts['running_cost_variance'] = self._running_cost_variance
+        # if isinstance(self.dynamics, online_model.OnlineGPMixing) and self.dynamics.sample_dynamics is False:
+        #     self.Q_variance = torch.eye(self.nx, device=self.d, dtype=self.dtype) * 2.
+        #     opts['dynamics_variance'] = self._dynamics_variance
+        #     opts['running_cost_variance'] = self._running_cost_variance
         return opts
 
     def _dynamics_variance(self, next_state):

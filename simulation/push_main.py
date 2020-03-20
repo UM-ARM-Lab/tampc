@@ -260,7 +260,7 @@ def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.G
                                                           const_local_mix_weight=False, sigreg=1e-10, device=d)
         elif online_adapt is OnlineAdapt.GP_KERNEL:
             dynamics = online_model.OnlineGPMixing(pm, ds, env.state_difference, device=d, max_data_points=50,
-                                                   use_independent_outputs=False, sample=True, training_iter=100,
+                                                   use_independent_outputs=False, sample=False, training_iter=100,
                                                    refit_strategy=online_model.RefitGPStrategy.RESET_DATA)
         else:
             raise RuntimeError("Unrecognized online adaption value {}".format(online_adapt))
@@ -1587,8 +1587,8 @@ class HardCodedContactControllerWrapper(controller.MPPI):
 def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM,
                                                    prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
     seed = 1
-    plot_model_eval = True
-    plot_online_update = True
+    plot_model_eval = False
+    plot_online_update = False
     d = get_device()
     if plot_model_eval:
         env = get_easy_env(p.DIRECT)

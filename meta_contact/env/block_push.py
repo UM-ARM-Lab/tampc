@@ -860,7 +860,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         return ['x block (m)', 'y block (m)', 'block rotation (rads)', 'pusher along face (m)']
 
 
-REACTION_Q_COST = 0.01
+REACTION_Q_COST = 0.0
 
 
 class PushWithForceDirectlyReactionInStateEnv(PushWithForceDirectlyEnv):
