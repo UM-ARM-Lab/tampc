@@ -62,10 +62,13 @@ class OnlineMPC(OnlineController):
     Online controller with a pytorch based MPC method (CEM, MPPI)
     """
 
-    def __init__(self, *args, constrain_state=noop_constrain, always_use_online_model=False, **kwargs):
+    def __init__(self, *args, constrain_state=noop_constrain, always_use_local_model=False, keep_local_model_for_turn=3,
+                 **kwargs):
         self.constrain_state = constrain_state
         self.mpc = None
-        self.always_use_online_model = always_use_online_model
+        self.always_use_local_model = always_use_local_model
+        self.keep_local_model_for_turn = keep_local_model_for_turn
+        self.use_local_model_for_turn = 0
         super().__init__(*args, **kwargs)
 
     def _apply_dynamics(self, state, u, t=0):
@@ -73,14 +76,8 @@ class OnlineMPC(OnlineController):
             state = state.view(1, -1)
             u = u.view(1, -1)
 
-        # TODO select model in a smarter way; currently we have a in-contact local model and otherwise use nominal model
         # TODO the MPC method doesn't give dynamics px and pu (different from our prevx and prevu)
-        use_local_model = self.always_use_online_model
-        if self.context[0] is not None:
-            r = np.linalg.norm(self.context[0]['reaction'])
-            if r > 200:
-                use_local_model = True
-        if use_local_model:
+        if self.use_local_model_for_turn > 0:
             next_state = self.dynamics.predict(None, None, state, u)
         else:
             next_state = self.dynamics.prior.dyn_net.predict(torch.cat((state, u), dim=1))
@@ -91,7 +88,19 @@ class OnlineMPC(OnlineController):
         return next_state
 
     def _compute_action(self, x):
-        return self.mpc.command(x)
+        if self.always_use_local_model:
+            self.use_local_model_for_turn = 2  # 2 so that after subtraction afterwards, still > 0
+        else:
+            # TODO select local model in a smarter way
+            if self.context[0] is not None:
+                r = np.linalg.norm(self.context[0]['reaction'])
+                if r > 100:
+                    self.use_local_model_for_turn = self.keep_local_model_for_turn
+
+        u = self.mpc.command(x)
+        if self.use_local_model_for_turn > 0:
+            self.use_local_model_for_turn -= 1
+        return u
 
 
 class OnlineMPPI(OnlineMPC, controller.MPPI):
@@ -101,10 +110,11 @@ class OnlineMPPI(OnlineMPC, controller.MPPI):
     def _mpc_opts(self):
         opts = super()._mpc_opts()
         # use variance cost if possible (when not sampling)
-        # if isinstance(self.dynamics, online_model.OnlineGPMixing) and self.dynamics.sample_dynamics is False:
-        #     self.Q_variance = torch.eye(self.nx, device=self.d, dtype=self.dtype) * 2.
-        #     opts['dynamics_variance'] = self._dynamics_variance
-        #     opts['running_cost_variance'] = self._running_cost_variance
+        if isinstance(self.dynamics, online_model.OnlineGPMixing) and self.dynamics.sample_dynamics is False:
+            q = 10000
+            self.Q_variance = torch.diag(torch.tensor([q, q, q, q, 0, 0], device=self.d, dtype=self.dtype))
+            opts['dynamics_variance'] = self._dynamics_variance
+            opts['running_cost_variance'] = self._running_cost_variance
         return opts
 
     def _dynamics_variance(self, next_state):
@@ -117,5 +127,5 @@ class OnlineMPPI(OnlineMPC, controller.MPPI):
     def _running_cost_variance(self, variance):
         if variance is not None:
             c = linalg.batch_quadratic_product(variance, self.Q_variance)
-            return c
+            return -c
         return 0

@@ -253,7 +253,7 @@ def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.G
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     d = common_wrapper_opts['device']
     if online_adapt is not OnlineAdapt.NONE:
-        common_wrapper_opts['always_use_online_model'] = True
+        common_wrapper_opts['always_use_local_model'] = True
         if online_adapt is OnlineAdapt.LINEARIZE_LIKELIHOOD:
             dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds, env.state_difference,
                                                           local_mix_weight_scale=50.0, xu_characteristic_length=10,
@@ -1589,6 +1589,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     seed = 1
     plot_model_eval = False
     plot_online_update = False
+    use_gp = False
     d = get_device()
     if plot_model_eval:
         env = get_easy_env(p.DIRECT)
@@ -1608,7 +1609,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     # train_slice = slice(15, 55)
     # data from predetermined policy for getting into and out of bug trap
     ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
-    train_slice = slice(70, 150)
+    train_slice = slice(90, 135)
 
     # use same preprocessor
     ds_wall.update_preprocessor(preprocessor)
@@ -1694,8 +1695,8 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
             axes[i].scatter(t, Y[:, dim], label='truth', alpha=0.4)
             axes[i].plot(t, Yhat_freespace[:, dim], label='nominal', alpha=0.4, linewidth=3)
 
-            axes[i].plot(t, yhat_gp_mean[:, dim].cpu().numpy(), label='gp')
-            axes[i].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, dim].cpu().numpy(), alpha=0.3)
+            # axes[i].plot(t, yhat_gp_mean[:, dim].cpu().numpy(), label='gp')
+            # axes[i].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, dim].cpu().numpy(), alpha=0.3)
             # axes[i].scatter(np.tile(t, samples), gp_samples[:, :, dim].view(-1).cpu().numpy(), label='gp sample',
             #                 marker='*', color='k', alpha=0.3)
 
@@ -1706,10 +1707,10 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
             # axes[i].plot(t, Yhat_linear[:, dim], label='linear fit', alpha=0.5)
 
-            # m = yhat_linear_mix[:, dim].cpu().numpy()
-            # w = weight_linear_mix.cpu().numpy()
-            # axes[i].plot(t, m, label='mix')
-            # axes[i].fill_between(t, m - w, m + w, alpha=0.2, color='g')
+            m = yhat_linear_mix[:, dim].cpu().numpy()
+            w = weight_linear_mix.cpu().numpy()
+            axes[i].plot(t, m, label='mix', color='g')
+            axes[i].fill_between(t, m - w, m + w, alpha=0.2, color='g')
 
             # axes[i].plot(t, Yhat_linear_online[:, dim], label='online mix')
             if dim in [4, 5]:
@@ -1759,8 +1760,8 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     common_wrapper_opts['adjust_model_pred_with_prev_error'] = False
-    ctrl = online_controller.OnlineMPPI(dynamics_gp, untransformed_config, **common_wrapper_opts,
-                                        constrain_state=constrain_state, mpc_opts=mpc_opts)
+    ctrl = online_controller.OnlineMPPI(dynamics_gp if use_gp else dynamics, untransformed_config,
+                                        **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
     # try hardcoded to see if controller will do what we want given the hypothesized model predictions
     # ctrl = controller.MPPI(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
 
@@ -1940,13 +1941,65 @@ def learn_model(use_tsf, seed=1, name="", train_epochs=600, batch_N=500):
     mw.learn_model(train_epochs, batch_N=batch_N)
 
 
+def _visualize_dataset_training_distribution(env, ds, z_names=None, v_names=None, fs=(None, None, None),
+                                             axes=(None, None, None)):
+    import seaborn as sns
+    plt.ioff()
+
+    XU, Y, _ = ds.training_set()
+    X, U = torch.split(XU, env.nx, dim=1)
+
+    def plot_series(series, dim_names, title, f=None, ax=None):
+        if f is None:
+            f, ax = plt.subplots(1, len(dim_names), figsize=(12, 6))
+        f.tight_layout()
+        f.suptitle(title)
+        for i, name in enumerate(dim_names):
+            sns.distplot(series[:, i].cpu().numpy(), ax=ax[i])
+            ax[i].set_xlabel(name)
+        return f, ax
+
+    ofs = [None] * 3
+    oaxes = [None] * 3
+    if ds.preprocessor is None:
+        ofs[0], oaxes[0] = plot_series(X, env.state_names(), 'states X', fs[0], axes[0])
+        ofs[1], oaxes[1] = plot_series(U, ["u{}".format(i) for i in range(env.nu)], 'control U', fs[1], axes[1])
+        ofs[2], oaxes[2] = plot_series(Y, ["d{}".format(n) for n in env.state_names()], 'prediction Y', fs[2], axes[2])
+    else:
+        if z_names is None:
+            z_names = ["$z_{}$".format(i) for i in range(XU.shape[1])]
+            v_names = ["$v_{}$".format(i) for i in range(Y.shape[1])]
+        ofs[0], oaxes[0] = plot_series(XU, z_names, 'latent input Z (XU)', fs[0], axes[0])
+        ofs[1], oaxes[1] = plot_series(Y, v_names, 'prediction V (Y)', fs[1], axes[1])
+
+    return ofs, oaxes
+
+
+def visualize_datasets():
+    _, env, _, ds = get_free_space_env_init()
+    untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, UseTransform.COORDINATE_TRANSFORM,
+                                                                            evaluate_transform=False)
+    coord_z_names = ['p', '\\theta', 'f', '\\beta', '$r_x$', '$r_y$']
+    coord_v_names = ['d{}'.format(n) for n in coord_z_names]
+
+    ds_wall, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
+    ds_wall.update_preprocessor(preprocessor)
+    train_slice = slice(90, 135)
+    ds_wall.restrict_training_set_to_slice(train_slice)
+
+    fs, axes = _visualize_dataset_training_distribution(env, ds, coord_z_names, coord_v_names)
+    _visualize_dataset_training_distribution(env, ds_wall, coord_z_names, coord_v_names, fs=fs, axes=axes)
+    plt.show()
+
+
 if __name__ == "__main__":
     level = 0
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
     # collect_push_against_wall_recovery_data()
     # collect_single_long_trajectory()
+    visualize_datasets()
 
-    test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
+    # test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD)
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE)
