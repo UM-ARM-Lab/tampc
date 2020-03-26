@@ -164,21 +164,22 @@ def test_env_control():
     init_block_yaw = -0.3
     face = block_push.BlockFace.LEFT
     along_face = 0
-    env = block_push.PushWithForceDirectlyReactionInStateEnv(mode=p.GUI, init_pusher=along_face,
+    env = block_push.PushWithForceDirectlyReactionInStateEnv(mode=p.GUI, init_pusher=along_face, log_video=True,
                                                              init_block=init_block_pos, init_yaw=init_block_yaw,
                                                              environment_level=1)
-    env.sim_step_wait = 0.001
+    seed = rand.seed(0)
+    env.sim_step_wait = 0.01
     u = []
+    for _ in range(10):
+        u.append((0., 1, 0.))
     for _ in range(20):
-        u.append((0., 1, -0.6))
-    # for _ in range(20):
-    #     u.append((np.random.randn(), 1, np.random.randn()))
+        u.append((np.random.randn(), 1, np.random.randn()))
 
     ctrl = controller.PreDeterminedController(u)
     sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=True, save=False)
-    seed = rand.seed()
     sim.run(seed)
-    input('look at plots')
+    plt.ioff()
+    plt.show()
 
 
 def tune_direct_push():
