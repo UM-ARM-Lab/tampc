@@ -503,12 +503,14 @@ class PushAgainstWallEnv(MyPybulletEnv):
             fy, fx = _get_lateral_friction_forces(contact)
             reaction_force = [sum(i) for i in zip(reaction_force, fy, fx)]
 
+        info['wc'] = 0
         if self.level > 0:
             # assume at most 4 contact points
             info['bw'] = np.zeros(4)
             # TODO handle other walls
             for wallId in self.walls:
                 contactInfo = p.getContactPoints(self.blockId, wallId)
+                info['wc'] += len(contactInfo)
                 for i, contact in enumerate(contactInfo):
                     name = 'w{}'.format(i)
                     info['bw'][i] = contact[9]
@@ -554,6 +556,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
     def _aggregate_contact_info(self):
         info = {key: np.stack(value, axis=0) for key, value in self._contact_info.items() if len(value)}
         info['reaction'] = self._reaction_force[:2]
+        info['wall_contact'] = info['wc'].max()
         self._reaction_force = None
         self._contact_info = {}
         return info
@@ -1092,14 +1095,19 @@ class InteractivePush(simulation.Simulation):
         self.pred_traj = np.zeros_like(self.traj)
         self.u = np.zeros((self.num_frames, self.env.nu))
         self.reaction_force = np.zeros((self.num_frames, 2))
+        self.wall_contact = np.zeros((self.num_frames,))
         self.model_error = np.zeros_like(self.traj)
         self.time = np.arange(0, self.num_frames * self.sim_step_s, self.sim_step_s)
         return simulation.ReturnMeaning.SUCCESS
 
     def _truncate_data(self, frame):
-        self.traj, self.u, self.reaction_force, self.model_error, self.time = (data[:frame] for data in
-                                                                               (self.traj, self.u, self.reaction_force,
-                                                                                self.model_error, self.time))
+        self.traj, self.u, self.reaction_force, self.wall_contact, self.model_error, self.time = (data[:frame] for data
+                                                                                                  in
+                                                                                                  (self.traj, self.u,
+                                                                                                   self.reaction_force,
+                                                                                                   self.wall_contact,
+                                                                                                   self.model_error,
+                                                                                                   self.time))
 
     def _predicts_state(self):
         return isinstance(self.ctrl, controller.MPC)
@@ -1132,6 +1140,7 @@ class InteractivePush(simulation.Simulation):
             self.traj[simTime + 1, :] = obs
             # reaction force felt as we apply this action, as observed at the start of the next time step
             self.reaction_force[simTime + 1, :] = info['reaction']
+            self.wall_contact[simTime + 1] = info['wall_contact']
             if self._predicts_state():
                 self.pred_traj[simTime + 1, :] = self.ctrl.prev_predicted_x.cpu().numpy()
                 # model error from the previous prediction step (can only evaluate it at the current step)
@@ -1175,10 +1184,14 @@ class InteractivePush(simulation.Simulation):
         assert state_dim == len(axis_name)
         ctrl_dim = self.u.shape[1]
 
-        self.fig, self.axes = plt.subplots(state_dim, 1)
-        self.fu, self.au = plt.subplots(ctrl_dim, 1)
+        self.fig, self.axes = plt.subplots(state_dim, 1, sharex=True)
+        self.fu, self.au = plt.subplots(ctrl_dim, 1, sharex=True)
         if self._predicts_state():
-            self.fd, self.ad = plt.subplots(state_dim, 1)
+            self.fd, self.ad = plt.subplots(state_dim, 1, sharex=True)
+        # plot of other info
+        self.fo, self.ao = plt.subplots(2, 1, sharex=True)
+        self.ao[0].set_ylabel('reaction magitude')
+        self.ao[1].set_ylabel('wall contacts')
 
         for i in range(state_dim):
             self.axes[i].set_ylabel(axis_name[i])
@@ -1202,6 +1215,11 @@ class InteractivePush(simulation.Simulation):
                 self.axes[i].scatter(t, self.pred_traj[1:, i], marker='*', color='k', label='predicted')
                 self.ad[i].plot(self.model_error[:, i])
         self.axes[0].legend()
+
+        mag = np.linalg.norm(self.reaction_force, axis=1)
+        self.ao[0].plot(mag)
+        self.ao[1].plot(self.wall_contact)
+
         self.fig.canvas.draw()
         for i in range(self.u.shape[1]):
             self.au[i].plot(self.u[:, i])

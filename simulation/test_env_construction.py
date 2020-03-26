@@ -172,12 +172,15 @@ def test_env_control():
     u = []
     for _ in range(80):
         u.append((0., 1, 0.))
-    for _ in range(40):
+    N = 40
+    u_dir = np.linspace(0, -1, N)
+    u_mag = np.linspace(1, 0, N)
+    for i in range(N):
         # u.append((np.random.randn(), 1, np.random.randn()))
-        u.append((0, 1, np.random.randn()))
+        u.append((0.1, u_mag[i], u_dir[i]))
 
     ctrl = controller.PreDeterminedController(u)
-    sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=False, save=False)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=True, save=False)
     sim.run(seed)
     plt.ioff()
     plt.show()
@@ -364,8 +367,8 @@ def run_direct_push():
 
 if __name__ == "__main__":
     # test_pusher_placement_inverse()
-    # test_env_control()
-    test_env_set()
+    test_env_control()
+    # test_env_set()
     # test_simulator_friction_isometry()
     # tune_direct_push()
     # run_direct_push()
