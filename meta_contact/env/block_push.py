@@ -27,6 +27,7 @@ class BlockFace:
 # TODO This is specific to this pusher and block; how to generalize this?
 _MAX_ALONG = 0.075 + 0.1  # half length of block
 _BLOCK_HEIGHT = 0.05
+_PUSHER_MID = 0.10
 DIST_FOR_JUST_TOUCHING = _MAX_ALONG + 0.021 - 0.00001 + 0.002
 
 
@@ -362,6 +363,22 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self._error_debug_lines['line'] = _draw_debug_2d_line(self._error_debug_lines['line'], pose,
                                                               (pred_pose - pose)[:2], c, scale=20, size=angle_diff * 50)
 
+    def set_state(self, state):
+        assert state.shape[0] == self.nx
+        prev_block_pose = p.getBasePositionAndOrientation(self.blockId)
+        zb = prev_block_pose[0][2]
+
+        block_pose = self.get_block_pose(state)
+        # keep previous height rather than reset since we don't know what's the height at ground level
+        p.resetBasePositionAndOrientation(self.blockId, (block_pose[0], block_pose[1], zb),
+                                          p.getQuaternionFromEuler([0, 0, block_pose[2]]))
+
+        pusher_pos = self.get_pusher_pos(state)
+        p.resetBasePositionAndOrientation(self.pusherId, (pusher_pos[0], pusher_pos[1], _PUSHER_MID),
+                                          p.getQuaternionFromEuler([0, 0, 0]))
+        self.state = state
+        # TODO visualize current state
+
     def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
         """Change task configuration; assumes only goal position is specified #TOOD relax assumption"""
         if goal is not None:
@@ -379,7 +396,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.goal = np.array(tuple(goal) + tuple(goal) + (0.0,))
 
     def _set_init_pusher(self, init_pusher):
-        self.initPusherPos = tuple(init_pusher) + (0.10,)
+        self.initPusherPos = tuple(init_pusher) + (_PUSHER_MID,)
 
     def _set_init_block_pos(self, init_block_pos):
         self.initBlockPos = tuple(init_block_pos) + (0.03,)
@@ -447,6 +464,10 @@ class PushAgainstWallEnv(MyPybulletEnv):
     @staticmethod
     def get_block_pose(state):
         return state[2:5]
+
+    @staticmethod
+    def get_pusher_pos(state):
+        return state[0:2]
 
     def _move_pusher(self, end):
         p.changeConstraint(self.pusherConstraint, end, maxForce=self.max_pusher_force)
@@ -723,6 +744,13 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
     def get_block_pose(state):
         return state[:3]
 
+    @staticmethod
+    def get_pusher_pos(state):
+        along = state[3]
+        pos = pusher_pos_for_touching(state[:2], state[2], from_center=DIST_FOR_JUST_TOUCHING, face=BlockFace.LEFT,
+                                      along_face=along * _MAX_ALONG)
+        return pos
+
     def _obs(self):
         xb, yb, yaw = self._observe_block()
         x, y, z = self._observe_pusher()
@@ -855,10 +883,6 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
 
         return np.copy(self.state), -cost, done, info
 
-    @staticmethod
-    def state_names():
-        return ['x block (m)', 'y block (m)', 'block rotation (rads)', 'pusher along face (m)']
-
 
 REACTION_Q_COST = 0.0
 
@@ -916,7 +940,6 @@ class PushWithForceDirectlyReactionInStateEnv(PushWithForceDirectlyEnv):
 
     @staticmethod
     def state_names():
-        # return ['x block (m)', 'y block (m)', 'block rotation (rads)', 'pusher along face (m)', 'Rx (N)', 'Ry (N)']
         return ['$x_b$ (m)', '$y_b$ (m)', '$\\theta$ (rads)', '$p$ (m)', '$r_x$ (N)', '$r_y$ (N)']
 
 
