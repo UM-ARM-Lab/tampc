@@ -160,16 +160,25 @@ def plot_and_analyze_body_frame_invariance(yaws, z_os):
 
 
 def test_env_control():
-    init_block_pos = [0, 0]
-    init_block_yaw = 0
+    init_block_pos = [-0.5, 0.2]
+    init_block_yaw = -0.3
     face = block_push.BlockFace.LEFT
     along_face = 0
-    env = block_push.PushAgainstWallStickyEnv(mode=p.GUI, init_pusher=along_face, face=face,
-                                              init_block=init_block_pos, init_yaw=init_block_yaw)
-    ctrl = controller.FullRandomController(2, (-0.01, 0), (0.01, 0.03))
-    sim = block_push.InteractivePush(env, ctrl, num_frames=100, plot=False, save=False)
+    env = block_push.PushWithForceDirectlyReactionInStateEnv(mode=p.GUI, init_pusher=along_face,
+                                                             init_block=init_block_pos, init_yaw=init_block_yaw,
+                                                             environment_level=1)
+    env.sim_step_wait = 0.001
+    u = []
+    for _ in range(20):
+        u.append((0., 1, -0.6))
+    # for _ in range(20):
+    #     u.append((np.random.randn(), 1, np.random.randn()))
+
+    ctrl = controller.PreDeterminedController(u)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=True, save=False)
     seed = rand.seed()
     sim.run(seed)
+    input('look at plots')
 
 
 def tune_direct_push():
@@ -337,7 +346,7 @@ def run_direct_push():
 
 if __name__ == "__main__":
     # test_pusher_placement_inverse()
-    # test_env_control()
+    test_env_control()
     # test_simulator_friction_isometry()
     # tune_direct_push()
-    run_direct_push()
+    # run_direct_push()
