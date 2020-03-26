@@ -168,18 +168,35 @@ def test_env_control():
                                                              init_block=init_block_pos, init_yaw=init_block_yaw,
                                                              environment_level=1)
     seed = rand.seed(0)
-    env.sim_step_wait = 0.01
+    # env.sim_step_wait = 0.01
     u = []
-    for _ in range(10):
+    for _ in range(80):
         u.append((0., 1, 0.))
-    for _ in range(20):
-        u.append((np.random.randn(), 1, np.random.randn()))
+    for _ in range(40):
+        # u.append((np.random.randn(), 1, np.random.randn()))
+        u.append((0, 1, np.random.randn()))
 
     ctrl = controller.PreDeterminedController(u)
-    sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=True, save=False)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=False, save=False)
     sim.run(seed)
     plt.ioff()
     plt.show()
+
+
+def test_env_set():
+    env = block_push.PushWithForceDirectlyReactionInStateEnv(mode=p.GUI, environment_level=0)
+    for _ in range(10):
+        env.step([0] * env.nu)
+    env.set_state(np.array([0, 0.5, 0, 0, 0, 0]))
+    time.sleep(1)
+    env.set_state(np.array([-0.5, 0.5, 0, 0, 0, 0]))
+    time.sleep(1)
+    env.set_state(np.array([-0.5, 0.5, 0.5, 0, 0, 0]))
+    time.sleep(1)
+    env.set_state(np.array([-0.5, 0.5, 0.5, 1, 0, 0]))
+    time.sleep(1)
+    env.set_state(np.array([-0.5, 0.5, 0.5, 1, 40, 0]))
+    time.sleep(1)
 
 
 def tune_direct_push():
@@ -347,7 +364,8 @@ def run_direct_push():
 
 if __name__ == "__main__":
     # test_pusher_placement_inverse()
-    test_env_control()
+    # test_env_control()
+    test_env_set()
     # test_simulator_friction_isometry()
     # tune_direct_push()
     # run_direct_push()

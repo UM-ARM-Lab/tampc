@@ -377,7 +377,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         p.resetBasePositionAndOrientation(self.pusherId, (pusher_pos[0], pusher_pos[1], _PUSHER_MID),
                                           p.getQuaternionFromEuler([0, 0, 0]))
         self.state = state
-        # TODO visualize current state
+        self._draw_state()
 
     def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
         """Change task configuration; assumes only goal position is specified #TOOD relax assumption"""
@@ -436,7 +436,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
         self.set_camera_position([0, 0])
         self._draw_goal()
-        _draw_debug_2d_pose(self._init_block_debug_lines, self.get_block_pose(self._obs()), color=(0, 1, 0))
+        self.state = self._obs()
+        self._draw_state()
 
         # set gravity
         p.setGravity(0, 0, -10)
@@ -457,6 +458,9 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
     def _draw_goal(self):
         _draw_debug_2d_pose(self._goal_debug_lines, self._get_goal_block_pose())
+
+    def _draw_state(self):
+        _draw_debug_2d_pose(self._block_debug_lines, self.get_block_pose(self.state))
 
     def _get_goal_block_pose(self):
         return self.goal[2:5]
@@ -503,21 +507,22 @@ class PushAgainstWallEnv(MyPybulletEnv):
             # assume at most 4 contact points
             info['bw'] = np.zeros(4)
             # TODO handle other walls
-            contactInfo = p.getContactPoints(self.blockId, self.walls[0])
-            for i, contact in enumerate(contactInfo):
-                name = 'w{}'.format(i)
-                info['bw'][i] = contact[9]
+            for wallId in self.walls:
+                contactInfo = p.getContactPoints(self.blockId, wallId)
+                for i, contact in enumerate(contactInfo):
+                    name = 'w{}'.format(i)
+                    info['bw'][i] = contact[9]
 
-                f_contact = _get_total_contact_force(contact)
-                reaction_force = [sum(i) for i in zip(reaction_force, f_contact)]
+                    f_contact = _get_total_contact_force(contact)
+                    reaction_force = [sum(i) for i in zip(reaction_force, f_contact)]
 
-                # only visualize the largest contact
-                if abs(contact[9]) > abs(self._largest_contact.get(name, 0)):
-                    self._largest_contact[name] = contact[9]
-                    if visualize and self._debug_visualizations[DebugVisualization.WALL_ON_BLOCK]:
-                        if name not in self._contact_debug_lines:
-                            self._contact_debug_lines[name] = [-1, -1, -1]
-                        _draw_contact_point(self._contact_debug_lines[name], contact)
+                    # only visualize the largest contact
+                    if abs(contact[9]) > abs(self._largest_contact.get(name, 0)):
+                        self._largest_contact[name] = contact[9]
+                        if visualize and self._debug_visualizations[DebugVisualization.WALL_ON_BLOCK]:
+                            if name not in self._contact_debug_lines:
+                                self._contact_debug_lines[name] = [-1, -1, -1]
+                            _draw_contact_point(self._contact_debug_lines[name], contact)
 
         reaction_force[2] = 0
         # save reaction force
@@ -642,7 +647,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
                                [0, 0, 1], 2))
 
         # render current pose
-        _draw_debug_2d_pose(self._block_debug_lines, new_block)
+        self._draw_state()
 
         cost, done = self.evaluate_cost(self.state, action)
 
@@ -903,6 +908,8 @@ class PushWithForceDirectlyReactionInStateEnv(PushWithForceDirectlyEnv):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.Q = np.diag([10, 10, 0, 0.01, REACTION_Q_COST, REACTION_Q_COST])
+        # we render this directly when rendering state so no need to double count
+        self._debug_visualizations[DebugVisualization.REACTION_ON_PUSHER] = False
 
     @staticmethod
     def state_difference(state, other_state):
@@ -936,6 +943,19 @@ class PushWithForceDirectlyReactionInStateEnv(PushWithForceDirectlyEnv):
     def _set_goal(self, goal_pos):
         # want 0 reaction force
         self.goal = np.array(tuple(goal_pos) + (0, 0) + (0, 0))
+
+    def _draw_state(self):
+        super(PushWithForceDirectlyReactionInStateEnv, self)._draw_state()
+        # NOTE this is visualizing the reaction from the previous action, rather than the current action
+        name = 'r'
+        start = self._observe_pusher()
+        if name not in self._contact_debug_lines:
+            self._contact_debug_lines[name] = -1
+        rf = self.state[4:6]
+        mag = np.linalg.norm(rf)
+        self._contact_debug_lines[name] = _draw_debug_2d_line(self._contact_debug_lines[name], start, rf,
+                                                              size=mag, scale=0.03,
+                                                              color=(1, 0, 1))
 
     def _obs(self):
         state = super()._obs()
