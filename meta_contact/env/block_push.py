@@ -1134,7 +1134,8 @@ class InteractivePush(simulation.Simulation):
 
         for i in range(state_dim):
             self.axes[i].set_ylabel(axis_name[i])
-            self.ad[i].set_ylabel('d' + axis_name[i])
+            if self._predicts_state():
+                self.ad[i].set_ylabel('d' + axis_name[i])
         for i in range(ctrl_dim):
             self.au[i].set_ylabel('$u_{}$'.format(i))
 
@@ -1144,7 +1145,7 @@ class InteractivePush(simulation.Simulation):
     def _plot_data(self):
         if self.fig is None:
             self.start_plot_runs()
-            time.sleep(0.05)
+            plt.pause(0.0001)
 
         t = np.arange(1, self.pred_traj.shape[0])
         for i in range(self.traj.shape[1]):
@@ -1156,7 +1157,7 @@ class InteractivePush(simulation.Simulation):
         self.fig.canvas.draw()
         for i in range(self.u.shape[1]):
             self.au[i].plot(self.u[:, i])
-        time.sleep(0.01)
+        plt.pause(0.0001)
 
     def _reset_sim(self):
         return self.env.reset()
