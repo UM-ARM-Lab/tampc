@@ -797,13 +797,15 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
     nx = 4
     ny = 4
     MAX_PUSH_ANGLE = math.pi / 4  # 45 degree on either side of normal
-    MAX_SLIDE = 0.3  # can slide at most 30/200 = 15% of the face in 1 move
-    MAX_FORCE = 420
+    MAX_SLIDE = 0.1  # can slide at most 30/200 = 15% of the face in 1 move
+    MAX_FORCE = 40
 
-    def __init__(self, init_pusher=0, **kwargs):
+    def __init__(self, init_pusher=0, repeat_action_times=10, **kwargs):
         # initial config
         self.along = init_pusher
         self._action_debug_line = -1
+        # with a small push magnitude, we have to repeat the push multiple times so that each control step gets enough
+        self.repeat_action_times = repeat_action_times
         super().__init__(init_pusher=init_pusher, face=BlockFace.LEFT, **kwargs)
 
     @staticmethod
@@ -855,19 +857,22 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         # execute action
         ft = math.sin(f_dir) * f_mag
         fn = math.cos(f_dir) * f_mag
-        # apply force on the left face of the block at along
-        p.applyExternalForce(self.blockId, -1, [fn, ft, 0], [-_MAX_ALONG, self.along * _MAX_ALONG, 0], p.LINK_FRAME)
-        p.stepSimulation()
 
-        for t in range(20):
-            for tt in range(5):
-                # also move the pusher along visually
-                self._keep_pusher_adjacent()
-                self._observe_contact()
+        # repeat action so that each resulting step can be larger
+        for _ in range(self.repeat_action_times):
+            # apply force on the left face of the block at along
+            p.applyExternalForce(self.blockId, -1, [fn, ft, 0], [-_MAX_ALONG, self.along * _MAX_ALONG, 0], p.LINK_FRAME)
+            p.stepSimulation()
 
-                p.stepSimulation()
-                if self.mode is p.GUI and self.sim_step_wait:
-                    time.sleep(self.sim_step_wait)
+            for t in range(20):
+                for tt in range(5):
+                    # also move the pusher along visually
+                    self._keep_pusher_adjacent()
+                    self._observe_contact()
+
+                    p.stepSimulation()
+                    if self.mode is p.GUI and self.sim_step_wait:
+                        time.sleep(self.sim_step_wait)
 
         # apply the sliding along side after the push settles down
         self.along = np.clip(old_state[3] + d_along, -1, 1)
