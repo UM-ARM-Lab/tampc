@@ -71,8 +71,8 @@ class OnlineDynamicsModel(abc.ABC):
         :return: B x N x nx or N x nx next states
         """
 
-        ocx = cx  # original state
         cx, cu, px, pu = self._make_2d_tensor(cx, cu, px, pu)
+        ocx = cx  # original state
         # transform if necessary (ensure dynamics is evaluated only in transformed space)
         if self.ds.preprocessor and not already_transformed:
             cx, cu = self._apply_transform(cx, cu)
