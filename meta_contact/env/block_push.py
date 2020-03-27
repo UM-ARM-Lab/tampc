@@ -805,15 +805,19 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
     nx = 4
     ny = 4
     MAX_PUSH_ANGLE = math.pi / 4  # 45 degree on either side of normal
-    MAX_SLIDE = 0.1  # can slide at most 30/200 = 15% of the face in 1 move
+    MAX_SLIDE = 0.3  # can slide at most 30/200 = 15% of the face in 1 move
     MAX_FORCE = 40
 
-    def __init__(self, init_pusher=0, repeat_action_times=10, **kwargs):
+    def __init__(self, init_pusher=0, repeat_action_times=80, repeat_step_times=8, **kwargs):
         # initial config
         self.along = init_pusher
         self._action_debug_line = -1
         # with a small push magnitude, we have to repeat the push multiple times so that each control step gets enough
         self.repeat_action_times = repeat_action_times
+        # with a small push, we don't have to step as many times in the simulator so this should be inversely
+        # proportional to how many times we'll need to repeat the action
+        # tune this in test_env_construction.run_direct_push such that we get 0 velocity at the end
+        self.repeat_step_times = repeat_step_times
         super().__init__(init_pusher=init_pusher, face=BlockFace.LEFT, **kwargs)
 
     @staticmethod
@@ -872,15 +876,14 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
             p.applyExternalForce(self.blockId, -1, [fn, ft, 0], [-_MAX_ALONG, self.along * _MAX_ALONG, 0], p.LINK_FRAME)
             p.stepSimulation()
 
-            for t in range(20):
-                for tt in range(5):
-                    # also move the pusher along visually
-                    self._keep_pusher_adjacent()
-                    self._observe_contact()
+            # also move the pusher along visually
+            self._keep_pusher_adjacent()
+            for t in range(self.repeat_step_times):
+                self._observe_contact()
 
-                    p.stepSimulation()
-                    if self.mode is p.GUI and self.sim_step_wait:
-                        time.sleep(self.sim_step_wait)
+                p.stepSimulation()
+                if self.mode is p.GUI and self.sim_step_wait:
+                    time.sleep(self.sim_step_wait)
 
         # apply the sliding along side after the push settles down
         self.along = np.clip(old_state[3] + d_along, -1, 1)

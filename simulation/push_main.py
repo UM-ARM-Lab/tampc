@@ -84,6 +84,7 @@ def collect_touching_freespace_data(trials=20, trial_length=40, level=0):
 def collect_push_against_wall_recovery_data():
     # get data in and around the bug trap we want to avoid in the future
     env = get_easy_env(p.GUI, 1, log_video=True)
+    seed = rand.seed(140891)
     u = []
     for _ in range(10):
         u.append([0.7 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.6 + np.random.randn() * 0.4])
@@ -99,7 +100,28 @@ def collect_push_against_wall_recovery_data():
         u.append([0.2 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, 0.1 + np.random.randn() * 0.3])
     ctrl = controller.PreDeterminedController(np.array(u))
     sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=True, stop_when_done=False)
-    seed = rand.seed(140891)
+    sim.run(seed)
+
+
+def collect_push_against_wall_recovery_data_mini_step():
+    # get data in and around the bug trap we want to avoid in the future
+    env = get_easy_env(p.GUI, 1, log_video=True)
+    seed = rand.seed(124512)
+    u = []
+    for _ in range(10):
+        u.append([0.7 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.6 + np.random.randn() * 0.4])
+    for _ in range(8):
+        u.append([0.1 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.7 + np.random.randn() * 0.3])
+    for _ in range(10):
+        u.append([-0.3 + np.random.randn() * 0.4, 0.6 + np.random.randn() * 0.4, 0.0 + np.random.randn() * 0.8])
+    for _ in range(10):
+        u.append([-0.8 + np.random.randn() * 0.2, 0.2 + np.random.randn() * 0.1, -0.2 + np.random.randn() * 0.4])
+    for _ in range(90):
+        u.append([-0.3 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, -0.9 + np.random.randn() * 0.2])
+    for _ in range(40):
+        u.append([0.1 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.1, 0.1 + np.random.randn() * 0.3])
+    ctrl = controller.PreDeterminedController(np.array(u))
+    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=True, stop_when_done=False)
     sim.run(seed)
 
 
@@ -141,7 +163,7 @@ def get_easy_env(mode=p.GUI, level=0, log_video=False):
         env = block_push.PushWithForceDirectlyReactionInStateEnv(**env_opts)
     else:
         env = block_push.PushWithForceDirectlyEnv(**env_opts)
-    env_dir = 'pushing/direct_force'
+    env_dir = 'pushing/direct_force_mini_step'
     return env
 
 
@@ -1552,18 +1574,18 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     ctrl = get_controller(env, pm, ds, untransformed_config, **kwargs)
     name = get_full_controller_name(pm, ctrl, tsf_name)
     # expensive evaluation
-    # evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921],
-    #                     override=override)
+    evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921],
+                        override=override)
 
-    env.draw_user_text(name, 14, left_offset=-1.5)
-    # env.sim_step_wait = 0.01
-    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=True, save=True, stop_when_done=False)
-    seed = rand.seed(2)
-    env.draw_user_text("try {}".format(seed), 2)
-    sim.run(seed)
-    logger.info("last run cost %f", np.sum(sim.last_run_cost))
-    plt.ioff()
-    plt.show()
+    # env.draw_user_text(name, 14, left_offset=-1.5)
+    # # env.sim_step_wait = 0.01
+    # sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=True, save=True, stop_when_done=False)
+    # seed = rand.seed(2)
+    # env.draw_user_text("try {}".format(seed), 2)
+    # sim.run(seed)
+    # logger.info("last run cost %f", np.sum(sim.last_run_cost))
+    # plt.ioff()
+    # plt.show()
 
     env.close()
 
@@ -1587,9 +1609,9 @@ class HardCodedContactControllerWrapper(controller.MPPI):
 def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM,
                                                    prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
     seed = 1
-    plot_model_eval = False
+    plot_model_eval = True
     plot_online_update = False
-    use_gp = False
+    use_gp = True
     d = get_device()
     if plot_model_eval:
         env = get_easy_env(p.DIRECT)
@@ -1695,22 +1717,21 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
             axes[i].scatter(t, Y[:, dim], label='truth', alpha=0.4)
             axes[i].plot(t, Yhat_freespace[:, dim], label='nominal', alpha=0.4, linewidth=3)
 
-            # axes[i].plot(t, yhat_gp_mean[:, dim].cpu().numpy(), label='gp')
-            # axes[i].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, dim].cpu().numpy(), alpha=0.3)
-            # axes[i].scatter(np.tile(t, samples), gp_samples[:, :, dim].view(-1).cpu().numpy(), label='gp sample',
-            #                 marker='*', color='k', alpha=0.3)
-
-            if plot_online_update:
-                axes[i].plot(t, yhat_gp_online_mean[:, dim].cpu().numpy(), label='online gp')
-                axes[i].fill_between(t, lower_online[:, dim].cpu().numpy(), upper_online[:, dim].cpu().numpy(),
-                                     alpha=0.3)
-
-            # axes[i].plot(t, Yhat_linear[:, dim], label='linear fit', alpha=0.5)
-
-            m = yhat_linear_mix[:, dim].cpu().numpy()
-            w = weight_linear_mix.cpu().numpy()
-            axes[i].plot(t, m, label='mix', color='g')
-            axes[i].fill_between(t, m - w, m + w, alpha=0.2, color='g')
+            if use_gp:
+                axes[i].plot(t, yhat_gp_mean[:, dim].cpu().numpy(), label='gp')
+                axes[i].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, dim].cpu().numpy(), alpha=0.3)
+                # axes[i].scatter(np.tile(t, samples), gp_samples[:, :, dim].view(-1).cpu().numpy(), label='gp sample',
+                #                 marker='*', color='k', alpha=0.3)
+                if plot_online_update:
+                    axes[i].plot(t, yhat_gp_online_mean[:, dim].cpu().numpy(), label='online gp')
+                    axes[i].fill_between(t, lower_online[:, dim].cpu().numpy(), upper_online[:, dim].cpu().numpy(),
+                                         alpha=0.3)
+            else:
+                # axes[i].plot(t, Yhat_linear[:, dim], label='linear fit', alpha=0.5)
+                m = yhat_linear_mix[:, dim].cpu().numpy()
+                w = weight_linear_mix.cpu().numpy()
+                axes[i].plot(t, m, label='mix', color='g')
+                axes[i].fill_between(t, m - w, m + w, alpha=0.2, color='g')
 
             # axes[i].plot(t, Yhat_linear_online[:, dim], label='online mix')
             if dim in [4, 5]:
@@ -1723,7 +1744,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
         axes[0].legend()
         axes[-1].plot(t, np.linalg.norm(reaction_forces, axis=1))
         axes[-1].set_ylabel('|r|')
-        axes[-1].set_ybound(0., 500)
+        axes[-1].set_ybound(0., 50)
         axes[-1].axvspan(train_slice.start, train_slice.stop, alpha=0.3)
         axes[-1].text((train_slice.start + train_slice.stop) * 0.5, 20, 'local train interval')
         # axes[-1].plot(t, np.linalg.norm(model_errors.cpu().numpy(), axis=1))
@@ -1996,14 +2017,15 @@ if __name__ == "__main__":
     level = 0
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
     # collect_push_against_wall_recovery_data()
+    # collect_push_against_wall_recovery_data_mini_step()
     # collect_single_long_trajectory()
-    visualize_datasets()
+    # visualize_datasets()
 
-    # test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
+    test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
-    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD)
-    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE)
-    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.GP_KERNEL)
+    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD, override=True)
+    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE, override=True)
+    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.GP_KERNEL, override=True)
 
     # test_online_model()
     # for seed in range(1):
