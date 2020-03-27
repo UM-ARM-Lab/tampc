@@ -109,15 +109,19 @@ class FullRandomController(Controller):
 
 
 class PreDeterminedController(Controller):
-    def __init__(self, controls):
+    def __init__(self, controls, u_min=None, u_max=None):
         super().__init__()
         self.u = controls
         self.j = 0
+        self.u_min = u_min
+        self.u_max = u_max
 
     def command(self, obs, info=None):
         if self.j >= len(self.u):
             return np.zeros_like(self.u[self.j - 1])
         u = self.u[self.j]
+        if self.u_min is not None:
+            u = np.clip(u, self.u_min, self.u_max)
         self.j += 1
         return u
 
