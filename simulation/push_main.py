@@ -120,7 +120,7 @@ def collect_push_against_wall_recovery_data_mini_step():
         u.append([-0.3 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, -0.9 + np.random.randn() * 0.2])
     for _ in range(40):
         u.append([0.1 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.1, 0.1 + np.random.randn() * 0.3])
-    ctrl = controller.PreDeterminedController(np.array(u))
+    ctrl = controller.PreDeterminedController(np.array(u), *env.get_control_bounds())
     sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=True, stop_when_done=False)
     sim.run(seed)
 
@@ -2013,15 +2013,63 @@ def visualize_datasets():
     plt.show()
 
 
+def visualize_model_actions_at_given_state():
+    seed = 1
+    d = get_device()
+    env = get_easy_env(p.GUI, level=1)
+
+    logger.info("initial random seed %d", rand.seed(seed))
+
+    # TODO encapsulate getting loaded online model in a separate function
+    ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
+    untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, UseTransform.COORDINATE_TRANSFORM,
+                                                                            evaluate_transform=False)
+    pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)
+
+    ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
+    train_slice = slice(90, 135)
+
+    # use same preprocessor
+    ds_wall.update_preprocessor(preprocessor)
+    dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice,
+                                              allow_update=False, sample=False,
+                                              refit_strategy=online_model.RefitGPStrategy.RESET_DATA,
+                                              device=d, training_iter=150, use_independent_outputs=False)
+
+    XU, Y, info = ds_wall.training_set(original=True)
+    X, U = torch.split(XU, env.nx, dim=1)
+
+    i = 95
+    x = X[i]
+    u = U[i]
+    env.set_state(x.cpu().numpy())
+    N = 1000
+    # query over range of u and get variance in each dimension
+    u_sample = np.random.uniform(*env.get_control_bounds(), (N, env.nu))
+    u_sample[-1] = u.cpu().numpy()
+    u_dist = np.linalg.norm(u_sample - u.cpu().numpy(), axis=1)
+    next_x = dynamics_gp.predict(None, None, x.repeat(N, 1).cpu().numpy(), u_sample)
+    var = dynamics_gp.last_prediction.variance.detach().cpu().numpy()
+
+    f, axes = plt.subplots(env.nx, 1, sharex=True)
+    for j, name in enumerate(env.state_names()):
+        axes[j].scatter(u_dist, var[:, j], alpha=0.3)
+        axes[j].set_ylabel('var d{}'.format(name))
+    axes[-1].set_xlabel('eucliden dist to trajectory u')
+    plt.show()
+    input('do visualization')
+
+
 if __name__ == "__main__":
     level = 0
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
     # collect_push_against_wall_recovery_data()
-    # collect_push_against_wall_recovery_data_mini_step()
+    collect_push_against_wall_recovery_data_mini_step()
     # collect_single_long_trajectory()
     # visualize_datasets()
+    # visualize_model_actions_at_given_state()
 
-    test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
+    # test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD, override=True)
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE, override=True)
