@@ -4,7 +4,7 @@ import numpy as np
 from arm_pytorch_utilities import math_utils
 from arm_pytorch_utilities import tensor_utils
 from arm_pytorch_utilities.trajectory import dlqr
-from meta_contact import model
+from meta_contact.dynamics import model
 from meta_contact.controller.controller import Controller
 
 logger = logging.getLogger(__name__)

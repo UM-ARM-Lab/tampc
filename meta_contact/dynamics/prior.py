@@ -6,7 +6,7 @@ import torch
 from arm_pytorch_utilities import grad
 from arm_pytorch_utilities import linalg
 from arm_pytorch_utilities.gmm import GMM
-from meta_contact import model
+from meta_contact.dynamics import model
 
 logger = logging.getLogger(__name__)
 

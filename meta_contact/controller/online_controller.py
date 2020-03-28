@@ -4,7 +4,7 @@ import numpy as np
 import torch
 
 from arm_pytorch_utilities import math_utils, linalg
-from meta_contact import online_model
+from meta_contact.dynamics import online_model
 from meta_contact.controller import controller
 
 logger = logging.getLogger(__name__)

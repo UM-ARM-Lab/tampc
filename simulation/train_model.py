@@ -4,7 +4,8 @@ import matplotlib.pyplot as plt
 import sklearn.preprocessing as skpre
 from arm_pytorch_utilities import preprocess, load_data
 from arm_pytorch_utilities.model import make
-from meta_contact import model, util
+from meta_contact import util
+from meta_contact.dynamics import model
 from meta_contact.env import block_push as exp
 
 logger = logging.getLogger(__name__)

@@ -1,7 +1,6 @@
 import torch
 from arm_pytorch_utilities import linalg
-from meta_contact import model
-from meta_contact import prior
+from meta_contact.dynamics import model, prior
 from torch.distributions.multivariate_normal import MultivariateNormal
 from torch import distributions
 import logging
