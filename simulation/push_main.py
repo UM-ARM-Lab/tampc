@@ -1607,9 +1607,9 @@ class HardCodedContactControllerWrapper(controller.MPPI):
 def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM,
                                                    prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
     seed = 1
-    plot_model_eval = False
+    plot_model_eval = True
     plot_online_update = False
-    use_gp = True
+    use_gp = False
     d = get_device()
     if plot_model_eval:
         env = get_easy_env(p.DIRECT)
@@ -1710,7 +1710,10 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
 
         axis_name = ['d{}'.format(name) for name in env.state_names()]
         to_plot_y_dims = [0, 2, 4, 5]
-        f, axes = plt.subplots(len(to_plot_y_dims) + 1, 1, sharex=True)
+        num_plots = len(to_plot_y_dims) + 1  # additional reaction force magnitude
+        if not use_gp:
+            num_plots += 1  # weights for local model (marginalized likelihood of data)
+        f, axes = plt.subplots(num_plots, 1, sharex=True)
         for i, dim in enumerate(to_plot_y_dims):
             axes[i].scatter(t, Y[:, dim], label='truth', alpha=0.4)
             axes[i].plot(t, Yhat_freespace[:, dim], label='nominal', alpha=0.4, linewidth=3)
@@ -1727,9 +1730,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
             else:
                 # axes[i].plot(t, Yhat_linear[:, dim], label='linear fit', alpha=0.5)
                 m = yhat_linear_mix[:, dim].cpu().numpy()
-                w = weight_linear_mix.cpu().numpy()
                 axes[i].plot(t, m, label='mix', color='g')
-                axes[i].fill_between(t, m - w, m + w, alpha=0.2, color='g')
 
             # axes[i].plot(t, Yhat_linear_online[:, dim], label='online mix')
             if dim in [4, 5]:
@@ -1739,15 +1740,17 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
                 axes[i].set_ybound(-0.2, 1.2)
             axes[i].set_ylabel(axis_name[dim])
 
+        if not use_gp:
+            w = weight_linear_mix.cpu().numpy()
+            axes[-2].plot(t, w, color='g')
+            axes[-2].set_ylabel('local model weight')
+
         axes[0].legend()
         axes[-1].plot(t, np.linalg.norm(reaction_forces, axis=1))
         axes[-1].set_ylabel('|r|')
         axes[-1].set_ybound(0., 50)
         axes[-1].axvspan(train_slice.start, train_slice.stop, alpha=0.3)
         axes[-1].text((train_slice.start + train_slice.stop) * 0.5, 20, 'local train interval')
-        # axes[-1].plot(t, np.linalg.norm(model_errors.cpu().numpy(), axis=1))
-        # axes[-1].set_ylabel('|e|')
-        # axes[-1].set_ybound(0., .2)
 
         if plot_online_update:
             f, axes = plt.subplots(2, 1, sharex=True)
