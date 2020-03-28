@@ -326,7 +326,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
             p.stepSimulation()
         self.state = self._obs()
 
-    def verify_cost_dims(self):
+    def verify_dims(self):
         assert self.Q.shape[0] == self.nx
         assert self.R.shape[0] == self.nu
 
@@ -974,10 +974,10 @@ class PushWithForceDirectlyReactionInStateEnv(PushWithForceDirectlyEnv):
         return ['$x_b$ (m)', '$y_b$ (m)', '$\\theta$ (rads)', '$p$ (m)', '$r_x$ (N)', '$r_y$ (N)']
 
 
-class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
+class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
     """
-    Pusher in this env is abstracted and always sticks to the block; control is how much to slide along the side of the
-    block, the magnitude of force to push with, and the angle to push wrt the block
+    Pusher in this env is abstracted and always sticks to the block; control is change in position of pusher
+    in block frame, and where along the side of the block to push
     """
 
     def _setup_experiment(self):
@@ -986,7 +986,7 @@ class PushWithForceIndirectlyEnv(PushWithForceDirectlyEnv):
         p.setCollisionFilterPair(self.pusherId, self.blockId, -1, -1, 1)
 
     def _observe_contact(self, visualize=True):
-        super(PushWithForceIndirectlyEnv, self)._observe_contact()
+        super(PushPhysicallyAnyAlongEnv, self)._observe_contact()
         # get reaction force on pusher
         contactInfo = p.getContactPoints(self.pusherId, self.blockId)
         for i, contact in enumerate(contactInfo):
@@ -1065,7 +1065,7 @@ class InteractivePush(simulation.Simulation):
                  terminal_cost_multiplier=1, stop_when_done=True, visualize_rollouts=True, **kwargs):
 
         super(InteractivePush, self).__init__(save_dir=save_dir, num_frames=num_frames, config=cfg, **kwargs)
-        env.verify_cost_dims()
+        env.verify_dims()
         self.mode = env.mode
         self.stop_when_done = stop_when_done
         self.visualize_rollouts = visualize_rollouts
