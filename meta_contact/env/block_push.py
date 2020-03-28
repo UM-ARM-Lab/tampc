@@ -327,6 +327,11 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.state = self._obs()
 
     def verify_dims(self):
+        u_min, u_max = self.get_control_bounds()
+        assert u_min.shape[0] == u_max.shape[0]
+        assert u_min.shape[0] == self.nu
+        assert len(self.state_names()) == self.nx
+        assert len(self.control_names()) == self.nu
         assert self.Q.shape[0] == self.nx
         assert self.R.shape[0] == self.nu
 
@@ -694,6 +699,10 @@ class PushAgainstWallEnv(MyPybulletEnv):
     def state_names():
         return ['x robot (m)', 'y robot (m)', 'x block (m)', 'y block (m)', 'block rotation (rads)']
 
+    @staticmethod
+    def control_names():
+        return ['d$x_r$', 'd$y_r$']
+
 
 class PushAgainstWallStickyEnv(PushAgainstWallEnv):
     """
@@ -794,6 +803,10 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
     @staticmethod
     def state_names():
         return ['x block (m)', 'y block (m)', 'block rotation (rads)', 'pusher along face (m)']
+
+    @staticmethod
+    def control_names():
+        return ['d$p$', 'd push forward (m)']
 
 
 class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
@@ -899,6 +912,10 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
 
         return np.copy(self.state), -cost, done, info
 
+    @staticmethod
+    def control_names():
+        return ['d$p$', 'f push magnitude', '$\\beta$ push direction']
+
 
 REACTION_Q_COST = 0.0
 
@@ -979,6 +996,9 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
     Pusher in this env is abstracted and always sticks to the block; control is change in position of pusher
     in block frame, and where along the side of the block to push
     """
+    nu = 3
+    nx = 5
+    ny = 5
 
     def _setup_experiment(self):
         super()._setup_experiment()
@@ -1058,6 +1078,14 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         cost, done = self._observe_finished_action(old_state, action)
 
         return np.copy(self.state), -cost, done, info
+
+    @staticmethod
+    def state_names():
+        return ['$x_b$ (m)', '$y_b$ (m)', '$\\theta$ (rads)', '$r_x$ (N)', '$r_y$ (N)']
+
+    @staticmethod
+    def control_names():
+        return ['$p$', '$d_x$', '$d_y$']
 
 
 class InteractivePush(simulation.Simulation):
