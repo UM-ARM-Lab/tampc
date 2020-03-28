@@ -1607,7 +1607,7 @@ class HardCodedContactControllerWrapper(controller.MPPI):
 def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM,
                                                    prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
     seed = 1
-    plot_model_eval = True
+    plot_model_eval = False
     plot_online_update = False
     use_gp = True
     d = get_device()
@@ -2062,12 +2062,12 @@ if __name__ == "__main__":
     level = 0
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
     # collect_push_against_wall_recovery_data()
-    collect_push_against_wall_recovery_data_mini_step()
+    # collect_push_against_wall_recovery_data_mini_step()
     # collect_single_long_trajectory()
     # visualize_datasets()
     # visualize_model_actions_at_given_state()
 
-    # test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
+    test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD, override=True)
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE, override=True)

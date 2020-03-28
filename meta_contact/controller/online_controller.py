@@ -5,7 +5,7 @@ import torch
 
 from arm_pytorch_utilities import math_utils, linalg
 from meta_contact.dynamics import online_model
-from meta_contact.controller import controller
+from meta_contact.controller import controller, mode_selector
 
 logger = logging.getLogger(__name__)
 
@@ -62,13 +62,12 @@ class OnlineMPC(OnlineController):
     Online controller with a pytorch based MPC method (CEM, MPPI)
     """
 
-    def __init__(self, *args, constrain_state=noop_constrain, always_use_local_model=False, keep_local_model_for_turn=3,
+    def __init__(self, *args, constrain_state=noop_constrain,
+                 mode_select=mode_selector.ReactionForceHeuristicSelector(),
                  **kwargs):
         self.constrain_state = constrain_state
         self.mpc = None
-        self.always_use_local_model = always_use_local_model
-        self.keep_local_model_for_turn = keep_local_model_for_turn
-        self.use_local_model_for_turn = 0
+        self.mode_select = mode_select
         super().__init__(*args, **kwargs)
 
     def _apply_dynamics(self, state, u, t=0):
@@ -76,11 +75,16 @@ class OnlineMPC(OnlineController):
             state = state.view(1, -1)
             u = u.view(1, -1)
 
-        # TODO the MPC method doesn't give dynamics px and pu (different from our prevx and prevu)
-        if self.use_local_model_for_turn > 0:
-            next_state = self.dynamics.predict(None, None, state, u)
-        else:
-            next_state = self.dynamics.prior.dyn_net.predict(torch.cat((state, u), dim=1))
+        dynamics_mode = self.mode_select.sample_mode(state, u)
+        next_state = torch.zeros_like(state)
+        # TODO we should generalize to more than 2 modes
+        nominal_mode = dynamics_mode == 0
+        local_mode = dynamics_mode == 1
+        if torch.any(nominal_mode):
+            next_state[nominal_mode] = self.dynamics.prior.dyn_net.predict(
+                torch.cat((state[nominal_mode], u[nominal_mode]), dim=1))
+        if torch.any(local_mode):
+            next_state[local_mode] = self.dynamics.predict(None, None, state[local_mode], u[local_mode])
 
         next_state = self._adjust_next_state(next_state, u, t)
         next_state = self.constrain_state(next_state)
@@ -88,18 +92,7 @@ class OnlineMPC(OnlineController):
         return next_state
 
     def _compute_action(self, x):
-        if self.always_use_local_model:
-            self.use_local_model_for_turn = 2  # 2 so that after subtraction afterwards, still > 0
-        else:
-            # TODO select local model in a smarter way
-            if self.context[0] is not None:
-                r = np.linalg.norm(self.context[0]['reaction'])
-                if r > 100:
-                    self.use_local_model_for_turn = self.keep_local_model_for_turn
-
         u = self.mpc.command(x)
-        if self.use_local_model_for_turn > 0:
-            self.use_local_model_for_turn -= 1
         return u
 
 
@@ -108,6 +101,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI):
         return OnlineMPC._command(self, obs)
 
     def _mpc_opts(self):
+        # TODO move variance usage in biasing control sampling rather than as a loss function
         opts = super()._mpc_opts()
         # use variance cost if possible (when not sampling)
         if isinstance(self.dynamics, online_model.OnlineGPMixing) and self.dynamics.sample_dynamics is False:
