@@ -18,6 +18,16 @@ class ModeSelector(abc.ABC):
         return torch.zeros((state.shape[0],), device=state.device, dtype=torch.int)
 
 
+class AlwaysSelectNominal(ModeSelector):
+    def sample_mode(self, state, action, *args):
+        return torch.zeros((state.shape[0],), device=state.device, dtype=torch.int)
+
+
+class AlwaysSelectLocal(ModeSelector):
+    def sample_mode(self, state, action, *args):
+        return torch.ones((state.shape[0],), device=state.device, dtype=torch.int)
+
+
 class ReactionForceHeuristicSelector(ModeSelector):
     def sample_mode(self, state, action, *args):
         # use local model if reaction force is beyond a certain threshold
@@ -25,3 +35,7 @@ class ReactionForceHeuristicSelector(ModeSelector):
         r = torch.norm(state[:, 4:6], dim=1)
         mode = r > 16
         return mode.to(dtype=torch.int)
+
+# TODO implement likelihood selector
+
+# TODO evaluate selector on some validation data with hindsight labelling (nominal model error > threshold)

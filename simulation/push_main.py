@@ -19,6 +19,7 @@ from meta_contact import cfg, invariant
 from meta_contact.dynamics import online_model, model, prior
 from meta_contact.controller import controller
 from meta_contact.controller import online_controller
+from meta_contact.controller import mode_selector
 from meta_contact.env import block_push
 
 logger = logging.getLogger(__name__)
@@ -247,7 +248,7 @@ def get_controller_options(env):
         'compare_to_goal': env.state_difference,
         'device': d,
         'terminal_cost_multiplier': 50,
-        'adjust_model_pred_with_prev_error': True,
+        'adjust_model_pred_with_prev_error': False,
         'use_orientation_terminal_cost': False,
     }
     mpc_opts = {
@@ -273,7 +274,6 @@ def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.G
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     d = common_wrapper_opts['device']
     if online_adapt is not OnlineAdapt.NONE:
-        common_wrapper_opts['always_use_local_model'] = True
         if online_adapt is OnlineAdapt.LINEARIZE_LIKELIHOOD:
             dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds, env.state_difference,
                                                           local_mix_weight_scale=50.0, xu_characteristic_length=10,
@@ -1806,6 +1806,9 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
                         translation=(0, 0),
                         override=False):
     """Fixed set of benchmark tasks to do control over, with the total reward for each task collected and reported"""
+    # for evaluations in freespace we always use local model
+    if isinstance(ctrl, online_controller.OnlineMPC):
+        ctrl.mode_select = mode_selector.AlwaysSelectLocal()
     num_frames = 150
     env.set_camera_position(translation)
     env.draw_user_text('center {}'.format(translation), 2)
@@ -2065,14 +2068,15 @@ if __name__ == "__main__":
     level = 0
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
     # collect_push_against_wall_recovery_data()
-    # collect_push_against_wall_recovery_data_mini_step()
+    collect_push_against_wall_recovery_data_mini_step()
     # collect_single_long_trajectory()
     # visualize_datasets()
     # visualize_model_actions_at_given_state()
 
-    test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
+    # test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
-    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD, override=True)
+    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD,
+    #               override=True)
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE, override=True)
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.GP_KERNEL, override=True)
 
