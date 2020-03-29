@@ -161,7 +161,7 @@ def plot_and_analyze_body_frame_invariance(yaws, z_os):
 
 def test_env_control():
     init_block_pos = [-0.5, 0.2]
-    init_block_yaw = -0.3
+    init_block_yaw = -0.0
     face = block_push.BlockFace.LEFT
     along_face = 0
     # env = block_push.PushWithForceDirectlyReactionInStateEnv(mode=p.GUI, init_pusher=along_face, log_video=True,
@@ -172,8 +172,9 @@ def test_env_control():
     env.sim_step_wait = 0.01
     u = []
 
-    for _ in range(10):
-        u.append((0, 1, 0))
+    u.append((0, 1, 0))
+    u.append((1, 1, 0))
+    u.append((-1, 1, 0))
 
     # for _ in range(80):
     #     u.append((0., 1, 0.))

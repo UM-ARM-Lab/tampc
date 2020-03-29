@@ -25,6 +25,7 @@ class BlockFace:
     LEFT = 2
     BOT = 3
 
+
 class ContactInfo:
     """Semantics for indices of a contact info from getContactPoints"""
     POS_A = 5
@@ -348,7 +349,7 @@ def handle_data_format_for_state_diff(state_diff):
         if len(other_state.shape) == 1:
             other_state = other_state.reshape(1, -1)
         diff = state_diff(state, other_state)
-        if torch.tensor(state):
+        if torch.is_tensor(state):
             diff = torch.cat(diff, dim=1)
         else:
             diff = np.column_stack(diff)
@@ -431,6 +432,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         # info per sim step
         self._contact_info = {}
         self._largest_contact = {}
+        self._reaction_force = np.zeros(2)
 
         # quadratic cost
         self.Q = np.diag([0, 0, 1, 1, 0])
@@ -456,6 +458,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
     def _clear_state_between_control_steps(self):
         self._contact_info = {}
         self._largest_contact = {}
+        self._reaction_force = np.zeros(2)
 
     def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
         """Change task configuration; assumes only goal position is specified #TOOD relax assumption"""
@@ -607,7 +610,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
     def _observe_reaction_force(self):
         """Return representative reaction force for simulation steps up to current one since last control step"""
-        return np.zeros(2)
+        return self._reaction_force[:2]
 
     def _observe_additional_info(self, info, visualize=True):
         pass
@@ -638,6 +641,18 @@ class PushAgainstWallEnv(MyPybulletEnv):
             if key not in self._contact_info:
                 self._contact_info[key] = []
             self._contact_info[key].append(value)
+
+    def _observe_raw_reaction_force(self, info, reaction_force, visualize=True):
+        reaction_force[2] = 0
+        # save reaction force
+        name = 'r'
+        info[name] = reaction_force
+        reaction_force_size = np.linalg.norm(reaction_force)
+        if reaction_force_size > self._largest_contact.get(name, 0):
+            self._largest_contact[name] = reaction_force_size
+            self._reaction_force = reaction_force
+            if visualize and self._debug_visualizations[DebugVisualization.REACTION_ON_PUSHER]:
+                self._draw_reaction_force(reaction_force, name, (1, 0, 1))
 
     def _aggregate_info(self):
         info = {key: np.stack(value, axis=0) for key, value in self._contact_info.items() if len(value)}
@@ -852,12 +867,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         # proportional to how many times we'll need to repeat the action
         # tune this in test_env_construction.run_direct_push such that we get 0 velocity at the end
         self.repeat_step_times = repeat_step_times
-        self._reaction_force = np.zeros(2)
         super().__init__(init_pusher=init_pusher, face=BlockFace.LEFT, **kwargs)
-
-    def _clear_state_between_control_steps(self):
-        super(PushWithForceDirectlyEnv, self)._clear_state_between_control_steps()
-        self._reaction_force = np.zeros(2)
 
     def _set_init_pusher(self, init_pusher):
         self.along = init_pusher
@@ -909,16 +919,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
                         if visualize and self._debug_visualizations[DebugVisualization.WALL_ON_BLOCK]:
                             self._dd.draw_contact_point(name, contact)
 
-        reaction_force[2] = 0
-        # save reaction force
-        name = 'r'
-        info[name] = reaction_force
-        reaction_force_size = np.linalg.norm(reaction_force)
-        if reaction_force_size > self._largest_contact.get(name, 0):
-            self._largest_contact[name] = reaction_force_size
-            self._reaction_force = reaction_force
-            if visualize and self._debug_visualizations[DebugVisualization.REACTION_ON_PUSHER]:
-                self._draw_reaction_force(reaction_force, name, (1, 0, 1))
+        self._observe_raw_reaction_force(info, reaction_force, info)
 
     def _keep_pusher_adjacent(self):
         state = self._obs()
@@ -1082,15 +1083,7 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         state = np.concatenate((self._observe_block(), self._observe_reaction_force()))
         return state
 
-    def _observe_reaction_force(self):
-        # TODO implement
-        return np.zeros(2)
-
     def _observe_additional_info(self, info, visualize=True):
-        super(PushPhysicallyAnyAlongEnv, self)._observe_info()
-        # TODO implement
-        # get reaction force on pusher
-
         reaction_force = [0, 0, 0]
 
         contactInfo = p.getContactPoints(self.pusherId, self.blockId)
@@ -1099,8 +1092,7 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         for i, contact in enumerate(contactInfo):
             f_contact = _get_total_contact_force(contact)
             reaction_force = [sum(i) for i in zip(reaction_force, f_contact)]
-            r_mag = np.linalg.norm(f_contact)
-            info['pb'][i] = r_mag
+            info['pb'][i] = contact[ContactInfo.NORMAL_MAG]
 
             name = 'r{}'.format(i)
             if abs(contact[ContactInfo.NORMAL_MAG]) > abs(self._largest_contact.get(name, 0)):
@@ -1108,17 +1100,7 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
                 if visualize and self._debug_visualizations[DebugVisualization.BLOCK_ON_PUSHER]:
                     self._dd.draw_contact_point(name, contact, flip=False)
 
-        reaction_force[2] = 0
-        # save reaction force
-        name = 'r'
-        info[name] = reaction_force
-        reaction_force_size = np.linalg.norm(reaction_force)
-        if reaction_force_size > self._largest_contact.get(name, 0):
-            self._largest_contact[name] = reaction_force_size
-            self._reaction_force = reaction_force
-            if visualize and self._debug_visualizations[DebugVisualization.REACTION_ON_PUSHER]:
-                self._draw_reaction_force(reaction_force, name, (1, 0, 1))
-
+        self._observe_raw_reaction_force(info, reaction_force, visualize)
 
     def step(self, action):
         action = np.clip(action, *self.get_control_bounds())
