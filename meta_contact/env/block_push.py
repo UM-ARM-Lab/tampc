@@ -25,6 +25,16 @@ class BlockFace:
     LEFT = 2
     BOT = 3
 
+class ContactInfo:
+    """Semantics for indices of a contact info from getContactPoints"""
+    POS_A = 5
+    NORMAL_DIR_B = 7
+    NORMAL_MAG = 9
+    LATERAL1_MAG = 10
+    LATERAL1_DIR = 11
+    LATERAL2_MAG = 12
+    LATERAL2_DIR = 13
+
 
 # TODO This is specific to this pusher and block; how to generalize this?
 _MAX_ALONG = 0.075 + 0.1  # half length of block
@@ -125,7 +135,7 @@ class DebugDrawer:
                                                    color, lineWidth=size, replaceItemUniqueId=uid)
 
     def draw_contact_point(self, name, contact, flip=True):
-        start = contact[5]
+        start = contact[ContactInfo.POS_A]
         f_all = _get_total_contact_force(contact, flip)
         # line_unique_ids[2] = _draw_debug_2d_line(line_unique_ids[2], start, dv, size=abs(force), scale=0.1,
         #                                          color=(1, 0, 0))
@@ -138,7 +148,7 @@ class DebugDrawer:
         return f_size
 
     def draw_contact_friction(self, name, contact, flip=True):
-        start = list(contact[5])
+        start = list(contact[ContactInfo.POS_A])
         start[2] = _BLOCK_HEIGHT
         # friction along y
         scale = 0.1
@@ -180,17 +190,18 @@ class DebugDrawer:
 
 def _get_lateral_friction_forces(contact, flip=True):
     force_sign = -1 if flip else 1
-    fy = force_sign * contact[10]
-    fyd = [fy * v for v in contact[11]]
-    fx = force_sign * contact[12]
-    fxd = [fx * v for v in contact[13]]
+    fy = force_sign * contact[ContactInfo.LATERAL1_MAG]
+    fyd = [fy * v for v in contact[ContactInfo.LATERAL1_DIR]]
+    fx = force_sign * contact[ContactInfo.LATERAL2_MAG]
+    fxd = [fx * v for v in contact[ContactInfo.LATERAL2_DIR]]
     return fyd, fxd
 
 
 def _get_total_contact_force(contact, flip=True):
     force_sign = -1 if flip else 1
-    force = force_sign * contact[9]
-    dv = [force * v for v in contact[7]]
+    force = force_sign * contact[ContactInfo.NORMAL_MAG]
+    # TODO confirm this is correct
+    dv = [force * v for v in contact[ContactInfo.NORMAL_DIR_B]]
     fyd, fxd = _get_lateral_friction_forces(contact, flip)
     f_all = [sum(i) for i in zip(dv, fyd, fxd)]
     return f_all
@@ -326,6 +337,7 @@ class DebugVisualization:
     WALL_ON_BLOCK = 1
     REACTION_ON_PUSHER = 2
     ACTION = 3
+    BLOCK_ON_PUSHER = 4
 
 
 def handle_data_format_for_state_diff(state_diff):
@@ -411,6 +423,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
             DebugVisualization.REACTION_ON_PUSHER: True,
             DebugVisualization.WALL_ON_BLOCK: False,
             DebugVisualization.ACTION: True,
+            DebugVisualization.BLOCK_ON_PUSHER: False,
         }
         if debug_visualizations is not None:
             self._debug_visualizations.update(debug_visualizations)
@@ -874,7 +887,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         for i, contact in enumerate(contactInfo):
             if visualize and self._debug_visualizations[DebugVisualization.FRICTION]:
                 self._dd.draw_contact_friction('bp{}'.format(i), contact)
-            info['bp'][i] = (contact[10], contact[12])
+            info['bp'][i] = (contact[ContactInfo.LATERAL1_MAG], contact[ContactInfo.LATERAL2_MAG])
             fy, fx = _get_lateral_friction_forces(contact)
             reaction_force = [sum(i) for i in zip(reaction_force, fy, fx)]
 
@@ -885,14 +898,14 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
                 contactInfo = p.getContactPoints(self.blockId, wallId)
                 for i, contact in enumerate(contactInfo):
                     name = 'w{}'.format(i)
-                    info['bw'][i] = contact[9]
+                    info['bw'][i] = contact[ContactInfo.NORMAL_MAG]
 
                     f_contact = _get_total_contact_force(contact)
                     reaction_force = [sum(i) for i in zip(reaction_force, f_contact)]
 
                     # only visualize the largest contact
-                    if abs(contact[9]) > abs(self._largest_contact.get(name, 0)):
-                        self._largest_contact[name] = contact[9]
+                    if abs(contact[ContactInfo.NORMAL_MAG]) > abs(self._largest_contact.get(name, 0)):
+                        self._largest_contact[name] = contact[ContactInfo.NORMAL_MAG]
                         if visualize and self._debug_visualizations[DebugVisualization.WALL_ON_BLOCK]:
                             self._dd.draw_contact_point(name, contact)
 
@@ -1078,13 +1091,34 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         # TODO implement
         # get reaction force on pusher
 
+        reaction_force = [0, 0, 0]
+
         contactInfo = p.getContactPoints(self.pusherId, self.blockId)
+        # should be at most 2 contacts between block and pusher
+        info['pb'] = np.zeros(2)
         for i, contact in enumerate(contactInfo):
+            f_contact = _get_total_contact_force(contact)
+            reaction_force = [sum(i) for i in zip(reaction_force, f_contact)]
+            r_mag = np.linalg.norm(f_contact)
+            info['pb'][i] = r_mag
+
             name = 'r{}'.format(i)
-            if abs(contact[9]) > abs(self._largest_contact.get(name, 0)):
-                self._largest_contact[name] = contact[9]
-                if visualize and self._debug_visualizations[DebugVisualization.REACTION_ON_PUSHER]:
+            if abs(contact[ContactInfo.NORMAL_MAG]) > abs(self._largest_contact.get(name, 0)):
+                self._largest_contact[name] = contact[ContactInfo.NORMAL_MAG]
+                if visualize and self._debug_visualizations[DebugVisualization.BLOCK_ON_PUSHER]:
                     self._dd.draw_contact_point(name, contact, flip=False)
+
+        reaction_force[2] = 0
+        # save reaction force
+        name = 'r'
+        info[name] = reaction_force
+        reaction_force_size = np.linalg.norm(reaction_force)
+        if reaction_force_size > self._largest_contact.get(name, 0):
+            self._largest_contact[name] = reaction_force_size
+            self._reaction_force = reaction_force
+            if visualize and self._debug_visualizations[DebugVisualization.REACTION_ON_PUSHER]:
+                self._draw_reaction_force(reaction_force, name, (1, 0, 1))
+
 
     def step(self, action):
         action = np.clip(action, *self.get_control_bounds())
