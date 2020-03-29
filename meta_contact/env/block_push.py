@@ -415,10 +415,9 @@ class PushAgainstWallEnv(MyPybulletEnv):
         if debug_visualizations is not None:
             self._debug_visualizations.update(debug_visualizations)
 
-        # info
+        # info per sim step
         self._contact_info = {}
         self._largest_contact = {}
-        self._reaction_force = np.zeros(2)
 
         # quadratic cost
         self.Q = np.diag([0, 0, 1, 1, 0])
@@ -441,6 +440,10 @@ class PushAgainstWallEnv(MyPybulletEnv):
         assert self.R.shape[0] == self.nu
 
     # --- initialization and task configuration
+    def _clear_state_between_control_steps(self):
+        self._contact_info = {}
+        self._largest_contact = {}
+
     def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
         """Change task configuration; assumes only goal position is specified #TOOD relax assumption"""
         if goal is not None:
@@ -589,7 +592,10 @@ class PushAgainstWallEnv(MyPybulletEnv):
         pusherPose = p.getBasePositionAndOrientation(self.pusherId)
         return pusherPose[0]
 
-    @abc.abstractmethod
+    def _observe_reaction_force(self):
+        """Return representative reaction force for simulation steps up to current one since last control step"""
+        return np.zeros(2)
+
     def _observe_additional_info(self, info, visualize=True):
         pass
 
@@ -622,10 +628,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
     def _aggregate_info(self):
         info = {key: np.stack(value, axis=0) for key, value in self._contact_info.items() if len(value)}
-        info['reaction'] = self._reaction_force[:2]
+        info['reaction'] = self._observe_reaction_force()
         info['wall_contact'] = info['wc'].max()
-        self._reaction_force = np.zeros(2)
-        self._contact_info = {}
         return info
 
     # --- control helpers (rarely overridden)
@@ -638,11 +642,10 @@ class PushAgainstWallEnv(MyPybulletEnv):
             cost += action @ self.R @ action
         return cost, done
 
-    def _observe_finished_action(self, old_state, action):
-        # get the net contact force between robot and block
+    def _finish_action(self, old_state, action):
+        """Evaluate action after finishing it; step should not modify state after calling this"""
         self.state = np.array(self._obs())
-        # clear contact information so we can reuse it for next step
-        self._largest_contact = {}
+
         # track trajectory
         prev_block = self.get_block_pose(old_state)
         new_block = self.get_block_pose(self.state)
@@ -654,7 +657,13 @@ class PushAgainstWallEnv(MyPybulletEnv):
         cost, done = self.evaluate_cost(self.state, action)
         self._dd.draw_text('cost', '{0:.3f}'.format(cost), 0)
 
-        return cost, done
+        # summarize information per sim step into information for entire control step
+        info = self._aggregate_info()
+
+        # prepare for next control step
+        self._clear_state_between_control_steps()
+
+        return cost, done, info
 
     # --- control (commonly overridden)
     def _move_pusher(self, end):
@@ -679,9 +688,9 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
         # execute the action
         self._move_and_wait(eePos)
-        cost, done = self._observe_finished_action(old_state, action)
+        cost, done, info = self._finish_action(old_state, action)
 
-        return np.copy(self.state), -cost, done, self._aggregate_info()
+        return np.copy(self.state), -cost, done, info
 
     def reset(self):
         # reset robot to nominal pose
@@ -693,8 +702,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
             p.removeConstraint(self.pusherConstraint)
         self.pusherConstraint = p.createConstraint(self.pusherId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
                                                    self.initPusherPos)
+        self._clear_state_between_control_steps()
         # start at rest
-        self._reaction_force = np.zeros(2)
         for _ in range(1000):
             p.stepSimulation()
         self.state = self._obs()
@@ -792,9 +801,9 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         # execute the action
         self._move_and_wait(eePos)
 
-        cost, done = self._observe_finished_action(old_state, action)
+        cost, done, info = self._finish_action(old_state, action)
 
-        return np.copy(self.state), -cost, done, self._aggregate_info()
+        return np.copy(self.state), -cost, done, info
 
 
 class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
@@ -830,7 +839,12 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         # proportional to how many times we'll need to repeat the action
         # tune this in test_env_construction.run_direct_push such that we get 0 velocity at the end
         self.repeat_step_times = repeat_step_times
+        self._reaction_force = np.zeros(2)
         super().__init__(init_pusher=init_pusher, face=BlockFace.LEFT, **kwargs)
+
+    def _clear_state_between_control_steps(self):
+        super(PushWithForceDirectlyEnv, self)._clear_state_between_control_steps()
+        self._reaction_force = np.zeros(2)
 
     def _set_init_pusher(self, init_pusher):
         self.along = init_pusher
@@ -942,8 +956,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
             if self.mode is p.GUI and self.sim_step_wait:
                 time.sleep(self.sim_step_wait)
 
-        cost, done = self._observe_finished_action(old_state, action)
-        info = self._aggregate_info()
+        cost, done, info = self._finish_action(old_state, action)
 
         return np.copy(self.state), -cost, done, info
 
@@ -993,8 +1006,7 @@ class PushWithForceDirectlyReactionInStateEnv(PushWithForceDirectlyEnv):
 
     def _obs(self):
         state = super()._obs()
-        r = self._reaction_force[:2]
-        state = np.concatenate((state, r))
+        state = np.concatenate((state, self._observe_reaction_force()))
         return state
 
 
@@ -1054,15 +1066,18 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         self._dd.draw_2d_line('u', start, pointer, (1, 0, 0), scale=1)
 
     def _obs(self):
-        state = self._observe_block()
-        r = self._reaction_force[:2]
-        state = np.concatenate((state, r))
+        state = np.concatenate((self._observe_block(), self._observe_reaction_force()))
         return state
 
-    def _observe_info(self, visualize=True):
+    def _observe_reaction_force(self):
+        # TODO implement
+        return np.zeros(2)
+
+    def _observe_additional_info(self, info, visualize=True):
         super(PushPhysicallyAnyAlongEnv, self)._observe_info()
         # TODO implement
         # get reaction force on pusher
+
         contactInfo = p.getContactPoints(self.pusherId, self.blockId)
         for i, contact in enumerate(contactInfo):
             name = 'r{}'.format(i)
@@ -1114,8 +1129,7 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         #         if self.mode is p.GUI and self.sim_step_wait:
         #             time.sleep(self.sim_step_wait)
 
-        info = self._aggregate_info()
-        cost, done = self._observe_finished_action(old_state, action)
+        cost, done, info = self._finish_action(old_state, action)
 
         return np.copy(self.state), -cost, done, info
 
