@@ -331,6 +331,44 @@ class PushAgainstWallEnv(MyPybulletEnv):
     nx = 5
     ny = 3
 
+    @staticmethod
+    def state_names():
+        return ['x robot (m)', 'y robot (m)', 'x block (m)', 'y block (m)', 'block rotation (rads)']
+
+    @staticmethod
+    def get_block_pose(state):
+        return state[2:5]
+
+    @staticmethod
+    def get_pusher_pos(state):
+        return state[0:2]
+
+    @staticmethod
+    def state_difference(state, other_state):
+        """Get state - other_state in state space"""
+        if len(state.shape) == 1:
+            state = state.reshape(1, -1)
+        if len(other_state.shape) == 1:
+            other_state = other_state.reshape(1, -1)
+        dyaw = math_utils.angular_diff_batch(state[:, 4], other_state[:, 4])
+        dpos = state[:, :4] - other_state[:, :4]
+        if torch.tensor(state):
+            diff = torch.cat((dpos, dyaw.view(-1, 1)), dim=1)
+        else:
+            diff = np.column_stack((dpos, dyaw.reshape(-1, 1)))
+        return diff
+
+    @staticmethod
+    def control_names():
+        return ['d$x_r$', 'd$y_r$']
+
+    @staticmethod
+    def get_control_bounds():
+        # depends on the environment; these are the limits for StickyEnv
+        u_min = np.array([-0.03, 0.03])
+        u_max = np.array([0.03, 0.03])
+        return u_min, u_max
+
     def __init__(self, goal=(1.0, 0.), init_pusher=(-0.25, 0), init_block=(0., 0.), init_yaw=0.,
                  environment_level=0, sim_step_wait=None, debug_visualizations=None, **kwargs):
         """
@@ -390,52 +428,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         assert self.Q.shape[0] == self.nx
         assert self.R.shape[0] == self.nu
 
-    @staticmethod
-    def get_control_bounds():
-        # depends on the environment; these are the limits for StickyEnv
-        u_min = np.array([-0.03, 0.03])
-        u_max = np.array([0.03, 0.03])
-        return u_min, u_max
-
-    def visualize_rollouts(self, states):
-        """In GUI mode, show how the sequence of states will look like"""
-        if states is None:
-            return
-        # assume states is iterable, so could be a bunch of row vectors
-        T = len(states)
-        for t in range(T):
-            pose = self.get_block_pose(states[t])
-            c = (t + 1) / (T + 1)
-            self._dd.draw_2d_pose('rx{}'.format(t), pose, (0, c, c))
-
-    def visualize_prediction_error(self, predicted_state):
-        """In GUI mode, show the difference between the predicted state and the current actual state"""
-        pred_pose = self.get_block_pose(predicted_state)
-        c = (0.5, 0, 0.5)
-        self._dd.draw_2d_pose('ep', pred_pose, c)
-        pose = self.get_block_pose(self.state)
-        # use size to represent error in rotation
-        angle_diff = abs(math_utils.angular_diff(pred_pose[2], pose[2]))
-        pose[2] = _BLOCK_HEIGHT
-        # draw line from current pose to predicted pose
-        self._dd.draw_2d_line('el', pose, (pred_pose - pose)[:2], c, scale=20, size=angle_diff * 50)
-
-    def set_state(self, state):
-        assert state.shape[0] == self.nx
-        prev_block_pose = p.getBasePositionAndOrientation(self.blockId)
-        zb = prev_block_pose[0][2]
-
-        block_pose = self.get_block_pose(state)
-        # keep previous height rather than reset since we don't know what's the height at ground level
-        p.resetBasePositionAndOrientation(self.blockId, (block_pose[0], block_pose[1], zb),
-                                          p.getQuaternionFromEuler([0, 0, block_pose[2]]))
-
-        pusher_pos = self.get_pusher_pos(state)
-        p.resetBasePositionAndOrientation(self.pusherId, (pusher_pos[0], pusher_pos[1], _PUSHER_MID),
-                                          p.getQuaternionFromEuler([0, 0, 0]))
-        self.state = state
-        self._draw_state()
-
+    # --- initialization and task configuration
     def set_task_config(self, goal=None, init_pusher=None, init_block=None, init_yaw=None):
         """Change task configuration; assumes only goal position is specified #TOOD relax assumption"""
         if goal is not None:
@@ -503,6 +496,30 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.pusherConstraint = p.createConstraint(self.pusherId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
                                                    self.initPusherPos)
 
+    # --- visualization (rarely overriden)
+    def visualize_rollouts(self, states):
+        """In GUI mode, show how the sequence of states will look like"""
+        if states is None:
+            return
+        # assume states is iterable, so could be a bunch of row vectors
+        T = len(states)
+        for t in range(T):
+            pose = self.get_block_pose(states[t])
+            c = (t + 1) / (T + 1)
+            self._dd.draw_2d_pose('rx{}'.format(t), pose, (0, c, c))
+
+    def visualize_prediction_error(self, predicted_state):
+        """In GUI mode, show the difference between the predicted state and the current actual state"""
+        pred_pose = self.get_block_pose(predicted_state)
+        c = (0.5, 0, 0.5)
+        self._dd.draw_2d_pose('ep', pred_pose, c)
+        pose = self.get_block_pose(self.state)
+        # use size to represent error in rotation
+        angle_diff = abs(math_utils.angular_diff(pred_pose[2], pose[2]))
+        pose[2] = _BLOCK_HEIGHT
+        # draw line from current pose to predicted pose
+        self._dd.draw_2d_line('el', pose, (pred_pose - pose)[:2], c, scale=20, size=angle_diff * 50)
+
     def set_camera_position(self, camera_pos):
         self._dd._camera_pos = camera_pos
         p.resetDebugVisualizerCamera(cameraDistance=0.5, cameraYaw=0, cameraPitch=-85,
@@ -512,7 +529,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self._dd.clear_transitions()
 
     def _draw_goal(self):
-        self._dd.draw_2d_pose('goal', self._get_goal_block_pose())
+        self._dd.draw_2d_pose('goal', self.get_block_pose(self.goal))
 
     def _draw_state(self):
         self._dd.draw_2d_pose('state', self.get_block_pose(self.state))
@@ -521,19 +538,33 @@ class PushAgainstWallEnv(MyPybulletEnv):
         start = self._observe_pusher()
         self._dd.draw_2d_line(name, start, r, size=np.linalg.norm(r), scale=0.03, color=color)
 
-    def _get_goal_block_pose(self):
-        return self.goal[2:5]
+    def draw_user_text(self, text, location_index=1, left_offset=1):
+        if location_index is 0:
+            raise RuntimeError("Can't use same location index (0) as cost")
+        self._dd.draw_text('user{}'.format(location_index), text, location_index, left_offset)
 
-    @staticmethod
-    def get_block_pose(state):
-        return state[2:5]
+    # --- set current state
+    def set_state(self, state):
+        assert state.shape[0] == self.nx
+        prev_block_pose = p.getBasePositionAndOrientation(self.blockId)
+        zb = prev_block_pose[0][2]
 
-    @staticmethod
-    def get_pusher_pos(state):
-        return state[0:2]
+        block_pose = self.get_block_pose(state)
+        # keep previous height rather than reset since we don't know what's the height at ground level
+        p.resetBasePositionAndOrientation(self.blockId, (block_pose[0], block_pose[1], zb),
+                                          p.getQuaternionFromEuler([0, 0, block_pose[2]]))
 
-    def _move_pusher(self, end):
-        p.changeConstraint(self.pusherConstraint, end, maxForce=self.max_pusher_force)
+        pusher_pos = self.get_pusher_pos(state)
+        p.resetBasePositionAndOrientation(self.pusherId, (pusher_pos[0], pusher_pos[1], _PUSHER_MID),
+                                          p.getQuaternionFromEuler([0, 0, 0]))
+        self.state = state
+        self._draw_state()
+
+    # --- observing state from simulation
+    def _obs(self):
+        """Observe current state from simulator"""
+        x, y, z = self._observe_pusher()
+        return np.array((x, y) + self._observe_block())
 
     def _observe_block(self):
         blockPose = p.getBasePositionAndOrientation(self.blockId)
@@ -610,53 +641,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self._contact_info = {}
         return info
 
-    STATIC_VELOCITY_THRESHOLD = 5e-5
-    REACH_COMMAND_THRESHOLD = 1e-4
-
-    def _static_environment(self):
-        v, va = p.getBaseVelocity(self.blockId)
-        if (np.linalg.norm(v) > self.STATIC_VELOCITY_THRESHOLD) or (
-                np.linalg.norm(va) > self.STATIC_VELOCITY_THRESHOLD):
-            return False
-        v, va = p.getBaseVelocity(self.pusherId)
-        if (np.linalg.norm(v) > self.STATIC_VELOCITY_THRESHOLD) or (
-                np.linalg.norm(va) > self.STATIC_VELOCITY_THRESHOLD):
-            return False
-        return True
-
-    def _reached_command(self, eePos):
-        pos = self._observe_pusher()
-        return (np.linalg.norm(np.subtract(pos, eePos)[:2])) < self.REACH_COMMAND_THRESHOLD
-
-    def _obs(self):
-        x, y, z = self._observe_pusher()
-        return np.array((x, y) + self._observe_block())
-
-    def _move_and_wait(self, eePos, steps_to_wait=50):
-        # execute the action
-        self._move_pusher(eePos)
-        p.stepSimulation()
-        for _ in range(steps_to_wait):
-            self._observe_contact()
-            p.stepSimulation()
-            if self.mode is p.GUI and self.sim_step_wait:
-                time.sleep(self.sim_step_wait)
-
-    @staticmethod
-    def state_difference(state, other_state):
-        """Get state - other_state in state space"""
-        if len(state.shape) == 1:
-            state = state.reshape(1, -1)
-        if len(other_state.shape) == 1:
-            other_state = other_state.reshape(1, -1)
-        dyaw = math_utils.angular_diff_batch(state[:, 4], other_state[:, 4])
-        dpos = state[:, :4] - other_state[:, :4]
-        if torch.tensor(state):
-            diff = torch.cat((dpos, dyaw.view(-1, 1)), dim=1)
-        else:
-            diff = np.column_stack((dpos, dyaw.reshape(-1, 1)))
-        return diff
-
+    # --- control helpers (rarely overridden)
     def evaluate_cost(self, state, action=None):
         diff = self.state_difference(state, self.goal)
         diff = diff.reshape(-1)
@@ -665,19 +650,6 @@ class PushAgainstWallEnv(MyPybulletEnv):
         if action is not None:
             cost += action @ self.R @ action
         return cost, done
-
-    def step(self, action):
-        old_state = self._obs()
-        d = action
-        # set end effector pose
-        z = self.initPusherPos[2]
-        eePos = [old_state[0] + d[0], old_state[1] + d[1], z]
-
-        # execute the action
-        self._move_and_wait(eePos)
-        cost, done = self._observe_finished_action(old_state, action)
-
-        return np.copy(self.state), -cost, done, self._aggregate_contact_info()
 
     def _observe_finished_action(self, old_state, action):
         # get the net contact force between robot and block
@@ -697,10 +669,32 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
         return cost, done
 
-    def draw_user_text(self, text, location_index=1, left_offset=1):
-        if location_index is 0:
-            raise RuntimeError("Can't use same location index (0) as cost")
-        self._dd.draw_text('user{}'.format(location_index), text, location_index, left_offset)
+    # --- control (commonly overridden)
+    def _move_pusher(self, end):
+        p.changeConstraint(self.pusherConstraint, end, maxForce=self.max_pusher_force)
+
+    def _move_and_wait(self, eePos, steps_to_wait=50):
+        # execute the action
+        self._move_pusher(eePos)
+        p.stepSimulation()
+        for _ in range(steps_to_wait):
+            self._observe_contact()
+            p.stepSimulation()
+            if self.mode is p.GUI and self.sim_step_wait:
+                time.sleep(self.sim_step_wait)
+
+    def step(self, action):
+        old_state = self._obs()
+        d = action
+        # set end effector pose
+        z = self.initPusherPos[2]
+        eePos = [old_state[0] + d[0], old_state[1] + d[1], z]
+
+        # execute the action
+        self._move_and_wait(eePos)
+        cost, done = self._observe_finished_action(old_state, action)
+
+        return np.copy(self.state), -cost, done, self._aggregate_contact_info()
 
     def reset(self):
         # reset robot to nominal pose
@@ -720,14 +714,6 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self._dd.draw_2d_pose('x0', self.get_block_pose(self._obs()), color=(0, 1, 0))
         return np.copy(self.state)
 
-    @staticmethod
-    def state_names():
-        return ['x robot (m)', 'y robot (m)', 'x block (m)', 'y block (m)', 'block rotation (rads)']
-
-    @staticmethod
-    def control_names():
-        return ['d$x_r$', 'd$y_r$']
-
 
 class PushAgainstWallStickyEnv(PushAgainstWallEnv):
     """
@@ -740,29 +726,20 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
     MAX_SLIDE = 0.3
     MAX_INTO = 0.01
 
-    def __init__(self, init_pusher=0, face=BlockFace.LEFT, **kwargs):
-        # initial config
-        self.face = face
-        super().__init__(init_pusher=init_pusher, **kwargs)
-
-        # quadratic cost
-        self.Q = np.diag([10, 10, 0, 0.01])
-        self.R = np.diag([0.01 for _ in range(self.nu)])
+    @staticmethod
+    def state_names():
+        return ['x block (m)', 'y block (m)', 'block rotation (rads)', 'pusher along face (m)']
 
     @staticmethod
-    def get_control_bounds():
-        u_min = np.array([-1, 0])
-        u_max = np.array([1, 1])
-        return u_min, u_max
+    def get_block_pose(state):
+        return state[:3]
 
-    def _set_goal(self, goal):
-        # ignore the pusher position
-        self.goal = np.array(tuple(goal) + (0.0, 0))
-
-    def _set_init_pusher(self, init_pusher):
-        pos = pusher_pos_for_touching(self.initBlockPos[:2], self.initBlockYaw, face=self.face,
-                                      along_face=init_pusher * _MAX_ALONG)
-        super()._set_init_pusher(pos)
+    @staticmethod
+    def get_pusher_pos(state):
+        along = state[3]
+        pos = pusher_pos_for_touching(state[:2], state[2], from_center=DIST_FOR_JUST_TOUCHING, face=BlockFace.LEFT,
+                                      along_face=along * _MAX_ALONG)
+        return pos
 
     @staticmethod
     def state_difference(state, other_state):
@@ -779,19 +756,33 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
             diff = np.column_stack((dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1)))
         return diff
 
-    def _get_goal_block_pose(self):
-        return self.goal[:3]
+    @staticmethod
+    def control_names():
+        return ['d$p$', 'd push forward (m)']
 
     @staticmethod
-    def get_block_pose(state):
-        return state[:3]
+    def get_control_bounds():
+        u_min = np.array([-1, 0])
+        u_max = np.array([1, 1])
+        return u_min, u_max
 
-    @staticmethod
-    def get_pusher_pos(state):
-        along = state[3]
-        pos = pusher_pos_for_touching(state[:2], state[2], from_center=DIST_FOR_JUST_TOUCHING, face=BlockFace.LEFT,
-                                      along_face=along * _MAX_ALONG)
-        return pos
+    def __init__(self, init_pusher=0, face=BlockFace.LEFT, **kwargs):
+        # initial config
+        self.face = face
+        super().__init__(init_pusher=init_pusher, **kwargs)
+
+        # quadratic cost
+        self.Q = np.diag([10, 10, 0, 0.01])
+        self.R = np.diag([0.01 for _ in range(self.nu)])
+
+    def _set_goal(self, goal):
+        # ignore the pusher position
+        self.goal = np.array(tuple(goal) + (0.0, 0))
+
+    def _set_init_pusher(self, init_pusher):
+        pos = pusher_pos_for_touching(self.initBlockPos[:2], self.initBlockYaw, face=self.face,
+                                      along_face=init_pusher * _MAX_ALONG)
+        super()._set_init_pusher(pos)
 
     def _obs(self):
         xb, yb, yaw = self._observe_block()
@@ -825,14 +816,6 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
 
         return np.copy(self.state), -cost, done, self._aggregate_contact_info()
 
-    @staticmethod
-    def state_names():
-        return ['x block (m)', 'y block (m)', 'block rotation (rads)', 'pusher along face (m)']
-
-    @staticmethod
-    def control_names():
-        return ['d$p$', 'd push forward (m)']
-
 
 class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
     """
@@ -846,6 +829,17 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
     MAX_SLIDE = 0.3  # can slide at most 30/200 = 15% of the face in 1 move
     MAX_FORCE = 40
 
+    @staticmethod
+    def control_names():
+        return ['d$p$', 'f push magnitude', '$\\beta$ push direction']
+
+    @staticmethod
+    def get_control_bounds():
+        # depends on the env to perform normalization
+        u_min = np.array([-1, 0, -1])
+        u_max = np.array([1, 1, 1])
+        return u_min, u_max
+
     def __init__(self, init_pusher=0, repeat_action_times=80, repeat_step_times=8, **kwargs):
         # initial config
         self.along = init_pusher
@@ -858,13 +852,6 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         self.repeat_step_times = repeat_step_times
         super().__init__(init_pusher=init_pusher, face=BlockFace.LEFT, **kwargs)
 
-    @staticmethod
-    def get_control_bounds():
-        # depends on the env to perform normalization
-        u_min = np.array([-1, 0, -1])
-        u_max = np.array([1, 1, 1])
-        return u_min, u_max
-
     def _set_init_pusher(self, init_pusher):
         self.along = init_pusher
         super()._set_init_pusher(init_pusher)
@@ -873,6 +860,11 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         super()._setup_experiment()
         # disable collision since we're applying a force directly on the block (pusher is for visualization for now)
         p.setCollisionFilterPair(self.pusherId, self.blockId, -1, -1, 0)
+
+    def _draw_action(self, f_mag, f_dir_world):
+        start = self._observe_pusher()
+        pointer = math_utils.rotate_wrt_origin((f_mag / self.MAX_FORCE, 0), f_dir_world)
+        self._dd.draw_2d_line('u', start, pointer, (1, 0, 0), scale=0.4)
 
     def _obs(self):
         xb, yb, yaw = self._observe_block()
@@ -885,11 +877,6 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         z = self.initPusherPos[2]
         eePos = np.concatenate((pos, (z,)))
         self._move_pusher(eePos)
-
-    def _draw_action(self, f_mag, f_dir_world):
-        start = self._observe_pusher()
-        pointer = math_utils.rotate_wrt_origin((f_mag / self.MAX_FORCE, 0), f_dir_world)
-        self._dd.draw_2d_line('u', start, pointer, (1, 0, 0), scale=0.4)
 
     def step(self, action):
         old_state = self._obs()
@@ -937,10 +924,6 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
 
         return np.copy(self.state), -cost, done, info
 
-    @staticmethod
-    def control_names():
-        return ['d$p$', 'f push magnitude', '$\\beta$ push direction']
-
 
 REACTION_Q_COST = 0.0
 
@@ -953,11 +936,9 @@ class PushWithForceDirectlyReactionInStateEnv(PushWithForceDirectlyEnv):
     nx = 6
     ny = 6
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.Q = np.diag([10, 10, 0, 0.01, REACTION_Q_COST, REACTION_Q_COST])
-        # we render this directly when rendering state so no need to double count
-        self._debug_visualizations[DebugVisualization.REACTION_ON_PUSHER] = False
+    @staticmethod
+    def state_names():
+        return ['$x_b$ (m)', '$y_b$ (m)', '$\\theta$ (rads)', '$p$ (m)', '$r_x$ (N)', '$r_y$ (N)']
 
     @staticmethod
     def state_difference(state, other_state):
@@ -974,6 +955,12 @@ class PushWithForceDirectlyReactionInStateEnv(PushWithForceDirectlyEnv):
         else:
             diff = np.column_stack((dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1), dreaction))
         return diff
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.Q = np.diag([10, 10, 0, 0.01, REACTION_Q_COST, REACTION_Q_COST])
+        # we render this directly when rendering state so no need to double count
+        self._debug_visualizations[DebugVisualization.REACTION_ON_PUSHER] = False
 
     def _set_goal(self, goal_pos):
         # want 0 reaction force
@@ -994,10 +981,6 @@ class PushWithForceDirectlyReactionInStateEnv(PushWithForceDirectlyEnv):
         state = np.concatenate((state, r))
         return state
 
-    @staticmethod
-    def state_names():
-        return ['$x_b$ (m)', '$y_b$ (m)', '$\\theta$ (rads)', '$p$ (m)', '$r_x$ (N)', '$r_y$ (N)']
-
 
 class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
     """
@@ -1010,10 +993,19 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
     MAX_PUSH_ANGLE = math.pi / 4  # 45 degree on either side of normal
     MAX_PUSH_DIST = _MAX_ALONG / 10  # effectively how many moves of pushing straight to move a half block
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    @staticmethod
+    def state_names():
+        return ['$x_b$ (m)', '$y_b$ (m)', '$\\theta$ (rads)', '$r_x$ (N)', '$r_y$ (N)']
 
-        self.Q = np.diag([10, 10, 0, REACTION_Q_COST, REACTION_Q_COST])
+    @staticmethod
+    def control_names():
+        return ['$p$', 'd push distance', '$\\beta$ push angle (wrt normal)']
+
+    @staticmethod
+    def get_control_bounds():
+        u_min = np.array([-1, 0, -1])
+        u_max = np.array([1, 1, 1])
+        return u_min, u_max
 
     @staticmethod
     def state_difference(state, other_state):
@@ -1029,6 +1021,11 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         else:
             diff = np.column_stack((dpos, dyaw.reshape(-1, 1), dreaction))
         return diff
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.Q = np.diag([10, 10, 0, REACTION_Q_COST, REACTION_Q_COST])
 
     def _set_goal(self, goal_pos):
         self.goal = np.array(tuple(goal_pos) + (0,) + (0, 0))
@@ -1046,6 +1043,12 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         start = self._observe_pusher()
         pointer = math_utils.rotate_wrt_origin((push_dist, 0), push_dir_world)
         self._dd.draw_2d_line('u', start, pointer, (1, 0, 0), scale=1)
+
+    def _obs(self):
+        state = self._observe_block()
+        r = np.zeros(2) if self._reaction_force is None else self._reaction_force[:2]
+        state = np.concatenate((state, r))
+        return state
 
     def _observe_contact(self, visualize=True):
         super(PushPhysicallyAnyAlongEnv, self)._observe_contact()
@@ -1106,26 +1109,6 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         cost, done = self._observe_finished_action(old_state, action)
 
         return np.copy(self.state), -cost, done, info
-
-    def _obs(self):
-        state = self._observe_block()
-        r = np.zeros(2) if self._reaction_force is None else self._reaction_force[:2]
-        state = np.concatenate((state, r))
-        return state
-
-    @staticmethod
-    def state_names():
-        return ['$x_b$ (m)', '$y_b$ (m)', '$\\theta$ (rads)', '$r_x$ (N)', '$r_y$ (N)']
-
-    @staticmethod
-    def get_control_bounds():
-        u_min = np.array([-1, 0, -1])
-        u_max = np.array([1, 1, 1])
-        return u_min, u_max
-
-    @staticmethod
-    def control_names():
-        return ['$p$', 'd push distance', '$\\beta$ push angle (wrt normal)']
 
 
 class InteractivePush(simulation.Simulation):
