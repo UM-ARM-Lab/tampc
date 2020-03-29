@@ -287,7 +287,7 @@ def run_direct_push():
 
     # env.sim_step_wait = 0.01
     env.draw_user_text('run direct push', 2)
-    ctrl = controller.PreDeterminedController([(0.0, 1.0, 0.0) for _ in range(N)])
+    ctrl = controller.PreDeterminedController([(0.5, 1.0, -1.0) for _ in range(N)])
     # ctrl = controller.PreDeterminedController([(1, -1, 0) for _ in range(N)])
     # record how many steps of pushing to reach 1m
     contacts = {}
@@ -304,47 +304,33 @@ def run_direct_push():
     contacts = {key: np.stack(value, axis=0) for key, value in contacts.items() if len(value)}
     plt.ioff()
 
-    def plot_series(t, y, ax):
+    def plot_series(t, y, ax, title):
         mean = np.mean(y, axis=0)
         std = np.std(y, axis=0)
         ax.plot(t, mean)
         ax.fill_between(t, mean - std, mean + std, alpha=0.2)
-
-    def plot_velocity(vs, title):
-        v_names = ['velocity', 'angular v']
-        # average over the steps, look at how the forces differ over time for the different contact points
-        f, axes = plt.subplots(2, 1, sharex=True)
-        for n, ax in zip(v_names, axes):
-            ax.set_ylabel(n)
-        axes[0].set_xlabel('sim step (wait for quasi-static)')
-        t = list(range(vs[0].shape[1]))
-        for i, y in enumerate(vs):
-            plot_series(t, y, axes[i])
-        axes[0].set_ybound(0, 0.3)
-        axes[1].set_ybound(0, 0.6)
-        plt.legend()
-        f.suptitle(title)
-
-    plot_velocity([contacts['bv'], contacts['bva']], 'block')
-    plot_velocity([contacts['pv'], contacts['pva']], 'pusher')
-
-    plt.figure()
-    v = contacts['pusher dist']
-    t = list(range(v.shape[1]))
-    plt.ylabel('pusher dist')
-    plot_series(t, v, plt.gca())
+        ax.set_ylabel(title)
 
     r = contacts['r']
     v = np.linalg.norm(r, axis=2)
     t = list(range(v.shape[1]))
-    f, axes = plt.subplots(3, 1, sharex=True)
-    axes[0].set_ylabel('reaction force magnitude')
-    axes[1].set_ylabel('$r_x$')
-    axes[2].set_ylabel('$r_y$')
-    plot_series(t, v, axes[0])
-    plot_series(t, r[:, :, 0], axes[1])
-    plot_series(t, r[:, :, 1], axes[2])
+    f, axes = plt.subplots(7, 1, sharex=True)
+    plot_series(t, v, axes[0], '|r|')
+    plot_series(t, contacts['npb'], axes[1], '# contacts')
+    plot_series(t, r[:, :, 0], axes[2], '$r_x$')
+    plot_series(t, r[:, :, 1], axes[3], '$r_y$')
 
+    plot_series(t, contacts['bv'], axes[4], '$v_b$')
+    plot_series(t, contacts['pv'], axes[5], '$v_p$')
+
+    plot_series(t, contacts['pusher dist'], axes[6], 'pusher dist')
+
+    axes[-1].set_xlabel('sim step')
+
+    f, axes = plt.subplots(2, 1, sharex=True)
+    plot_series(t, contacts['bva'], axes[0], 'pusher av')
+    plot_series(t, contacts['pva'], axes[1], 'block av')
+    axes[-1].set_xlabel('sim step')
     # log friction averaged over time steps
     # friction_log = contacts['bp']
     # friction_dirs = ['(0,1,0)', '(1,0,0)']
