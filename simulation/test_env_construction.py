@@ -274,21 +274,22 @@ def tune_direct_push():
 
 def run_direct_push():
     N = 10
-    init_block_pos = [0., 0.]
-    init_block_yaw = 0
-    # init_block_yaw = -math.pi/2
+    init_block_pos = [0., 0.2]
+    # init_block_yaw = 0
+    init_block_yaw = -math.pi / 2
     # init_block_pos = [0., 0.175]
     # init_block_yaw = -0.9 # -math.pi/2
     goal_pos = [0.85, -0.35]
     # env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=0.5, log_video=True, goal=goal_pos,
     #                                           init_block=init_block_pos, init_yaw=init_block_yaw, environment_level=0)
-    env = block_push.PushPhysicallyAnyAlongEnv(mode=p.GUI, init_block=init_block_pos, init_yaw=init_block_yaw,
-                                               environment_level=0)
+    env = block_push.PushPhysicallyAnyAlongEnv(mode=p.GUI, log_video=True, init_block=init_block_pos,
+                                               init_yaw=init_block_yaw,
+                                               environment_level=1)
 
     # env.sim_step_wait = 0.01
     env.draw_user_text('run direct push', 2)
-    ctrl = controller.PreDeterminedController([(0.5, 1.0, -1.0) for _ in range(N)])
-    # ctrl = controller.PreDeterminedController([(1, -1, 0) for _ in range(N)])
+    ctrl = controller.PreDeterminedController([(0.0, 1.0, 0.0) for _ in range(N)])
+    # ctrl = controller.PreDeterminedController([(0.5, 1.0, -0.5) for _ in range(N)])
     # record how many steps of pushing to reach 1m
     contacts = {}
     obs = env.reset()
@@ -304,24 +305,26 @@ def run_direct_push():
     contacts = {key: np.stack(value, axis=0) for key, value in contacts.items() if len(value)}
     plt.ioff()
 
-    def plot_series(t, y, ax, title):
+    def plot_series(t, y, ax, title, zero_min=False):
         mean = np.mean(y, axis=0)
         std = np.std(y, axis=0)
         ax.plot(t, mean)
         ax.fill_between(t, mean - std, mean + std, alpha=0.2)
         ax.set_ylabel(title)
+        if zero_min:
+            ax.set_ybound(0, (mean + std).max() * 1.05)
 
     r = contacts['r']
     v = np.linalg.norm(r, axis=2)
     t = list(range(v.shape[1]))
     f, axes = plt.subplots(7, 1, sharex=True)
-    plot_series(t, v, axes[0], '|r|')
-    plot_series(t, contacts['npb'], axes[1], '# contacts')
+    plot_series(t, v, axes[0], '|r|', True)
+    plot_series(t, contacts['npb'], axes[1], '# contacts', True)
     plot_series(t, r[:, :, 0], axes[2], '$r_x$')
     plot_series(t, r[:, :, 1], axes[3], '$r_y$')
 
-    plot_series(t, contacts['bv'], axes[4], '$v_b$')
-    plot_series(t, contacts['pv'], axes[5], '$v_p$')
+    plot_series(t, contacts['bv'], axes[4], '$v_b$', True)
+    plot_series(t, contacts['pv'], axes[5], '$v_p$', True)
 
     plot_series(t, contacts['pusher dist'], axes[6], 'pusher dist')
 
