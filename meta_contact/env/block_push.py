@@ -4,6 +4,7 @@ import os
 import pybullet as p
 import time
 import functools
+import abc
 
 import numpy as np
 import torch
@@ -417,7 +418,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         # info
         self._contact_info = {}
         self._largest_contact = {}
-        self._reaction_force = None
+        self._reaction_force = np.zeros(2)
 
         # quadratic cost
         self.Q = np.diag([0, 0, 1, 1, 0])
@@ -588,67 +589,42 @@ class PushAgainstWallEnv(MyPybulletEnv):
         pusherPose = p.getBasePositionAndOrientation(self.pusherId)
         return pusherPose[0]
 
-    def _observe_contact(self, visualize=True):
-        # TODO move this kind of observing and calculating reaction force into derived class
-        # assume there's 4 contact points between block and plane
-        info = {'bp': np.zeros((4, 2))}
-        # push of plane onto block
-        contactInfo = p.getContactPoints(self.blockId, self.planeId)
-        # get reaction force on pusher
-        reaction_force = [0, 0, 0]
-        for i, contact in enumerate(contactInfo):
-            if visualize and self._debug_visualizations[DebugVisualization.FRICTION]:
-                self._dd.draw_contact_friction('bp{}'.format(i), contact)
-            info['bp'][i] = (contact[10], contact[12])
-            fy, fx = _get_lateral_friction_forces(contact)
-            reaction_force = [sum(i) for i in zip(reaction_force, fy, fx)]
+    @abc.abstractmethod
+    def _observe_additional_info(self, info, visualize=True):
+        pass
 
+    def _observe_info(self, visualize=True):
+        info = {}
+
+        self._observe_additional_info(info, visualize)
+
+        # number of wall contacts
         info['wc'] = 0
         if self.level > 0:
-            # assume at most 4 contact points
-            info['bw'] = np.zeros(4)
             for wallId in self.walls:
                 contactInfo = p.getContactPoints(self.blockId, wallId)
                 info['wc'] += len(contactInfo)
-                for i, contact in enumerate(contactInfo):
-                    name = 'w{}'.format(i)
-                    info['bw'][i] = contact[9]
-
-                    f_contact = _get_total_contact_force(contact)
-                    reaction_force = [sum(i) for i in zip(reaction_force, f_contact)]
-
-                    # only visualize the largest contact
-                    if abs(contact[9]) > abs(self._largest_contact.get(name, 0)):
-                        self._largest_contact[name] = contact[9]
-                        if visualize and self._debug_visualizations[DebugVisualization.WALL_ON_BLOCK]:
-                            self._dd.draw_contact_point(name, contact)
-
-        reaction_force[2] = 0
-        # save reaction force
-        name = 'r'
-        info[name] = reaction_force
-        reaction_force_size = np.linalg.norm(reaction_force)
-        if reaction_force_size > self._largest_contact.get(name, 0):
-            self._largest_contact[name] = reaction_force_size
-            self._reaction_force = reaction_force
-            if visualize and self._debug_visualizations[DebugVisualization.REACTION_ON_PUSHER]:
-                self._draw_reaction_force(reaction_force, name, (1, 0, 1))
 
         # block velocity
         v, va = p.getBaseVelocity(self.blockId)
         info['bv'] = np.linalg.norm(v)
         info['bva'] = np.linalg.norm(va)
 
+        # block-pusher distance
+        x, y, _ = self._observe_pusher()
+        xb, yb, _ = self._observe_block()
+        info['pusher dist'] = np.linalg.norm((x - xb, y - yb))
+
         for key, value in info.items():
             if key not in self._contact_info:
                 self._contact_info[key] = []
             self._contact_info[key].append(value)
 
-    def _aggregate_contact_info(self):
+    def _aggregate_info(self):
         info = {key: np.stack(value, axis=0) for key, value in self._contact_info.items() if len(value)}
         info['reaction'] = self._reaction_force[:2]
         info['wall_contact'] = info['wc'].max()
-        self._reaction_force = None
+        self._reaction_force = np.zeros(2)
         self._contact_info = {}
         return info
 
@@ -689,7 +665,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self._move_pusher(eePos)
         p.stepSimulation()
         for _ in range(steps_to_wait):
-            self._observe_contact()
+            self._observe_info()
             p.stepSimulation()
             if self.mode is p.GUI and self.sim_step_wait:
                 time.sleep(self.sim_step_wait)
@@ -705,7 +681,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self._move_and_wait(eePos)
         cost, done = self._observe_finished_action(old_state, action)
 
-        return np.copy(self.state), -cost, done, self._aggregate_contact_info()
+        return np.copy(self.state), -cost, done, self._aggregate_info()
 
     def reset(self):
         # reset robot to nominal pose
@@ -718,7 +694,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.pusherConstraint = p.createConstraint(self.pusherId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
                                                    self.initPusherPos)
         # start at rest
-        self._reaction_force = None
+        self._reaction_force = np.zeros(2)
         for _ in range(1000):
             p.stepSimulation()
         self.state = self._obs()
@@ -818,7 +794,7 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
 
         cost, done = self._observe_finished_action(old_state, action)
 
-        return np.copy(self.state), -cost, done, self._aggregate_contact_info()
+        return np.copy(self.state), -cost, done, self._aggregate_info()
 
 
 class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
@@ -874,6 +850,49 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         xb, yb, yaw = self._observe_block()
         return np.array((xb, yb, yaw, self.along))
 
+    def _observe_additional_info(self, info, visualize=True):
+        # assume there's 4 contact points between block and plane
+        info['bp'] = np.zeros((4, 2))
+        # push of plane onto block
+        contactInfo = p.getContactPoints(self.blockId, self.planeId)
+        # get reaction force on pusher
+        reaction_force = [0, 0, 0]
+        for i, contact in enumerate(contactInfo):
+            if visualize and self._debug_visualizations[DebugVisualization.FRICTION]:
+                self._dd.draw_contact_friction('bp{}'.format(i), contact)
+            info['bp'][i] = (contact[10], contact[12])
+            fy, fx = _get_lateral_friction_forces(contact)
+            reaction_force = [sum(i) for i in zip(reaction_force, fy, fx)]
+
+        if self.level > 0:
+            # assume at most 4 contact points
+            info['bw'] = np.zeros(4)
+            for wallId in self.walls:
+                contactInfo = p.getContactPoints(self.blockId, wallId)
+                for i, contact in enumerate(contactInfo):
+                    name = 'w{}'.format(i)
+                    info['bw'][i] = contact[9]
+
+                    f_contact = _get_total_contact_force(contact)
+                    reaction_force = [sum(i) for i in zip(reaction_force, f_contact)]
+
+                    # only visualize the largest contact
+                    if abs(contact[9]) > abs(self._largest_contact.get(name, 0)):
+                        self._largest_contact[name] = contact[9]
+                        if visualize and self._debug_visualizations[DebugVisualization.WALL_ON_BLOCK]:
+                            self._dd.draw_contact_point(name, contact)
+
+        reaction_force[2] = 0
+        # save reaction force
+        name = 'r'
+        info[name] = reaction_force
+        reaction_force_size = np.linalg.norm(reaction_force)
+        if reaction_force_size > self._largest_contact.get(name, 0):
+            self._largest_contact[name] = reaction_force_size
+            self._reaction_force = reaction_force
+            if visualize and self._debug_visualizations[DebugVisualization.REACTION_ON_PUSHER]:
+                self._draw_reaction_force(reaction_force, name, (1, 0, 1))
+
     def _keep_pusher_adjacent(self):
         state = self._obs()
         pos = pusher_pos_for_touching(state[:2], state[2], from_center=DIST_FOR_JUST_TOUCHING, face=self.face,
@@ -908,7 +927,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
             # also move the pusher along visually
             self._keep_pusher_adjacent()
             for t in range(self.repeat_step_times):
-                self._observe_contact()
+                self._observe_info()
 
                 p.stepSimulation()
                 if self.mode is p.GUI and self.sim_step_wait:
@@ -924,7 +943,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
                 time.sleep(self.sim_step_wait)
 
         cost, done = self._observe_finished_action(old_state, action)
-        info = self._aggregate_contact_info()
+        info = self._aggregate_info()
 
         return np.copy(self.state), -cost, done, info
 
@@ -974,7 +993,7 @@ class PushWithForceDirectlyReactionInStateEnv(PushWithForceDirectlyEnv):
 
     def _obs(self):
         state = super()._obs()
-        r = np.zeros(2) if self._reaction_force is None else self._reaction_force[:2]
+        r = self._reaction_force[:2]
         state = np.concatenate((state, r))
         return state
 
@@ -1036,12 +1055,12 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
 
     def _obs(self):
         state = self._observe_block()
-        r = np.zeros(2) if self._reaction_force is None else self._reaction_force[:2]
+        r = self._reaction_force[:2]
         state = np.concatenate((state, r))
         return state
 
-    def _observe_contact(self, visualize=True):
-        super(PushPhysicallyAnyAlongEnv, self)._observe_contact()
+    def _observe_info(self, visualize=True):
+        super(PushPhysicallyAnyAlongEnv, self)._observe_info()
         # TODO implement
         # get reaction force on pusher
         contactInfo = p.getContactPoints(self.pusherId, self.blockId)
@@ -1095,7 +1114,7 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         #         if self.mode is p.GUI and self.sim_step_wait:
         #             time.sleep(self.sim_step_wait)
 
-        info = self._aggregate_contact_info()
+        info = self._aggregate_info()
         cost, done = self._observe_finished_action(old_state, action)
 
         return np.copy(self.state), -cost, done, info
