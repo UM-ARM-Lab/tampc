@@ -82,35 +82,98 @@ def pusher_pos_along_face(block_pos, block_yaw, pusher_pos, face=BlockFace.LEFT)
     return along_face, from_center
 
 
-def _draw_debug_2d_pose(line_unique_ids, pose, color=(0, 0, 0), length=0.15 / 2, height=_BLOCK_HEIGHT):
-    location = (pose[0], pose[1], height)
-    side_lines = math_utils.rotate_wrt_origin((0, length * 0.2), pose[2])
-    pointer = math_utils.rotate_wrt_origin((length, 0), pose[2])
-    # replace previous debug lines
-    line_unique_ids[0] = p.addUserDebugLine(np.add(location, [side_lines[0], side_lines[1], 0]),
-                                            np.add(location, [-side_lines[0], -side_lines[1], 0]),
-                                            color, 2, replaceItemUniqueId=line_unique_ids[0])
-    line_unique_ids[1] = p.addUserDebugLine(np.add(location, [0, 0, 0]),
-                                            np.add(location, [pointer[0], pointer[1], 0]),
-                                            color, 2, replaceItemUniqueId=line_unique_ids[1])
+class DebugDrawer:
+    def __init__(self):
+        self._debug_ids = {}
+        self._camera_pos = [0, 0]
 
+    def draw_point(self, name, point, color=(0, 0, 0), length=0.01, height=_BLOCK_HEIGHT):
+        if name not in self._debug_ids:
+            self._debug_ids[name] = [-1, -1]
+        uids = self._debug_ids[name]
 
-def _draw_debug_2d_line(line_unique_id, start, diff, color=(0, 0, 0), size=2., scale=0.4):
-    return p.addUserDebugLine(start, np.add(start, [diff[0] * scale, diff[1] * scale,
-                                                    diff[2] * scale if len(diff) is 3 else 0]),
-                              color, lineWidth=size,
-                              replaceItemUniqueId=line_unique_id)
+        location = (point[0], point[1], height)
+        uids[0] = p.addUserDebugLine(np.add(location, [length, 0, 0]), np.add(location, [-length, 0, 0]), color, 2,
+                                     replaceItemUniqueId=uids[0])
+        uids[1] = p.addUserDebugLine(np.add(location, [0, length, 0]), np.add(location, [0, -length, 0]), color, 2,
+                                     replaceItemUniqueId=uids[1])
 
+    def draw_2d_pose(self, name, pose, color=(0, 0, 0), length=0.15 / 2, height=_BLOCK_HEIGHT):
+        if name not in self._debug_ids:
+            self._debug_ids[name] = [-1, -1]
+        uids = self._debug_ids[name]
 
-def _draw_debug_point(point_unique_ids, point, color=(0, 0, 0), length=0.01, height=_BLOCK_HEIGHT):
-    location = (point[0], point[1], height)
-    # replace previous debug lines
-    point_unique_ids[0] = p.addUserDebugLine(np.add(location, [length, 0, 0]),
-                                             np.add(location, [-length, 0, 0]),
-                                             color, 2, replaceItemUniqueId=point_unique_ids[0])
-    point_unique_ids[1] = p.addUserDebugLine(np.add(location, [0, length, 0]),
-                                             np.add(location, [0, -length, 0]),
-                                             color, 2, replaceItemUniqueId=point_unique_ids[1])
+        location = (pose[0], pose[1], height)
+        side_lines = math_utils.rotate_wrt_origin((0, length * 0.2), pose[2])
+        pointer = math_utils.rotate_wrt_origin((length, 0), pose[2])
+        uids[0] = p.addUserDebugLine(np.add(location, [side_lines[0], side_lines[1], 0]),
+                                     np.add(location, [-side_lines[0], -side_lines[1], 0]),
+                                     color, 2, replaceItemUniqueId=uids[0])
+        uids[1] = p.addUserDebugLine(np.add(location, [0, 0, 0]),
+                                     np.add(location, [pointer[0], pointer[1], 0]),
+                                     color, 2, replaceItemUniqueId=uids[1])
+
+    def draw_2d_line(self, name, start, diff, color=(0, 0, 0), size=2., scale=0.4):
+        if name not in self._debug_ids:
+            self._debug_ids[name] = -1
+        uid = self._debug_ids[name]
+
+        self._debug_ids[name] = p.addUserDebugLine(start, np.add(start, [diff[0] * scale, diff[1] * scale,
+                                                                         diff[2] * scale if len(diff) is 3 else 0]),
+                                                   color, lineWidth=size, replaceItemUniqueId=uid)
+
+    def draw_contact_point(self, name, contact, flip=True):
+        start = contact[5]
+        f_all = _get_total_contact_force(contact, flip)
+        # line_unique_ids[2] = _draw_debug_2d_line(line_unique_ids[2], start, dv, size=abs(force), scale=0.1,
+        #                                          color=(1, 0, 0))
+        # combined normal vector (adding lateral friction)
+        f_size = np.linalg.norm(f_all)
+        # project away z
+        f_all[2] = 0
+        self.draw_2d_line("{} xy".format(name), start, f_all, size=f_size, scale=0.03, color=(1, 1, 0))
+        # _draw_contact_friction(line_unique_ids, contact, flip)
+        return f_size
+
+    def draw_contact_friction(self, name, contact, flip=True):
+        start = list(contact[5])
+        start[2] = _BLOCK_HEIGHT
+        # friction along y
+        scale = 0.1
+        c = (1, 0.4, 0.7)
+        fyd, fxd = _get_lateral_friction_forces(contact, flip)
+        self.draw_2d_line('{}y'.format(name), start, fyd, size=np.linalg.norm(fyd), scale=scale, color=c)
+        self.draw_2d_line('{}x'.format(name), start, fxd, size=np.linalg.norm(fxd), scale=scale, color=c)
+
+    def draw_transition(self, prev_block, new_block):
+        name = 't'
+        if name not in self._debug_ids:
+            self._debug_ids[name] = []
+
+        self._debug_ids[name].append(
+            p.addUserDebugLine([prev_block[0], prev_block[1], _BLOCK_HEIGHT],
+                               (new_block[0], new_block[1], _BLOCK_HEIGHT),
+                               [0, 0, 1], 2))
+
+    def clear_transitions(self):
+        name = 't'
+        if name in self._debug_ids:
+            for line in self._debug_ids[name]:
+                p.removeUserDebugItem(line)
+            self._debug_ids[name] = []
+
+    def draw_text(self, name, text, location_index, left_offset=1):
+        if name not in self._debug_ids:
+            self._debug_ids[name] = -1
+        uid = self._debug_ids[name]
+
+        move_down = location_index * 0.15
+        self._debug_ids[name] = p.addUserDebugText(str(text),
+                                                   [self._camera_pos[0] + left_offset,
+                                                    self._camera_pos[1] + 1 - move_down, 0.1],
+                                                   textColorRGB=[0.5, 0.1, 0.1],
+                                                   textSize=2,
+                                                   replaceItemUniqueId=uid)
 
 
 def _get_lateral_friction_forces(contact, flip=True):
@@ -129,35 +192,6 @@ def _get_total_contact_force(contact, flip=True):
     fyd, fxd = _get_lateral_friction_forces(contact, flip)
     f_all = [sum(i) for i in zip(dv, fyd, fxd)]
     return f_all
-
-
-def _draw_contact_point(line_unique_ids, contact, flip=True):
-    while len(line_unique_ids) < 4:
-        line_unique_ids.append(-1)
-    start = contact[5]
-    f_all = _get_total_contact_force(contact, flip)
-    # line_unique_ids[2] = _draw_debug_2d_line(line_unique_ids[2], start, dv, size=abs(force), scale=0.1,
-    #                                          color=(1, 0, 0))
-    # combined normal vector (adding lateral friction)
-    f_size = np.linalg.norm(f_all)
-    # project away z
-    f_all[2] = 0
-    line_unique_ids[3] = _draw_debug_2d_line(line_unique_ids[3], start, f_all, size=f_size, scale=0.03, color=(1, 1, 0))
-    # _draw_contact_friction(line_unique_ids, contact, flip)
-    return f_size
-
-
-def _draw_contact_friction(line_unique_ids, contact, flip=True):
-    start = list(contact[5])
-    start[2] = _BLOCK_HEIGHT
-    # friction along y
-    scale = 0.1
-    c = (1, 0.4, 0.7)
-    fyd, fxd = _get_lateral_friction_forces(contact, flip)
-    line_unique_ids[0] = _draw_debug_2d_line(line_unique_ids[0], start, fyd, size=np.linalg.norm(fyd), scale=scale,
-                                             color=c)
-    line_unique_ids[1] = _draw_debug_2d_line(line_unique_ids[1], start, fxd, size=np.linalg.norm(fxd), scale=scale,
-                                             color=c)
 
 
 class PushLoader(load_utils.DataLoader):
@@ -321,19 +355,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.initBlockPos = None
         self.initBlockYaw = None
 
-        # TODO create external class for handling these debug drawing IDs
-        # debugging objects
-        self._goal_debug_lines = [-1, -1]
-        self._init_block_debug_lines = [-1, -1]
-        self._block_debug_lines = [-1, -1]
-        self._traj_debug_lines = []
-        self._rollout_debug_lines = {}
-        self._error_debug_lines = {'pose': [-1, -1], 'line': -1}
-        self._contact_debug_lines = {}
-        self._friction_debug_lines = {}
-        self._debug_text = -1
-        self._user_debug_text = {}
-        self._camera_pos = None
+        self._dd = DebugDrawer()
         self._debug_visualizations = {
             DebugVisualization.FRICTION: False,
             DebugVisualization.REACTION_ON_PUSHER: True,
@@ -383,23 +405,20 @@ class PushAgainstWallEnv(MyPybulletEnv):
         T = len(states)
         for t in range(T):
             pose = self.get_block_pose(states[t])
-            if t not in self._rollout_debug_lines:
-                self._rollout_debug_lines[t] = [-1, -1]
             c = (t + 1) / (T + 1)
-            _draw_debug_2d_pose(self._rollout_debug_lines[t], pose, (0, c, c))
+            self._dd.draw_2d_pose('rx{}'.format(t), pose, (0, c, c))
 
     def visualize_prediction_error(self, predicted_state):
         """In GUI mode, show the difference between the predicted state and the current actual state"""
         pred_pose = self.get_block_pose(predicted_state)
         c = (0.5, 0, 0.5)
-        _draw_debug_2d_pose(self._error_debug_lines['pose'], pred_pose, c)
+        self._dd.draw_2d_pose('ep', pred_pose, c)
         pose = self.get_block_pose(self.state)
         # use size to represent error in rotation
         angle_diff = abs(math_utils.angular_diff(pred_pose[2], pose[2]))
         pose[2] = _BLOCK_HEIGHT
         # draw line from current pose to predicted pose
-        self._error_debug_lines['line'] = _draw_debug_2d_line(self._error_debug_lines['line'], pose,
-                                                              (pred_pose - pose)[:2], c, scale=20, size=angle_diff * 50)
+        self._dd.draw_2d_line('el', pose, (pred_pose - pose)[:2], c, scale=20, size=angle_diff * 50)
 
     def set_state(self, state):
         assert state.shape[0] == self.nx
@@ -485,29 +504,22 @@ class PushAgainstWallEnv(MyPybulletEnv):
                                                    self.initPusherPos)
 
     def set_camera_position(self, camera_pos):
-        self._camera_pos = camera_pos
+        self._dd._camera_pos = camera_pos
         p.resetDebugVisualizerCamera(cameraDistance=0.5, cameraYaw=0, cameraPitch=-85,
                                      cameraTargetPosition=[camera_pos[0], camera_pos[1], 1])
 
     def clear_debug_trajectories(self):
-        for line in self._traj_debug_lines:
-            p.removeUserDebugItem(line)
-        self._traj_debug_lines = []
+        self._dd.clear_transitions()
 
     def _draw_goal(self):
-        _draw_debug_2d_pose(self._goal_debug_lines, self._get_goal_block_pose())
+        self._dd.draw_2d_pose('goal', self._get_goal_block_pose())
 
     def _draw_state(self):
-        _draw_debug_2d_pose(self._block_debug_lines, self.get_block_pose(self.state))
+        self._dd.draw_2d_pose('state', self.get_block_pose(self.state))
 
     def _draw_reaction_force(self, r, name, color=(1, 0, 1)):
         start = self._observe_pusher()
-        if name not in self._contact_debug_lines:
-            self._contact_debug_lines[name] = -1
-        self._contact_debug_lines[name] = _draw_debug_2d_line(self._contact_debug_lines[name], start,
-                                                              r,
-                                                              size=np.linalg.norm(r), scale=0.03,
-                                                              color=color)
+        self._dd.draw_2d_line(name, start, r, size=np.linalg.norm(r), scale=0.03, color=color)
 
     def _get_goal_block_pose(self):
         return self.goal[2:5]
@@ -543,10 +555,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
         # get reaction force on pusher
         reaction_force = [0, 0, 0]
         for i, contact in enumerate(contactInfo):
-            if i not in self._friction_debug_lines:
-                self._friction_debug_lines[i] = [-1, -1]
             if visualize and self._debug_visualizations[DebugVisualization.FRICTION]:
-                _draw_contact_friction(self._friction_debug_lines[i], contact)
+                self._dd.draw_contact_friction('bp{}'.format(i), contact)
             info['bp'][i] = (contact[10], contact[12])
             fy, fx = _get_lateral_friction_forces(contact)
             reaction_force = [sum(i) for i in zip(reaction_force, fy, fx)]
@@ -555,7 +565,6 @@ class PushAgainstWallEnv(MyPybulletEnv):
         if self.level > 0:
             # assume at most 4 contact points
             info['bw'] = np.zeros(4)
-            # TODO handle other walls
             for wallId in self.walls:
                 contactInfo = p.getContactPoints(self.blockId, wallId)
                 info['wc'] += len(contactInfo)
@@ -570,9 +579,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
                     if abs(contact[9]) > abs(self._largest_contact.get(name, 0)):
                         self._largest_contact[name] = contact[9]
                         if visualize and self._debug_visualizations[DebugVisualization.WALL_ON_BLOCK]:
-                            if name not in self._contact_debug_lines:
-                                self._contact_debug_lines[name] = [-1, -1, -1]
-                            _draw_contact_point(self._contact_debug_lines[name], contact)
+                            self._dd.draw_contact_point(name, contact)
 
         reaction_force[2] = 0
         # save reaction force
@@ -583,13 +590,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
             self._largest_contact[name] = reaction_force_size
             self._reaction_force = reaction_force
             if visualize and self._debug_visualizations[DebugVisualization.REACTION_ON_PUSHER]:
-                start = self._observe_pusher()
-                if name not in self._contact_debug_lines:
-                    self._contact_debug_lines[name] = -1
-                self._contact_debug_lines[name] = _draw_debug_2d_line(self._contact_debug_lines[name], start,
-                                                                      reaction_force,
-                                                                      size=reaction_force_size, scale=0.03,
-                                                                      color=(1, 0, 1))
+                self._draw_reaction_force(reaction_force, name, (1, 0, 1))
 
         # block velocity
         v, va = p.getBaseVelocity(self.blockId)
@@ -686,33 +687,20 @@ class PushAgainstWallEnv(MyPybulletEnv):
         # track trajectory
         prev_block = self.get_block_pose(old_state)
         new_block = self.get_block_pose(self.state)
-        self._traj_debug_lines.append(
-            p.addUserDebugLine([prev_block[0], prev_block[1], _BLOCK_HEIGHT],
-                               (new_block[0], new_block[1], _BLOCK_HEIGHT),
-                               [0, 0, 1], 2))
+        self._dd.draw_transition(prev_block, new_block)
 
         # render current pose
         self._draw_state()
 
         cost, done = self.evaluate_cost(self.state, action)
-
-        self._debug_text = self._draw_text('{0:.3f}'.format(cost), self._debug_text, 0)
+        self._dd.draw_text('cost', '{0:.3f}'.format(cost), 0)
 
         return cost, done
 
     def draw_user_text(self, text, location_index=1, left_offset=1):
         if location_index is 0:
             raise RuntimeError("Can't use same location index (0) as cost")
-        self._user_debug_text[location_index] = self._draw_text(text, self._user_debug_text.get(location_index, -1),
-                                                                location_index, left_offset)
-
-    def _draw_text(self, text, text_id, location_index, left_offset=1):
-        move_down = location_index * 0.15
-        return p.addUserDebugText(str(text),
-                                  [self._camera_pos[0] + left_offset, self._camera_pos[1] + 1 - move_down, 0.1],
-                                  textColorRGB=[0.5, 0.1, 0.1],
-                                  textSize=2,
-                                  replaceItemUniqueId=text_id)
+        self._dd.draw_text('user{}'.format(location_index), text, location_index, left_offset)
 
     def reset(self):
         # reset robot to nominal pose
@@ -729,7 +717,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         for _ in range(1000):
             p.stepSimulation()
         self.state = self._obs()
-        _draw_debug_2d_pose(self._init_block_debug_lines, self.get_block_pose(self._obs()), color=(0, 1, 0))
+        self._dd.draw_2d_pose('x0', self.get_block_pose(self._obs()), color=(0, 1, 0))
         return np.copy(self.state)
 
     @staticmethod
@@ -901,7 +889,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
     def _draw_action(self, f_mag, f_dir_world):
         start = self._observe_pusher()
         pointer = math_utils.rotate_wrt_origin((f_mag / self.MAX_FORCE, 0), f_dir_world)
-        self._action_debug_line = _draw_debug_2d_line(self._action_debug_line, start, pointer, (1, 0, 0), scale=0.4)
+        self._dd.draw_2d_line('u', start, pointer, (1, 0, 0), scale=0.4)
 
     def step(self, action):
         old_state = self._obs()
@@ -1025,10 +1013,6 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        self._start_eepos_ids = [-1, -1]
-        self._final_eepos_ids = [-1, -1]
-        self._action_debug_line = -1
-
         self.Q = np.diag([10, 10, 0, REACTION_Q_COST, REACTION_Q_COST])
 
     @staticmethod
@@ -1061,7 +1045,7 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
     def _draw_action(self, push_dist, push_dir_world):
         start = self._observe_pusher()
         pointer = math_utils.rotate_wrt_origin((push_dist, 0), push_dir_world)
-        self._action_debug_line = _draw_debug_2d_line(self._action_debug_line, start, pointer, (1, 0, 0), scale=1)
+        self._dd.draw_2d_line('u', start, pointer, (1, 0, 0), scale=1)
 
     def _observe_contact(self, visualize=True):
         super(PushPhysicallyAnyAlongEnv, self)._observe_contact()
@@ -1069,12 +1053,11 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         # get reaction force on pusher
         contactInfo = p.getContactPoints(self.pusherId, self.blockId)
         for i, contact in enumerate(contactInfo):
-            name = 'e{}'.format(i)
+            name = 'r{}'.format(i)
             if abs(contact[9]) > abs(self._largest_contact.get(name, 0)):
                 self._largest_contact[name] = contact[9]
-                if name not in self._contact_debug_lines:
-                    self._contact_debug_lines[name] = [-1, -1, -1]
-                _draw_contact_point(self._contact_debug_lines[name], contact, flip=False)
+                if visualize and self._debug_visualizations[DebugVisualization.REACTION_ON_PUSHER]:
+                    self._dd.draw_contact_point(name, contact, flip=False)
 
     def step(self, action):
         action = np.clip(action, *self.get_control_bounds())
@@ -1091,7 +1074,7 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         pos = pusher_pos_for_touching(old_state[:2], old_state[2], from_center=DIST_FOR_JUST_TOUCHING, face=self.face,
                                       along_face=push_along)
         start_ee_pos = np.concatenate((pos, (self.initPusherPos[2],)))
-        _draw_debug_point(self._start_eepos_ids, start_ee_pos, color=(0, 0.5, 0.8))
+        self._dd.draw_point('start eepos', start_ee_pos, color=(0, 0.5, 0.8))
 
         # first get to desired starting push position (should experience no reaction force during this move)
         self._move_and_wait(start_ee_pos, steps_to_wait=20)
@@ -1106,7 +1089,7 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
                                       face=self.face, along_face=push_along + dy)
         final_ee_pos = np.concatenate((pos, (self.initPusherPos[2],)))
         # TODO debug final ee pos correctness; draw debug point
-        _draw_debug_point(self._final_eepos_ids, final_ee_pos, color=(0, 0.5, 0.5))
+        self._dd.draw_point('final eepos', final_ee_pos, color=(0, 0.5, 0.5))
         self._move_and_wait(final_ee_pos, steps_to_wait=50)
 
         # p.stepSimulation()
