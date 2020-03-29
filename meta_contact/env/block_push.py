@@ -102,6 +102,17 @@ def _draw_debug_2d_line(line_unique_id, start, diff, color=(0, 0, 0), size=2., s
                               replaceItemUniqueId=line_unique_id)
 
 
+def _draw_debug_point(point_unique_ids, point, color=(0, 0, 0), length=0.01, height=_BLOCK_HEIGHT):
+    location = (point[0], point[1], height)
+    # replace previous debug lines
+    point_unique_ids[0] = p.addUserDebugLine(np.add(location, [length, 0, 0]),
+                                             np.add(location, [-length, 0, 0]),
+                                             color, 2, replaceItemUniqueId=point_unique_ids[0])
+    point_unique_ids[1] = p.addUserDebugLine(np.add(location, [0, length, 0]),
+                                             np.add(location, [0, -length, 0]),
+                                             color, 2, replaceItemUniqueId=point_unique_ids[1])
+
+
 def _get_lateral_friction_forces(contact, flip=True):
     force_sign = -1 if flip else 1
     fy = force_sign * contact[10]
@@ -254,6 +265,26 @@ class PushLoaderWithReaction(PushLoaderRestricted):
         return xu, y, cc
 
 
+class PushLoaderPhysicalPusherWithReaction(PushLoaderRestricted):
+    def _process_file_raw_data(self, d):
+        x = d['X']
+        if x.shape[1] != PushPhysicallyAnyAlongEnv.nx:
+            raise RuntimeError(
+                "Incompatible dataset; expected nx = {} got nx = {}".format(PushPhysicallyAnyAlongEnv.nx, x.shape[1]))
+
+        if self.config.predict_difference:
+            dpos = x[1:, :2] - x[:-1, :2]
+            dyaw = math_utils.angular_diff_batch(x[1:, 2], x[:-1, 2])
+            dr = x[1:, 3:5] - x[:-1, 3:5]
+            y = np.concatenate((dpos, dyaw.reshape(-1, 1), dr), axis=1)
+        else:
+            raise RuntimeError("Too hard to predict discontinuous normalized angles; use predict difference")
+
+        xu, y, cc = self._apply_masks(d, x, y)
+
+        return xu, y, cc
+
+
 class DebugVisualization:
     FRICTION = 0
     WALL_ON_BLOCK = 1
@@ -281,7 +312,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
         super().__init__(**kwargs)
         self.level = environment_level
         self.sim_step_wait = sim_step_wait
-        self.max_pusher_force = 200
+        # TODO tune this such that acceleration profiles are smooth and we end with no velocity at end
+        self.max_pusher_force = 40
 
         # initial config
         self.goal = None
@@ -289,6 +321,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.initBlockPos = None
         self.initBlockYaw = None
 
+        # TODO create external class for handling these debug drawing IDs
         # debugging objects
         self._goal_debug_lines = [-1, -1]
         self._init_block_debug_lines = [-1, -1]
@@ -467,6 +500,15 @@ class PushAgainstWallEnv(MyPybulletEnv):
     def _draw_state(self):
         _draw_debug_2d_pose(self._block_debug_lines, self.get_block_pose(self.state))
 
+    def _draw_reaction_force(self, r, name, color=(1, 0, 1)):
+        start = self._observe_pusher()
+        if name not in self._contact_debug_lines:
+            self._contact_debug_lines[name] = -1
+        self._contact_debug_lines[name] = _draw_debug_2d_line(self._contact_debug_lines[name], start,
+                                                              r,
+                                                              size=np.linalg.norm(r), scale=0.03,
+                                                              color=color)
+
     def _get_goal_block_pose(self):
         return self.goal[2:5]
 
@@ -493,6 +535,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         return pusherPose[0]
 
     def _observe_contact(self, visualize=True):
+        # TODO move this kind of observing and calculating reaction force into derived class
         # assume there's 4 contact points between block and plane
         info = {'bp': np.zeros((4, 2))}
         # push of plane onto block
@@ -588,21 +631,15 @@ class PushAgainstWallEnv(MyPybulletEnv):
         x, y, z = self._observe_pusher()
         return np.array((x, y) + self._observe_block())
 
-    def _move_and_wait(self, eePos):
+    def _move_and_wait(self, eePos, steps_to_wait=50):
         # execute the action
         self._move_pusher(eePos)
         p.stepSimulation()
-        self._observe_contact()
-        # handle trying to go into wall (if we don't succeed)
-        # we use a force insufficient for going into the wall
-        while not self._reached_command(eePos):
-            for _ in range(50):
-                p.stepSimulation()
-
-        # wait until simulation becomes static
-        while not self._static_environment():
-            for _ in range(50):
-                p.stepSimulation()
+        for _ in range(steps_to_wait):
+            self._observe_contact()
+            p.stepSimulation()
+            if self.mode is p.GUI and self.sim_step_wait:
+                time.sleep(self.sim_step_wait)
 
     @staticmethod
     def state_difference(state, other_state):
@@ -950,35 +987,18 @@ class PushWithForceDirectlyReactionInStateEnv(PushWithForceDirectlyEnv):
             diff = np.column_stack((dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1), dreaction))
         return diff
 
-    def visualize_prediction_error(self, predicted_state):
-        super().visualize_prediction_error(predicted_state)
-        # visualize the predicted reaction force
-        r = predicted_state[4:6]
-        start = self._observe_pusher()
-        name = 'pr'
-        if name not in self._contact_debug_lines:
-            self._contact_debug_lines[name] = -1
-        self._contact_debug_lines[name] = _draw_debug_2d_line(self._contact_debug_lines[name], start,
-                                                              r,
-                                                              size=np.linalg.norm(r), scale=0.03,
-                                                              color=(0.5, 0, 0.5))
-
     def _set_goal(self, goal_pos):
         # want 0 reaction force
         self.goal = np.array(tuple(goal_pos) + (0, 0) + (0, 0))
 
+    def visualize_prediction_error(self, predicted_state):
+        super().visualize_prediction_error(predicted_state)
+        self._draw_reaction_force(predicted_state[4:6], 'pr', (0.5, 0, 0.5))
+
     def _draw_state(self):
-        super(PushWithForceDirectlyReactionInStateEnv, self)._draw_state()
+        super()._draw_state()
         # NOTE this is visualizing the reaction from the previous action, rather than the current action
-        name = 'r'
-        start = self._observe_pusher()
-        if name not in self._contact_debug_lines:
-            self._contact_debug_lines[name] = -1
-        rf = self.state[4:6]
-        mag = np.linalg.norm(rf)
-        self._contact_debug_lines[name] = _draw_debug_2d_line(self._contact_debug_lines[name], start, rf,
-                                                              size=mag, scale=0.03,
-                                                              color=(1, 0, 1))
+        self._draw_reaction_force(self.state[4:6], 'r')
 
     def _obs(self):
         state = super()._obs()
@@ -999,14 +1019,53 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
     nu = 3
     nx = 5
     ny = 5
+    MAX_PUSH_ANGLE = math.pi / 4  # 45 degree on either side of normal
+    MAX_PUSH_DIST = _MAX_ALONG / 10  # effectively how many moves of pushing straight to move a half block
 
-    def _setup_experiment(self):
-        super()._setup_experiment()
-        # renable collision
-        p.setCollisionFilterPair(self.pusherId, self.blockId, -1, -1, 1)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self._start_eepos_ids = [-1, -1]
+        self._final_eepos_ids = [-1, -1]
+        self._action_debug_line = -1
+
+        self.Q = np.diag([10, 10, 0, REACTION_Q_COST, REACTION_Q_COST])
+
+    @staticmethod
+    def state_difference(state, other_state):
+        if len(state.shape) == 1:
+            state = state.reshape(1, -1)
+        if len(other_state.shape) == 1:
+            other_state = other_state.reshape(1, -1)
+        dyaw = math_utils.angular_diff_batch(state[:, 2], other_state[:, 2])
+        dpos = state[:, :2] - other_state[:, :2]
+        dreaction = state[:, 3:5] - other_state[:, 3:5]
+        if torch.is_tensor(state):
+            diff = torch.cat((dpos, dyaw.view(-1, 1), dreaction), dim=1)
+        else:
+            diff = np.column_stack((dpos, dyaw.reshape(-1, 1), dreaction))
+        return diff
+
+    def _set_goal(self, goal_pos):
+        self.goal = np.array(tuple(goal_pos) + (0,) + (0, 0))
+
+    def visualize_prediction_error(self, predicted_state):
+        super().visualize_prediction_error(predicted_state)
+        self._draw_reaction_force(predicted_state[3:5], 'pr', (0.5, 0, 0.5))
+
+    def _draw_state(self):
+        super()._draw_state()
+        # NOTE this is visualizing the reaction from the previous action, rather than the current action
+        self._draw_reaction_force(self.state[3:5], 'r')
+
+    def _draw_action(self, push_dist, push_dir_world):
+        start = self._observe_pusher()
+        pointer = math_utils.rotate_wrt_origin((push_dist, 0), push_dir_world)
+        self._action_debug_line = _draw_debug_2d_line(self._action_debug_line, start, pointer, (1, 0, 0), scale=1)
 
     def _observe_contact(self, visualize=True):
         super(PushPhysicallyAnyAlongEnv, self)._observe_contact()
+        # TODO implement
         # get reaction force on pusher
         contactInfo = p.getContactPoints(self.pusherId, self.blockId)
         for i, contact in enumerate(contactInfo):
@@ -1018,74 +1077,72 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
                 _draw_contact_point(self._contact_debug_lines[name], contact, flip=False)
 
     def step(self, action):
-        if self.pusherConstraint is not None:
-            p.removeConstraint(self.pusherConstraint)
-            self.pusherConstraint = None
-
+        action = np.clip(action, *self.get_control_bounds())
         # normalize action such that the input can be within a fixed range
-        # first action is difference in along
+        push_along = action[0] * (_MAX_ALONG * 0.98)  # avoid corner to avoid leaving contact
+        push_dist = action[1] * self.MAX_PUSH_DIST
+        push_dir = action[2] * self.MAX_PUSH_ANGLE
+
         old_state = self._obs()
-        d_along = np.clip(action[0], -1, 1) * self.MAX_SLIDE
-        # TODO consider having u as fn and ft
-        # second action is push magnitude
-        f_mag = np.clip(action[1], 0, 1) * self.MAX_FORCE
-        # third option is push angle (0 being perpendicular to face)
-        f_dir = np.clip(action[2], -1, 1) * self.MAX_PUSH_ANGLE
         if self._debug_visualizations[DebugVisualization.ACTION]:
-            self._draw_action(f_mag, f_dir + old_state[2])
+            self._draw_action(push_dist, push_dir + old_state[2])
 
+        # TODO decide if we should have fixed push destination
         pos = pusher_pos_for_touching(old_state[:2], old_state[2], from_center=DIST_FOR_JUST_TOUCHING, face=self.face,
-                                      along_face=self.along * _MAX_ALONG)
-        z = self.initPusherPos[2]
-        eePos = np.concatenate((pos, (z,)))
-        # reset to have same orientation as block
-        _, block_orientation = p.getBasePositionAndOrientation(self.blockId)
-        p.resetBasePositionAndOrientation(self.pusherId, eePos, block_orientation)
-        # execute action on pusher
-        ft = math.sin(f_dir) * f_mag
-        fn = math.cos(f_dir) * f_mag
-        # apply force on the left face of the block at along
-        p.applyExternalForce(self.pusherId, -1, [fn, ft, 0], [0, 0, 0], p.LINK_FRAME)
+                                      along_face=push_along)
+        start_ee_pos = np.concatenate((pos, (self.initPusherPos[2],)))
+        _draw_debug_point(self._start_eepos_ids, start_ee_pos, color=(0, 0.5, 0.8))
 
-        # self.max_pusher_force = 20
-        # MAX_MOVE = 0.005/100
-        # dx, dy = math_utils.rotate_wrt_origin((fn, ft), state[2])
-        # dx *= MAX_MOVE
-        # dy *= MAX_MOVE
-        # z = self.initPusherPos[2]
-        # eePos = [pos[0] + dx, pos[1] + dy, z]
-        # self._move_pusher(eePos)
+        # first get to desired starting push position (should experience no reaction force during this move)
+        self._move_and_wait(start_ee_pos, steps_to_wait=20)
+        # alternatively reset to have same orientation as block
+        # _, block_orientation = p.getBasePositionAndOrientation(self.blockId)
+        # p.resetBasePositionAndOrientation(self.pusherId, eePos, block_orientation)
 
-        p.stepSimulation()
-        for _ in range(20):
-            # also move the pusher along visually
-            # self._keep_pusher_adjacent()
-            for _ in range(5):
-                self._observe_contact()
-                p.stepSimulation()
-                if self.mode is p.GUI and self.sim_step_wait:
-                    time.sleep(self.sim_step_wait)
+        # TODO execute push with mini-steps (try without ministeps first)
+        dx = np.cos(push_dir) * push_dist
+        dy = np.sin(push_dir) * push_dist
+        pos = pusher_pos_for_touching(old_state[:2], old_state[2], from_center=DIST_FOR_JUST_TOUCHING - dx,
+                                      face=self.face, along_face=push_along + dy)
+        final_ee_pos = np.concatenate((pos, (self.initPusherPos[2],)))
+        # TODO debug final ee pos correctness; draw debug point
+        _draw_debug_point(self._final_eepos_ids, final_ee_pos, color=(0, 0.5, 0.5))
+        self._move_and_wait(final_ee_pos, steps_to_wait=50)
+
+        # p.stepSimulation()
+        # for _ in range(20):
+        #     # also move the pusher along visually
+        #     # self._keep_pusher_adjacent()
+        #     for _ in range(5):
+        #         self._observe_contact()
+        #         p.stepSimulation()
+        #         if self.mode is p.GUI and self.sim_step_wait:
+        #             time.sleep(self.sim_step_wait)
 
         info = self._aggregate_contact_info()
-        logger.info('normal {}'.format(self._largest_contact))
-        # apply the sliding along side after the push settles down
-        self.along = np.clip(old_state[3] + d_along, -1, 1)
-        # self._keep_pusher_adjacent()
-
-        for _ in range(20):
-            p.stepSimulation()
-
         cost, done = self._observe_finished_action(old_state, action)
 
         return np.copy(self.state), -cost, done, info
+
+    def _obs(self):
+        state = self._observe_block()
+        r = np.zeros(2) if self._reaction_force is None else self._reaction_force[:2]
+        state = np.concatenate((state, r))
+        return state
 
     @staticmethod
     def state_names():
         return ['$x_b$ (m)', '$y_b$ (m)', '$\\theta$ (rads)', '$r_x$ (N)', '$r_y$ (N)']
 
     @staticmethod
+    def get_control_bounds():
+        u_min = np.array([-1, 0, -1])
+        u_max = np.array([1, 1, 1])
+        return u_min, u_max
+
+    @staticmethod
     def control_names():
-        return ['$p$', '$d_x$', '$d_y$']
+        return ['$p$', 'd push distance', '$\\beta$ push angle (wrt normal)']
 
 
 class InteractivePush(simulation.Simulation):
@@ -1264,7 +1321,8 @@ class PushDataSource(datasource.FileDataSource):
     loader_map = {PushAgainstWallEnv: PushLoader,
                   PushAgainstWallStickyEnv: PushLoaderRestricted,
                   PushWithForceDirectlyEnv: PushLoaderRestricted,
-                  PushWithForceDirectlyReactionInStateEnv: PushLoaderWithReaction}
+                  PushWithForceDirectlyReactionInStateEnv: PushLoaderWithReaction,
+                  PushPhysicallyAnyAlongEnv: PushLoaderPhysicalPusherWithReaction}
 
     def __init__(self, env, data_dir='pushing', **kwargs):
         loader = self.loader_map.get(type(env), None)

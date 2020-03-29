@@ -164,20 +164,25 @@ def test_env_control():
     init_block_yaw = -0.3
     face = block_push.BlockFace.LEFT
     along_face = 0
-    env = block_push.PushWithForceDirectlyReactionInStateEnv(mode=p.GUI, init_pusher=along_face, log_video=True,
-                                                             init_block=init_block_pos, init_yaw=init_block_yaw,
-                                                             environment_level=1)
+    # env = block_push.PushWithForceDirectlyReactionInStateEnv(mode=p.GUI, init_pusher=along_face, log_video=True,
+    #                                                          init_block=init_block_pos, init_yaw=init_block_yaw,
+    #                                                          environment_level=1)
+    env = block_push.PushPhysicallyAnyAlongEnv(mode=p.GUI, init_block=init_block_pos, init_yaw=init_block_yaw)
     seed = rand.seed(0)
-    # env.sim_step_wait = 0.01
+    env.sim_step_wait = 0.01
     u = []
-    for _ in range(80):
-        u.append((0., 1, 0.))
-    N = 40
-    u_dir = np.linspace(0, -1, N)
-    u_mag = np.linspace(1, 0, N)
-    for i in range(N):
-        # u.append((np.random.randn(), 1, np.random.randn()))
-        u.append((0.1, u_mag[i], u_dir[i]))
+
+    for _ in range(10):
+        u.append((0, 1, 0))
+
+    # for _ in range(80):
+    #     u.append((0., 1, 0.))
+    # N = 40
+    # u_dir = np.linspace(0, -1, N)
+    # u_mag = np.linspace(1, 0, N)
+    # for i in range(N):
+    #     # u.append((np.random.randn(), 1, np.random.randn()))
+    #     u.append((0.1, u_mag[i], u_dir[i]))
 
     ctrl = controller.PreDeterminedController(u)
     sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=True, save=False)
@@ -204,7 +209,7 @@ def test_env_set():
 
 def tune_direct_push():
     # determine number of pushes to reach a fixed distance and make a u-turn
-    max_N = 200  # definitely won't take this many steps
+    max_N = 100  # definitely won't take this many steps
     init_block_pos = [0, 0]
     init_block_yaw = 0
     env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=0,
@@ -274,14 +279,14 @@ def run_direct_push():
     # init_block_pos = [0., 0.175]
     # init_block_yaw = -0.9 # -math.pi/2
     goal_pos = [0.85, -0.35]
-    env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=0, log_video=True, goal=goal_pos,
+    env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=0.5, log_video=True, goal=goal_pos,
                                               init_block=init_block_pos, init_yaw=init_block_yaw, environment_level=0)
     # env = block_push.PushWithForceIndirectlyEnv(mode=p.GUI, init_pusher=-0.2, log_video=True,
     #                                           init_block=init_block_pos, init_yaw=init_block_yaw, environment_level=1)
 
     # env.sim_step_wait = 0.01
     env.draw_user_text('run direct push', 2)
-    ctrl = controller.PreDeterminedController([(0.0, 0.5, -0.00) for _ in range(N)])
+    ctrl = controller.PreDeterminedController([(0.0, 1.0, -1.00) for _ in range(N)])
     # ctrl = controller.PreDeterminedController([(1, -1, 0) for _ in range(N)])
     # record how many steps of pushing to reach 1m
     contacts = {}
@@ -361,7 +366,7 @@ def run_direct_push():
     #     #     axes[pt].plot(t, pts, label='t {}'.format(tt),
     #     #                   color=(0.8 * tt / time_steps, 0.8 * tt / time_steps, tt / time_steps))
     # plt.legend()
-    #
+
     plt.show()
 
 
