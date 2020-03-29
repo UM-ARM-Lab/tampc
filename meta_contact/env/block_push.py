@@ -3,6 +3,7 @@ import math
 import os
 import pybullet as p
 import time
+import functools
 
 import numpy as np
 import torch
@@ -326,6 +327,23 @@ class DebugVisualization:
     ACTION = 3
 
 
+def handle_data_format_for_state_diff(state_diff):
+    @functools.wraps(state_diff)
+    def data_format_handler(state, other_state):
+        if len(state.shape) == 1:
+            state = state.reshape(1, -1)
+        if len(other_state.shape) == 1:
+            other_state = other_state.reshape(1, -1)
+        diff = state_diff(state, other_state)
+        if torch.tensor(state):
+            diff = torch.cat(diff, dim=1)
+        else:
+            diff = np.column_stack(diff)
+        return diff
+
+    return data_format_handler
+
+
 class PushAgainstWallEnv(MyPybulletEnv):
     nu = 2
     nx = 5
@@ -344,19 +362,12 @@ class PushAgainstWallEnv(MyPybulletEnv):
         return state[0:2]
 
     @staticmethod
+    @handle_data_format_for_state_diff
     def state_difference(state, other_state):
         """Get state - other_state in state space"""
-        if len(state.shape) == 1:
-            state = state.reshape(1, -1)
-        if len(other_state.shape) == 1:
-            other_state = other_state.reshape(1, -1)
         dyaw = math_utils.angular_diff_batch(state[:, 4], other_state[:, 4])
         dpos = state[:, :4] - other_state[:, :4]
-        if torch.tensor(state):
-            diff = torch.cat((dpos, dyaw.view(-1, 1)), dim=1)
-        else:
-            diff = np.column_stack((dpos, dyaw.reshape(-1, 1)))
-        return diff
+        return dpos, dyaw.reshape(-1, 1)
 
     @staticmethod
     def control_names():
@@ -742,19 +753,12 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         return pos
 
     @staticmethod
+    @handle_data_format_for_state_diff
     def state_difference(state, other_state):
-        if len(state.shape) == 1:
-            state = state.reshape(1, -1)
-        if len(other_state.shape) == 1:
-            other_state = other_state.reshape(1, -1)
         dyaw = math_utils.angular_diff_batch(state[:, 2], other_state[:, 2])
         dpos = state[:, :2] - other_state[:, :2]
         dalong = state[:, 3] - other_state[:, 3]
-        if torch.is_tensor(state):
-            diff = torch.cat((dpos, dyaw.view(-1, 1), dalong.view(-1, 1)), dim=1)
-        else:
-            diff = np.column_stack((dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1)))
-        return diff
+        return dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1)
 
     @staticmethod
     def control_names():
@@ -941,20 +945,13 @@ class PushWithForceDirectlyReactionInStateEnv(PushWithForceDirectlyEnv):
         return ['$x_b$ (m)', '$y_b$ (m)', '$\\theta$ (rads)', '$p$ (m)', '$r_x$ (N)', '$r_y$ (N)']
 
     @staticmethod
+    @handle_data_format_for_state_diff
     def state_difference(state, other_state):
-        if len(state.shape) == 1:
-            state = state.reshape(1, -1)
-        if len(other_state.shape) == 1:
-            other_state = other_state.reshape(1, -1)
         dyaw = math_utils.angular_diff_batch(state[:, 2], other_state[:, 2])
         dpos = state[:, :2] - other_state[:, :2]
         dalong = state[:, 3] - other_state[:, 3]
         dreaction = state[:, 4:6] - other_state[:, 4:6]
-        if torch.is_tensor(state):
-            diff = torch.cat((dpos, dyaw.view(-1, 1), dalong.view(-1, 1), dreaction), dim=1)
-        else:
-            diff = np.column_stack((dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1), dreaction))
-        return diff
+        return dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1), dreaction
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1008,19 +1005,12 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         return u_min, u_max
 
     @staticmethod
+    @handle_data_format_for_state_diff
     def state_difference(state, other_state):
-        if len(state.shape) == 1:
-            state = state.reshape(1, -1)
-        if len(other_state.shape) == 1:
-            other_state = other_state.reshape(1, -1)
         dyaw = math_utils.angular_diff_batch(state[:, 2], other_state[:, 2])
         dpos = state[:, :2] - other_state[:, :2]
         dreaction = state[:, 3:5] - other_state[:, 3:5]
-        if torch.is_tensor(state):
-            diff = torch.cat((dpos, dyaw.view(-1, 1), dreaction), dim=1)
-        else:
-            diff = np.column_stack((dpos, dyaw.reshape(-1, 1), dreaction))
-        return diff
+        return dpos, dyaw.reshape(-1, 1), dreaction
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
