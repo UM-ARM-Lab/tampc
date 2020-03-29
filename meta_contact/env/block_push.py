@@ -639,8 +639,11 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
         # block-pusher distance
         x, y, _ = self._observe_pusher()
-        xb, yb, _ = self._observe_block()
-        info['pusher dist'] = np.linalg.norm((x - xb, y - yb)) - DIST_FOR_JUST_TOUCHING
+        xb, yb, theta = self._observe_block()
+
+        along, from_center = pusher_pos_along_face((xb, yb), theta, (x, y))
+        info['pusher dist'] = from_center - DIST_FOR_JUST_TOUCHING
+        info['pusher along'] = along
 
         for key, value in info.items():
             if key not in self._contact_info:
@@ -1092,12 +1095,10 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         reaction_force = [0, 0, 0]
 
         contactInfo = p.getContactPoints(self.pusherId, self.blockId)
-        # should be at most this many contacts between block and pusher
-        info['pb'] = np.zeros(3)
+        info['npb'] = len(contactInfo)
         for i, contact in enumerate(contactInfo):
             f_contact = _get_total_contact_force(contact, False)
             reaction_force = [sum(i) for i in zip(reaction_force, f_contact)]
-            info['pb'][i] = contact[ContactInfo.NORMAL_MAG]
 
             name = 'r{}'.format(i)
             if abs(contact[ContactInfo.NORMAL_MAG]) > abs(self._largest_contact.get(name, 0)):
@@ -1125,7 +1126,7 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         self._dd.draw_point('start eepos', start_ee_pos, color=(0, 0.5, 0.8))
 
         # first get to desired starting push position (should experience no reaction force during this move)
-        self._move_and_wait(start_ee_pos, steps_to_wait=40)
+        self._move_and_wait(start_ee_pos, steps_to_wait=50)
         # alternatively reset to have same orientation as block
         # _, block_orientation = p.getBasePositionAndOrientation(self.blockId)
         # p.resetBasePositionAndOrientation(self.pusherId, eePos, block_orientation)
