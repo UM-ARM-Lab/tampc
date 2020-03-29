@@ -105,6 +105,10 @@ class DebugDrawer:
             self._debug_ids[name] = [-1, -1]
         uids = self._debug_ids[name]
 
+        # use default height if point is 2D, otherwise use point's z coordinate
+        if point.shape[0] == 3:
+            height = point[2]
+
         location = (point[0], point[1], height)
         uids[0] = p.addUserDebugLine(np.add(location, [length, 0, 0]), np.add(location, [-length, 0, 0]), color, 2,
                                      replaceItemUniqueId=uids[0])
@@ -138,12 +142,8 @@ class DebugDrawer:
     def draw_contact_point(self, name, contact, flip=True):
         start = contact[ContactInfo.POS_A]
         f_all = _get_total_contact_force(contact, flip)
-        # line_unique_ids[2] = _draw_debug_2d_line(line_unique_ids[2], start, dv, size=abs(force), scale=0.1,
-        #                                          color=(1, 0, 0))
         # combined normal vector (adding lateral friction)
         f_size = np.linalg.norm(f_all)
-        # project away z
-        f_all[2] = 0
         self.draw_2d_line("{} xy".format(name), start, f_all, size=f_size, scale=0.03, color=(1, 1, 0))
         # _draw_contact_friction(line_unique_ids, contact, flip)
         return f_size
@@ -424,7 +424,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
             DebugVisualization.REACTION_ON_PUSHER: True,
             DebugVisualization.WALL_ON_BLOCK: False,
             DebugVisualization.ACTION: True,
-            DebugVisualization.BLOCK_ON_PUSHER: False,
+            DebugVisualization.BLOCK_ON_PUSHER: True,
         }
         if debug_visualizations is not None:
             self._debug_visualizations.update(debug_visualizations)
@@ -632,10 +632,15 @@ class PushAgainstWallEnv(MyPybulletEnv):
         info['bv'] = np.linalg.norm(v)
         info['bva'] = np.linalg.norm(va)
 
+        # pusher velocity
+        v, va = p.getBaseVelocity(self.pusherId)
+        info['pv'] = np.linalg.norm(v)
+        info['pva'] = np.linalg.norm(va)
+
         # block-pusher distance
         x, y, _ = self._observe_pusher()
         xb, yb, _ = self._observe_block()
-        info['pusher dist'] = np.linalg.norm((x - xb, y - yb))
+        info['pusher dist'] = np.linalg.norm((x - xb, y - yb)) - DIST_FOR_JUST_TOUCHING
 
         for key, value in info.items():
             if key not in self._contact_info:
@@ -1077,7 +1082,7 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
     def _draw_action(self, push_dist, push_dir_world):
         start = self._observe_pusher()
         pointer = math_utils.rotate_wrt_origin((push_dist, 0), push_dir_world)
-        self._dd.draw_2d_line('u', start, pointer, (1, 0, 0), scale=1)
+        self._dd.draw_2d_line('u', start, pointer, (1, 0, 0), scale=5)
 
     def _obs(self):
         state = np.concatenate((self._observe_block(), self._observe_reaction_force()))
@@ -1090,7 +1095,7 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         # should be at most 2 contacts between block and pusher
         info['pb'] = np.zeros(2)
         for i, contact in enumerate(contactInfo):
-            f_contact = _get_total_contact_force(contact)
+            f_contact = _get_total_contact_force(contact, False)
             reaction_force = [sum(i) for i in zip(reaction_force, f_contact)]
             info['pb'][i] = contact[ContactInfo.NORMAL_MAG]
 
@@ -1098,7 +1103,7 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
             if abs(contact[ContactInfo.NORMAL_MAG]) > abs(self._largest_contact.get(name, 0)):
                 self._largest_contact[name] = contact[ContactInfo.NORMAL_MAG]
                 if visualize and self._debug_visualizations[DebugVisualization.BLOCK_ON_PUSHER]:
-                    self._dd.draw_contact_point(name, contact, flip=False)
+                    self._dd.draw_contact_point(name, contact, False)
 
         self._observe_raw_reaction_force(info, reaction_force, visualize)
 
@@ -1120,7 +1125,7 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         self._dd.draw_point('start eepos', start_ee_pos, color=(0, 0.5, 0.8))
 
         # first get to desired starting push position (should experience no reaction force during this move)
-        self._move_and_wait(start_ee_pos, steps_to_wait=20)
+        self._move_and_wait(start_ee_pos, steps_to_wait=40)
         # alternatively reset to have same orientation as block
         # _, block_orientation = p.getBasePositionAndOrientation(self.blockId)
         # p.resetBasePositionAndOrientation(self.pusherId, eePos, block_orientation)
@@ -1133,7 +1138,7 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         final_ee_pos = np.concatenate((pos, (self.initPusherPos[2],)))
         # TODO debug final ee pos correctness; draw debug point
         self._dd.draw_point('final eepos', final_ee_pos, color=(0, 0.5, 0.5))
-        self._move_and_wait(final_ee_pos, steps_to_wait=50)
+        self._move_and_wait(final_ee_pos, steps_to_wait=70)
 
         # p.stepSimulation()
         # for _ in range(20):

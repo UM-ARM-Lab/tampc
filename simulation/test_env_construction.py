@@ -273,21 +273,21 @@ def tune_direct_push():
 
 
 def run_direct_push():
-    N = 100
-    init_block_pos = [0., 0.12]
+    N = 10
+    init_block_pos = [0., 0.]
     init_block_yaw = 0
     # init_block_yaw = -math.pi/2
     # init_block_pos = [0., 0.175]
     # init_block_yaw = -0.9 # -math.pi/2
     goal_pos = [0.85, -0.35]
-    env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=0.5, log_video=True, goal=goal_pos,
-                                              init_block=init_block_pos, init_yaw=init_block_yaw, environment_level=0)
-    # env = block_push.PushWithForceIndirectlyEnv(mode=p.GUI, init_pusher=-0.2, log_video=True,
-    #                                           init_block=init_block_pos, init_yaw=init_block_yaw, environment_level=1)
+    # env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=0.5, log_video=True, goal=goal_pos,
+    #                                           init_block=init_block_pos, init_yaw=init_block_yaw, environment_level=0)
+    env = block_push.PushPhysicallyAnyAlongEnv(mode=p.GUI, init_block=init_block_pos, init_yaw=init_block_yaw,
+                                               environment_level=0)
 
     # env.sim_step_wait = 0.01
     env.draw_user_text('run direct push', 2)
-    ctrl = controller.PreDeterminedController([(0.0, 1.0, -1.00) for _ in range(N)])
+    ctrl = controller.PreDeterminedController([(0.0, 1.0, 0.0) for _ in range(N)])
     # ctrl = controller.PreDeterminedController([(1, -1, 0) for _ in range(N)])
     # record how many steps of pushing to reach 1m
     contacts = {}
@@ -304,43 +304,59 @@ def run_direct_push():
     contacts = {key: np.stack(value, axis=0) for key, value in contacts.items() if len(value)}
     plt.ioff()
 
-    # log velocity averaged over time steps
-    v = contacts['bv']
-    va = contacts['bva']
-    vs = [v, va]
-    v_names = ['velocity', 'angular v']
-    # average over the steps, look at how the forces differ over time for the different contact points
-    f, axes = plt.subplots(2, 1, sharex=True)
-    for n, ax in zip(v_names, axes):
-        ax.set_ylabel(n)
-    axes[0].set_xlabel('sim step (wait for quasi-static)')
-    t = list(range(v.shape[1]))
-    for i, y in enumerate(vs):
+    def plot_series(t, y, ax):
         mean = np.mean(y, axis=0)
         std = np.std(y, axis=0)
-        axes[i].plot(t, mean)
-        axes[i].fill_between(t, mean - std, mean + std, alpha=0.2)
-    axes[0].set_ybound(0, 0.3)
-    axes[1].set_ybound(0, 0.6)
-    plt.legend()
+        ax.plot(t, mean)
+        ax.fill_between(t, mean - std, mean + std, alpha=0.2)
+
+    def plot_velocity(vs, title):
+        v_names = ['velocity', 'angular v']
+        # average over the steps, look at how the forces differ over time for the different contact points
+        f, axes = plt.subplots(2, 1, sharex=True)
+        for n, ax in zip(v_names, axes):
+            ax.set_ylabel(n)
+        axes[0].set_xlabel('sim step (wait for quasi-static)')
+        t = list(range(vs[0].shape[1]))
+        for i, y in enumerate(vs):
+            plot_series(t, y, axes[i])
+        axes[0].set_ybound(0, 0.3)
+        axes[1].set_ybound(0, 0.6)
+        plt.legend()
+        f.suptitle(title)
+
+    plot_velocity([contacts['bv'], contacts['bva']], 'block')
+    plot_velocity([contacts['pv'], contacts['pva']], 'pusher')
+
+    plt.figure()
+    v = contacts['pusher dist']
+    t = list(range(v.shape[1]))
+    plt.ylabel('pusher dist')
+    plot_series(t, v, plt.gca())
+
+    plt.figure()
+    v = np.linalg.norm(contacts['r'], axis=2)
+    t = list(range(v.shape[1]))
+    plt.ylabel('reaction force magnitude')
+    plot_series(t, v, plt.gca())
 
     # log friction averaged over time steps
-    friction_log = contacts['bp']
-    friction_dirs = ['(0,1,0)', '(1,0,0)']
-    # average over the steps, look at how the forces differ over time for the different contact points
-    f, axes = plt.subplots(2, 1, sharex=True)
-    for d, ax in zip(friction_dirs, axes):
-        ax.set_ylabel('lateral friction in {}'.format(d))
-    axes[0].set_xlabel('sim step (wait for quasi-static)')
-    t = list(range(friction_log.shape[1]))
-    for pt in range(friction_log.shape[2]):
-        for friction_dir in range(friction_log.shape[3]):
-            pts = friction_log[:, :, pt, friction_dir]
-            friction = np.mean(pts, axis=0)
-            std = np.std(pts, axis=0)
-            axes[friction_dir].plot(t, friction, label='pt {}'.format(pt, friction_dir))
-            axes[friction_dir].fill_between(t, friction - std, friction + std, alpha=0.2)
-    plt.legend()
+    # friction_log = contacts['bp']
+    # friction_dirs = ['(0,1,0)', '(1,0,0)']
+    # # average over the steps, look at how the forces differ over time for the different contact points
+    # f, axes = plt.subplots(2, 1, sharex=True)
+    # for d, ax in zip(friction_dirs, axes):
+    #     ax.set_ylabel('lateral friction in {}'.format(d))
+    # axes[0].set_xlabel('sim step (wait for quasi-static)')
+    # t = list(range(friction_log.shape[1]))
+    # for pt in range(friction_log.shape[2]):
+    #     for friction_dir in range(friction_log.shape[3]):
+    #         pts = friction_log[:, :, pt, friction_dir]
+    #         friction = np.mean(pts, axis=0)
+    #         std = np.std(pts, axis=0)
+    #         axes[friction_dir].plot(t, friction, label='pt {}'.format(pt, friction_dir))
+    #         axes[friction_dir].fill_between(t, friction - std, friction + std, alpha=0.2)
+    # plt.legend()
 
     # log contact with wall for each time step
     # contact_log = contacts['bw']
@@ -373,8 +389,8 @@ def run_direct_push():
 
 if __name__ == "__main__":
     # test_pusher_placement_inverse()
-    test_env_control()
+    # test_env_control()
     # test_env_set()
     # test_simulator_friction_isometry()
     # tune_direct_push()
-    # run_direct_push()
+    run_direct_push()
