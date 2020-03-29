@@ -334,11 +334,16 @@ def run_direct_push():
     plt.ylabel('pusher dist')
     plot_series(t, v, plt.gca())
 
-    plt.figure()
-    v = np.linalg.norm(contacts['r'], axis=2)
+    r = contacts['r']
+    v = np.linalg.norm(r, axis=2)
     t = list(range(v.shape[1]))
-    plt.ylabel('reaction force magnitude')
-    plot_series(t, v, plt.gca())
+    f, axes = plt.subplots(3, 1, sharex=True)
+    axes[0].set_ylabel('reaction force magnitude')
+    axes[1].set_ylabel('$r_x$')
+    axes[2].set_ylabel('$r_y$')
+    plot_series(t, v, axes[0])
+    plot_series(t, r[:, :, 0], axes[1])
+    plot_series(t, r[:, :, 1], axes[2])
 
     # log friction averaged over time steps
     # friction_log = contacts['bp']

@@ -41,7 +41,7 @@ class ContactInfo:
 _MAX_ALONG = 0.075 + 0.1  # half length of block
 _BLOCK_HEIGHT = 0.05
 _PUSHER_MID = 0.10
-DIST_FOR_JUST_TOUCHING = _MAX_ALONG + 0.021 - 0.00001 + 0.002
+DIST_FOR_JUST_TOUCHING = _MAX_ALONG + 0.021 - 0.00001
 
 
 def pusher_pos_for_touching(block_pos, block_yaw, from_center=DIST_FOR_JUST_TOUCHING, face=BlockFace.LEFT,
@@ -410,7 +410,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.level = environment_level
         self.sim_step_wait = sim_step_wait
         # TODO tune this such that acceleration profiles are smooth and we end with no velocity at end
-        self.max_pusher_force = 40
+        self.max_pusher_force = 10
 
         # initial config
         self.goal = None
@@ -1092,8 +1092,8 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         reaction_force = [0, 0, 0]
 
         contactInfo = p.getContactPoints(self.pusherId, self.blockId)
-        # should be at most 2 contacts between block and pusher
-        info['pb'] = np.zeros(2)
+        # should be at most this many contacts between block and pusher
+        info['pb'] = np.zeros(3)
         for i, contact in enumerate(contactInfo):
             f_contact = _get_total_contact_force(contact, False)
             reaction_force = [sum(i) for i in zip(reaction_force, f_contact)]
@@ -1138,7 +1138,7 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         final_ee_pos = np.concatenate((pos, (self.initPusherPos[2],)))
         # TODO debug final ee pos correctness; draw debug point
         self._dd.draw_point('final eepos', final_ee_pos, color=(0, 0.5, 0.5))
-        self._move_and_wait(final_ee_pos, steps_to_wait=70)
+        self._move_and_wait(final_ee_pos, steps_to_wait=300)
 
         # p.stepSimulation()
         # for _ in range(20):
