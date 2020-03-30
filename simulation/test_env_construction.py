@@ -169,7 +169,7 @@ def test_env_control():
     #                                                          environment_level=1)
     env = block_push.PushPhysicallyAnyAlongEnv(mode=p.GUI, init_block=init_block_pos, init_yaw=init_block_yaw)
     seed = rand.seed(0)
-    env.sim_step_wait = 0.01
+    # env.sim_step_wait = 0.01
     u = []
 
     u.append((0, 1, 0))
@@ -178,12 +178,12 @@ def test_env_control():
 
     # for _ in range(80):
     #     u.append((0., 1, 0.))
-    # N = 40
-    # u_dir = np.linspace(0, -1, N)
-    # u_mag = np.linspace(1, 0, N)
-    # for i in range(N):
-    #     # u.append((np.random.randn(), 1, np.random.randn()))
-    #     u.append((0.1, u_mag[i], u_dir[i]))
+    N = 40
+    u_dir = np.linspace(0, -1, N)
+    u_mag = np.linspace(1, 0, N)
+    for i in range(N):
+        # u.append((np.random.randn(), 1, np.random.randn()))
+        u.append((0.1, u_mag[i], u_dir[i]))
 
     ctrl = controller.PreDeterminedController(u)
     sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=True, save=False)
@@ -273,7 +273,7 @@ def tune_direct_push():
 
 
 def run_direct_push():
-    N = 10
+    N = 20
     init_block_pos = [0., 0.2]
     # init_block_yaw = 0
     init_block_yaw = -math.pi / 2
@@ -282,14 +282,14 @@ def run_direct_push():
     goal_pos = [0.85, -0.35]
     # env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=0.5, log_video=True, goal=goal_pos,
     #                                           init_block=init_block_pos, init_yaw=init_block_yaw, environment_level=0)
-    env = block_push.PushPhysicallyAnyAlongEnv(mode=p.GUI, log_video=True, init_block=init_block_pos,
+    env = block_push.PushPhysicallyAnyAlongEnv(mode=p.GUI, log_video=False, init_block=init_block_pos,
                                                init_yaw=init_block_yaw,
                                                environment_level=1)
 
     # env.sim_step_wait = 0.01
     env.draw_user_text('run direct push', 2)
-    ctrl = controller.PreDeterminedController([(0.0, 1.0, 0.0) for _ in range(N)])
-    # ctrl = controller.PreDeterminedController([(0.5, 1.0, -0.5) for _ in range(N)])
+    # ctrl = controller.PreDeterminedController([(0.0, 1.0, 0.0) for _ in range(N)])
+    ctrl = controller.PreDeterminedController([(0.5, 1.0, -0.5) for _ in range(N)])
     # record how many steps of pushing to reach 1m
     contacts = {}
     obs = env.reset()

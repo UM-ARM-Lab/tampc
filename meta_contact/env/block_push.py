@@ -201,7 +201,6 @@ def _get_lateral_friction_forces(contact, flip=True):
 def _get_total_contact_force(contact, flip=True):
     force_sign = -1 if flip else 1
     force = force_sign * contact[ContactInfo.NORMAL_MAG]
-    # TODO confirm this is correct
     dv = [force * v for v in contact[ContactInfo.NORMAL_DIR_B]]
     fyd, fxd = _get_lateral_friction_forces(contact, flip)
     f_all = [sum(i) for i in zip(dv, fyd, fxd)]
@@ -409,8 +408,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
         super().__init__(**kwargs)
         self.level = environment_level
         self.sim_step_wait = sim_step_wait
-        # TODO tune this such that acceleration profiles are smooth and we end with no velocity at end
-        self.max_pusher_force = 10
+        # as long as this is above 20 for the current setting it is OK
+        self.max_pusher_force = 40
 
         # initial config
         self.goal = None
@@ -424,7 +423,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
             DebugVisualization.REACTION_ON_PUSHER: True,
             DebugVisualization.WALL_ON_BLOCK: False,
             DebugVisualization.ACTION: True,
-            DebugVisualization.BLOCK_ON_PUSHER: True,
+            DebugVisualization.BLOCK_ON_PUSHER: False,
         }
         if debug_visualizations is not None:
             self._debug_visualizations.update(debug_visualizations)
@@ -942,7 +941,6 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         # normalize action such that the input can be within a fixed range
         # first action is difference in along
         d_along = action[0] * self.MAX_SLIDE
-        # TODO consider having u as fn and ft
         # second action is push magnitude
         f_mag = max(0, action[1] * self.MAX_FORCE)
         # third option is push angle (0 being perpendicular to face)
@@ -1024,7 +1022,7 @@ class PushWithForceDirectlyReactionInStateEnv(PushWithForceDirectlyEnv):
     def _draw_state(self):
         super()._draw_state()
         # NOTE this is visualizing the reaction from the previous action, rather than the current action
-        self._draw_reaction_force(self.state[4:6], 'r')
+        self._draw_reaction_force(self.state[3:5], 'sr', (0, 0, 0))
 
     def _obs(self):
         state = super()._obs()
@@ -1079,8 +1077,8 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
 
     def _draw_state(self):
         super()._draw_state()
-        # NOTE this is visualizing the reaction from the previous action, rather than the current action
-        self._draw_reaction_force(self.state[3:5], 'r')
+        # NOTE this is visualizing the reaction from the previous action, rather than the instantaneous reaction
+        self._draw_reaction_force(self.state[3:5], 'sr', (0, 0, 0))
 
     def _draw_action(self, push_dist, push_dir_world):
         start = self._observe_pusher()
@@ -1119,41 +1117,36 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         if self._debug_visualizations[DebugVisualization.ACTION]:
             self._draw_action(push_dist, push_dir + old_state[2])
 
-        # TODO decide if we should have fixed push destination
         pos = pusher_pos_for_touching(old_state[:2], old_state[2], from_center=DIST_FOR_JUST_TOUCHING, face=self.face,
                                       along_face=push_along)
         start_ee_pos = np.concatenate((pos, (self.initPusherPos[2],)))
         self._dd.draw_point('start eepos', start_ee_pos, color=(0, 0.5, 0.8))
 
         # first get to desired starting push position (should experience no reaction force during this move)
-        self._move_and_wait(start_ee_pos, steps_to_wait=50)
-        # alternatively reset to have same orientation as block
-        # _, block_orientation = p.getBasePositionAndOrientation(self.blockId)
-        # p.resetBasePositionAndOrientation(self.pusherId, eePos, block_orientation)
+        # self._move_and_wait(start_ee_pos, steps_to_wait=50)
+        # alternatively reset pusher (this avoids knocking the block over)
+        p.resetBasePositionAndOrientation(self.pusherId, start_ee_pos, p.getQuaternionFromEuler([0, 0, 0]))
 
-        # TODO execute push with mini-steps (try without ministeps first)
         dx = np.cos(push_dir) * push_dist
         dy = np.sin(push_dir) * push_dist
         pos = pusher_pos_for_touching(old_state[:2], old_state[2], from_center=DIST_FOR_JUST_TOUCHING - dx,
                                       face=self.face, along_face=push_along + dy)
         final_ee_pos = np.concatenate((pos, (self.initPusherPos[2],)))
-        # TODO debug final ee pos correctness; draw debug point
         self._dd.draw_point('final eepos', final_ee_pos, color=(0, 0.5, 0.5))
-        self._move_and_wait(final_ee_pos, steps_to_wait=300)
 
-        # p.stepSimulation()
-        # for _ in range(20):
-        #     # also move the pusher along visually
-        #     # self._keep_pusher_adjacent()
-        #     for _ in range(5):
-        #         self._observe_contact()
-        #         p.stepSimulation()
-        #         if self.mode is p.GUI and self.sim_step_wait:
-        #             time.sleep(self.sim_step_wait)
+        # execute push with mini-steps
+        self.mini_steps = 100
+        for step in range(self.mini_steps):
+            intermediate_ee_pos = interpolate_pos(start_ee_pos, final_ee_pos, (step + 1) / self.mini_steps)
+            self._move_and_wait(intermediate_ee_pos, steps_to_wait=20)
 
         cost, done, info = self._finish_action(old_state, action)
 
         return np.copy(self.state), -cost, done, info
+
+
+def interpolate_pos(start, end, t):
+    return t * end + (1 - t) * start
 
 
 class InteractivePush(simulation.Simulation):
