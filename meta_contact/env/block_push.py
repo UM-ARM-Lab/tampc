@@ -38,7 +38,7 @@ class ContactInfo:
 
 
 # TODO This is specific to this pusher and block; how to generalize this?
-_MAX_ALONG = 0.075 + 0.1  # half length of block
+_MAX_ALONG = 0.3 / 2  # half length of block
 _BLOCK_HEIGHT = 0.05
 _PUSHER_MID = 0.10
 DIST_FOR_JUST_TOUCHING = _MAX_ALONG + 0.021 - 0.00001
@@ -1070,7 +1070,7 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
     nx = 5
     ny = 5
     MAX_PUSH_ANGLE = math.pi / 4  # 45 degree on either side of normal
-    MAX_PUSH_DIST = _MAX_ALONG / 7  # effectively how many moves of pushing straight to move a half block
+    MAX_PUSH_DIST = _MAX_ALONG / 5  # effectively how many moves of pushing straight to move a half block
 
     @staticmethod
     def state_names():

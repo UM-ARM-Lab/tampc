@@ -13,12 +13,12 @@
     <inertial>
       <origin rpy="0 0 0" xyz="0 0 0"/>
       <mass value="3.0"/>
-      <inertia ixx="0.031249999999999997" ixy="0" ixz="0" iyy="0.031249999999999997" iyz="0" izz="0.06124999999999999"/>
+      <inertia ixx="0.023125" ixy="0" ixz="0" iyy="0.023125" iyz="0" izz="0.045"/>
     </inertial>
     <visual>
       <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
       <geometry>
-        <box size="0.35 0.35 0.05"/>
+        <box size="0.3 0.3 0.05"/>
       </geometry>
       <material name="blockmat">
         <color rgba="0.1 0.7 0.1 0.8"/>
@@ -27,7 +27,7 @@
     <collision>
       <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
       <geometry>
-        <box size="0.35 0.35 0.05"/>
+        <box size="0.3 0.3 0.05"/>
       </geometry>
     </collision>
   </link>
