@@ -46,6 +46,8 @@ def random_touching_start(env, w=block_push.DIST_FOR_JUST_TOUCHING):
     elif env_type in (block_push.PushAgainstWallStickyEnv, block_push.PushWithForceDirectlyEnv,
                       block_push.PushWithForceDirectlyReactionInStateEnv):
         init_pusher = np.random.uniform(-1, 1)
+    elif env_type in (block_push.PushPhysicallyAnyAlongEnv,):
+        init_pusher = 0
     else:
         raise RuntimeError("Unrecognized env type")
     return init_block_pos, init_block_yaw, init_pusher
@@ -144,7 +146,8 @@ def get_easy_env(mode=p.GUI, level=0, log_video=False):
     init_block_pos = [-0.8, 0.12]
     init_block_yaw = 0
     init_pusher = 0
-    goal_pos = [0.85, -0.35]
+    # goal_pos = [0.85, -0.35]
+    goal_pos = [-0.8, -0.35]
     env_opts = {
         'mode': mode,
         'goal': goal_pos,
@@ -158,11 +161,13 @@ def get_easy_env(mode=p.GUI, level=0, log_video=False):
     # env_dir = 'pushing/no_restriction'
     # env = block_push.PushAgainstWallStickyEnv(**env_opts)
     # env_dir = 'pushing/sticky'
-    if REACTION_IN_STATE:
-        env = block_push.PushWithForceDirectlyReactionInStateEnv(**env_opts)
-    else:
-        env = block_push.PushWithForceDirectlyEnv(**env_opts)
-    env_dir = 'pushing/direct_force_mini_step'
+    # if REACTION_IN_STATE:
+    #     env = block_push.PushWithForceDirectlyReactionInStateEnv(**env_opts)
+    # else:
+    #     env = block_push.PushWithForceDirectlyEnv(**env_opts)
+    # env_dir = 'pushing/direct_force_mini_step'
+    env = block_push.PushPhysicallyAnyAlongEnv(**env_opts)
+    env_dir = 'pushing/physical'
     return env
 
 
@@ -232,7 +237,10 @@ def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics):
 def get_controller_options(env):
     d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     u_min, u_max = env.get_control_bounds()
-    q = [10, 10, 0, 0.01]
+    if isinstance(env, block_push.PushPhysicallyAnyAlongEnv):
+        q = [10, 10, 0]
+    else:
+        q = [10, 10, 0, 0.01]
     if REACTION_IN_STATE:
         q += [block_push.REACTION_Q_COST, block_push.REACTION_Q_COST]
     Q = torch.diag(torch.tensor(q, dtype=torch.double))
@@ -256,7 +264,7 @@ def get_controller_options(env):
         'noise_sigma': torch.diag(sigma),
         'noise_mu': torch.tensor([0, 0.5, 0], dtype=torch.double, device=d),
         'lambda_': 1,
-        'horizon': 35,
+        'horizon': 40,
         'u_init': torch.tensor([0, 0.5, 0], dtype=torch.double, device=d),
         'sample_null_action': False,
         'step_dependent_dynamics': True,
@@ -354,11 +362,11 @@ def constrain_state(state):
 
 # ------- Hand designed coordinate transform classes using architecture 2
 class HandDesignedCoordTransform(PusherTransform):
-    def __init__(self, ds, nz, **kwargs):
+    def __init__(self, ds, nz, nv=4, reaction_force_start_index=4, **kwargs):
         # assume 4 states; anything after we should just passthrough
-        self.passthrough_states = ds.config.nx - 4
+        self.passthrough_states = ds.config.nx - reaction_force_start_index
         # v is dx, dy, dyaw in body frame and d_along
-        super().__init__(ds, nz + self.passthrough_states, 4 + self.passthrough_states, name='coord', **kwargs)
+        super().__init__(ds, nz + self.passthrough_states, nv + self.passthrough_states, name='coord', **kwargs)
 
     def _add_passthrough_states(self, z, x):
         # we always use the last few dims for passthrough; so use the same for v
@@ -457,6 +465,44 @@ class WorldBodyFrameTransformForReactionInState(HandDesignedCoordTransform):
         z = torch.cat((state[:, 2:4], action), dim=1)
         z = self._add_passthrough_states(z, state)
         return z
+
+
+class WorldBodyFrameTransformPhysicalPush(HandDesignedCoordTransform):
+    def __init__(self, ds, **kwargs):
+        super().__init__(ds, 4, nv=3, reaction_force_start_index=3, **kwargs)
+
+    def xu_to_z(self, state, action):
+        if len(state.shape) < 2:
+            state = state.reshape(1, -1)
+            action = action.reshape(1, -1)
+
+        z = torch.cat((state[:, 2].view(-1, 1), action), dim=1)
+        z = self._add_passthrough_states(z, state)
+        return z
+
+    def dx_to_v(self, x, dx):
+        if len(x.shape) == 1:
+            x = x.view(1, -1)
+            dx = dx.view(1, -1)
+        # convert world frame to body frame
+        dpos_body = math_utils.batch_rotate_wrt_origin(dx[:, :2], -x[:, 2])
+        # second last element is dyaw, which also gets passed along directly
+        dyaw = dx[:, 2]
+        v = torch.cat((dpos_body, dyaw.view(-1, 1)), dim=1)
+        v = self._add_passthrough_states(v, dx)
+        return v
+
+    def get_dx(self, x, v):
+        if len(x.shape) == 1:
+            x = x.view(1, -1)
+            v = v.view(1, -1)
+        # convert (dx, dy) from body frame back to world frame
+        dpos_world = math_utils.batch_rotate_wrt_origin(v[:, :2], x[:, 2])
+        # second last element is dyaw, which also gets passed along directly
+        dyaw = v[:, 2]
+        dx = torch.cat((dpos_world, dyaw.view(-1, 1)), dim=1)
+        dx = self._add_passthrough_states(dx, v)
+        return dx
 
 
 # ------- Learned transform classes using architecture 3
@@ -1251,7 +1297,8 @@ class AblationAllRegularizedTransform(AblationRemoveAllLinearityTransform):
 def coord_tsf_factory(env, *args, **kwargs):
     tsfs = {block_push.PushAgainstWallStickyEnv: WorldBodyFrameTransformForStickyEnv,
             block_push.PushWithForceDirectlyEnv: WorldBodyFrameTransformForDirectPush,
-            block_push.PushWithForceDirectlyReactionInStateEnv: WorldBodyFrameTransformForReactionInState}
+            block_push.PushWithForceDirectlyReactionInStateEnv: WorldBodyFrameTransformForReactionInState,
+            block_push.PushPhysicallyAnyAlongEnv: WorldBodyFrameTransformPhysicalPush}
     tsf_type = tsfs.get(type(env), None)
     if tsf_type is None:
         raise RuntimeError("No tsf specified for env type {}".format(type(env)))
@@ -1503,7 +1550,7 @@ def update_ds_with_transform(env, ds, use_tsf, **kwargs):
 def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False, override=False,
                   prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior, **kwargs):
     seed = 1
-    plot_model_error = False
+    plot_model_error = True
     enforce_model_rollout = False
     d = get_device()
     if plot_model_error:
@@ -1572,18 +1619,18 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     ctrl = get_controller(env, pm, ds, untransformed_config, **kwargs)
     name = get_full_controller_name(pm, ctrl, tsf_name)
     # expensive evaluation
-    evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921],
-                        override=override)
+    # evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921],
+    #                     override=override)
 
-    # env.draw_user_text(name, 14, left_offset=-1.5)
-    # # env.sim_step_wait = 0.01
-    # sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=True, save=True, stop_when_done=False)
-    # seed = rand.seed(2)
-    # env.draw_user_text("try {}".format(seed), 2)
-    # sim.run(seed)
-    # logger.info("last run cost %f", np.sum(sim.last_run_cost))
-    # plt.ioff()
-    # plt.show()
+    env.draw_user_text(name, 14, left_offset=-1.5)
+    # env.sim_step_wait = 0.01
+    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=True, save=True, stop_when_done=False)
+    seed = rand.seed(2)
+    env.draw_user_text("try {}".format(seed), 2)
+    sim.run(seed)
+    logger.info("last run cost %f", np.sum(sim.last_run_cost))
+    plt.ioff()
+    plt.show()
 
     env.close()
 
@@ -2036,7 +2083,7 @@ def visualize_model_actions_at_given_state():
     # use same preprocessor
     ds_wall.update_preprocessor(preprocessor)
     dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice,
-                                              allow_update=False, sample=False,
+                                              allow_update=False, sample=True,
                                               refit_strategy=online_model.RefitGPStrategy.RESET_DATA,
                                               device=d, training_iter=150, use_independent_outputs=False)
 
@@ -2066,9 +2113,9 @@ def visualize_model_actions_at_given_state():
 
 if __name__ == "__main__":
     level = 0
-    # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
+    collect_touching_freespace_data(trials=200, trial_length=50, level=0)
     # collect_push_against_wall_recovery_data()
-    collect_push_against_wall_recovery_data_mini_step()
+    # collect_push_against_wall_recovery_data_mini_step()
     # collect_single_long_trajectory()
     # visualize_datasets()
     # visualize_model_actions_at_given_state()
@@ -2084,4 +2131,4 @@ if __name__ == "__main__":
     # for seed in range(1):
     #     learn_invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
     # for seed in range(1):
-    #     learn_model(UseTransform.WITH_COMPRESSION_AND_PARTITION, seed=seed, name="per_dim_in_orig_space")
+    #     learn_model(UseTransform.NO_TRANSFORM, seed=seed, name="physical first")
