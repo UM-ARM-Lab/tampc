@@ -510,7 +510,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
                                   p.getQuaternionFromEuler([0, 0, self.initBlockYaw]))
 
         # adjust dynamics for better stability
-        p.changeDynamics(self.planeId, -1, lateralFriction=0.3, spinningFriction=0.1, rollingFriction=0.1)
+        p.changeDynamics(self.planeId, -1, lateralFriction=0.3, spinningFriction=0.025, rollingFriction=0.01)
 
         self.walls = []
         wall_z = 0.05
@@ -1070,7 +1070,7 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
     nx = 5
     ny = 5
     MAX_PUSH_ANGLE = math.pi / 4  # 45 degree on either side of normal
-    MAX_PUSH_DIST = _MAX_ALONG / 8  # effectively how many moves of pushing straight to move a half block
+    MAX_PUSH_DIST = _MAX_ALONG / 7  # effectively how many moves of pushing straight to move a half block
 
     @staticmethod
     def state_names():

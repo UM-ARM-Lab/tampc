@@ -8,7 +8,7 @@
 
   <link name="base_link">
     <contact>
-      <lateral_friction value="1.0"/>
+      <lateral_friction value="1.5"/>
       <spinning_friction value=".1"/>
     </contact>
     <inertial>
