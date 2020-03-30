@@ -394,7 +394,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
         return u_min, u_max
 
     def __init__(self, goal=(1.0, 0.), init_pusher=(-0.25, 0), init_block=(0., 0.), init_yaw=0.,
-                 environment_level=0, sim_step_wait=None, debug_visualizations=None, **kwargs):
+                 environment_level=0, sim_step_wait=None, mini_steps=100, wait_sim_steps_per_mini_step=20,
+                 max_pusher_force=40, debug_visualizations=None, **kwargs):
         """
         :param goal:
         :param init_pusher:
@@ -403,13 +404,19 @@ class PushAgainstWallEnv(MyPybulletEnv):
         :param environment_level: what obstacles should show up in the environment
         :param sim_step_wait: how many seconds to wait between each sim step to show intermediate states
         (0.01 seems reasonable for visualization)
+        :param mini_steps how many mini control steps to divide the control step into;
+        more is better for controller and allows greater force to prevent sliding
+        :param wait_sim_steps_per_mini_step how many sim steps to wait per mini control step executed;
+        inversely proportional to mini_steps
         :param kwargs:
         """
         super().__init__(**kwargs)
         self.level = environment_level
         self.sim_step_wait = sim_step_wait
-        # as long as this is above 20 for the current setting it is OK
-        self.max_pusher_force = 40
+        # as long as this is above a certain amount we won't exceed it in freespace pushing if we have many mini steps
+        self.max_pusher_force = max_pusher_force
+        self.mini_steps = mini_steps
+        self.wait_sim_step_per_mini_step = wait_sim_steps_per_mini_step
 
         # initial config
         self.goal = None
@@ -864,16 +871,9 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         u_max = np.array([1, 1, 1])
         return u_min, u_max
 
-    def __init__(self, init_pusher=0, repeat_action_times=80, repeat_step_times=8, **kwargs):
+    def __init__(self, init_pusher=0, **kwargs):
         # initial config
         self.along = init_pusher
-        self._action_debug_line = -1
-        # with a small push magnitude, we have to repeat the push multiple times so that each control step gets enough
-        self.repeat_action_times = repeat_action_times
-        # with a small push, we don't have to step as many times in the simulator so this should be inversely
-        # proportional to how many times we'll need to repeat the action
-        # tune this in test_env_construction.run_direct_push such that we get 0 velocity at the end
-        self.repeat_step_times = repeat_step_times
         super().__init__(init_pusher=init_pusher, face=BlockFace.LEFT, **kwargs)
 
     def _set_init_pusher(self, init_pusher):
@@ -953,14 +953,14 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         fn = math.cos(f_dir) * f_mag
 
         # repeat action so that each resulting step can be larger
-        for _ in range(self.repeat_action_times):
+        for _ in range(self.mini_steps):
             # apply force on the left face of the block at along
             p.applyExternalForce(self.blockId, -1, [fn, ft, 0], [-_MAX_ALONG, self.along * _MAX_ALONG, 0], p.LINK_FRAME)
             p.stepSimulation()
 
             # also move the pusher along visually
             self._keep_pusher_adjacent()
-            for t in range(self.repeat_step_times):
+            for t in range(self.wait_sim_step_per_mini_step):
                 self._observe_info()
 
                 p.stepSimulation()
@@ -1135,12 +1135,10 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         final_ee_pos = np.concatenate((pos, (self.initPusherPos[2],)))
         self._dd.draw_point('final eepos', final_ee_pos, color=(0, 0.5, 0.5))
 
-        # TODO generalize this for reuse with the previous env
         # execute push with mini-steps
-        self.mini_steps = 100
         for step in range(self.mini_steps):
             intermediate_ee_pos = interpolate_pos(start_ee_pos, final_ee_pos, (step + 1) / self.mini_steps)
-            self._move_and_wait(intermediate_ee_pos, steps_to_wait=20)
+            self._move_and_wait(intermediate_ee_pos, steps_to_wait=self.wait_sim_step_per_mini_step)
 
         cost, done, info = self._finish_action(old_state, action)
 
