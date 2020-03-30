@@ -167,7 +167,7 @@ def test_env_control():
     # env = block_push.PushWithForceDirectlyReactionInStateEnv(mode=p.GUI, init_pusher=along_face, log_video=True,
     #                                                          init_block=init_block_pos, init_yaw=init_block_yaw,
     #                                                          environment_level=1)
-    env = block_push.PushPhysicallyAnyAlongEnv(mode=p.GUI, init_block=init_block_pos, init_yaw=init_block_yaw)
+    env = block_push.PushPhysicallyAnyAlongEnv(mode=p.GUI, log_video=True, init_block=init_block_pos, init_yaw=init_block_yaw)
     seed = rand.seed(0)
     # env.sim_step_wait = 0.01
     u = []
@@ -182,8 +182,8 @@ def test_env_control():
     u_dir = np.linspace(0, -1, N)
     u_mag = np.linspace(1, 0, N)
     for i in range(N):
-        # u.append((np.random.randn(), 1, np.random.randn()))
-        u.append((0.1, u_mag[i], u_dir[i]))
+        u.append((0, 1, np.random.randn()))
+        # u.append((0.1, u_mag[i], u_dir[i]))
 
     ctrl = controller.PreDeterminedController(u)
     sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=True, save=False)
@@ -210,11 +210,12 @@ def test_env_set():
 
 def tune_direct_push():
     # determine number of pushes to reach a fixed distance and make a u-turn
-    max_N = 100  # definitely won't take this many steps
+    max_N = 250  # definitely won't take this many steps
     init_block_pos = [0, 0]
     init_block_yaw = 0
-    env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=0,
-                                              init_block=init_block_pos, init_yaw=init_block_yaw)
+    # env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=0,
+    #                                           init_block=init_block_pos, init_yaw=init_block_yaw)
+    env = block_push.PushPhysicallyAnyAlongEnv(mode=p.GUI, init_block=init_block_pos, init_yaw=init_block_yaw)
 
     env.draw_user_text('test 1-meter dash')
     ctrl = controller.PreDeterminedController([(0.0, 1, 0) for _ in range(max_N)])
@@ -234,7 +235,8 @@ def tune_direct_push():
     along_face = 1.0
     env.set_task_config(init_pusher=along_face)
     env.draw_user_text('test u-turn')
-    ctrl = controller.PreDeterminedController([(0.0, 1, 0) for _ in range(max_N)])
+    # ctrl = controller.PreDeterminedController([(0.0, 1, 0) for _ in range(max_N)])
+    ctrl = controller.PreDeterminedController([(1.0, 1, 1) for _ in range(max_N)])
     # record how many steps of pushing to make a u-turn (yaw > pi or > -pi)
     px = env.reset()
     step = 0
@@ -259,7 +261,7 @@ def tune_direct_push():
         if u_turn_step is None and block_pose[2] > 0:
             u_turn_step = step
         # stop after making a full turn
-        if step > 10 and 0 > block_pose[2] > -0.3:
+        if step > 40 and 0 > block_pose[2] > -0.3:
             yaws = yaws[:step]
             z_os = z_os[:step]
             xs = xs[:step]
@@ -282,14 +284,14 @@ def run_direct_push():
     goal_pos = [0.85, -0.35]
     # env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=0.5, log_video=True, goal=goal_pos,
     #                                           init_block=init_block_pos, init_yaw=init_block_yaw, environment_level=0)
-    env = block_push.PushPhysicallyAnyAlongEnv(mode=p.GUI, log_video=False, init_block=init_block_pos,
+    env = block_push.PushPhysicallyAnyAlongEnv(mode=p.GUI, log_video=True, init_block=init_block_pos,
                                                init_yaw=init_block_yaw,
-                                               environment_level=1)
+                                               environment_level=0)
 
     # env.sim_step_wait = 0.01
     env.draw_user_text('run direct push', 2)
     # ctrl = controller.PreDeterminedController([(0.0, 1.0, 0.0) for _ in range(N)])
-    ctrl = controller.PreDeterminedController([(0.5, 1.0, -0.5) for _ in range(N)])
+    ctrl = controller.PreDeterminedController([(0.5, 1.0, -1.0) for _ in range(N)])
     # record how many steps of pushing to reach 1m
     contacts = {}
     obs = env.reset()
@@ -386,5 +388,5 @@ if __name__ == "__main__":
     # test_env_control()
     # test_env_set()
     # test_simulator_friction_isometry()
-    # tune_direct_push()
-    run_direct_push()
+    tune_direct_push()
+    # run_direct_push()
