@@ -446,7 +446,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
             self._debug_visualizations.update(debug_visualizations)
 
         # avoid the spike at the start of each mini step from rapid acceleration
-        self._steps_since_start_to_get_reaction = 3
+        self._steps_since_start_to_get_reaction = 5
         self._clear_state_between_control_steps()
 
         # quadratic cost
@@ -510,7 +510,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
                                   p.getQuaternionFromEuler([0, 0, self.initBlockYaw]))
 
         # adjust dynamics for better stability
-        p.changeDynamics(self.planeId, -1, lateralFriction=0.3, spinningFriction=0.025, rollingFriction=0.01)
+        p.changeDynamics(self.planeId, -1, lateralFriction=0.3, spinningFriction=0.0, rollingFriction=0.0)
 
         self.walls = []
         wall_z = 0.05
@@ -889,7 +889,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
     ny = 4
     MAX_PUSH_ANGLE = math.pi / 4  # 45 degree on either side of normal
     MAX_SLIDE = 0.3  # can slide at most 30/200 = 15% of the face in 1 move
-    MAX_FORCE = 40
+    MAX_FORCE = 20
 
     @staticmethod
     def control_names():
@@ -1070,7 +1070,7 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
     nx = 5
     ny = 5
     MAX_PUSH_ANGLE = math.pi / 4  # 45 degree on either side of normal
-    MAX_PUSH_DIST = _MAX_ALONG / 5  # effectively how many moves of pushing straight to move a half block
+    MAX_PUSH_DIST = _MAX_ALONG / 4  # effectively how many moves of pushing straight to move a half block
 
     @staticmethod
     def state_names():
