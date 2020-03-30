@@ -1114,8 +1114,6 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         push_dir = action[2] * self.MAX_PUSH_ANGLE
 
         old_state = self._obs()
-        if self._debug_visualizations[DebugVisualization.ACTION]:
-            self._draw_action(push_dist, push_dir + old_state[2])
 
         pos = pusher_pos_for_touching(old_state[:2], old_state[2], from_center=DIST_FOR_JUST_TOUCHING, face=self.face,
                                       along_face=push_along)
@@ -1126,6 +1124,9 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         # self._move_and_wait(start_ee_pos, steps_to_wait=50)
         # alternatively reset pusher (this avoids knocking the block over)
         p.resetBasePositionAndOrientation(self.pusherId, start_ee_pos, p.getQuaternionFromEuler([0, 0, 0]))
+
+        if self._debug_visualizations[DebugVisualization.ACTION]:
+            self._draw_action(push_dist, push_dir + old_state[2])
 
         dx = np.cos(push_dir) * push_dist
         dy = np.sin(push_dir) * push_dist
