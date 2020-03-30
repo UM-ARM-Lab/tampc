@@ -340,6 +340,13 @@ class DebugVisualization:
     BLOCK_ON_PUSHER = 4
 
 
+class ReactionForceStrategy:
+    MAX_OVER_CONTROL_STEP = 0
+    MAX_OVER_MINI_STEPS = 1
+    AVG_OVER_MINI_STEPS = 2
+    MEDIAN_OVER_MINI_STEPS = 3
+
+
 def handle_data_format_for_state_diff(state_diff):
     @functools.wraps(state_diff)
     def data_format_handler(state, other_state):
@@ -395,7 +402,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
     def __init__(self, goal=(1.0, 0.), init_pusher=(-0.25, 0), init_block=(0., 0.), init_yaw=0.,
                  environment_level=0, sim_step_wait=None, mini_steps=100, wait_sim_steps_per_mini_step=20,
-                 max_pusher_force=40, debug_visualizations=None, **kwargs):
+                 max_pusher_force=20, debug_visualizations=None,
+                 reaction_force_strategy=ReactionForceStrategy.MEDIAN_OVER_MINI_STEPS, **kwargs):
         """
         :param goal:
         :param init_pusher:
@@ -408,6 +416,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         more is better for controller and allows greater force to prevent sliding
         :param wait_sim_steps_per_mini_step how many sim steps to wait per mini control step executed;
         inversely proportional to mini_steps
+        :param reaction_force_strategy how to aggregate measured reaction forces over control step into 1 value
         :param kwargs:
         """
         super().__init__(**kwargs)
@@ -417,6 +426,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self.max_pusher_force = max_pusher_force
         self.mini_steps = mini_steps
         self.wait_sim_step_per_mini_step = wait_sim_steps_per_mini_step
+        self.reaction_force_strategy = reaction_force_strategy
 
         # initial config
         self.goal = None
@@ -435,10 +445,9 @@ class PushAgainstWallEnv(MyPybulletEnv):
         if debug_visualizations is not None:
             self._debug_visualizations.update(debug_visualizations)
 
-        # info per sim step
-        self._contact_info = {}
-        self._largest_contact = {}
-        self._reaction_force = np.zeros(2)
+        # avoid the spike at the start of each mini step from rapid acceleration
+        self._steps_since_start_to_get_reaction = 3
+        self._clear_state_between_control_steps()
 
         # quadratic cost
         self.Q = np.diag([0, 0, 1, 1, 0])
@@ -462,6 +471,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
     # --- initialization and task configuration
     def _clear_state_between_control_steps(self):
+        self._sim_step = 0
+        self._mini_step_contact = {'full': np.zeros((self.mini_steps, 2)), 'mag': np.zeros(self.mini_steps)}
         self._contact_info = {}
         self._largest_contact = {}
         self._reaction_force = np.zeros(2)
@@ -616,15 +627,22 @@ class PushAgainstWallEnv(MyPybulletEnv):
 
     def _observe_reaction_force(self):
         """Return representative reaction force for simulation steps up to current one since last control step"""
-        return self._reaction_force[:2]
+        if self.reaction_force_strategy is ReactionForceStrategy.AVG_OVER_MINI_STEPS:
+            return self._mini_step_contact['full'].mean(axis=0)
+        if self.reaction_force_strategy is ReactionForceStrategy.MEDIAN_OVER_MINI_STEPS:
+            median_mini_step = np.argsort(self._mini_step_contact['mag'])[self.mini_steps // 2]
+            return self._mini_step_contact['full'][median_mini_step]
+        if self.reaction_force_strategy is ReactionForceStrategy.MAX_OVER_MINI_STEPS:
+            max_mini_step = np.argmax(self._mini_step_contact['mag'])
+            return self._mini_step_contact['full'][max_mini_step]
+        else:
+            return self._reaction_force[:2]
 
     def _observe_additional_info(self, info, visualize=True):
         pass
 
     def _observe_info(self, visualize=True):
         info = {}
-
-        self._observe_additional_info(info, visualize)
 
         # number of wall contacts
         info['wc'] = 0
@@ -651,6 +669,9 @@ class PushAgainstWallEnv(MyPybulletEnv):
         info['pusher dist'] = from_center - DIST_FOR_JUST_TOUCHING
         info['pusher along'] = along
 
+        self._observe_additional_info(info, visualize)
+        self._sim_step += 1
+
         for key, value in info.items():
             if key not in self._contact_info:
                 self._contact_info[key] = []
@@ -662,10 +683,20 @@ class PushAgainstWallEnv(MyPybulletEnv):
         name = 'r'
         info[name] = reaction_force
         reaction_force_size = np.linalg.norm(reaction_force)
+        # see if we should save it as the reaction force for this mini-step
+        mini_step, step_since_start = divmod(self._sim_step, self.wait_sim_step_per_mini_step)
+        if step_since_start is self._steps_since_start_to_get_reaction:
+            self._mini_step_contact['full'][mini_step] = reaction_force[:2]
+            self._mini_step_contact['mag'][mini_step] = reaction_force_size
+            if self.reaction_force_strategy is not ReactionForceStrategy.MAX_OVER_CONTROL_STEP and \
+                    self._debug_visualizations[DebugVisualization.REACTION_ON_PUSHER] and visualize:
+                self._draw_reaction_force(reaction_force, name, (1, 0, 1))
+        # update our running count of max force
         if reaction_force_size > self._largest_contact.get(name, 0):
             self._largest_contact[name] = reaction_force_size
             self._reaction_force = reaction_force
-            if visualize and self._debug_visualizations[DebugVisualization.REACTION_ON_PUSHER]:
+            if self.reaction_force_strategy is ReactionForceStrategy.MAX_OVER_CONTROL_STEP and \
+                    self._debug_visualizations[DebugVisualization.REACTION_ON_PUSHER] and visualize:
                 self._draw_reaction_force(reaction_force, name, (1, 0, 1))
 
     def _aggregate_info(self):
@@ -749,7 +780,7 @@ class PushAgainstWallEnv(MyPybulletEnv):
         for _ in range(1000):
             p.stepSimulation()
         self.state = self._obs()
-        self._dd.draw_2d_pose('x0', self.get_block_pose(self._obs()), color=(0, 1, 0))
+        self._dd.draw_2d_pose('x0', self.get_block_pose(self.state), color=(0, 1, 0))
         return np.copy(self.state)
 
 

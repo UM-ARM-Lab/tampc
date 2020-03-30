@@ -276,7 +276,7 @@ def tune_direct_push():
 
 def run_direct_push():
     N = 20
-    init_block_pos = [0., 0.2]
+    init_block_pos = [0., 0.15]
     # init_block_yaw = 0
     init_block_yaw = -math.pi / 2
     # init_block_pos = [0., 0.175]
@@ -286,7 +286,7 @@ def run_direct_push():
     #                                           init_block=init_block_pos, init_yaw=init_block_yaw, environment_level=0)
     env = block_push.PushPhysicallyAnyAlongEnv(mode=p.GUI, log_video=True, init_block=init_block_pos,
                                                init_yaw=init_block_yaw,
-                                               environment_level=0)
+                                               environment_level=1)
 
     # env.sim_step_wait = 0.01
     env.draw_user_text('run direct push', 2)
@@ -388,5 +388,5 @@ if __name__ == "__main__":
     # test_env_control()
     # test_env_set()
     # test_simulator_friction_isometry()
-    tune_direct_push()
-    # run_direct_push()
+    # tune_direct_push()
+    run_direct_push()
