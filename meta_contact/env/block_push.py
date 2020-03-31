@@ -1176,6 +1176,26 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         return np.copy(self.state), -cost, done, info
 
 
+class FixedPushDistPhysicalEnv(PushAgainstWallStickyEnv):
+    """
+    Same as before, but simplified such that push dist is always max
+    """
+    nu = 2
+
+    @staticmethod
+    def control_names():
+        return ['$p$', '$\\beta$ push angle (wrt normal)']
+
+    @staticmethod
+    def get_control_bounds():
+        u_min = np.array([-1, -1])
+        u_max = np.array([1, 1])
+        return u_min, u_max
+
+    def step(self, action):
+        return super(FixedPushDistPhysicalEnv, self).step(np.array([action[0], 1, action[1]]))
+
+
 def interpolate_pos(start, end, t):
     return t * end + (1 - t) * start
 
