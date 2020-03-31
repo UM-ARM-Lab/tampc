@@ -1221,13 +1221,16 @@ def interpolate_pos(start, end, t):
 
 class InteractivePush(simulation.Simulation):
     def __init__(self, env: PushAgainstWallEnv, controller, num_frames=1000, save_dir='pushing',
-                 terminal_cost_multiplier=1, stop_when_done=True, visualize_rollouts=True, **kwargs):
+                 terminal_cost_multiplier=1, stop_when_done=True, visualize_rollouts=True,
+                 visualize_action_sample=False,
+                 **kwargs):
 
         super(InteractivePush, self).__init__(save_dir=save_dir, num_frames=num_frames, config=cfg, **kwargs)
         env.verify_dims()
         self.mode = env.mode
         self.stop_when_done = stop_when_done
         self.visualize_rollouts = visualize_rollouts
+        self.visualize_action_sample = visualize_action_sample
 
         self.env = env
         self.ctrl = controller
@@ -1243,6 +1246,9 @@ class InteractivePush(simulation.Simulation):
         self.au = None
         self.fd = None
         self.ad = None
+
+        self.fu_sample = None
+        self.au_sample = None
 
     def _configure_physics_engine(self):
         return simulation.ReturnMeaning.SUCCESS
@@ -1285,6 +1291,8 @@ class InteractivePush(simulation.Simulation):
             start = time.perf_counter()
 
             action = self.ctrl.command(obs, info)
+            if self.visualize_action_sample and self._predicts_state():
+                self._plot_action_sample(self.ctrl.mpc.perturbed_action)
             # plot expected state rollouts from this point
             if self.visualize_rollouts:
                 self.env.visualize_rollouts(self.ctrl.get_rollouts(obs))
@@ -1339,6 +1347,29 @@ class InteractivePush(simulation.Simulation):
         return {'X': X, 'U': self.u, 'reaction': self.reaction_force, 'model error': self.model_error,
                 'scaled model error': scaled_model_error,
                 'mask': mask.reshape(-1, 1)}
+
+    def _start_plot_action_sample(self):
+        self.fu_sample, self.au_sample = plt.subplots(self.env.nu, 1)
+        u_min, u_max = self.env.get_control_bounds()
+        u_names = self.env.control_names()
+        for i, name in enumerate(u_names):
+            self.au_sample[i].set_xbound(u_min[i], u_max[i])
+            self.au_sample[i].set_xlabel(name)
+        plt.ion()
+        plt.show()
+
+    def _plot_action_sample(self, action):
+
+        if self.fu_sample is None:
+            self._start_plot_action_sample()
+            plt.pause(0.0001)
+
+        # for now just consider the sample over first step
+        u = action[:, 0, :].cpu().numpy()
+        for i in range(self.env.nu):
+            self.au_sample[i].clear()
+            self.au_sample[i].hist(u[:, i])
+        plt.pause(0.0001)
 
     def start_plot_runs(self):
         axis_name = self.env.state_names()
