@@ -1155,9 +1155,10 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
     def step(self, action):
         action = np.clip(action, *self.get_control_bounds())
         # normalize action such that the input can be within a fixed range
-        push_along = action[0] * (_MAX_ALONG * 0.98)  # avoid corner to avoid leaving contact
-        push_dist = action[1] * self.MAX_PUSH_DIST
-        push_dir = action[2] * self.MAX_PUSH_ANGLE
+        physical_push = self._get_physical_push_from_action(action)
+        push_along = physical_push[0] * (_MAX_ALONG * 0.98)  # avoid corner to avoid leaving contact
+        push_dist = physical_push[1] * self.MAX_PUSH_DIST
+        push_dir = physical_push[2] * self.MAX_PUSH_ANGLE
 
         old_state = self._obs()
 
@@ -1190,8 +1191,11 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
 
         return np.copy(self.state), -cost, done, info
 
+    def _get_physical_push_from_action(self, action):
+        return action
 
-class FixedPushDistPhysicalEnv(PushAgainstWallStickyEnv):
+
+class FixedPushDistPhysicalEnv(PushPhysicallyAnyAlongEnv):
     """
     Same as before, but simplified such that push dist is always max
     """
@@ -1207,8 +1211,8 @@ class FixedPushDistPhysicalEnv(PushAgainstWallStickyEnv):
         u_max = np.array([1, 1])
         return u_min, u_max
 
-    def step(self, action):
-        return super(FixedPushDistPhysicalEnv, self).step(np.array([action[0], 1, action[1]]))
+    def _get_physical_push_from_action(self, action):
+        return action[0], 1, action[1]
 
 
 def interpolate_pos(start, end, t):

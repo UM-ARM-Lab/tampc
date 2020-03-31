@@ -46,7 +46,7 @@ def random_touching_start(env, w=block_push.DIST_FOR_JUST_TOUCHING):
     elif env_type in (block_push.PushAgainstWallStickyEnv, block_push.PushWithForceDirectlyEnv,
                       block_push.PushWithForceDirectlyReactionInStateEnv):
         init_pusher = np.random.uniform(-1, 1)
-    elif env_type in (block_push.PushPhysicallyAnyAlongEnv,):
+    elif env_type in (block_push.PushPhysicallyAnyAlongEnv, block_push.FixedPushDistPhysicalEnv):
         init_pusher = 0
     else:
         raise RuntimeError("Unrecognized env type")
