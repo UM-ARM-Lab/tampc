@@ -1392,7 +1392,8 @@ class PushDataSource(datasource.FileDataSource):
                   PushAgainstWallStickyEnv: PushLoaderRestricted,
                   PushWithForceDirectlyEnv: PushLoaderRestricted,
                   PushWithForceDirectlyReactionInStateEnv: PushLoaderWithReaction,
-                  PushPhysicallyAnyAlongEnv: PushLoaderPhysicalPusherWithReaction}
+                  PushPhysicallyAnyAlongEnv: PushLoaderPhysicalPusherWithReaction,
+                  FixedPushDistPhysicalEnv: PushLoaderPhysicalPusherWithReaction}
 
     def __init__(self, env, data_dir='pushing', **kwargs):
         loader = self.loader_map.get(type(env), None)

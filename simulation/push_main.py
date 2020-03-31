@@ -147,7 +147,7 @@ def get_easy_env(mode=p.GUI, level=0, log_video=False):
     init_block_yaw = 0
     init_pusher = 0
     # goal_pos = [0.85, -0.35]
-    goal_pos = [-0.8, -0.35]
+    goal_pos = [-0.5, 0.12]
     env_opts = {
         'mode': mode,
         'goal': goal_pos,
@@ -166,8 +166,10 @@ def get_easy_env(mode=p.GUI, level=0, log_video=False):
     # else:
     #     env = block_push.PushWithForceDirectlyEnv(**env_opts)
     # env_dir = 'pushing/direct_force_mini_step'
-    env = block_push.PushPhysicallyAnyAlongEnv(**env_opts)
-    env_dir = 'pushing/physical'
+    # env = block_push.PushPhysicallyAnyAlongEnv(**env_opts)
+    # env_dir = 'pushing/physical'
+    env = block_push.FixedPushDistPhysicalEnv(**env_opts)
+    env_dir = 'pushing/fixed_mag_physical'
     return env
 
 
@@ -240,9 +242,7 @@ def get_controller_options(env):
     Q = torch.tensor(env.state_cost(), dtype=torch.double)
     R = 0.01
     # tune this so that we figure out to make u-turns
-    sigma = torch.ones(env.nu, dtype=torch.double, device=d) * 0.8
-    sigma[1] = 2
-    sigma[2] = 1
+    sigma = torch.tensor([0.3, 0.2, 0.2], dtype=torch.double, device=d)
     common_wrapper_opts = {
         'Q': Q,
         'R': R,
@@ -252,14 +252,14 @@ def get_controller_options(env):
         'device': d,
         'terminal_cost_multiplier': 50,
         'adjust_model_pred_with_prev_error': False,
-        'use_orientation_terminal_cost': False,
+        'use_orientation_terminal_cost': True,
     }
     mpc_opts = {
         'num_samples': 1000,
         'noise_sigma': torch.diag(sigma),
-        'noise_mu': torch.tensor([0, 0.5, 0], dtype=torch.double, device=d),
+        'noise_mu': torch.tensor([0, 0.0, 0], dtype=torch.double, device=d),
         'lambda_': 1,
-        'horizon': 35,
+        'horizon': 40,
         'u_init': torch.tensor([0, 0.5, 0], dtype=torch.double, device=d),
         'sample_null_action': False,
         'step_dependent_dynamics': True,
@@ -464,7 +464,7 @@ class WorldBodyFrameTransformForReactionInState(HandDesignedCoordTransform):
 
 class WorldBodyFrameTransformPhysicalPush(HandDesignedCoordTransform):
     def __init__(self, ds, **kwargs):
-        super().__init__(ds, 4, nv=3, reaction_force_start_index=3, **kwargs)
+        super().__init__(ds, ds.config.nu + 1, nv=3, reaction_force_start_index=3, **kwargs)
 
     def xu_to_z(self, state, action):
         if len(state.shape) < 2:
@@ -1293,7 +1293,8 @@ def coord_tsf_factory(env, *args, **kwargs):
     tsfs = {block_push.PushAgainstWallStickyEnv: WorldBodyFrameTransformForStickyEnv,
             block_push.PushWithForceDirectlyEnv: WorldBodyFrameTransformForDirectPush,
             block_push.PushWithForceDirectlyReactionInStateEnv: WorldBodyFrameTransformForReactionInState,
-            block_push.PushPhysicallyAnyAlongEnv: WorldBodyFrameTransformPhysicalPush}
+            block_push.PushPhysicallyAnyAlongEnv: WorldBodyFrameTransformPhysicalPush,
+            block_push.FixedPushDistPhysicalEnv: WorldBodyFrameTransformPhysicalPush}
     tsf_type = tsfs.get(type(env), None)
     if tsf_type is None:
         raise RuntimeError("No tsf specified for env type {}".format(type(env)))
@@ -1547,6 +1548,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     seed = 1
     plot_model_error = False
     enforce_model_rollout = False
+    full_evaluation = True
     d = get_device()
     if plot_model_error:
         env = get_easy_env(p.DIRECT, level=level)
@@ -1614,19 +1616,20 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
 
     ctrl = get_controller(env, pm, ds, untransformed_config, **kwargs)
     name = get_full_controller_name(pm, ctrl, tsf_name)
-    # expensive evaluation
-    # evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921],
-    #                     override=override)
 
-    env.draw_user_text(name, 14, left_offset=-1.5)
-    # env.sim_step_wait = 0.01
-    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=True, save=True, stop_when_done=False)
-    seed = rand.seed(2)
-    env.draw_user_text("try {}".format(seed), 2)
-    sim.run(seed)
-    logger.info("last run cost %f", np.sum(sim.last_run_cost))
-    plt.ioff()
-    plt.show()
+    if full_evaluation:
+        evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921],
+                            override=override)
+    else:
+        env.draw_user_text(name, 14, left_offset=-1.5)
+        # env.sim_step_wait = 0.01
+        sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=True, save=True, stop_when_done=False)
+        seed = rand.seed(2)
+        env.draw_user_text("try {}".format(seed), 2)
+        sim.run(seed)
+        logger.info("last run cost %f", np.sum(sim.last_run_cost))
+        plt.ioff()
+        plt.show()
 
     env.close()
 
@@ -2109,7 +2112,7 @@ def visualize_model_actions_at_given_state():
 
 if __name__ == "__main__":
     level = 0
-    # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
+    collect_touching_freespace_data(trials=200, trial_length=50, level=0)
     # collect_push_against_wall_recovery_data()
     # collect_push_against_wall_recovery_data_mini_step()
     # collect_single_long_trajectory()
@@ -2120,7 +2123,7 @@ if __name__ == "__main__":
 
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD,
     #               override=True)
-    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE, override=True)
+    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE, override=True)
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.GP_KERNEL, override=True)
 
     # test_online_model()
