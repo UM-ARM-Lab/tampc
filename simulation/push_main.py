@@ -108,7 +108,8 @@ def collect_push_against_wall_recovery_data():
             for _ in range(25):
                 u.append([0.8 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.7 + np.random.randn() * 0.4])
             for _ in range(15):
-                u.append([-0.8 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, -0.9 + np.random.randn() * 0.2])
+                u.append(
+                    [-0.8 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, -0.9 + np.random.randn() * 0.2])
             for _ in range(10):
                 u.append([0.1 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.1, 0.1 + np.random.randn() * 0.3])
         else:
@@ -125,7 +126,6 @@ def collect_push_against_wall_recovery_data():
     ctrl = controller.PreDeterminedController(np.array(u), *env.get_control_bounds())
     sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=False, save=True, stop_when_done=False)
     sim.run(seed)
-
 
 
 def collect_single_long_trajectory():
@@ -2075,6 +2075,49 @@ def visualize_datasets():
     plt.show()
 
 
+def _visualize_conditioned_dataset(x_limits, u_limits, env, ds, pm, output_dim_index=2, range_epsilon=0.05):
+    assert len(x_limits) is env.nx
+    assert len(u_limits) is env.nu
+    XU, Y, _ = ds.training_set(original=True)
+    X, U = torch.split(XU, env.nx, dim=1)
+    # TODO by default marginalize over X, which doesn't work for all environments
+    output_name = "d{}".format(env.state_names()[output_dim_index])
+    # find index of the input variable (we condition on all other input dimensions)
+    input_dim_index = u_limits.index(None)
+    input_name = env.control_names()[input_dim_index]
+
+    # condition on the given dimensions (since it's continuous, our limits are ranges)
+    indices = torch.arange(0, U.shape[0], dtype=torch.long)
+    for i, conditioned_value in enumerate(u_limits):
+        if conditioned_value is None:
+            continue
+        allowed = (U[indices, i] < (conditioned_value + range_epsilon)) & (
+                U[indices, i] > (conditioned_value - range_epsilon))
+        indices = indices[allowed]
+
+    Yhat = pm.dyn_net.predict(XU[indices], get_next_state=False)
+
+    plt.figure()
+    plt.scatter(U[indices, input_dim_index].cpu(), Y[indices, output_dim_index].cpu(), label='true')
+    plt.scatter(U[indices, input_dim_index].cpu(), Yhat[:, output_dim_index].cpu(), label='predicted')
+    plt.xlabel(input_name)
+    plt.ylabel(output_name)
+    plt.title('conditioned on u = {} +- {}'.format(u_limits, range_epsilon))
+    plt.legend()
+
+
+def visualize_dynamics_stochasticity(use_tsf=UseTransform.COORDINATE_TRANSFORM):
+    _, env, _, ds = get_free_space_env_init()
+    untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
+
+    ds_eval, _ = get_ds(env, "pushing/fixed_p_and_beta.mat", validation_ratio=0.)
+    ds_eval.update_preprocessor(preprocessor)
+
+    pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)
+    _visualize_conditioned_dataset([None] * env.nx, [0.9, None, 0.8], env, ds_eval, pm)
+    plt.show()
+
+
 def visualize_model_actions_at_given_state():
     seed = 1
     d = get_device()
@@ -2125,10 +2168,11 @@ def visualize_model_actions_at_given_state():
 if __name__ == "__main__":
     level = 0
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
-    collect_push_against_wall_recovery_data()
+    # collect_push_against_wall_recovery_data()
     # collect_single_long_trajectory()
     # visualize_datasets()
     # visualize_model_actions_at_given_state()
+    visualize_dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
 
     # test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
 

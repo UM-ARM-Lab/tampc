@@ -172,21 +172,22 @@ def test_env_control():
     # env.sim_step_wait = 0.01
     u = []
 
-    u.append((0, 1, 0))
-    u.append((1, 1, 0))
-    u.append((-1, 1, 0))
+    # u.append((0, 1, 0))
+    # u.append((1, 1, 0))
+    # u.append((-1, 1, 0))
 
     # for _ in range(80):
     #     u.append((0., 1, 0.))
-    N = 40
+    N = 300
     u_dir = np.linspace(0, -1, N)
     u_mag = np.linspace(1, 0, N)
     for i in range(N):
-        u.append((0, 1, np.random.randn()))
+        # u.append((0, 1, np.random.randn()))
         # u.append((0.1, u_mag[i], u_dir[i]))
+        u.append((0.9, np.random.rand(), 0.8))
 
     ctrl = controller.PreDeterminedController(u)
-    sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=True, save=False)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=True, save=True)
     sim.run(seed)
     plt.ioff()
     plt.show()
@@ -217,26 +218,26 @@ def tune_direct_push():
     #                                           init_block=init_block_pos, init_yaw=init_block_yaw)
     env = block_push.PushPhysicallyAnyAlongEnv(mode=p.GUI, init_block=init_block_pos, init_yaw=init_block_yaw)
 
-    env.draw_user_text('test 1-meter dash')
-    ctrl = controller.PreDeterminedController([(0.0, 1, 0) for _ in range(max_N)])
-    # record how many steps of pushing to reach 1m
-    obs = env.reset()
-    step = 0
-    while True:
-        action = ctrl.command(obs)
-        obs, _, _, _ = env.step(action)
-        block_pose = env.get_block_pose(obs)
-        step += 1
-        if block_pose[0] > 1:
-            break
-
-    logger.info("took %d steps to get to %f", step, block_pose[0])
+    # env.draw_user_text('test 1-meter dash')
+    # ctrl = controller.PreDeterminedController([(0.0, 1, 0) for _ in range(max_N)])
+    # # record how many steps of pushing to reach 1m
+    # obs = env.reset()
+    # step = 0
+    # while True:
+    #     action = ctrl.command(obs)
+    #     obs, _, _, _ = env.step(action)
+    #     block_pose = env.get_block_pose(obs)
+    #     step += 1
+    #     if block_pose[0] > 1:
+    #         break
+    #
+    # logger.info("took %d steps to get to %f", step, block_pose[0])
 
     along_face = 1.0
     env.set_task_config(init_pusher=along_face)
     env.draw_user_text('test u-turn')
     # ctrl = controller.PreDeterminedController([(0.0, 1, 0) for _ in range(max_N)])
-    ctrl = controller.PreDeterminedController([(1.0, 1, 1) for _ in range(max_N)])
+    ctrl = controller.PreDeterminedController([(0.95, 1, 1) for _ in range(max_N)])
     # record how many steps of pushing to make a u-turn (yaw > pi or > -pi)
     px = env.reset()
     step = 0
@@ -336,57 +337,14 @@ def run_direct_push():
     plot_series(t, contacts['bva'], axes[0], 'pusher av')
     plot_series(t, contacts['pva'], axes[1], 'block av')
     axes[-1].set_xlabel('sim step')
-    # log friction averaged over time steps
-    # friction_log = contacts['bp']
-    # friction_dirs = ['(0,1,0)', '(1,0,0)']
-    # # average over the steps, look at how the forces differ over time for the different contact points
-    # f, axes = plt.subplots(2, 1, sharex=True)
-    # for d, ax in zip(friction_dirs, axes):
-    #     ax.set_ylabel('lateral friction in {}'.format(d))
-    # axes[0].set_xlabel('sim step (wait for quasi-static)')
-    # t = list(range(friction_log.shape[1]))
-    # for pt in range(friction_log.shape[2]):
-    #     for friction_dir in range(friction_log.shape[3]):
-    #         pts = friction_log[:, :, pt, friction_dir]
-    #         friction = np.mean(pts, axis=0)
-    #         std = np.std(pts, axis=0)
-    #         axes[friction_dir].plot(t, friction, label='pt {}'.format(pt, friction_dir))
-    #         axes[friction_dir].fill_between(t, friction - std, friction + std, alpha=0.2)
-    # plt.legend()
-
-    # log contact with wall for each time step
-    # contact_log = contacts['bw']
-    # contact_loc = ['bot', 'top', 'rbot', 'rtop']
-    # # average over the steps, look at how the forces differ over time for the different contact points
-    # time_steps = contact_log.shape[0]
-    # f, axes = plt.subplots(2, 2, sharex=True)
-    # axes = axes.flatten()
-    # for d, ax in zip(contact_loc, axes):
-    #     ax.set_ylabel('wall contact {}'.format(d))
-    # axes[0].set_xlabel('sim step (wait for quasi-static)')
-    # t = list(range(contact_log.shape[1]))
-    # for pt in range(contact_log.shape[2]):
-    #     pts = contact_log[10:, :, pt]
-    #     m = np.mean(pts, axis=0)
-    #     low = np.percentile(pts, 25, axis=0)
-    #     high = np.percentile(pts, 75, axis=0)
-    #     # std = np.std(pts, axis=0)
-    #     axes[pt].plot(t, m)
-    #     # axes[pt].fill_between(t, m - std, m + std, alpha=0.2)
-    #     axes[pt].fill_between(t, low, high, alpha=0.2)
-    #     # for tt in range(time_steps):
-    #     #     pts = contact_log[tt, :, pt]
-    #     #     axes[pt].plot(t, pts, label='t {}'.format(tt),
-    #     #                   color=(0.8 * tt / time_steps, 0.8 * tt / time_steps, tt / time_steps))
-    # plt.legend()
 
     plt.show()
 
 
 if __name__ == "__main__":
     # test_pusher_placement_inverse()
-    # test_env_control()
+    test_env_control()
     # test_env_set()
     # test_simulator_friction_isometry()
     # tune_direct_push()
-    run_direct_push()
+    # run_direct_push()

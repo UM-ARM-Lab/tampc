@@ -156,11 +156,12 @@ class DynamicsModel(abc.ABC):
         # TODO check correctness of advance state function when we have have a transform (data is not xux' or xudx)
         self.advance = advance_state(ds.original_config(), use_np=use_np)
 
-    def predict(self, xu, already_transformed=False):
+    def predict(self, xu, already_transformed=False, get_next_state=True):
         """
         Predict next state; will return with the same dimensions as xu
         :param xu: B x N x (nx + nu) or N x (nx + nu) full input (if missing B will add it)
         :param already_transformed: whether the input xu has already been transformed (such as in chained calls)
+        :param get_next_state: whether to output the next state, or the output of the model without advancing state
         :return: B x N x nx or N x nx next states
         """
         orig_shape = xu.shape
@@ -177,11 +178,14 @@ class DynamicsModel(abc.ABC):
             x = xu[:, :self.ds.original_config().nx]
             dxb = self.ds.preprocessor.invert_transform(dxb, x)
 
-        x = self.advance(xu, dxb)
-        if len(orig_shape) > 2:
-            # restore original batch dimensions; keep variable dimension (nx)
-            x = x.view(*orig_shape[:-1], -1)
-        return x
+        if get_next_state:
+            x = self.advance(xu, dxb)
+            if len(orig_shape) > 2:
+                # restore original batch dimensions; keep variable dimension (nx)
+                x = x.view(*orig_shape[:-1], -1)
+            return x
+        else:
+            return dxb
 
     def _batch_apply_model(self, xu):
         orig_shape = xu.shape
