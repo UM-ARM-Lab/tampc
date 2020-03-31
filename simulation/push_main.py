@@ -85,45 +85,47 @@ def collect_touching_freespace_data(trials=20, trial_length=40, level=0):
 def collect_push_against_wall_recovery_data():
     # get data in and around the bug trap we want to avoid in the future
     env = get_easy_env(p.GUI, 1, log_video=True)
-    seed = rand.seed(140891)
     u = []
-    for _ in range(10):
-        u.append([0.7 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.6 + np.random.randn() * 0.4])
-    for _ in range(10):
-        u.append([0.1 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.7 + np.random.randn() * 0.3])
-    for _ in range(20):
-        u.append([-0.3 + np.random.randn() * 0.4, 0.6 + np.random.randn() * 0.4, 0.0 + np.random.randn() * 0.8])
-    for _ in range(10):
-        u.append([-0.8 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, -0.2 + np.random.randn() * 0.4])
-    for _ in range(74):
-        u.append([-0.3 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, -0.9 + np.random.randn() * 0.2])
-    for _ in range(40):
-        u.append([0.2 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, 0.1 + np.random.randn() * 0.3])
-    ctrl = controller.PreDeterminedController(np.array(u))
-    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=True, stop_when_done=False)
-    sim.run(seed)
+    if isinstance(env, block_push.PushWithForceDirectlyEnv):
+        seed = rand.seed(124512)
+        for _ in range(10):
+            u.append([0.7 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.6 + np.random.randn() * 0.4])
+        for _ in range(8):
+            u.append([0.1 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.7 + np.random.randn() * 0.3])
+        for _ in range(10):
+            u.append([-0.3 + np.random.randn() * 0.4, 0.6 + np.random.randn() * 0.4, 0.0 + np.random.randn() * 0.8])
+        for _ in range(10):
+            u.append([-0.8 + np.random.randn() * 0.2, 0.2 + np.random.randn() * 0.1, -0.2 + np.random.randn() * 0.4])
+        for _ in range(90):
+            u.append([-0.3 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, -0.9 + np.random.randn() * 0.2])
+        for _ in range(40):
+            u.append([0.1 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.1, 0.1 + np.random.randn() * 0.3])
+    elif isinstance(env, block_push.PushPhysicallyAnyAlongEnv):
+        seed = rand.seed(3)
+        # different friction between wall and block leads to very different behaviour
+        high_friction = True
+        if high_friction:
+            for _ in range(25):
+                u.append([0.8 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.7 + np.random.randn() * 0.4])
+            for _ in range(15):
+                u.append([-0.8 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, -0.9 + np.random.randn() * 0.2])
+            for _ in range(10):
+                u.append([0.1 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.1, 0.1 + np.random.randn() * 0.3])
+        else:
+            for _ in range(20):
+                u.append([0.8 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.7 + np.random.randn() * 0.4])
+            for _ in range(25):
+                u.append(
+                    [-1.0 + np.random.randn() * 0.1, 0.8 + np.random.randn() * 0.1, -0.9 + np.random.randn() * 0.1])
+            for _ in range(10):
+                u.append([0.1 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.1, 0.1 + np.random.randn() * 0.3])
+    else:
+        raise RuntimeError("Unrecognized environment")
 
-
-def collect_push_against_wall_recovery_data_mini_step():
-    # get data in and around the bug trap we want to avoid in the future
-    env = get_easy_env(p.GUI, 1, log_video=True)
-    seed = rand.seed(124512)
-    u = []
-    for _ in range(10):
-        u.append([0.7 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.6 + np.random.randn() * 0.4])
-    for _ in range(8):
-        u.append([0.1 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.7 + np.random.randn() * 0.3])
-    for _ in range(10):
-        u.append([-0.3 + np.random.randn() * 0.4, 0.6 + np.random.randn() * 0.4, 0.0 + np.random.randn() * 0.8])
-    for _ in range(10):
-        u.append([-0.8 + np.random.randn() * 0.2, 0.2 + np.random.randn() * 0.1, -0.2 + np.random.randn() * 0.4])
-    for _ in range(90):
-        u.append([-0.3 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, -0.9 + np.random.randn() * 0.2])
-    for _ in range(40):
-        u.append([0.1 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.1, 0.1 + np.random.randn() * 0.3])
     ctrl = controller.PreDeterminedController(np.array(u), *env.get_control_bounds())
-    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=True, stop_when_done=False)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=False, save=True, stop_when_done=False)
     sim.run(seed)
+
 
 
 def collect_single_long_trajectory():
@@ -146,8 +148,8 @@ def get_easy_env(mode=p.GUI, level=0, log_video=False):
     init_block_pos = [-0.8, 0.12]
     init_block_yaw = 0
     init_pusher = 0
-    # goal_pos = [0.85, -0.35]
-    goal_pos = [-0.5, 0.12]
+    goal_pos = [0.85, -0.35]
+    # goal_pos = [-0.5, 0.12]
     env_opts = {
         'mode': mode,
         'goal': goal_pos,
@@ -2123,8 +2125,7 @@ def visualize_model_actions_at_given_state():
 if __name__ == "__main__":
     level = 0
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
-    # collect_push_against_wall_recovery_data()
-    # collect_push_against_wall_recovery_data_mini_step()
+    collect_push_against_wall_recovery_data()
     # collect_single_long_trajectory()
     # visualize_datasets()
     # visualize_model_actions_at_given_state()
@@ -2133,7 +2134,7 @@ if __name__ == "__main__":
 
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD,
     #               override=True)
-    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE, override=True)
+    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE, override=True)
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.GP_KERNEL, override=True)
 
     # test_online_model()
