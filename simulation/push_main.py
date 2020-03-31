@@ -237,17 +237,12 @@ def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics):
 def get_controller_options(env):
     d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     u_min, u_max = env.get_control_bounds()
-    if isinstance(env, block_push.PushPhysicallyAnyAlongEnv):
-        q = [10, 10, 0]
-    else:
-        q = [10, 10, 0, 0.01]
-    if REACTION_IN_STATE:
-        q += [block_push.REACTION_Q_COST, block_push.REACTION_Q_COST]
-    Q = torch.diag(torch.tensor(q, dtype=torch.double))
+    Q = torch.tensor(env.state_cost(), dtype=torch.double)
     R = 0.01
     # tune this so that we figure out to make u-turns
     sigma = torch.ones(env.nu, dtype=torch.double, device=d) * 0.8
     sigma[1] = 2
+    sigma[2] = 1
     common_wrapper_opts = {
         'Q': Q,
         'R': R,
@@ -264,7 +259,7 @@ def get_controller_options(env):
         'noise_sigma': torch.diag(sigma),
         'noise_mu': torch.tensor([0, 0.5, 0], dtype=torch.double, device=d),
         'lambda_': 1,
-        'horizon': 40,
+        'horizon': 35,
         'u_init': torch.tensor([0, 0.5, 0], dtype=torch.double, device=d),
         'sample_null_action': False,
         'step_dependent_dynamics': True,
@@ -1550,7 +1545,7 @@ def update_ds_with_transform(env, ds, use_tsf, **kwargs):
 def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False, override=False,
                   prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior, **kwargs):
     seed = 1
-    plot_model_error = True
+    plot_model_error = False
     enforce_model_rollout = False
     d = get_device()
     if plot_model_error:
@@ -1615,6 +1610,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
             plt.plot(E[:, i])
             plt.ylabel("$e_{}$".format(i))
         plt.show()
+        return
 
     ctrl = get_controller(env, pm, ds, untransformed_config, **kwargs)
     name = get_full_controller_name(pm, ctrl, tsf_name)
@@ -2113,7 +2109,7 @@ def visualize_model_actions_at_given_state():
 
 if __name__ == "__main__":
     level = 0
-    collect_touching_freespace_data(trials=200, trial_length=50, level=0)
+    # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
     # collect_push_against_wall_recovery_data()
     # collect_push_against_wall_recovery_data_mini_step()
     # collect_single_long_trajectory()
@@ -2124,7 +2120,7 @@ if __name__ == "__main__":
 
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD,
     #               override=True)
-    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE, override=True)
+    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE, override=True)
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.GP_KERNEL, override=True)
 
     # test_online_model()

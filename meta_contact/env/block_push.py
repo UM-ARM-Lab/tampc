@@ -389,6 +389,10 @@ class PushAgainstWallEnv(MyPybulletEnv):
         dpos = state[:, :4] - other_state[:, :4]
         return dpos, dyaw.reshape(-1, 1)
 
+    @classmethod
+    def state_cost(cls):
+        return np.diag([0, 0, 1, 1, 0])
+
     @staticmethod
     def control_names():
         return ['d$x_r$', 'd$y_r$']
@@ -399,6 +403,10 @@ class PushAgainstWallEnv(MyPybulletEnv):
         u_min = np.array([-0.03, 0.03])
         u_max = np.array([0.03, 0.03])
         return u_min, u_max
+
+    @classmethod
+    def control_cost(cls):
+        return np.diag([1 for _ in range(cls.nu)])
 
     def __init__(self, goal=(1.0, 0.), init_pusher=(-0.25, 0), init_block=(0., 0.), init_yaw=0.,
                  environment_level=0, sim_step_wait=None, mini_steps=100, wait_sim_steps_per_mini_step=20,
@@ -451,8 +459,8 @@ class PushAgainstWallEnv(MyPybulletEnv):
         self._clear_state_between_control_steps()
 
         # quadratic cost
-        self.Q = np.diag([0, 0, 1, 1, 0])
-        self.R = np.diag([1 for _ in range(self.nu)])
+        self.Q = self.state_cost()
+        self.R = self.control_cost()
 
         self.set_task_config(goal, init_pusher, init_block, init_yaw)
         self._setup_experiment()
@@ -819,6 +827,10 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         dalong = state[:, 3] - other_state[:, 3]
         return dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1)
 
+    @classmethod
+    def state_cost(cls):
+        return np.diag([10, 10, 0, 0.01])
+
     @staticmethod
     def control_names():
         return ['d$p$', 'd push forward (m)']
@@ -829,14 +841,14 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         u_max = np.array([1, 1])
         return u_min, u_max
 
+    @classmethod
+    def control_cost(cls):
+        return np.diag([0.01 for _ in range(cls.nu)])
+
     def __init__(self, init_pusher=0, face=BlockFace.LEFT, **kwargs):
         # initial config
         self.face = face
         super().__init__(init_pusher=init_pusher, **kwargs)
-
-        # quadratic cost
-        self.Q = np.diag([10, 10, 0, 0.01])
-        self.R = np.diag([0.01 for _ in range(self.nu)])
 
     def _set_goal(self, goal):
         # ignore the pusher position
@@ -1037,9 +1049,12 @@ class PushWithForceDirectlyReactionInStateEnv(PushWithForceDirectlyEnv):
         dreaction = state[:, 4:6] - other_state[:, 4:6]
         return dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1), dreaction
 
+    @classmethod
+    def state_cost(cls):
+        return np.diag([10, 10, 0, 0.01, REACTION_Q_COST, REACTION_Q_COST])
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.Q = np.diag([10, 10, 0, 0.01, REACTION_Q_COST, REACTION_Q_COST])
         # we render this directly when rendering state so no need to double count
         self._debug_visualizations[DebugVisualization.REACTION_ON_PUSHER] = False
 
@@ -1078,6 +1093,18 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         return ['$x_b$ (m)', '$y_b$ (m)', '$\\theta$ (rads)', '$r_x$ (N)', '$r_y$ (N)']
 
     @staticmethod
+    @handle_data_format_for_state_diff
+    def state_difference(state, other_state):
+        dyaw = math_utils.angular_diff_batch(state[:, 2], other_state[:, 2])
+        dpos = state[:, :2] - other_state[:, :2]
+        dreaction = state[:, 3:5] - other_state[:, 3:5]
+        return dpos, dyaw.reshape(-1, 1), dreaction
+
+    @classmethod
+    def state_cost(cls):
+        return np.diag([10, 10, 0, REACTION_Q_COST, REACTION_Q_COST])
+
+    @staticmethod
     def control_names():
         return ['$p$', 'd push distance', '$\\beta$ push angle (wrt normal)']
 
@@ -1086,19 +1113,6 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         u_min = np.array([-1, 0, -1])
         u_max = np.array([1, 1, 1])
         return u_min, u_max
-
-    @staticmethod
-    @handle_data_format_for_state_diff
-    def state_difference(state, other_state):
-        dyaw = math_utils.angular_diff_batch(state[:, 2], other_state[:, 2])
-        dpos = state[:, :2] - other_state[:, :2]
-        dreaction = state[:, 3:5] - other_state[:, 3:5]
-        return dpos, dyaw.reshape(-1, 1), dreaction
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        self.Q = np.diag([10, 10, 0, REACTION_Q_COST, REACTION_Q_COST])
 
     def _set_goal(self, goal_pos):
         self.goal = np.array(tuple(goal_pos) + (0,) + (0, 0))
