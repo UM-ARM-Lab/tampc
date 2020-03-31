@@ -166,10 +166,10 @@ def get_easy_env(mode=p.GUI, level=0, log_video=False):
     # else:
     #     env = block_push.PushWithForceDirectlyEnv(**env_opts)
     # env_dir = 'pushing/direct_force_mini_step'
-    # env = block_push.PushPhysicallyAnyAlongEnv(**env_opts)
-    # env_dir = 'pushing/physical'
-    env = block_push.FixedPushDistPhysicalEnv(**env_opts)
-    env_dir = 'pushing/fixed_mag_physical'
+    env = block_push.PushPhysicallyAnyAlongEnv(**env_opts)
+    env_dir = 'pushing/physical'
+    # env = block_push.FixedPushDistPhysicalEnv(**env_opts)
+    # env_dir = 'pushing/fixed_mag_physical'
     return env
 
 
@@ -241,8 +241,18 @@ def get_controller_options(env):
     u_min, u_max = env.get_control_bounds()
     Q = torch.tensor(env.state_cost(), dtype=torch.double)
     R = 0.01
+    if env.nu is 3:
+        sigma = [0.3, 0.4, 0.8]
+        noise_mu = [0, 0.1, 0]
+        u_init = [0, 0.5, 0]
+    elif env.nu is 2:
+        sigma = [0.3, 0.2]
+        noise_mu = [0, 0]
+        u_init = [0, 0]
+    else:
+        raise RuntimeError("Unrecognized environment")
     # tune this so that we figure out to make u-turns
-    sigma = torch.tensor([0.3, 0.2, 0.2], dtype=torch.double, device=d)
+    sigma = torch.tensor(sigma, dtype=torch.double, device=d)
     common_wrapper_opts = {
         'Q': Q,
         'R': R,
@@ -252,15 +262,15 @@ def get_controller_options(env):
         'device': d,
         'terminal_cost_multiplier': 50,
         'adjust_model_pred_with_prev_error': False,
-        'use_orientation_terminal_cost': True,
+        'use_orientation_terminal_cost': False,
     }
     mpc_opts = {
         'num_samples': 1000,
         'noise_sigma': torch.diag(sigma),
-        'noise_mu': torch.tensor([0, 0.0, 0], dtype=torch.double, device=d),
-        'lambda_': 1,
+        'noise_mu': torch.tensor(noise_mu, dtype=torch.double, device=d),
+        'lambda_': 1e-2,
         'horizon': 40,
-        'u_init': torch.tensor([0, 0.5, 0], dtype=torch.double, device=d),
+        'u_init': torch.tensor(u_init, dtype=torch.double, device=d),
         'sample_null_action': False,
         'step_dependent_dynamics': True,
     }
@@ -1618,7 +1628,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     name = get_full_controller_name(pm, ctrl, tsf_name)
 
     if full_evaluation:
-        evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[885440, 214219, 305012, 102921],
+        evaluate_controller(env, ctrl, name, translation=(10, 10), tasks=[102921],
                             override=override)
     else:
         env.draw_user_text(name, 14, left_offset=-1.5)
@@ -2112,7 +2122,7 @@ def visualize_model_actions_at_given_state():
 
 if __name__ == "__main__":
     level = 0
-    collect_touching_freespace_data(trials=200, trial_length=50, level=0)
+    # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
     # collect_push_against_wall_recovery_data()
     # collect_push_against_wall_recovery_data_mini_step()
     # collect_single_long_trajectory()
@@ -2123,7 +2133,7 @@ if __name__ == "__main__":
 
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD,
     #               override=True)
-    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE, override=True)
+    test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE, override=True)
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.GP_KERNEL, override=True)
 
     # test_online_model()
