@@ -21,6 +21,7 @@ from meta_contact.controller import controller
 from meta_contact.controller import online_controller
 from meta_contact.controller import mode_selector
 from meta_contact.env import block_push
+from meta_contact.invariant import TransformToUse
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
@@ -265,545 +266,287 @@ def constrain_state(state):
 
 
 # --- offline data collection through predetermined or random controllers
-def random_touching_start(env, w=block_push.DIST_FOR_JUST_TOUCHING):
-    init_block_pos = (np.random.random((2,)) - 0.5)
-    init_block_yaw = (np.random.random() - 0.5) * 2 * math.pi
-    # randomly initialize pusher adjacent to block
-    # choose which face we will be next to
-    env_type = type(env)
-    if env_type == block_push.PushAgainstWallEnv:
-        along_face = (np.random.random() - 0.5) * 2
-        face = np.random.randint(0, 4)
-        init_pusher = block_push.pusher_pos_for_touching(init_block_pos, init_block_yaw, from_center=w,
-                                                         face=face,
-                                                         along_face=along_face)
-    elif env_type in (block_push.PushAgainstWallStickyEnv, block_push.PushWithForceDirectlyEnv,
-                      block_push.PushWithForceDirectlyReactionInStateEnv):
-        init_pusher = np.random.uniform(-1, 1)
-    elif env_type in (block_push.PushPhysicallyAnyAlongEnv, block_push.FixedPushDistPhysicalEnv):
-        init_pusher = 0
-    else:
-        raise RuntimeError("Unrecognized env type")
-    return init_block_pos, init_block_yaw, init_pusher
+def rn(scale):
+    return np.random.randn() * scale
 
 
-def collect_touching_freespace_data(trials=20, trial_length=40, level=0):
-    env = get_easy_env(p.DIRECT, level)
-    u_min, u_max = env.get_control_bounds()
-    ctrl = controller.FullRandomController(env.nu, u_min, u_max)
-    # use mode p.GUI to see what the trials look like
-    save_dir = '{}{}'.format(env_dir, level)
-    sim = block_push.InteractivePush(env, ctrl, num_frames=trial_length, plot=False, save=True,
-                                     stop_when_done=False, save_dir=save_dir)
-    rand.seed(4)
-    # randomly distribute data
-    for _ in range(trials):
-        seed = rand.seed()
-        # start at fixed location
-        init_block_pos, init_block_yaw, init_pusher = random_touching_start(env)
-        env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
-        ctrl = controller.FullRandomController(env.nu, u_min, u_max)
-        sim.ctrl = ctrl
-        sim.run(seed)
-
-    if sim.save:
-        load_data.merge_data_in_dir(cfg, save_dir, save_dir)
-    plt.ioff()
-    plt.show()
-
-
-def collect_push_against_wall_recovery_data():
-    # get data in and around the bug trap we want to avoid in the future
-    env = get_easy_env(p.GUI, 1, log_video=True)
-    u = []
-    if isinstance(env, block_push.PushWithForceDirectlyEnv):
-        seed = rand.seed(124512)
-        for _ in range(10):
-            u.append([0.7 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.6 + np.random.randn() * 0.4])
-        for _ in range(8):
-            u.append([0.1 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.7 + np.random.randn() * 0.3])
-        for _ in range(10):
-            u.append([-0.3 + np.random.randn() * 0.4, 0.6 + np.random.randn() * 0.4, 0.0 + np.random.randn() * 0.8])
-        for _ in range(10):
-            u.append([-0.8 + np.random.randn() * 0.2, 0.2 + np.random.randn() * 0.1, -0.2 + np.random.randn() * 0.4])
-        for _ in range(90):
-            u.append([-0.3 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, -0.9 + np.random.randn() * 0.2])
-        for _ in range(40):
-            u.append([0.1 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.1, 0.1 + np.random.randn() * 0.3])
-    elif isinstance(env, block_push.PushPhysicallyAnyAlongEnv):
-        seed = rand.seed(3)
-        # different friction between wall and block leads to very different behaviour
-        high_friction = True
-        if high_friction:
-            for _ in range(25):
-                u.append([0.8 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.7 + np.random.randn() * 0.4])
-            for _ in range(15):
-                u.append(
-                    [-0.8 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, -0.9 + np.random.randn() * 0.2])
-            for _ in range(10):
-                u.append([0.1 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.1, 0.1 + np.random.randn() * 0.3])
+class OfflineDataCollection:
+    @staticmethod
+    def random_touching_start(env, w=block_push.DIST_FOR_JUST_TOUCHING):
+        init_block_pos = (np.random.random((2,)) - 0.5)
+        init_block_yaw = (np.random.random() - 0.5) * 2 * math.pi
+        # randomly initialize pusher adjacent to block
+        # choose which face we will be next to
+        env_type = type(env)
+        if env_type == block_push.PushAgainstWallEnv:
+            along_face = (np.random.random() - 0.5) * 2
+            face = np.random.randint(0, 4)
+            init_pusher = block_push.pusher_pos_for_touching(init_block_pos, init_block_yaw, from_center=w,
+                                                             face=face,
+                                                             along_face=along_face)
+        elif env_type in (block_push.PushAgainstWallStickyEnv, block_push.PushWithForceDirectlyEnv,
+                          block_push.PushWithForceDirectlyReactionInStateEnv):
+            init_pusher = np.random.uniform(-1, 1)
+        elif env_type in (block_push.PushPhysicallyAnyAlongEnv, block_push.FixedPushDistPhysicalEnv):
+            init_pusher = 0
         else:
-            for _ in range(20):
-                u.append([0.8 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.7 + np.random.randn() * 0.4])
-            for _ in range(25):
-                u.append(
-                    [-1.0 + np.random.randn() * 0.1, 0.8 + np.random.randn() * 0.1, -0.9 + np.random.randn() * 0.1])
+            raise RuntimeError("Unrecognized env type")
+        return init_block_pos, init_block_yaw, init_pusher
+
+    @staticmethod
+    def freespace(trials=20, trial_length=40, level=0):
+        env = get_env(p.DIRECT, level)
+        u_min, u_max = env.get_control_bounds()
+        ctrl = controller.FullRandomController(env.nu, u_min, u_max)
+        # use mode p.GUI to see what the trials look like
+        save_dir = '{}{}'.format(env_dir, level)
+        sim = block_push.InteractivePush(env, ctrl, num_frames=trial_length, plot=False, save=True,
+                                         stop_when_done=False, save_dir=save_dir)
+        rand.seed(4)
+        # randomly distribute data
+        for _ in range(trials):
+            seed = rand.seed()
+            # start at fixed location
+            init_block_pos, init_block_yaw, init_pusher = OfflineDataCollection.random_touching_start(env)
+            env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher)
+            ctrl = controller.FullRandomController(env.nu, u_min, u_max)
+            sim.ctrl = ctrl
+            sim.run(seed)
+
+        if sim.save:
+            load_data.merge_data_in_dir(cfg, save_dir, save_dir)
+        plt.ioff()
+        plt.show()
+
+    @staticmethod
+    def push_against_wall_recovery():
+        # get data in and around the bug trap we want to avoid in the future
+        env = get_easy_env(p.GUI, 1, log_video=True)
+        u = []
+        if isinstance(env, block_push.PushWithForceDirectlyEnv):
+            seed = rand.seed(124512)
             for _ in range(10):
-                u.append([0.1 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.1, 0.1 + np.random.randn() * 0.3])
-    else:
-        raise RuntimeError("Unrecognized environment")
+                u.append([0.7 + rn(0.2), 0.7 + rn(0.3), 0.6 + rn(0.4)])
+            for _ in range(8):
+                u.append([0.1 + rn(0.2), 0.7 + rn(0.3), 0.7 + rn(0.3)])
+            for _ in range(10):
+                u.append([-0.3 + rn(0.4), 0.6 + rn(0.4), 0.0 + rn(0.8)])
+            for _ in range(10):
+                u.append([-0.8 + rn(0.2), 0.2 + rn(0.1), -0.2 + rn(0.4)])
+            for _ in range(90):
+                u.append([-0.3 + rn(0.2), 0.8 + rn(0.1), -0.9 + rn(0.2)])
+            for _ in range(40):
+                u.append([0.1 + rn(0.2), 0.7 + rn(0.1), 0.1 + rn(0.3)])
+        elif isinstance(env, block_push.PushPhysicallyAnyAlongEnv):
+            seed = rand.seed(3)
+            # different friction between wall and block leads to very different behaviour
+            high_friction = True
+            if high_friction:
+                for _ in range(25):
+                    u.append([0.8 + rn(0.2), 0.7 + rn(0.3), 0.7 + rn(0.4)])
+                for _ in range(15):
+                    u.append([-0.8 + rn(0.2), 0.8 + rn(0.1), -0.9 + rn(0.2)])
+                for _ in range(10):
+                    u.append([0.1 + rn(0.2), 0.7 + rn(0.1), 0.1 + rn(0.3)])
+            else:
+                for _ in range(20):
+                    u.append([0.8 + rn(0.2), 0.7 + rn(0.3), 0.7 + rn(0.4)])
+                for _ in range(25):
+                    u.append([-1.0 + rn(0.1), 0.8 + rn(0.1), -0.9 + rn(0.1)])
+                for _ in range(10):
+                    u.append([0.1 + rn(0.2), 0.7 + rn(0.1), 0.1 + rn(0.3)])
+        else:
+            raise RuntimeError("Unrecognized environment")
 
-    ctrl = controller.PreDeterminedController(np.array(u), *env.get_control_bounds())
-    sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=False, save=True, stop_when_done=False)
-    sim.run(seed, 'predetermined_bug_trap')
+        ctrl = controller.PreDeterminedController(np.array(u), *env.get_control_bounds())
+        sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=False, save=True, stop_when_done=False)
+        sim.run(seed, 'predetermined_bug_trap')
 
+    @staticmethod
+    def model_selector_evaluation(seed=5, level=1, relearn_dynamics=False,
+                                  prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
+        # load a reasonable model
+        env = get_easy_env(p.GUI, level=level, log_video=True)
+        ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
 
-def collect_data_for_model_selector_evaluation(seed=5, level=1, relearn_dynamics=False,
-                                               prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
-    # load a reasonable model
-    env = get_easy_env(p.GUI, level=level, log_video=True)
-    ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
+        logger.info("initial random seed %d", rand.seed(seed))
 
-    logger.info("initial random seed %d", rand.seed(seed))
+        untransformed_config, tsf_name, _ = update_ds_with_transform(env, ds, UseTransform.COORDINATE_TRANSFORM,
+                                                                     evaluate_transform=False)
+        pm = get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics)
 
-    untransformed_config, tsf_name, _ = update_ds_with_transform(env, ds, UseTransform.COORDINATE_TRANSFORM,
-                                                                 evaluate_transform=False)
-    pm = get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics)
+        u = []
+        for _ in range(10):
+            u.append([0.8 + rn(0.2), 0.7 + rn(0.3), 0.7 + rn(0.4)])
+        for _ in range(10):
+            u.append([-0.8 + rn(0.2), 0.8 + rn(0.1), -0.9 + rn(0.2)])
+        for _ in range(5):
+            u.append([0.1 + rn(0.2), 0.7 + rn(0.1), 0.1 + rn(0.3)])
+        for _ in range(100):
+            u.append([0.0 + rn(0.8), 0.7 + rn(0.3), 0.0 + rn(0.9)])
 
-    u = []
-    for _ in range(10):
-        u.append([0.8 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.7 + np.random.randn() * 0.4])
-    for _ in range(10):
-        u.append(
-            [-0.8 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, -0.9 + np.random.randn() * 0.2])
-    for _ in range(5):
-        u.append([0.1 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.1, 0.1 + np.random.randn() * 0.3])
-    for _ in range(100):
-        u.append([0.0 + np.random.randn() * 0.8, 0.7 + np.random.randn() * 0.3, 0.0 + np.random.randn() * 0.9])
-
-    ctrl = controller.PreDeterminedControllerWithPrediction(np.array(u), pm.dyn_net, *env.get_control_bounds())
-    sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=False, save=True, stop_when_done=False)
-    sim.run(seed, 'model_selector_evaluation')
+        ctrl = controller.PreDeterminedControllerWithPrediction(np.array(u), pm.dyn_net, *env.get_control_bounds())
+        sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=False, save=True, stop_when_done=False)
+        sim.run(seed, 'model_selector_evaluation')
 
 
 # ------- Hand designed coordinate transform classes using architecture 2
-class HandDesignedCoordTransform(PusherTransform):
-    def __init__(self, ds, nz, nv=4, reaction_force_start_index=4, **kwargs):
-        # assume 4 states; anything after we should just passthrough
-        self.passthrough_states = ds.config.nx - reaction_force_start_index
-        # v is dx, dy, dyaw in body frame and d_along
-        super().__init__(ds, nz + self.passthrough_states, nv + self.passthrough_states, name='coord', **kwargs)
+class CoordTransform:
+    @staticmethod
+    def factory(env, *args, **kwargs):
+        tsfs = {block_push.PushAgainstWallStickyEnv: CoordTransform.StickyEnv,
+                block_push.PushWithForceDirectlyEnv: CoordTransform.Direct,
+                block_push.PushWithForceDirectlyReactionInStateEnv: CoordTransform.ReactionInState,
+                block_push.PushPhysicallyAnyAlongEnv: CoordTransform.Physical,
+                block_push.FixedPushDistPhysicalEnv: CoordTransform.Physical}
+        tsf_type = tsfs.get(type(env), None)
+        if tsf_type is None:
+            raise RuntimeError("No tsf specified for env type {}".format(type(env)))
+        return tsf_type(*args, **kwargs)
 
-    def _add_passthrough_states(self, z, x):
-        # we always use the last few dims for passthrough; so use the same for v
-        if self.passthrough_states:
-            z = torch.cat((z, x[:, -self.passthrough_states:].view(-1, self.passthrough_states)), dim=1)
-        return z
+    class Base(PusherTransform):
+        def __init__(self, ds, nz, nv=4, reaction_force_start_index=4, **kwargs):
+            # assume 4 states; anything after we should just passthrough
+            self.passthrough_states = ds.config.nx - reaction_force_start_index
+            # v is dx, dy, dyaw in body frame and d_along
+            super().__init__(ds, nz + self.passthrough_states, nv + self.passthrough_states, name='coord', **kwargs)
 
-    def get_v(self, x, dx, z):
-        return self.dx_to_v(x, dx)
+        def _add_passthrough_states(self, z, x):
+            # we always use the last few dims for passthrough; so use the same for v
+            if self.passthrough_states:
+                z = torch.cat((z, x[:, -self.passthrough_states:].view(-1, self.passthrough_states)), dim=1)
+            return z
 
-    def xu_to_z(self, state, action):
-        if len(state.shape) < 2:
-            state = state.reshape(1, -1)
-            action = action.reshape(1, -1)
+        def get_v(self, x, dx, z):
+            return self.dx_to_v(x, dx)
 
-        # (along, d_along, push magnitude, push direction)
-        z = torch.cat((state[:, 3].view(-1, 1), action), dim=1)
-        z = self._add_passthrough_states(z, state)
-        return z
+        def xu_to_z(self, state, action):
+            if len(state.shape) < 2:
+                state = state.reshape(1, -1)
+                action = action.reshape(1, -1)
 
-    def dx_to_v(self, x, dx):
-        if len(x.shape) == 1:
-            x = x.view(1, -1)
-            dx = dx.view(1, -1)
-        # convert world frame to body frame
-        dpos_body = math_utils.batch_rotate_wrt_origin(dx[:, :2], -x[:, 2])
-        # second last element is dyaw, which also gets passed along directly
-        dyaw = dx[:, 2]
-        # last element is d_along, which gets passed along directly
-        dalong = dx[:, 3]
-        v = torch.cat((dpos_body, dyaw.view(-1, 1), dalong.view(-1, 1)), dim=1)
-        v = self._add_passthrough_states(v, dx)
-        return v
+            # (along, d_along, push magnitude, push direction)
+            z = torch.cat((state[:, 3].view(-1, 1), action), dim=1)
+            z = self._add_passthrough_states(z, state)
+            return z
 
-    def get_dx(self, x, v):
-        if len(x.shape) == 1:
-            x = x.view(1, -1)
-            v = v.view(1, -1)
-        # convert (dx, dy) from body frame back to world frame
-        dpos_world = math_utils.batch_rotate_wrt_origin(v[:, :2], x[:, 2])
-        # second last element is dyaw, which also gets passed along directly
-        dyaw = v[:, 2]
-        # last element is d_along, which gets passed along directly
-        dalong = v[:, 3]
-        dx = torch.cat((dpos_world, dyaw.view(-1, 1), dalong.view(-1, 1)), dim=1)
-        dx = self._add_passthrough_states(dx, v)
-        return dx
+        def dx_to_v(self, x, dx):
+            if len(x.shape) == 1:
+                x = x.view(1, -1)
+                dx = dx.view(1, -1)
+            # convert world frame to body frame
+            dpos_body = math_utils.batch_rotate_wrt_origin(dx[:, :2], -x[:, 2])
+            # second last element is dyaw, which also gets passed along directly
+            dyaw = dx[:, 2]
+            # last element is d_along, which gets passed along directly
+            dalong = dx[:, 3]
+            v = torch.cat((dpos_body, dyaw.view(-1, 1), dalong.view(-1, 1)), dim=1)
+            v = self._add_passthrough_states(v, dx)
+            return v
 
-    def parameters(self):
-        return [torch.zeros(1)]
+        def get_dx(self, x, v):
+            if len(x.shape) == 1:
+                x = x.view(1, -1)
+                v = v.view(1, -1)
+            # convert (dx, dy) from body frame back to world frame
+            dpos_world = math_utils.batch_rotate_wrt_origin(v[:, :2], x[:, 2])
+            # second last element is dyaw, which also gets passed along directly
+            dyaw = v[:, 2]
+            # last element is d_along, which gets passed along directly
+            dalong = v[:, 3]
+            dx = torch.cat((dpos_world, dyaw.view(-1, 1), dalong.view(-1, 1)), dim=1)
+            dx = self._add_passthrough_states(dx, v)
+            return dx
 
-    def _model_state_dict(self):
-        return None
+        def parameters(self):
+            return [torch.zeros(1)]
 
-    def _load_model_state_dict(self, saved_state_dict):
-        pass
+        def _model_state_dict(self):
+            return None
 
-    def learn_model(self, max_epoch, batch_N=500):
-        pass
+        def _load_model_state_dict(self, saved_state_dict):
+            pass
 
+        def learn_model(self, max_epoch, batch_N=500):
+            pass
 
-class WorldBodyFrameTransformForStickyEnv(HandDesignedCoordTransform):
-    """
-    Specific to StickyEnv formulation! (expects the states to be block pose and pusher along)
+    class StickyEnv(Base):
+        """
+        Specific to StickyEnv formulation! (expects the states to be block pose and pusher along)
 
-    Transforms world frame coordinates to input required for body frame dynamics
-    (along, d_along, and push magnitude) = z and predicts (dx, dy, dtheta) of block in previous block frame = v
-    separate latent space for input and output (z, v)
-    this is actually h and h^{-1} combined into 1, h(x,u) = z, learned dynamics hat{f}(z) = v, h^{-1}(v) = dx
-    """
+        Transforms world frame coordinates to input required for body frame dynamics
+        (along, d_along, and push magnitude) = z and predicts (dx, dy, dtheta) of block in previous block frame = v
+        separate latent space for input and output (z, v)
+        this is actually h and h^{-1} combined into 1, h(x,u) = z, learned dynamics hat{f}(z) = v, h^{-1}(v) = dx
+        """
 
-    def __init__(self, ds, **kwargs):
-        # need along, d_along, and push magnitude; don't need block position or yaw
-        super().__init__(ds, 3, **kwargs)
+        def __init__(self, ds, **kwargs):
+            # need along, d_along, and push magnitude; don't need block position or yaw
+            super().__init__(ds, 3, **kwargs)
 
+    class Direct(Base):
+        def __init__(self, ds, **kwargs):
+            # need along, d_along, push magnitude, and push direction; don't need block position or yaw
+            super().__init__(ds, 4, **kwargs)
 
-class WorldBodyFrameTransformForDirectPush(HandDesignedCoordTransform):
-    def __init__(self, ds, **kwargs):
-        # need along, d_along, push magnitude, and push direction; don't need block position or yaw
-        super().__init__(ds, 4, **kwargs)
+    class ReactionInState(Base):
+        def __init__(self, ds, **kwargs):
+            super().__init__(ds, 5, **kwargs)
 
+        def xu_to_z(self, state, action):
+            if len(state.shape) < 2:
+                state = state.reshape(1, -1)
+                action = action.reshape(1, -1)
 
-class WorldBodyFrameTransformForReactionInState(HandDesignedCoordTransform):
-    def __init__(self, ds, **kwargs):
-        super().__init__(ds, 5, **kwargs)
+            # NOTE we could just as well make the model work for free-space if we rotate reaction force to be in body frame
+            # but then it wouldn't work for pushing against a wall since it's no longer rotationally invariant
+            # additionally need theta in z to estimate reaction force direction
+            # (theta, along, d_along, push magnitude, push direction)
+            z = torch.cat((state[:, 2:4], action), dim=1)
+            z = self._add_passthrough_states(z, state)
+            return z
 
-    def xu_to_z(self, state, action):
-        if len(state.shape) < 2:
-            state = state.reshape(1, -1)
-            action = action.reshape(1, -1)
+    class Physical(Base):
+        def __init__(self, ds, **kwargs):
+            super().__init__(ds, ds.config.nu + 1, nv=3, reaction_force_start_index=3, **kwargs)
 
-        # NOTE we could just as well make the model work for free-space if we rotate reaction force to be in body frame
-        # but then it wouldn't work for pushing against a wall since it's no longer rotationally invariant
-        # additionally need theta in z to estimate reaction force direction
-        # (theta, along, d_along, push magnitude, push direction)
-        z = torch.cat((state[:, 2:4], action), dim=1)
-        z = self._add_passthrough_states(z, state)
-        return z
+        def xu_to_z(self, state, action):
+            if len(state.shape) < 2:
+                state = state.reshape(1, -1)
+                action = action.reshape(1, -1)
 
+            z = torch.cat((state[:, 2].view(-1, 1), action), dim=1)
+            z = self._add_passthrough_states(z, state)
+            return z
 
-class WorldBodyFrameTransformPhysicalPush(HandDesignedCoordTransform):
-    def __init__(self, ds, **kwargs):
-        super().__init__(ds, ds.config.nu + 1, nv=3, reaction_force_start_index=3, **kwargs)
+        def dx_to_v(self, x, dx):
+            if len(x.shape) == 1:
+                x = x.view(1, -1)
+                dx = dx.view(1, -1)
+            # convert world frame to body frame
+            dpos_body = math_utils.batch_rotate_wrt_origin(dx[:, :2], -x[:, 2])
+            # second last element is dyaw, which also gets passed along directly
+            dyaw = dx[:, 2]
+            v = torch.cat((dpos_body, dyaw.view(-1, 1)), dim=1)
+            v = self._add_passthrough_states(v, dx)
+            return v
 
-    def xu_to_z(self, state, action):
-        if len(state.shape) < 2:
-            state = state.reshape(1, -1)
-            action = action.reshape(1, -1)
-
-        z = torch.cat((state[:, 2].view(-1, 1), action), dim=1)
-        z = self._add_passthrough_states(z, state)
-        return z
-
-    def dx_to_v(self, x, dx):
-        if len(x.shape) == 1:
-            x = x.view(1, -1)
-            dx = dx.view(1, -1)
-        # convert world frame to body frame
-        dpos_body = math_utils.batch_rotate_wrt_origin(dx[:, :2], -x[:, 2])
-        # second last element is dyaw, which also gets passed along directly
-        dyaw = dx[:, 2]
-        v = torch.cat((dpos_body, dyaw.view(-1, 1)), dim=1)
-        v = self._add_passthrough_states(v, dx)
-        return v
-
-    def get_dx(self, x, v):
-        if len(x.shape) == 1:
-            x = x.view(1, -1)
-            v = v.view(1, -1)
-        # convert (dx, dy) from body frame back to world frame
-        dpos_world = math_utils.batch_rotate_wrt_origin(v[:, :2], x[:, 2])
-        # second last element is dyaw, which also gets passed along directly
-        dyaw = v[:, 2]
-        dx = torch.cat((dpos_world, dyaw.view(-1, 1)), dim=1)
-        dx = self._add_passthrough_states(dx, v)
-        return dx
+        def get_dx(self, x, v):
+            if len(x.shape) == 1:
+                x = x.view(1, -1)
+                v = v.view(1, -1)
+            # convert (dx, dy) from body frame back to world frame
+            dpos_world = math_utils.batch_rotate_wrt_origin(v[:, :2], x[:, 2])
+            # second last element is dyaw, which also gets passed along directly
+            dyaw = v[:, 2]
+            dx = torch.cat((dpos_world, dyaw.view(-1, 1)), dim=1)
+            dx = self._add_passthrough_states(dx, v)
+            return dx
 
 
 # ------- Learned transform classes using architecture 3
 # TODO handle passthrough states! (for now none of these should work with reaction force)
-class ParameterizedCoordTransform(invariant.LearnLinearDynamicsTransform, PusherTransform):
-    """Parameterize the coordinate transform such that it has to learn something"""
-
-    def __init__(self, ds, device, model_opts=None, nz=4, nv=4, **kwargs):
-        if model_opts is None:
-            model_opts = {}
-        # default values for the input model_opts to replace
-        opts = {'h_units': (16, 32)}
-        opts.update(model_opts)
-
-        # v is dx, dy, dyaw in body frame and d_along
-        # input is x, output is yaw
-        self.yaw_selector = torch.nn.Linear(ds.config.nx, 1, bias=False).to(device=device, dtype=torch.double)
-        self.true_yaw_param = torch.zeros(ds.config.nx, device=device, dtype=torch.double)
-        self.true_yaw_param[2] = 1
-        self.true_yaw_param = self.true_yaw_param.view(1, -1)  # to be consistent with weights
-        # try starting at the true parameters
-        # self.yaw_selector.weight.data = self.true_yaw_param + torch.randn_like(self.true_yaw_param)
-        # self.yaw_selector.weight.requires_grad = False
-
-        # input to local model is z, output is v
-        config = load_data.DataConfig()
-        config.nx = nz
-        config.ny = nv * nz  # matrix output
-        self.linear_model_producer = model.DeterministicUser(
-            make.make_sequential_network(config, **opts).to(device=device))
-        name = kwargs.pop('name', '')
-        invariant.LearnLinearDynamicsTransform.__init__(self, ds, nz, nv,
-                                                        name='{}_{}'.format(self._name_prefix(), name),
-                                                        **kwargs)
-
-    def _name_prefix(self):
-        return 'param_coord'
-
-    def linear_dynamics(self, z):
-        B = z.shape[0]
-        return self.linear_model_producer.sample(z).view(B, self.nv, self.nz)
-
-    def xu_to_z(self, state, action):
-        if len(state.shape) < 2:
-            state = state.reshape(1, -1)
-            action = action.reshape(1, -1)
-
-        # (along, d_along, push magnitude)
-        z = torch.cat((state[:, -1].view(-1, 1), action), dim=1)
-        return z
-
-    def dx_to_v(self, x, dx):
-        raise RuntimeError("Shouldn't have to convert from dx to v")
-
-    def get_dx(self, x, v):
-        if len(x.shape) == 1:
-            x = x.view(1, -1)
-            v = v.view(1, -1)
-
-        # choose which component of x to take as rotation (should select just theta)
-        yaw = self.yaw_selector(x)
-
-        N = v.shape[0]
-        dx = torch.zeros((N, 4), dtype=v.dtype, device=v.device)
-        # convert (dx, dy) from body frame back to world frame
-        dx[:, :2] = math_utils.batch_rotate_wrt_origin(v[:, :2], yaw)
-        # second last element is dyaw, which also gets passed along directly
-        dx[:, 2] = v[:, 2]
-        # last element is d_along, which gets passed along directly
-        dx[:, 3] = v[:, 3]
-        return dx
-
-    def parameters(self):
-        return list(self.yaw_selector.parameters()) + list(self.linear_model_producer.model.parameters())
-
-    def _model_state_dict(self):
-        d = {'yaw': self.yaw_selector.state_dict(), 'linear': self.linear_model_producer.model.state_dict()}
-        return d
-
-    def _load_model_state_dict(self, saved_state_dict):
-        self.yaw_selector.load_state_dict(saved_state_dict['yaw'])
-        self.linear_model_producer.model.load_state_dict(saved_state_dict['linear'])
-
-    def evaluate_validation(self, writer):
-        losses = super(ParameterizedCoordTransform, self).evaluate_validation(writer)
-        if writer is not None:
-            with torch.no_grad():
-                yaw_param = self.yaw_selector.weight.data
-                cs = torch.nn.functional.cosine_similarity(yaw_param, self.true_yaw_param).item()
-                dist = torch.norm(yaw_param - self.true_yaw_param).item()
-
-                logger.debug("step %d yaw cos sim %f dist %f", self.step, cs, dist)
-
-                writer.add_scalar('cosine_similarity', cs, self.step)
-                writer.add_scalar('param_diff', dist, self.step)
-                writer.add_scalar('param_norm', yaw_param.norm().item(), self.step)
-        return losses
-
-
-class Parameterized2Transform(ParameterizedCoordTransform):
-    """Relax parameterization structure to allow (each dimension of) z to be some linear combination of x,u"""
-
-    def __init__(self, ds, device, nz=4, **kwargs):
-        # input is x, output is z
-        # constrain output to 0 and 1
-        self.z_selector = torch.nn.Linear(ds.config.nx + ds.config.nu, nz, bias=False).to(device=device,
-                                                                                          dtype=torch.double)
-        self.true_z_param = torch.tensor(
-            [[0, 0, 0, 1, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0], [0, 0, 0, 0, 0, 1, 0], [0, 0, 0, 0, 0, 0, 1]], device=device,
-            dtype=torch.double)
-        # try starting at the true parameters
-        # self.z_selector.weight.data = self.true_z_param + torch.randn_like(self.true_z_param) * 0.1
-        # self.z_selector.weight.requires_grad = True
-        super().__init__(ds, device, nz=nz, **kwargs)
-
-    def _name_prefix(self):
-        return "z_select"
-
-    def xu_to_z(self, state, action):
-        if len(state.shape) < 2:
-            state = state.reshape(1, -1)
-            action = action.reshape(1, -1)
-
-        # more general parameterized versions where we select which components to take
-        xu = torch.cat((state, action), dim=1)
-        z = self.z_selector(xu)
-        return z
-
-    def parameters(self):
-        return super().parameters() + list(self.z_selector.parameters())
-
-    def _model_state_dict(self):
-        d = super()._model_state_dict()
-        d['z'] = self.z_selector.state_dict()
-        return d
-
-    def _load_model_state_dict(self, saved_state_dict):
-        super()._load_model_state_dict(saved_state_dict)
-        self.z_selector.load_state_dict(saved_state_dict['z'])
-
-
-class Parameterized3Transform(Parameterized2Transform):
-    """Relax parameterization structure to allow decoder to be some state dependent transformation of v"""
-
-    def __init__(self, ds, device, use_sincos_angle=False, nv=4, **kwargs):
-        # replace angle with their sin and cos
-        self.use_sincos_angle = use_sincos_angle
-        # input to producer is x, output is matrix to multiply v to get dx by
-        config = load_data.DataConfig()
-        config.nx = ds.config.nx + (1 if use_sincos_angle else 0)
-        config.ny = nv * ds.config.nx  # matrix output (original nx, ignore sincos)
-        # outputs a linear transformation from v to dx (linear in v), that is dependent on state
-        self.linear_decoder_producer = model.DeterministicUser(
-            make.make_sequential_network(config, h_units=(16, 32)).to(device=device))
-        super().__init__(ds, device, nv=nv, **kwargs)
-
-    def _name_prefix(self):
-        return 'state_dep_linear_tsf_{}'.format(int(self.use_sincos_angle))
-
-    def parameters(self):
-        return list(self.linear_decoder_producer.model.parameters()) + list(self.z_selector.parameters()) + list(
-            self.linear_model_producer.model.parameters())
-
-    def _model_state_dict(self):
-        d = super()._model_state_dict()
-        d['decoder'] = self.linear_decoder_producer.model.state_dict()
-        return d
-
-    def _load_model_state_dict(self, saved_state_dict):
-        super()._load_model_state_dict(saved_state_dict)
-        self.linear_decoder_producer.model.load_state_dict(saved_state_dict['decoder'])
-
-    def linear_dynamics(self, z):
-        B = z.shape[0]
-        return self.linear_model_producer.sample(z).view(B, self.nv, self.nz)
-
-    def get_dx(self, x, v):
-        if len(x.shape) == 1:
-            x = x.view(1, -1)
-            v = v.view(1, -1)
-
-        # make state-dependent linear transforms (matrices) that multiply v to get dx
-        B, nx = x.shape
-        if self.use_sincos_angle:
-            angle_index = 2
-            s = torch.sin(x[:, angle_index]).view(-1, 1)
-            c = torch.cos(x[:, angle_index]).view(-1, 1)
-            x = torch.cat((x[:, :angle_index], s, c, x[:, angle_index + 1:]), dim=1)
-        linear_tsf = self.linear_decoder_producer.sample(x).view(B, nx, self.nv)
-        dx = linalg.batch_batch_product(v, linear_tsf)
-        return dx
-
-
-class Parameterized3BatchTransform(Parameterized3Transform, invariant.LearnFromBatchTransform):
-    """Train using randomized neighbourhoods instead of fixed given ones"""
-
-    def learn_model(self, max_epoch, batch_N=500):
-        return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
-
-
-class LinearRelaxEncoderTransform(Parameterized3BatchTransform):
-    """Still enforce that dynamics and decoder are linear, but relax parameterization of encoder"""
-
-    def __init__(self, ds, device, nz=4, **kwargs):
-        config = load_data.DataConfig()
-        config.nx = ds.config.nx + ds.config.nu
-        config.ny = nz
-        self.encoder = model.DeterministicUser(
-            make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
-
-        super().__init__(ds, device, nz=nz, **kwargs)
-
-    def _name_prefix(self):
-        return 'linear_relax_encoder'
-
-    def xu_to_z(self, state, action):
-        if len(state.shape) < 2:
-            state = state.reshape(1, -1)
-            action = action.reshape(1, -1)
-
-        xu = torch.cat((state, action), dim=1)
-        z = self.encoder.sample(xu)
-        return z
-
-    def parameters(self):
-        return list(self.linear_decoder_producer.model.parameters()) + list(self.encoder.model.parameters()) + list(
-            self.linear_model_producer.model.parameters())
-
-    def _model_state_dict(self):
-        d = super()._model_state_dict()
-        d['encoder'] = self.encoder.model.state_dict()
-        return d
-
-    def _load_model_state_dict(self, saved_state_dict):
-        super()._load_model_state_dict(saved_state_dict)
-        self.encoder.model.load_state_dict(saved_state_dict['encoder'])
-
-
-from meta_contact.invariant import TransformToUse
-
-
-class DistRegularizedTransform(Parameterized3BatchTransform):
-    """Try requiring pairwise distances are proportional"""
-
-    def __init__(self, *args, dist_loss_weight=1., **kwargs):
-        self.dist_loss_weight = dist_loss_weight
-        super(DistRegularizedTransform, self).__init__(*args, **kwargs)
-
-    def _name_prefix(self):
-        return 'dist_reg'
-
-    def _loss_weight_name(self):
-        return "dist_{}".format(self.dist_loss_weight)
-
-    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
-        z, A, v, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
-
-        # hypothesize that close in z iff close in A, v space
-        # TODO maybe only require that things close in z should be close in A, v space (not bidirectional)
-        # TODO try distance instead of cosine/directionality
-        di = torch.nn.functional.pdist(z)
-        # dA = torch.nn.functional.pdist(A.view(A.shape[0], -1))
-        do = torch.nn.functional.pdist(v)
-        dist_loss = 1 - torch.nn.functional.cosine_similarity(di, do, dim=0)
-        mse_loss = torch.norm(yhat - Y, dim=1)
-        return mse_loss, dist_loss
-
-    @staticmethod
-    def loss_names():
-        return "mse_loss", "dist_loss"
-
-    def _reduce_losses(self, losses):
-        return torch.mean(losses[0]) + self.dist_loss_weight * torch.mean(losses[1])
-
-
+# TODO try mutual information penalty (want low mutual information of input and output - throw out noise)
 def compression_reward(v, xu, dist_regularization=1e-8, top_percent=None):
     # normalize here so loss wouldn't change if all v were scaled by a fixed amount (tested)
     mn = v.norm(dim=1).mean()
@@ -825,511 +568,759 @@ def compression_reward(v, xu, dist_regularization=1e-8, top_percent=None):
     return torch.log(dxu) - torch.log(dv + dist_regularization)
 
 
-class CompressionRewardTransform(Parameterized3BatchTransform):
-    """Reward mapping large differences in x,u space to small differences in v space"""
+class LearnedTransform:
+    class ParameterizedYawSelect(invariant.LearnLinearDynamicsTransform, PusherTransform):
+        """Parameterize the coordinate transform such that it has to learn something"""
 
-    def __init__(self, *args, compression_loss_weight=1e-3, dist_regularization=1e-8, **kwargs):
-        self.compression_loss_weight = compression_loss_weight
-        # avoid log(0)
-        self.dist_regularization = dist_regularization
-        super(CompressionRewardTransform, self).__init__(*args, **kwargs)
+        def __init__(self, ds, device, model_opts=None, nz=4, nv=4, **kwargs):
+            if model_opts is None:
+                model_opts = {}
+            # default values for the input model_opts to replace
+            opts = {'h_units': (16, 32)}
+            opts.update(model_opts)
 
-    def _name_prefix(self):
-        return 'reward_compression'
+            # v is dx, dy, dyaw in body frame and d_along
+            # input is x, output is yaw
+            self.yaw_selector = torch.nn.Linear(ds.config.nx, 1, bias=False).to(device=device, dtype=torch.double)
+            self.true_yaw_param = torch.zeros(ds.config.nx, device=device, dtype=torch.double)
+            self.true_yaw_param[2] = 1
+            self.true_yaw_param = self.true_yaw_param.view(1, -1)  # to be consistent with weights
+            # try starting at the true parameters
+            # self.yaw_selector.weight.data = self.true_yaw_param + torch.randn_like(self.true_yaw_param)
+            # self.yaw_selector.weight.requires_grad = False
 
-    def _loss_weight_name(self):
-        return "compress_{}".format(self.compression_loss_weight)
+            # input to local model is z, output is v
+            config = load_data.DataConfig()
+            config.nx = nz
+            config.ny = nv * nz  # matrix output
+            self.linear_model_producer = model.DeterministicUser(
+                make.make_sequential_network(config, **opts).to(device=device))
+            name = kwargs.pop('name', '')
+            invariant.LearnLinearDynamicsTransform.__init__(self, ds, nz, nv,
+                                                            name='{}_{}'.format(self._name_prefix(), name),
+                                                            **kwargs)
 
-    def _evaluate_batch_apply_tsf(self, X, U, tsf):
-        assert tsf is TransformToUse.LATENT_SPACE
-        z = self.xu_to_z(X, U)
-        A = self.linear_dynamics(z)
-        v = linalg.batch_batch_product(z, A.transpose(-1, -2))
-        yhat = self.get_dx(X, v)
-        return z, A, v, yhat
+        def _name_prefix(self):
+            return 'param_coord'
 
-    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
-        z, A, v, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
-        compression_r = compression_reward(v, torch.cat((X, U), dim=1), dist_regularization=self.dist_regularization,
-                                           top_percent=0.05)
-        mse_loss = torch.norm(yhat - Y, dim=1)
-        return mse_loss, -compression_r
+        def linear_dynamics(self, z):
+            B = z.shape[0]
+            return self.linear_model_producer.sample(z).view(B, self.nv, self.nz)
 
-    @staticmethod
-    def loss_names():
-        return "mse_loss", "compression_loss"
+        def xu_to_z(self, state, action):
+            if len(state.shape) < 2:
+                state = state.reshape(1, -1)
+                action = action.reshape(1, -1)
 
-    def _reduce_losses(self, losses):
-        return torch.mean(losses[0]) + self.compression_loss_weight * torch.mean(losses[1])
+            # (along, d_along, push magnitude)
+            z = torch.cat((state[:, -1].view(-1, 1), action), dim=1)
+            return z
 
+        def dx_to_v(self, x, dx):
+            raise RuntimeError("Shouldn't have to convert from dx to v")
 
-class PartialPassthroughTransform(CompressionRewardTransform):
-    """Don't pass through all of x to g, since it could just learn to map v to u"""
+        def get_dx(self, x, v):
+            if len(x.shape) == 1:
+                x = x.view(1, -1)
+                v = v.view(1, -1)
 
-    def __init__(self, ds, device, *args, nv=4, **kwargs):
-        config = load_data.DataConfig()
-        config.nx = 2
-        config.ny = nv * ds.config.nx  # matrix output (original nx, ignore sincos)
-        self.partial_decoder = model.DeterministicUser(
-            make.make_sequential_network(config, h_units=(16, 32)).to(device=device))
-        super().__init__(ds, device, *args, nv=nv, **kwargs)
+            # choose which component of x to take as rotation (should select just theta)
+            yaw = self.yaw_selector(x)
 
-    def _name_prefix(self):
-        return 'partial_passthrough'
+            N = v.shape[0]
+            dx = torch.zeros((N, 4), dtype=v.dtype, device=v.device)
+            # convert (dx, dy) from body frame back to world frame
+            dx[:, :2] = math_utils.batch_rotate_wrt_origin(v[:, :2], yaw)
+            # second last element is dyaw, which also gets passed along directly
+            dx[:, 2] = v[:, 2]
+            # last element is d_along, which gets passed along directly
+            dx[:, 3] = v[:, 3]
+            return dx
 
-    def parameters(self):
-        return list(self.partial_decoder.model.parameters()) + list(self.z_selector.parameters()) + list(
-            self.linear_model_producer.model.parameters())
+        def parameters(self):
+            return list(self.yaw_selector.parameters()) + list(self.linear_model_producer.model.parameters())
 
-    def _model_state_dict(self):
-        d = super()._model_state_dict()
-        d['pd'] = self.partial_decoder.model.state_dict()
-        return d
+        def _model_state_dict(self):
+            d = {'yaw': self.yaw_selector.state_dict(), 'linear': self.linear_model_producer.model.state_dict()}
+            return d
 
-    def _load_model_state_dict(self, saved_state_dict):
-        super()._load_model_state_dict(saved_state_dict)
-        self.partial_decoder.model.load_state_dict(saved_state_dict['pd'])
+        def _load_model_state_dict(self, saved_state_dict):
+            self.yaw_selector.load_state_dict(saved_state_dict['yaw'])
+            self.linear_model_producer.model.load_state_dict(saved_state_dict['linear'])
 
-    def get_dx(self, x, v):
-        if len(x.shape) == 1:
-            x = x.view(1, -1)
-            v = v.view(1, -1)
+        def evaluate_validation(self, writer):
+            losses = super().evaluate_validation(writer)
+            if writer is not None:
+                with torch.no_grad():
+                    yaw_param = self.yaw_selector.weight.data
+                    cs = torch.nn.functional.cosine_similarity(yaw_param, self.true_yaw_param).item()
+                    dist = torch.norm(yaw_param - self.true_yaw_param).item()
 
-        B, nx = x.shape
-        angle_index = 2
-        s = torch.sin(x[:, angle_index]).view(-1, 1)
-        c = torch.cos(x[:, angle_index]).view(-1, 1)
-        x = torch.cat((s, c), dim=1)
-        linear_tsf = self.partial_decoder.sample(x).view(B, nx, self.nv)
-        dx = linalg.batch_batch_product(v, linear_tsf)
-        return dx
+                    logger.debug("step %d yaw cos sim %f dist %f", self.step, cs, dist)
 
+                    writer.add_scalar('cosine_similarity', cs, self.step)
+                    writer.add_scalar('param_diff', dist, self.step)
+                    writer.add_scalar('param_norm', yaw_param.norm().item(), self.step)
+            return losses
 
-class PartitionBlock(torch.nn.Module):
-    def __init__(self, input_dim, output_dim, split_at):
-        super().__init__()
-        self.split_at = split_at
-        self.linear = torch.nn.Parameter(torch.randn((input_dim, output_dim)), requires_grad=True)
-        # self.linear = torch.nn.Linear(input_dim, output_dim, bias=False)
+    class LinearComboLatentInput(ParameterizedYawSelect):
+        """Relax parameterization structure to allow (each dimension of) z to be some linear combination of x,u"""
 
-    def forward(self, x, split):
-        # require that a single dimension is split up (can't have multiple copies of same element)
-        # each column should sum to 1
-        weights = torch.nn.functional.softmax(self.linear, dim=0)
-        y = x @ weights
-        if split is 0:
-            y = y[:, :self.split_at]
-        else:
-            y = y[:, self.split_at:]
-        return y
+        def __init__(self, ds, device, nz=4, **kwargs):
+            # input is x, output is z
+            # constrain output to 0 and 1
+            self.z_selector = torch.nn.Linear(ds.config.nx + ds.config.nu, nz, bias=False).to(device=device,
+                                                                                              dtype=torch.double)
+            self.true_z_param = torch.tensor(
+                [[0, 0, 0, 1, 0, 0, 0], [0, 0, 0, 0, 1, 0, 0], [0, 0, 0, 0, 0, 1, 0], [0, 0, 0, 0, 0, 0, 1]],
+                device=device,
+                dtype=torch.double)
+            # try starting at the true parameters
+            # self.z_selector.weight.data = self.true_z_param + torch.randn_like(self.true_z_param) * 0.1
+            # self.z_selector.weight.requires_grad = True
+            super().__init__(ds, device, nz=nz, **kwargs)
 
+        def _name_prefix(self):
+            return "z_select"
 
-class LearnedPartialPassthroughTransform(CompressionRewardTransform):
-    """Don't pass through all of x to g; learn which parts to pass to g and which to h"""
+        def xu_to_z(self, state, action):
+            if len(state.shape) < 2:
+                state = state.reshape(1, -1)
+                action = action.reshape(1, -1)
 
-    def __init__(self, ds, device, *args, nz=4, nv=4, reduced_decoder_input_dim=2, **kwargs):
-        self.reduced_decoder_input_dim = reduced_decoder_input_dim
-        self.x_extractor = torch.nn.Linear(ds.config.nx, self.reduced_decoder_input_dim).to(device=device,
-                                                                                            dtype=torch.double)
+            # more general parameterized versions where we select which components to take
+            xu = torch.cat((state, action), dim=1)
+            z = self.z_selector(xu)
+            return z
 
-        config = load_data.DataConfig()
-        config.nx = self.reduced_decoder_input_dim
-        config.ny = nv * ds.config.nx
-        self.partial_decoder = model.DeterministicUser(
-            make.make_sequential_network(config, h_units=(16, 32)).to(device=device))
+        def parameters(self):
+            return super().parameters() + list(self.z_selector.parameters())
 
-        super().__init__(ds, device, *args, nz=nz, nv=nv, **kwargs)
+        def _model_state_dict(self):
+            d = super()._model_state_dict()
+            d['z'] = self.z_selector.state_dict()
+            return d
 
-    def _name_prefix(self):
-        return 'extract_passthrough_{}'.format(self.reduced_decoder_input_dim)
+        def _load_model_state_dict(self, saved_state_dict):
+            super()._load_model_state_dict(saved_state_dict)
+            self.z_selector.load_state_dict(saved_state_dict['z'])
 
-    def parameters(self):
-        return list(self.partial_decoder.model.parameters()) + list(self.z_selector.parameters()) + list(
-            self.linear_model_producer.model.parameters()) + list(self.x_extractor.parameters())
+    class ParameterizeDecoder(LinearComboLatentInput):
+        """Relax parameterization structure to allow decoder to be some state dependent transformation of v"""
 
-    def _model_state_dict(self):
-        d = super()._model_state_dict()
-        d['pd'] = self.partial_decoder.model.state_dict()
-        d['extract'] = self.x_extractor.state_dict()
-        return d
+        def __init__(self, ds, device, use_sincos_angle=False, nv=4, **kwargs):
+            # replace angle with their sin and cos
+            self.use_sincos_angle = use_sincos_angle
+            # input to producer is x, output is matrix to multiply v to get dx by
+            config = load_data.DataConfig()
+            config.nx = ds.config.nx + (1 if use_sincos_angle else 0)
+            config.ny = nv * ds.config.nx  # matrix output (original nx, ignore sincos)
+            # outputs a linear transformation from v to dx (linear in v), that is dependent on state
+            self.linear_decoder_producer = model.DeterministicUser(
+                make.make_sequential_network(config, h_units=(16, 32)).to(device=device))
+            super().__init__(ds, device, nv=nv, **kwargs)
 
-    def _load_model_state_dict(self, saved_state_dict):
-        super()._load_model_state_dict(saved_state_dict)
-        self.partial_decoder.model.load_state_dict(saved_state_dict['pd'])
-        self.x_extractor.load_state_dict(saved_state_dict['extract'])
+        def _name_prefix(self):
+            return 'state_dep_linear_tsf_{}'.format(int(self.use_sincos_angle))
 
-    def get_dx(self, x, v):
-        if len(x.shape) == 1:
-            x = x.view(1, -1)
-            v = v.view(1, -1)
+        def parameters(self):
+            return list(self.linear_decoder_producer.model.parameters()) + list(self.z_selector.parameters()) + list(
+                self.linear_model_producer.model.parameters())
 
-        B, nx = x.shape
-        extracted_from_x = self.x_extractor(x)
-        linear_tsf = self.partial_decoder.sample(extracted_from_x).view(B, nx, self.nv)
-        dx = linalg.batch_batch_product(v, linear_tsf)
-        return dx
+        def _model_state_dict(self):
+            d = super()._model_state_dict()
+            d['decoder'] = self.linear_decoder_producer.model.state_dict()
+            return d
 
+        def _load_model_state_dict(self, saved_state_dict):
+            super()._load_model_state_dict(saved_state_dict)
+            self.linear_decoder_producer.model.load_state_dict(saved_state_dict['decoder'])
 
-class GroundTruthWithCompression(CompressionRewardTransform):
-    """Ground truth coordinate transform with only f learned"""
+        def linear_dynamics(self, z):
+            B = z.shape[0]
+            return self.linear_model_producer.sample(z).view(B, self.nv, self.nz)
 
-    def _name_prefix(self):
-        return 'ground_truth'
+        def get_dx(self, x, v):
+            if len(x.shape) == 1:
+                x = x.view(1, -1)
+                v = v.view(1, -1)
 
-    def xu_to_z(self, state, action):
-        if len(state.shape) < 2:
-            state = state.reshape(1, -1)
-            action = action.reshape(1, -1)
+            # make state-dependent linear transforms (matrices) that multiply v to get dx
+            B, nx = x.shape
+            if self.use_sincos_angle:
+                angle_index = 2
+                s = torch.sin(x[:, angle_index]).view(-1, 1)
+                c = torch.cos(x[:, angle_index]).view(-1, 1)
+                x = torch.cat((x[:, :angle_index], s, c, x[:, angle_index + 1:]), dim=1)
+            linear_tsf = self.linear_decoder_producer.sample(x).view(B, nx, self.nv)
+            dx = linalg.batch_batch_product(v, linear_tsf)
+            return dx
 
-        # (along, d_along, push magnitude)
-        z = torch.cat((state[:, 3].view(-1, 1), action), dim=1)
-        return z
+    class ParameterizeDecoderBatch(ParameterizeDecoder, invariant.LearnFromBatchTransform):
+        """Train using randomized neighbourhoods instead of fixed given ones"""
 
-    def get_dx(self, x, v):
-        if len(x.shape) == 1:
-            x = x.view(1, -1)
-            v = v.view(1, -1)
+        def learn_model(self, max_epoch, batch_N=500):
+            return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
 
-        yaw = x[:, 2]
-        N = v.shape[0]
-        dx = torch.zeros((N, 4), dtype=v.dtype, device=v.device)
-        # convert (dx, dy) from body frame back to world frame
-        dx[:, :2] = math_utils.batch_rotate_wrt_origin(v[:, :2], yaw)
-        dx[:, 2:] = v[:, 2:]
-        return dx
+    class LinearRelaxEncoder(ParameterizeDecoderBatch):
+        """Still enforce that dynamics and decoder are linear, but relax parameterization of encoder"""
 
-    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
-        z, A, v, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
-        # we know what v actually is based on y; train the network to output the actual v
-        v = self.get_v(X, Y, z)
+        def __init__(self, ds, device, nz=4, **kwargs):
+            config = load_data.DataConfig()
+            config.nx = ds.config.nx + ds.config.nu
+            config.ny = nz
+            self.encoder = model.DeterministicUser(
+                make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
 
-        # compression reward should be a constant
-        compression_r = compression_reward(v, torch.cat((X, U), dim=1), dist_regularization=self.dist_regularization,
-                                           top_percent=0.05)
-        mse_loss = torch.norm(yhat - Y, dim=1)
-        return mse_loss, -compression_r
+            super().__init__(ds, device, nz=nz, **kwargs)
 
-    def parameters(self):
-        return list(self.linear_model_producer.model.parameters())
+        def _name_prefix(self):
+            return 'linear_relax_encoder'
 
-    def _model_state_dict(self):
-        d = {'linear': self.linear_model_producer.model.state_dict()}
-        return d
+        def xu_to_z(self, state, action):
+            if len(state.shape) < 2:
+                state = state.reshape(1, -1)
+                action = action.reshape(1, -1)
 
-    def _load_model_state_dict(self, saved_state_dict):
-        self.linear_model_producer.model.load_state_dict(saved_state_dict['linear'])
+            xu = torch.cat((state, action), dim=1)
+            z = self.encoder.sample(xu)
+            return z
+
+        def parameters(self):
+            return list(self.linear_decoder_producer.model.parameters()) + list(self.encoder.model.parameters()) + list(
+                self.linear_model_producer.model.parameters())
+
+        def _model_state_dict(self):
+            d = super()._model_state_dict()
+            d['encoder'] = self.encoder.model.state_dict()
+            return d
+
+        def _load_model_state_dict(self, saved_state_dict):
+            super()._load_model_state_dict(saved_state_dict)
+            self.encoder.model.load_state_dict(saved_state_dict['encoder'])
+
+    class DistRegularization(ParameterizeDecoderBatch):
+        """Try requiring pairwise distances are proportional"""
+
+        def __init__(self, *args, dist_loss_weight=1., **kwargs):
+            self.dist_loss_weight = dist_loss_weight
+            super().__init__(*args, **kwargs)
+
+        def _name_prefix(self):
+            return 'dist_reg'
+
+        def _loss_weight_name(self):
+            return "dist_{}".format(self.dist_loss_weight)
+
+        def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+            z, A, v, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
+
+            # hypothesize that close in z iff close in A, v space
+            # TODO maybe only require that things close in z should be close in A, v space (not bidirectional)
+            # TODO try distance instead of cosine/directionality
+            di = torch.nn.functional.pdist(z)
+            # dA = torch.nn.functional.pdist(A.view(A.shape[0], -1))
+            do = torch.nn.functional.pdist(v)
+            dist_loss = 1 - torch.nn.functional.cosine_similarity(di, do, dim=0)
+            mse_loss = torch.norm(yhat - Y, dim=1)
+            return mse_loss, dist_loss
+
+        @staticmethod
+        def loss_names():
+            return "mse_loss", "dist_loss"
+
+        def _reduce_losses(self, losses):
+            return torch.mean(losses[0]) + self.dist_loss_weight * torch.mean(losses[1])
+
+    class CompressionReward(ParameterizeDecoderBatch):
+        """Reward mapping large differences in x,u space to small differences in v space"""
+
+        def __init__(self, *args, compression_loss_weight=1e-3, dist_regularization=1e-8, **kwargs):
+            self.compression_loss_weight = compression_loss_weight
+            # avoid log(0)
+            self.dist_regularization = dist_regularization
+            super().__init__(*args, **kwargs)
+
+        def _name_prefix(self):
+            return 'reward_compression'
+
+        def _loss_weight_name(self):
+            return "compress_{}".format(self.compression_loss_weight)
+
+        def _evaluate_batch_apply_tsf(self, X, U, tsf):
+            assert tsf is TransformToUse.LATENT_SPACE
+            z = self.xu_to_z(X, U)
+            A = self.linear_dynamics(z)
+            v = linalg.batch_batch_product(z, A.transpose(-1, -2))
+            yhat = self.get_dx(X, v)
+            return z, A, v, yhat
+
+        def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+            z, A, v, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
+            compression_r = compression_reward(v, torch.cat((X, U), dim=1),
+                                               dist_regularization=self.dist_regularization,
+                                               top_percent=0.05)
+            mse_loss = torch.norm(yhat - Y, dim=1)
+            return mse_loss, -compression_r
+
+        @staticmethod
+        def loss_names():
+            return "mse_loss", "compression_loss"
+
+        def _reduce_losses(self, losses):
+            return torch.mean(losses[0]) + self.compression_loss_weight * torch.mean(losses[1])
+
+    class PartialPassthrough(CompressionReward):
+        """Don't pass through all of x to g, since it could just learn to map v to u"""
+
+        def __init__(self, ds, device, *args, nv=4, **kwargs):
+            config = load_data.DataConfig()
+            config.nx = 2
+            config.ny = nv * ds.config.nx  # matrix output (original nx, ignore sincos)
+            self.partial_decoder = model.DeterministicUser(
+                make.make_sequential_network(config, h_units=(16, 32)).to(device=device))
+            super().__init__(ds, device, *args, nv=nv, **kwargs)
+
+        def _name_prefix(self):
+            return 'partial_passthrough'
+
+        def parameters(self):
+            return list(self.partial_decoder.model.parameters()) + list(self.z_selector.parameters()) + list(
+                self.linear_model_producer.model.parameters())
+
+        def _model_state_dict(self):
+            d = super()._model_state_dict()
+            d['pd'] = self.partial_decoder.model.state_dict()
+            return d
+
+        def _load_model_state_dict(self, saved_state_dict):
+            super()._load_model_state_dict(saved_state_dict)
+            self.partial_decoder.model.load_state_dict(saved_state_dict['pd'])
+
+        def get_dx(self, x, v):
+            if len(x.shape) == 1:
+                x = x.view(1, -1)
+                v = v.view(1, -1)
+
+            B, nx = x.shape
+            angle_index = 2
+            s = torch.sin(x[:, angle_index]).view(-1, 1)
+            c = torch.cos(x[:, angle_index]).view(-1, 1)
+            x = torch.cat((s, c), dim=1)
+            linear_tsf = self.partial_decoder.sample(x).view(B, nx, self.nv)
+            dx = linalg.batch_batch_product(v, linear_tsf)
+            return dx
+
+    class PartitionBlock(torch.nn.Module):
+        def __init__(self, input_dim, output_dim, split_at):
+            super().__init__()
+            self.split_at = split_at
+            self.linear = torch.nn.Parameter(torch.randn((input_dim, output_dim)), requires_grad=True)
+            # self.linear = torch.nn.Linear(input_dim, output_dim, bias=False)
+
+        def forward(self, x, split):
+            # require that a single dimension is split up (can't have multiple copies of same element)
+            # each column should sum to 1
+            weights = torch.nn.functional.softmax(self.linear, dim=0)
+            y = x @ weights
+            if split is 0:
+                y = y[:, :self.split_at]
+            else:
+                y = y[:, self.split_at:]
+            return y
+
+    class LearnedPartialPassthrough(CompressionReward):
+        """Don't pass through all of x to g; learn which parts to pass to g and which to h"""
+
+        def __init__(self, ds, device, *args, nz=4, nv=4, reduced_decoder_input_dim=2, **kwargs):
+            self.reduced_decoder_input_dim = reduced_decoder_input_dim
+            self.x_extractor = torch.nn.Linear(ds.config.nx, self.reduced_decoder_input_dim).to(device=device,
+                                                                                                dtype=torch.double)
+
+            config = load_data.DataConfig()
+            config.nx = self.reduced_decoder_input_dim
+            config.ny = nv * ds.config.nx
+            self.partial_decoder = model.DeterministicUser(
+                make.make_sequential_network(config, h_units=(16, 32)).to(device=device))
+
+            super().__init__(ds, device, *args, nz=nz, nv=nv, **kwargs)
+
+        def _name_prefix(self):
+            return 'extract_passthrough_{}'.format(self.reduced_decoder_input_dim)
+
+        def parameters(self):
+            return list(self.partial_decoder.model.parameters()) + list(self.z_selector.parameters()) + list(
+                self.linear_model_producer.model.parameters()) + list(self.x_extractor.parameters())
+
+        def _model_state_dict(self):
+            d = super()._model_state_dict()
+            d['pd'] = self.partial_decoder.model.state_dict()
+            d['extract'] = self.x_extractor.state_dict()
+            return d
+
+        def _load_model_state_dict(self, saved_state_dict):
+            super()._load_model_state_dict(saved_state_dict)
+            self.partial_decoder.model.load_state_dict(saved_state_dict['pd'])
+            self.x_extractor.load_state_dict(saved_state_dict['extract'])
+
+        def get_dx(self, x, v):
+            if len(x.shape) == 1:
+                x = x.view(1, -1)
+                v = v.view(1, -1)
+
+            B, nx = x.shape
+            extracted_from_x = self.x_extractor(x)
+            linear_tsf = self.partial_decoder.sample(extracted_from_x).view(B, nx, self.nv)
+            dx = linalg.batch_batch_product(v, linear_tsf)
+            return dx
+
+    class GroundTruthWithCompression(CompressionReward):
+        """Ground truth coordinate transform with only f learned"""
+
+        def _name_prefix(self):
+            return 'ground_truth'
+
+        def xu_to_z(self, state, action):
+            if len(state.shape) < 2:
+                state = state.reshape(1, -1)
+                action = action.reshape(1, -1)
+
+            # (along, d_along, push magnitude)
+            z = torch.cat((state[:, 3].view(-1, 1), action), dim=1)
+            return z
+
+        def get_dx(self, x, v):
+            if len(x.shape) == 1:
+                x = x.view(1, -1)
+                v = v.view(1, -1)
+
+            yaw = x[:, 2]
+            N = v.shape[0]
+            dx = torch.zeros((N, 4), dtype=v.dtype, device=v.device)
+            # convert (dx, dy) from body frame back to world frame
+            dx[:, :2] = math_utils.batch_rotate_wrt_origin(v[:, :2], yaw)
+            dx[:, 2:] = v[:, 2:]
+            return dx
+
+        def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+            z, A, v, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
+            # we know what v actually is based on y; train the network to output the actual v
+            v = self.get_v(X, Y, z)
+
+            # compression reward should be a constant
+            compression_r = compression_reward(v, torch.cat((X, U), dim=1),
+                                               dist_regularization=self.dist_regularization,
+                                               top_percent=0.05)
+            mse_loss = torch.norm(yhat - Y, dim=1)
+            return mse_loss, -compression_r
+
+        def parameters(self):
+            return list(self.linear_model_producer.model.parameters())
+
+        def _model_state_dict(self):
+            d = {'linear': self.linear_model_producer.model.state_dict()}
+            return d
+
+        def _load_model_state_dict(self, saved_state_dict):
+            self.linear_model_producer.model.load_state_dict(saved_state_dict['linear'])
 
 
 # ------- Ablations on architecture 3
-class AblationRemoveLinearDecoderTransform(Parameterized2Transform, invariant.LearnFromBatchTransform):
-    """Don't require that g_rho output a linear transformation of v"""
-
-    def __init__(self, ds, device, nv=4, **kwargs):
-        config = load_data.DataConfig()
-        config.nx = ds.config.nx + nv
-        config.ny = ds.config.nx
-        # directly decode v and x to dx
-        self.decoder = model.DeterministicUser(make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
-        super().__init__(ds, device, nv=nv, **kwargs)
-
-    def _name_prefix(self):
-        return 'ablation_remove_decoder_linear'
-
-    def parameters(self):
-        return list(self.decoder.model.parameters()) + list(self.z_selector.parameters()) + list(
-            self.linear_model_producer.model.parameters())
-
-    def _model_state_dict(self):
-        d = super()._model_state_dict()
-        d['decoder'] = self.decoder.model.state_dict()
-        return d
-
-    def _load_model_state_dict(self, saved_state_dict):
-        super()._load_model_state_dict(saved_state_dict)
-        self.decoder.model.load_state_dict(saved_state_dict['decoder'])
-
-    def get_dx(self, x, v):
-        if len(x.shape) == 1:
-            x = x.view(1, -1)
-            v = v.view(1, -1)
-
-        decoder_input = torch.cat((x, v), dim=1)
-        dx = self.decoder.sample(decoder_input)
-        return dx
-
-    def learn_model(self, max_epoch, batch_N=500):
-        return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
-
-
-class AblationRemoveLinearDynamicsTransform(Parameterized3Transform, invariant.LearnFromBatchTransform):
-    """Don't require that f_psi output a linear transformation of z; instead allow it to output v directly"""
-
-    def __init__(self, ds, device, nz=4, nv=4, **kwargs):
-        config = load_data.DataConfig()
-        # directly learn dynamics from z to v
-        config.nx = nz
-        config.ny = nv
-        self.dynamics = model.DeterministicUser(
-            make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
-        super().__init__(ds, device, nz=nz, nv=nv, **kwargs)
-
-    def _name_prefix(self):
-        return 'ablation_remove_dynamics_linear'
-
-    def get_v(self, x, dx, z):
-        v = self.dynamics.sample(z)
-        return v
-
-    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
-        assert tsf is TransformToUse.LATENT_SPACE
-        z = self.xu_to_z(X, U)
-        v = self.get_v(X, Y, z)
-        yhat = self.get_dx(X, v)
-
-        # mse loss
-        mse_loss = torch.norm(yhat - Y, dim=1)
-        return mse_loss,
-
-    @staticmethod
-    def loss_names():
-        return "mse_loss",
-
-    def _reduce_losses(self, losses):
-        return torch.mean(losses[0])
-
-    def parameters(self):
-        return list(self.linear_decoder_producer.model.parameters()) + list(self.z_selector.parameters()) + list(
-            self.dynamics.model.parameters())
-
-    def _model_state_dict(self):
-        d = super()._model_state_dict()
-        d['dynamics'] = self.dynamics.model.state_dict()
-        return d
-
-    def _load_model_state_dict(self, saved_state_dict):
-        super()._load_model_state_dict(saved_state_dict)
-        self.dynamics.model.load_state_dict(saved_state_dict['dynamics'])
-
-    def linear_dynamics(self, z):
-        raise RuntimeError("Shouldn't be calling this; instead should transform z to v directly")
-
-    def learn_model(self, max_epoch, batch_N=500):
-        return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
-
-
-class AblationRemoveAllLinearityTransform(Parameterized2Transform, invariant.LearnFromBatchTransform):
-    """Combine the previous 2 ablations"""
-
-    def __init__(self, ds, device, nz=4, nv=4, **kwargs):
-        config = load_data.DataConfig()
-        # directly learn dynamics from z to v
-        config.nx = nz
-        config.ny = nv
-        self.dynamics = model.DeterministicUser(
-            make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
-
-        config = load_data.DataConfig()
-        config.nx = ds.config.nx + nv
-        config.ny = ds.config.nx
-        # directly decode v and x to dx
-        self.decoder = model.DeterministicUser(make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
-        super().__init__(ds, device, nz=nz, nv=nv, **kwargs)
-
-    def _name_prefix(self):
-        return 'ablation_remove_all_linear'
-
-    def parameters(self):
-        return list(self.decoder.model.parameters()) + list(self.z_selector.parameters()) + list(
-            self.dynamics.model.parameters())
-
-    def _model_state_dict(self):
-        d = super()._model_state_dict()
-        d['decoder'] = self.decoder.model.state_dict()
-        d['dynamics'] = self.dynamics.model.state_dict()
-        return d
-
-    def _load_model_state_dict(self, saved_state_dict):
-        super()._load_model_state_dict(saved_state_dict)
-        self.decoder.model.load_state_dict(saved_state_dict['decoder'])
-        self.dynamics.model.load_state_dict(saved_state_dict['dynamics'])
-
-    def get_dx(self, x, v):
-        if len(x.shape) == 1:
-            x = x.view(1, -1)
-            v = v.view(1, -1)
-
-        decoder_input = torch.cat((x, v), dim=1)
-        dx = self.decoder.sample(decoder_input)
-        return dx
-
-    def get_v(self, x, dx, z):
-        v = self.dynamics.sample(z)
-        return v
-
-    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
-        assert tsf is TransformToUse.LATENT_SPACE
-        z = self.xu_to_z(X, U)
-        v = self.get_v(X, Y, z)
-        yhat = self.get_dx(X, v)
-
-        # mse loss
-        mse_loss = torch.norm(yhat - Y, dim=1)
-        return mse_loss,
-
-    @staticmethod
-    def loss_names():
-        return "mse_loss",
-
-    def _reduce_losses(self, losses):
-        return torch.mean(losses[0])
-
-    def linear_dynamics(self, z):
-        raise RuntimeError("Shouldn't be calling this; instead should transform z to v directly")
-
-    def learn_model(self, max_epoch, batch_N=500):
-        return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
-
-
-class AblationRelaxEncoderTransform(AblationRemoveAllLinearityTransform):
-    """Relax the parameterization of z encoding"""
-
-    def __init__(self, ds, device, nz=4, **kwargs):
-        config = load_data.DataConfig()
-        # directly learn dynamics from z to v
-        config.nx = ds.config.nx + ds.config.nu
-        config.ny = nz
-        self.encoder = model.DeterministicUser(
-            make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
-
-        super().__init__(ds, device, nz=nz, **kwargs)
-
-    def _name_prefix(self):
-        return 'ablation_relax_encoder'
-
-    def xu_to_z(self, state, action):
-        if len(state.shape) < 2:
-            state = state.reshape(1, -1)
-            action = action.reshape(1, -1)
-
-        xu = torch.cat((state, action), dim=1)
-        z = self.encoder.sample(xu)
-        return z
-
-    def parameters(self):
-        return list(self.decoder.model.parameters()) + list(self.encoder.model.parameters()) + list(
-            self.dynamics.model.parameters())
-
-    def _model_state_dict(self):
-        d = super()._model_state_dict()
-        d['encoder'] = self.encoder.model.state_dict()
-        return d
-
-    def _load_model_state_dict(self, saved_state_dict):
-        super()._load_model_state_dict(saved_state_dict)
-        self.encoder.model.load_state_dict(saved_state_dict['encoder'])
-
-
-class AblationDirectDynamics(AblationRelaxEncoderTransform):
-    """Remove v and pass z directly to the decoder"""
-
-    def __init__(self, ds, device, nz=4, **kwargs):
-        super().__init__(ds, device, nz=nz, nv=ds.config.ny, **kwargs)
-
-    def _name_prefix(self):
-        return 'ablation_direct_no_v'
-
-    def get_v(self, x, dx, z):
-        return self.get_dx(x, z)
-
-    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
-        assert tsf is TransformToUse.LATENT_SPACE
-        z = self.xu_to_z(X, U)
-        # use z instead of v
-        yhat = self.get_dx(X, z)
-
-        # mse loss
-        mse_loss = torch.norm(yhat - Y, dim=1)
-        return mse_loss,
-
-    def parameters(self):
-        return list(self.decoder.model.parameters()) + list(self.encoder.model.parameters())
-
-
-class AblationNoPassthrough(AblationDirectDynamics):
-    """Remove x from decoder input (only pass x to decoder)"""
-
-    def __init__(self, ds, device, nz=4, **kwargs):
-        config = load_data.DataConfig()
-        config.nx = nz
-        config.ny = ds.config.nx
-        # directly decode v and x to dx
-        self.direct_decoder = model.DeterministicUser(
-            make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
-        super().__init__(ds, device, nz=nz, **kwargs)
-
-    def _name_prefix(self):
-        return 'ablation_no passthrough'
-
-    def _model_state_dict(self):
-        d = super()._model_state_dict()
-        d['d2'] = self.direct_decoder.model.state_dict()
-        return d
-
-    def _load_model_state_dict(self, saved_state_dict):
-        super()._load_model_state_dict(saved_state_dict)
-        self.direct_decoder.model.load_state_dict(saved_state_dict['d2'])
-
-    def get_dx(self, x, v):
-        if len(x.shape) == 1:
-            v = v.view(1, -1)
-
-        dx = self.direct_decoder.sample(v)
-        return dx
-
-    def parameters(self):
-        return list(self.decoder.model.parameters()) + list(self.encoder.model.parameters())
-
-
-class AblationAllRegularizedTransform(AblationRemoveAllLinearityTransform):
-    """Try requiring pairwise distances are proportional"""
-
-    def __init__(self, *args, compression_loss_weight=1e-3, **kwargs):
-        self.compression_loss_weight = compression_loss_weight
-        super(AblationAllRegularizedTransform, self).__init__(*args, **kwargs)
-
-    def _name_prefix(self):
-        return 'ablation_reg'
-
-    def _loss_weight_name(self):
-        return "compress_{}".format(self.compression_loss_weight)
-
-    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
-        z = self.xu_to_z(X, U)
-        v = self.get_v(X, Y, z)
-        yhat = self.get_dx(X, v)
-        compression_r = compression_reward(v, torch.cat((X, U), dim=1), dist_regularization=1e-8,
-                                           top_percent=0.05)
-        mse_loss = torch.norm(yhat - Y, dim=1)
-        return mse_loss, -compression_r
-
-    @staticmethod
-    def loss_names():
-        return "mse_loss", "compression_loss"
-
-    def _reduce_losses(self, losses):
-        return torch.mean(losses[0]) + self.compression_loss_weight * torch.mean(losses[1])
-
-
-def coord_tsf_factory(env, *args, **kwargs):
-    tsfs = {block_push.PushAgainstWallStickyEnv: WorldBodyFrameTransformForStickyEnv,
-            block_push.PushWithForceDirectlyEnv: WorldBodyFrameTransformForDirectPush,
-            block_push.PushWithForceDirectlyReactionInStateEnv: WorldBodyFrameTransformForReactionInState,
-            block_push.PushPhysicallyAnyAlongEnv: WorldBodyFrameTransformPhysicalPush,
-            block_push.FixedPushDistPhysicalEnv: WorldBodyFrameTransformPhysicalPush}
-    tsf_type = tsfs.get(type(env), None)
-    if tsf_type is None:
-        raise RuntimeError("No tsf specified for env type {}".format(type(env)))
-    return tsf_type(*args, **kwargs)
+class AblationOnTransform:
+    class RelaxDecoderLinearity(LearnedTransform.LinearComboLatentInput, invariant.LearnFromBatchTransform):
+        """Don't require that g_rho output a linear transformation of v"""
+
+        def __init__(self, ds, device, nv=4, **kwargs):
+            config = load_data.DataConfig()
+            config.nx = ds.config.nx + nv
+            config.ny = ds.config.nx
+            # directly decode v and x to dx
+            self.decoder = model.DeterministicUser(
+                make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
+            super().__init__(ds, device, nv=nv, **kwargs)
+
+        def _name_prefix(self):
+            return 'ablation_remove_decoder_linear'
+
+        def parameters(self):
+            return list(self.decoder.model.parameters()) + list(self.z_selector.parameters()) + list(
+                self.linear_model_producer.model.parameters())
+
+        def _model_state_dict(self):
+            d = super()._model_state_dict()
+            d['decoder'] = self.decoder.model.state_dict()
+            return d
+
+        def _load_model_state_dict(self, saved_state_dict):
+            super()._load_model_state_dict(saved_state_dict)
+            self.decoder.model.load_state_dict(saved_state_dict['decoder'])
+
+        def get_dx(self, x, v):
+            if len(x.shape) == 1:
+                x = x.view(1, -1)
+                v = v.view(1, -1)
+
+            decoder_input = torch.cat((x, v), dim=1)
+            dx = self.decoder.sample(decoder_input)
+            return dx
+
+        def learn_model(self, max_epoch, batch_N=500):
+            return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
+
+    class RelaxLinearLocalDynamics(LearnedTransform.ParameterizeDecoder, invariant.LearnFromBatchTransform):
+        """Don't require that f_psi output a linear transformation of z; instead allow it to output v directly"""
+
+        def __init__(self, ds, device, nz=4, nv=4, **kwargs):
+            config = load_data.DataConfig()
+            # directly learn dynamics from z to v
+            config.nx = nz
+            config.ny = nv
+            self.dynamics = model.DeterministicUser(
+                make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
+            super().__init__(ds, device, nz=nz, nv=nv, **kwargs)
+
+        def _name_prefix(self):
+            return 'ablation_remove_dynamics_linear'
+
+        def get_v(self, x, dx, z):
+            v = self.dynamics.sample(z)
+            return v
+
+        def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+            assert tsf is TransformToUse.LATENT_SPACE
+            z = self.xu_to_z(X, U)
+            v = self.get_v(X, Y, z)
+            yhat = self.get_dx(X, v)
+
+            # mse loss
+            mse_loss = torch.norm(yhat - Y, dim=1)
+            return mse_loss,
+
+        @staticmethod
+        def loss_names():
+            return "mse_loss",
+
+        def _reduce_losses(self, losses):
+            return torch.mean(losses[0])
+
+        def parameters(self):
+            return list(self.linear_decoder_producer.model.parameters()) + list(self.z_selector.parameters()) + list(
+                self.dynamics.model.parameters())
+
+        def _model_state_dict(self):
+            d = super()._model_state_dict()
+            d['dynamics'] = self.dynamics.model.state_dict()
+            return d
+
+        def _load_model_state_dict(self, saved_state_dict):
+            super()._load_model_state_dict(saved_state_dict)
+            self.dynamics.model.load_state_dict(saved_state_dict['dynamics'])
+
+        def linear_dynamics(self, z):
+            raise RuntimeError("Shouldn't be calling this; instead should transform z to v directly")
+
+        def learn_model(self, max_epoch, batch_N=500):
+            return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
+
+    class RelaxLinearDynamicsAndLinearDecoder(LearnedTransform.LinearComboLatentInput,
+                                              invariant.LearnFromBatchTransform):
+        """Combine the previous 2 ablations"""
+
+        def __init__(self, ds, device, nz=4, nv=4, **kwargs):
+            config = load_data.DataConfig()
+            # directly learn dynamics from z to v
+            config.nx = nz
+            config.ny = nv
+            self.dynamics = model.DeterministicUser(
+                make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
+
+            config = load_data.DataConfig()
+            config.nx = ds.config.nx + nv
+            config.ny = ds.config.nx
+            # directly decode v and x to dx
+            self.decoder = model.DeterministicUser(
+                make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
+            super().__init__(ds, device, nz=nz, nv=nv, **kwargs)
+
+        def _name_prefix(self):
+            return 'ablation_remove_all_linear'
+
+        def parameters(self):
+            return list(self.decoder.model.parameters()) + list(self.z_selector.parameters()) + list(
+                self.dynamics.model.parameters())
+
+        def _model_state_dict(self):
+            d = super()._model_state_dict()
+            d['decoder'] = self.decoder.model.state_dict()
+            d['dynamics'] = self.dynamics.model.state_dict()
+            return d
+
+        def _load_model_state_dict(self, saved_state_dict):
+            super()._load_model_state_dict(saved_state_dict)
+            self.decoder.model.load_state_dict(saved_state_dict['decoder'])
+            self.dynamics.model.load_state_dict(saved_state_dict['dynamics'])
+
+        def get_dx(self, x, v):
+            if len(x.shape) == 1:
+                x = x.view(1, -1)
+                v = v.view(1, -1)
+
+            decoder_input = torch.cat((x, v), dim=1)
+            dx = self.decoder.sample(decoder_input)
+            return dx
+
+        def get_v(self, x, dx, z):
+            v = self.dynamics.sample(z)
+            return v
+
+        def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+            assert tsf is TransformToUse.LATENT_SPACE
+            z = self.xu_to_z(X, U)
+            v = self.get_v(X, Y, z)
+            yhat = self.get_dx(X, v)
+
+            # mse loss
+            mse_loss = torch.norm(yhat - Y, dim=1)
+            return mse_loss,
+
+        @staticmethod
+        def loss_names():
+            return "mse_loss",
+
+        def _reduce_losses(self, losses):
+            return torch.mean(losses[0])
+
+        def linear_dynamics(self, z):
+            raise RuntimeError("Shouldn't be calling this; instead should transform z to v directly")
+
+        def learn_model(self, max_epoch, batch_N=500):
+            return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
+
+    class RelaxEncoder(RelaxLinearDynamicsAndLinearDecoder):
+        """Relax the parameterization of z encoding"""
+
+        def __init__(self, ds, device, nz=4, **kwargs):
+            config = load_data.DataConfig()
+            # directly learn dynamics from z to v
+            config.nx = ds.config.nx + ds.config.nu
+            config.ny = nz
+            self.encoder = model.DeterministicUser(
+                make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
+
+            super().__init__(ds, device, nz=nz, **kwargs)
+
+        def _name_prefix(self):
+            return 'ablation_relax_encoder'
+
+        def xu_to_z(self, state, action):
+            if len(state.shape) < 2:
+                state = state.reshape(1, -1)
+                action = action.reshape(1, -1)
+
+            xu = torch.cat((state, action), dim=1)
+            z = self.encoder.sample(xu)
+            return z
+
+        def parameters(self):
+            return list(self.decoder.model.parameters()) + list(self.encoder.model.parameters()) + list(
+                self.dynamics.model.parameters())
+
+        def _model_state_dict(self):
+            d = super()._model_state_dict()
+            d['encoder'] = self.encoder.model.state_dict()
+            return d
+
+        def _load_model_state_dict(self, saved_state_dict):
+            super()._load_model_state_dict(saved_state_dict)
+            self.encoder.model.load_state_dict(saved_state_dict['encoder'])
+
+    class UseDecoderForDynamics(RelaxEncoder):
+        """Remove v and pass z directly to the decoder"""
+
+        def __init__(self, ds, device, nz=4, **kwargs):
+            super().__init__(ds, device, nz=nz, nv=ds.config.ny, **kwargs)
+
+        def _name_prefix(self):
+            return 'ablation_direct_no_v'
+
+        def get_v(self, x, dx, z):
+            return self.get_dx(x, z)
+
+        def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+            assert tsf is TransformToUse.LATENT_SPACE
+            z = self.xu_to_z(X, U)
+            # use z instead of v
+            yhat = self.get_dx(X, z)
+
+            # mse loss
+            mse_loss = torch.norm(yhat - Y, dim=1)
+            return mse_loss,
+
+        def parameters(self):
+            return list(self.decoder.model.parameters()) + list(self.encoder.model.parameters())
+
+    class NoPassthrough(UseDecoderForDynamics):
+        """Remove x from decoder input (only pass x to decoder)"""
+
+        def __init__(self, ds, device, nz=4, **kwargs):
+            config = load_data.DataConfig()
+            config.nx = nz
+            config.ny = ds.config.nx
+            # directly decode v and x to dx
+            self.direct_decoder = model.DeterministicUser(
+                make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
+            super().__init__(ds, device, nz=nz, **kwargs)
+
+        def _name_prefix(self):
+            return 'ablation_no passthrough'
+
+        def _model_state_dict(self):
+            d = super()._model_state_dict()
+            d['d2'] = self.direct_decoder.model.state_dict()
+            return d
+
+        def _load_model_state_dict(self, saved_state_dict):
+            super()._load_model_state_dict(saved_state_dict)
+            self.direct_decoder.model.load_state_dict(saved_state_dict['d2'])
+
+        def get_dx(self, x, v):
+            if len(x.shape) == 1:
+                v = v.view(1, -1)
+
+            dx = self.direct_decoder.sample(v)
+            return dx
+
+        def parameters(self):
+            return list(self.decoder.model.parameters()) + list(self.encoder.model.parameters())
+
+    class ReguarlizePairwiseDistances(RelaxLinearDynamicsAndLinearDecoder):
+        """Try requiring pairwise distances are proportional"""
+
+        def __init__(self, *args, compression_loss_weight=1e-3, **kwargs):
+            self.compression_loss_weight = compression_loss_weight
+            super().__init__(*args, **kwargs)
+
+        def _name_prefix(self):
+            return 'ablation_reg'
+
+        def _loss_weight_name(self):
+            return "compress_{}".format(self.compression_loss_weight)
+
+        def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+            z = self.xu_to_z(X, U)
+            v = self.get_v(X, Y, z)
+            yhat = self.get_dx(X, v)
+            compression_r = compression_reward(v, torch.cat((X, U), dim=1), dist_regularization=1e-8,
+                                               top_percent=0.05)
+            mse_loss = torch.norm(yhat - Y, dim=1)
+            return mse_loss, -compression_r
+
+        @staticmethod
+        def loss_names():
+            return "mse_loss", "compression_loss"
+
+        def _reduce_losses(self, losses):
+            return torch.mean(losses[0]) + self.compression_loss_weight * torch.mean(losses[1])
 
 
 def verify_coordinate_transform():
@@ -1345,7 +1336,7 @@ def verify_coordinate_transform():
     env = get_easy_env(p.GUI)
     ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
 
-    tsf = coord_tsf_factory(env, ds)
+    tsf = CoordTransform.factory(env, ds)
 
     along = 0.7
     init_block_pos = [0, 0]
@@ -1408,7 +1399,7 @@ def test_online_model():
 
     logger.info("initial random seed %d", rand.seed(seed))
 
-    invariant_tsf = coord_tsf_factory(env, ds)
+    invariant_tsf = CoordTransform.factory(env, ds)
     transformer = invariant.InvariantTransformer
     preprocessor = preprocess.Compose(
         [transformer(invariant_tsf),
@@ -1524,18 +1515,22 @@ def get_transform(env, ds, use_tsf):
     d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     transforms = {
         UseTransform.NO_TRANSFORM: None,
-        UseTransform.COORDINATE_TRANSFORM: coord_tsf_factory(env, ds),
-        UseTransform.PARAMETERIZED_1: ParameterizedCoordTransform(ds, d, too_far_for_neighbour=0.3, name="_s2"),
-        UseTransform.PARAMETERIZED_2: Parameterized2Transform(ds, d, too_far_for_neighbour=0.3, name="rand_start_s9"),
-        UseTransform.PARAMETERIZED_3: Parameterized3Transform(ds, d, too_far_for_neighbour=0.3, name="_s9"),
-        UseTransform.PARAMETERIZED_4: Parameterized3Transform(ds, d, too_far_for_neighbour=0.3, name="sincos_s2",
-                                                              use_sincos_angle=True),
-        UseTransform.PARAMETERIZED_3_BATCH: Parameterized3BatchTransform(ds, d, name="_s1"),
-        UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER: AblationRelaxEncoderTransform(ds, d,
+        UseTransform.COORDINATE_TRANSFORM: CoordTransform.factory(env, ds),
+        UseTransform.PARAMETERIZED_1: LearnedTransform.ParameterizedYawSelect(ds, d, too_far_for_neighbour=0.3,
+                                                                              name="_s2"),
+        UseTransform.PARAMETERIZED_2: LearnedTransform.LinearComboLatentInput(ds, d, too_far_for_neighbour=0.3,
+                                                                              name="rand_start_s9"),
+        UseTransform.PARAMETERIZED_3: LearnedTransform.ParameterizeDecoder(ds, d, too_far_for_neighbour=0.3,
+                                                                           name="_s9"),
+        UseTransform.PARAMETERIZED_4: LearnedTransform.ParameterizeDecoder(ds, d, too_far_for_neighbour=0.3,
+                                                                           name="sincos_s2", use_sincos_angle=True),
+        UseTransform.PARAMETERIZED_3_BATCH: LearnedTransform.ParameterizeDecoderBatch(ds, d, name="_s1"),
+        UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER: AblationOnTransform.RelaxEncoder(ds, d,
+                                                                                                         name="_s0"),
+        UseTransform.PARAMETERIZED_ABLATE_NO_V: AblationOnTransform.UseDecoderForDynamics(ds, d, name="_s3"),
+        UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM: LearnedTransform.GroundTruthWithCompression(ds, d,
                                                                                                       name="_s0"),
-        UseTransform.PARAMETERIZED_ABLATE_NO_V: AblationDirectDynamics(ds, d, name="_s3"),
-        UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM: GroundTruthWithCompression(ds, d, name="_s0"),
-        UseTransform.WITH_COMPRESSION_AND_PARTITION: LearnedPartialPassthroughTransform(ds, d, name="_s0"),
+        UseTransform.WITH_COMPRESSION_AND_PARTITION: LearnedTransform.LearnedPartialPassthrough(ds, d, name="_s0"),
     }
     transform_names = {
         UseTransform.NO_TRANSFORM: 'none',
@@ -1663,22 +1658,6 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
         plt.show()
 
     env.close()
-
-
-class HardCodedContactControllerWrapper(controller.MPPI):
-    def _apply_dynamics(self, state, u, t=0):
-        next_state = self.dynamics(state, u)
-        affected = (state[:, 3] > 0.3) & (u[:, 2] > 0.)
-        # pushing up at high along doesn't change position
-        next_state[affected, :2] = state[affected, :2]
-        # push with high contact force also doesn't change position very much
-        if self.context[0] is not None:
-            reaction_force = self.context[0]['reaction']
-            if np.linalg.norm(reaction_force) > 100:
-                # TODO consider changing only those that have low angle?
-                affected = abs(u[:, 2]) < 0.7
-                next_state[affected, :2] = state[affected, :2]
-        return self._adjust_next_state(next_state, u, t)
 
 
 def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM,
@@ -1861,8 +1840,6 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     common_wrapper_opts['adjust_model_pred_with_prev_error'] = False
     ctrl = online_controller.OnlineMPPI(dynamics_gp if use_gp else dynamics, untransformed_config,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
-    # try hardcoded to see if controller will do what we want given the hypothesized model predictions
-    # ctrl = controller.MPPI(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
 
     name = get_full_controller_name(pm, ctrl, tsf_name)
 
@@ -1941,7 +1918,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
         task_seed = tasks[t]
         rand.seed(task_seed)
         # configure init and goal for task
-        init_block_pos, init_block_yaw, init_pusher = random_touching_start(env)
+        init_block_pos, init_block_yaw, init_pusher = OfflineDataCollection.random_touching_start(env)
         init_block_pos = np.add(init_block_pos, translation)
         goal_pos = np.add(np.random.uniform(-0.6, 0.6, 2), translation)
         env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=init_pusher, goal=goal_pos)
@@ -2005,193 +1982,183 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     return total_costs
 
 
-def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
-    d, env, config, ds = get_free_space_env_init(seed)
+class Learn:
+    @staticmethod
+    def invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
+        d, env, config, ds = get_free_space_env_init(seed)
 
-    common_opts = {'too_far_for_neighbour': 0.3, 'name': "{}_s{}".format(name, seed)}
-    # add in invariant transform here
-    # invariant_tsf = ParameterizedCoordTransform(ds, d, **common_opts)
-    # invariant_tsf = Parameterized2Transform(ds, d, **common_opts)
-    # invariant_tsf = Parameterized3Transform(ds, d, **common_opts)
-    # parameterization 4
-    # invariant_tsf = Parameterized3Transform(ds, d, **common_opts, use_sincos_angle=True)
-    # invariant_tsf = Parameterized3BatchTransform(ds, d, **common_opts, **kwargs)
-    # invariant_tsf = DistRegularizedTransform(ds, d, **common_opts, **kwargs)
-    # invariant_tsf = AblationRemoveLinearDecoderTransform(ds, d, **common_opts, **kwargs)
-    # invariant_tsf = AblationRemoveLinearDynamicsTransform(ds, d, **common_opts, **kwargs)
-    # invariant_tsf = AblationRemoveAllLinearityTransform(ds, d, **common_opts, **kwargs)
-    # invariant_tsf = AblationAllRegularizedTransform(ds, d, **common_opts, **kwargs)
-    # invariant_tsf = AblationRelaxEncoderTransform(ds, d, **common_opts, **kwargs)
-    # invariant_tsf = AblationDirectDynamics(ds, d, **common_opts, **kwargs)
-    # invariant_tsf = AblationNoPassthrough(ds, d, **common_opts, **kwargs)
-    # invariant_tsf = LinearRelaxEncoderTransform(ds, d, **common_opts, **kwargs)
-    # invariant_tsf = CompressionRewardTransform(ds, d, **common_opts, **kwargs)
-    # invariant_tsf = GroundTruthWithCompression(ds, d, **common_opts, **kwargs)
-    # invariant_tsf = PartialPassthroughTransform(ds, d, **common_opts, **kwargs)
-    invariant_tsf = LearnedPartialPassthroughTransform(ds, d, **common_opts, **kwargs)
-    invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
+        common_opts = {'too_far_for_neighbour': 0.3, 'name': "{}_s{}".format(name, seed)}
+        # add in invariant transform here
+        invariant_tsf = LearnedTransform.LearnedPartialPassthrough(ds, d, **common_opts, **kwargs)
+        invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
+
+    @staticmethod
+    def model(use_tsf, seed=1, name="", train_epochs=600, batch_N=500):
+        d, env, config, ds = get_free_space_env_init(seed)
+
+        _, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf)
+        # tsf_name = "none_at_all"
+
+        mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
+                           name="dynamics_{}{}_{}".format(tsf_name, name, seed))
+        mw.learn_model(train_epochs, batch_N=batch_N)
 
 
-def learn_model(use_tsf, seed=1, name="", train_epochs=600, batch_N=500):
-    d, env, config, ds = get_free_space_env_init(seed)
+class Visualize:
 
-    _, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf)
-    # tsf_name = "none_at_all"
+    @staticmethod
+    def _dataset_training_dist(env, ds, z_names=None, v_names=None, fs=(None, None, None), axes=(None, None, None)):
+        import seaborn as sns
+        plt.ioff()
 
-    mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
-                       name="dynamics_{}{}_{}".format(tsf_name, name, seed))
-    mw.learn_model(train_epochs, batch_N=batch_N)
+        XU, Y, _ = ds.training_set()
+        X, U = torch.split(XU, env.nx, dim=1)
 
+        def plot_series(series, dim_names, title, f=None, ax=None):
+            if f is None:
+                f, ax = plt.subplots(1, len(dim_names), figsize=(12, 6))
+            f.tight_layout()
+            f.suptitle(title)
+            for i, name in enumerate(dim_names):
+                sns.distplot(series[:, i].cpu().numpy(), ax=ax[i])
+                ax[i].set_xlabel(name)
+            return f, ax
 
-def _visualize_dataset_training_distribution(env, ds, z_names=None, v_names=None, fs=(None, None, None),
-                                             axes=(None, None, None)):
-    import seaborn as sns
-    plt.ioff()
+        ofs = [None] * 3
+        oaxes = [None] * 3
+        if ds.preprocessor is None:
+            ofs[0], oaxes[0] = plot_series(X, env.state_names(), 'states X', fs[0], axes[0])
+            ofs[1], oaxes[1] = plot_series(U, ["u{}".format(i) for i in range(env.nu)], 'control U', fs[1], axes[1])
+            ofs[2], oaxes[2] = plot_series(Y, ["d{}".format(n) for n in env.state_names()], 'prediction Y', fs[2],
+                                           axes[2])
+        else:
+            if z_names is None:
+                z_names = ["$z_{}$".format(i) for i in range(XU.shape[1])]
+                v_names = ["$v_{}$".format(i) for i in range(Y.shape[1])]
+            ofs[0], oaxes[0] = plot_series(XU, z_names, 'latent input Z (XU)', fs[0], axes[0])
+            ofs[1], oaxes[1] = plot_series(Y, v_names, 'prediction V (Y)', fs[1], axes[1])
 
-    XU, Y, _ = ds.training_set()
-    X, U = torch.split(XU, env.nx, dim=1)
+        return ofs, oaxes
 
-    def plot_series(series, dim_names, title, f=None, ax=None):
-        if f is None:
-            f, ax = plt.subplots(1, len(dim_names), figsize=(12, 6))
-        f.tight_layout()
-        f.suptitle(title)
-        for i, name in enumerate(dim_names):
-            sns.distplot(series[:, i].cpu().numpy(), ax=ax[i])
-            ax[i].set_xlabel(name)
-        return f, ax
+    @staticmethod
+    def dist_diff_nominal_and_bug_trap():
+        _, env, _, ds = get_free_space_env_init()
+        untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds,
+                                                                                UseTransform.COORDINATE_TRANSFORM,
+                                                                                evaluate_transform=False)
+        coord_z_names = ['p', '\\theta', 'f', '\\beta', '$r_x$', '$r_y$']
+        coord_v_names = ['d{}'.format(n) for n in coord_z_names]
 
-    ofs = [None] * 3
-    oaxes = [None] * 3
-    if ds.preprocessor is None:
-        ofs[0], oaxes[0] = plot_series(X, env.state_names(), 'states X', fs[0], axes[0])
-        ofs[1], oaxes[1] = plot_series(U, ["u{}".format(i) for i in range(env.nu)], 'control U', fs[1], axes[1])
-        ofs[2], oaxes[2] = plot_series(Y, ["d{}".format(n) for n in env.state_names()], 'prediction Y', fs[2], axes[2])
-    else:
-        if z_names is None:
-            z_names = ["$z_{}$".format(i) for i in range(XU.shape[1])]
-            v_names = ["$v_{}$".format(i) for i in range(Y.shape[1])]
-        ofs[0], oaxes[0] = plot_series(XU, z_names, 'latent input Z (XU)', fs[0], axes[0])
-        ofs[1], oaxes[1] = plot_series(Y, v_names, 'prediction V (Y)', fs[1], axes[1])
+        ds_wall, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
+        ds_wall.update_preprocessor(preprocessor)
+        train_slice = slice(90, 135)
+        ds_wall.restrict_training_set_to_slice(train_slice)
 
-    return ofs, oaxes
+        fs, axes = Visualize._dataset_training_dist(env, ds, coord_z_names, coord_v_names)
+        Visualize._dataset_training_dist(env, ds_wall, coord_z_names, coord_v_names, fs=fs, axes=axes)
+        plt.show()
 
+    @staticmethod
+    def _conditioned_dataset(x_limits, u_limits, env, ds, pm, output_dim_index=2, range_epsilon=0.05):
+        assert len(x_limits) is env.nx
+        assert len(u_limits) is env.nu
+        XU, Y, _ = ds.training_set(original=True)
+        X, U = torch.split(XU, env.nx, dim=1)
+        # TODO by default marginalize over X, which doesn't work for all environments
+        output_name = "d{}".format(env.state_names()[output_dim_index])
+        # find index of the input variable (we condition on all other input dimensions)
+        input_dim_index = u_limits.index(None)
+        input_name = env.control_names()[input_dim_index]
 
-def visualize_datasets():
-    _, env, _, ds = get_free_space_env_init()
-    untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, UseTransform.COORDINATE_TRANSFORM,
-                                                                            evaluate_transform=False)
-    coord_z_names = ['p', '\\theta', 'f', '\\beta', '$r_x$', '$r_y$']
-    coord_v_names = ['d{}'.format(n) for n in coord_z_names]
+        # condition on the given dimensions (since it's continuous, our limits are ranges)
+        indices = torch.arange(0, U.shape[0], dtype=torch.long)
+        for i, conditioned_value in enumerate(u_limits):
+            if conditioned_value is None:
+                continue
+            allowed = (U[indices, i] < (conditioned_value + range_epsilon)) & (
+                    U[indices, i] > (conditioned_value - range_epsilon))
+            indices = indices[allowed]
 
-    ds_wall, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
-    ds_wall.update_preprocessor(preprocessor)
-    train_slice = slice(90, 135)
-    ds_wall.restrict_training_set_to_slice(train_slice)
+        Yhat = pm.dyn_net.predict(XU[indices], get_next_state=False)
 
-    fs, axes = _visualize_dataset_training_distribution(env, ds, coord_z_names, coord_v_names)
-    _visualize_dataset_training_distribution(env, ds_wall, coord_z_names, coord_v_names, fs=fs, axes=axes)
-    plt.show()
+        plt.figure()
+        plt.scatter(U[indices, input_dim_index].cpu(), Y[indices, output_dim_index].cpu(), label='true')
+        plt.scatter(U[indices, input_dim_index].cpu(), Yhat[:, output_dim_index].cpu(), label='predicted')
+        plt.xlabel(input_name)
+        plt.ylabel(output_name)
+        plt.title('conditioned on u = {} +- {}'.format(u_limits, range_epsilon))
+        plt.legend()
 
+    @staticmethod
+    def dynamics_stochasticity(use_tsf=UseTransform.COORDINATE_TRANSFORM):
+        _, env, _, ds = get_free_space_env_init()
+        untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf,
+                                                                                evaluate_transform=False)
 
-def _visualize_conditioned_dataset(x_limits, u_limits, env, ds, pm, output_dim_index=2, range_epsilon=0.05):
-    assert len(x_limits) is env.nx
-    assert len(u_limits) is env.nu
-    XU, Y, _ = ds.training_set(original=True)
-    X, U = torch.split(XU, env.nx, dim=1)
-    # TODO by default marginalize over X, which doesn't work for all environments
-    output_name = "d{}".format(env.state_names()[output_dim_index])
-    # find index of the input variable (we condition on all other input dimensions)
-    input_dim_index = u_limits.index(None)
-    input_name = env.control_names()[input_dim_index]
+        ds_eval, _ = get_ds(env, "pushing/fixed_p_and_beta.mat", validation_ratio=0.)
+        ds_eval.update_preprocessor(preprocessor)
 
-    # condition on the given dimensions (since it's continuous, our limits are ranges)
-    indices = torch.arange(0, U.shape[0], dtype=torch.long)
-    for i, conditioned_value in enumerate(u_limits):
-        if conditioned_value is None:
-            continue
-        allowed = (U[indices, i] < (conditioned_value + range_epsilon)) & (
-                U[indices, i] > (conditioned_value - range_epsilon))
-        indices = indices[allowed]
+        pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)
+        Visualize._conditioned_dataset([None] * env.nx, [0.9, None, 0.8], env, ds_eval, pm)
+        plt.show()
 
-    Yhat = pm.dyn_net.predict(XU[indices], get_next_state=False)
+    @staticmethod
+    def model_actions_at_givne_state():
+        seed = 1
+        d = get_device()
+        env = get_easy_env(p.GUI, level=1)
 
-    plt.figure()
-    plt.scatter(U[indices, input_dim_index].cpu(), Y[indices, output_dim_index].cpu(), label='true')
-    plt.scatter(U[indices, input_dim_index].cpu(), Yhat[:, output_dim_index].cpu(), label='predicted')
-    plt.xlabel(input_name)
-    plt.ylabel(output_name)
-    plt.title('conditioned on u = {} +- {}'.format(u_limits, range_epsilon))
-    plt.legend()
+        logger.info("initial random seed %d", rand.seed(seed))
 
+        # TODO encapsulate getting loaded online model in a separate function
+        ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
+        untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds,
+                                                                                UseTransform.COORDINATE_TRANSFORM,
+                                                                                evaluate_transform=False)
+        pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)
 
-def visualize_dynamics_stochasticity(use_tsf=UseTransform.COORDINATE_TRANSFORM):
-    _, env, _, ds = get_free_space_env_init()
-    untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
+        ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
+        train_slice = slice(90, 135)
 
-    ds_eval, _ = get_ds(env, "pushing/fixed_p_and_beta.mat", validation_ratio=0.)
-    ds_eval.update_preprocessor(preprocessor)
+        # use same preprocessor
+        ds_wall.update_preprocessor(preprocessor)
+        dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice,
+                                                  allow_update=False, sample=True,
+                                                  refit_strategy=online_model.RefitGPStrategy.RESET_DATA,
+                                                  device=d, training_iter=150, use_independent_outputs=False)
 
-    pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)
-    _visualize_conditioned_dataset([None] * env.nx, [0.9, None, 0.8], env, ds_eval, pm)
-    plt.show()
+        XU, Y, info = ds_wall.training_set(original=True)
+        X, U = torch.split(XU, env.nx, dim=1)
 
+        i = 95
+        x = X[i]
+        u = U[i]
+        env.set_state(x.cpu().numpy())
+        N = 1000
+        # query over range of u and get variance in each dimension
+        u_sample = np.random.uniform(*env.get_control_bounds(), (N, env.nu))
+        u_sample[-1] = u.cpu().numpy()
+        u_dist = np.linalg.norm(u_sample - u.cpu().numpy(), axis=1)
+        next_x = dynamics_gp.predict(None, None, x.repeat(N, 1).cpu().numpy(), u_sample)
+        var = dynamics_gp.last_prediction.variance.detach().cpu().numpy()
 
-def visualize_model_actions_at_given_state():
-    seed = 1
-    d = get_device()
-    env = get_easy_env(p.GUI, level=1)
-
-    logger.info("initial random seed %d", rand.seed(seed))
-
-    # TODO encapsulate getting loaded online model in a separate function
-    ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
-    untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, UseTransform.COORDINATE_TRANSFORM,
-                                                                            evaluate_transform=False)
-    pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)
-
-    ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
-    train_slice = slice(90, 135)
-
-    # use same preprocessor
-    ds_wall.update_preprocessor(preprocessor)
-    dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice,
-                                              allow_update=False, sample=True,
-                                              refit_strategy=online_model.RefitGPStrategy.RESET_DATA,
-                                              device=d, training_iter=150, use_independent_outputs=False)
-
-    XU, Y, info = ds_wall.training_set(original=True)
-    X, U = torch.split(XU, env.nx, dim=1)
-
-    i = 95
-    x = X[i]
-    u = U[i]
-    env.set_state(x.cpu().numpy())
-    N = 1000
-    # query over range of u and get variance in each dimension
-    u_sample = np.random.uniform(*env.get_control_bounds(), (N, env.nu))
-    u_sample[-1] = u.cpu().numpy()
-    u_dist = np.linalg.norm(u_sample - u.cpu().numpy(), axis=1)
-    next_x = dynamics_gp.predict(None, None, x.repeat(N, 1).cpu().numpy(), u_sample)
-    var = dynamics_gp.last_prediction.variance.detach().cpu().numpy()
-
-    f, axes = plt.subplots(env.nx, 1, sharex=True)
-    for j, name in enumerate(env.state_names()):
-        axes[j].scatter(u_dist, var[:, j], alpha=0.3)
-        axes[j].set_ylabel('var d{}'.format(name))
-    axes[-1].set_xlabel('eucliden dist to trajectory u')
-    plt.show()
-    input('do visualization')
+        f, axes = plt.subplots(env.nx, 1, sharex=True)
+        for j, name in enumerate(env.state_names()):
+            axes[j].scatter(u_dist, var[:, j], alpha=0.3)
+            axes[j].set_ylabel('var d{}'.format(name))
+        axes[-1].set_xlabel('eucliden dist to trajectory u')
+        plt.show()
+        input('do visualization')
 
 
 if __name__ == "__main__":
     level = 0
-    # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
-    # collect_push_against_wall_recovery_data()
-    collect_data_for_model_selector_evaluation()
-    # visualize_datasets()
-    # visualize_model_actions_at_given_state()
-    # visualize_dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
+    # OfflineDataCollection.freespace(trials=200, trial_length=50, level=0)
+    # OfflineDataCollection.push_against_wall_recovery()
+    OfflineDataCollection.model_selector_evaluation()
+    # Visualize.dist_diff_nominal_and_bug_trap()
+    # Visualize.model_actions_at_givne_state()
+    # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
 
     # test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
@@ -2202,6 +2169,6 @@ if __name__ == "__main__":
 
     # test_online_model()
     # for seed in range(1):
-    #     learn_invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
+    #     Learn.invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
     # for seed in range(1):
-    #     learn_model(UseTransform.NO_TRANSFORM, seed=seed, name="physical first")
+    #     Learn.model(UseTransform.NO_TRANSFORM, seed=seed, name="physical first")
