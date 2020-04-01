@@ -56,7 +56,7 @@ class ToyLoader(load_utils.DataLoader):
 
 class ToyDataSource(datasource.FileDataSource):
     def __init__(self, data_dir='linear', **kwargs):
-        super().__init__(ToyLoader, data_dir, **kwargs)
+        super().__init__(ToyLoader(), data_dir, **kwargs)
 
 
 class ToyEnv:

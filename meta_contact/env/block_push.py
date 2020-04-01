@@ -209,12 +209,16 @@ def _get_total_contact_force(contact, flip=True):
 
 class PushLoader(load_utils.DataLoader):
     def __init__(self, *args, file_cfg=cfg, **kwargs):
+        self.info_desc = {}
         super().__init__(file_cfg, *args, **kwargs)
 
     def _apply_masks(self, d, x, y):
         """Handle common logic regardless of x and y"""
         r = d['reaction'][1:]
         e = d['model error'][1:]
+        if not self.info_desc:
+            self.info_desc['reaction'] = slice(0, r.shape[1])
+            self.info_desc['model_error'] = slice(r.shape[1], r.shape[1] + e.shape[1])
         r = np.column_stack((r, e))
 
         u = d['U'][:-1]
@@ -1430,7 +1434,8 @@ class PushDataSource(datasource.FileDataSource):
                   FixedPushDistPhysicalEnv: PushLoaderPhysicalPusherWithReaction}
 
     def __init__(self, env, data_dir='pushing', **kwargs):
-        loader = self.loader_map.get(type(env), None)
-        if not loader:
+        loader_class = self.loader_map.get(type(env), None)
+        if not loader_class:
             raise RuntimeError("Unrecognized data source for env {}".format(env))
+        loader = loader_class()
         super().__init__(loader, data_dir, **kwargs)
