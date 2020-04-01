@@ -40,7 +40,7 @@ def get_data_dir(level=0):
     return '{}{}.mat'.format(env_dir, level)
 
 
-def get_easy_env(mode=p.GUI, level=0, log_video=False):
+def get_env(mode=p.GUI, level=0, log_video=False):
     global env_dir
     init_block_pos = [-0.8, 0.12]
     init_block_yaw = 0
@@ -117,17 +117,16 @@ def get_device():
     return torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 
-def get_ds(env, data_dir, config=None, **kwargs):
+def get_ds(env, data_dir, **kwargs):
     d = get_device()
-    if config is None:
-        config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
+    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
     ds = block_push.PushDataSource(env, data_dir=data_dir, config=config, device=d, **kwargs)
     return ds, config
 
 
 def get_free_space_env_init(seed=1, **kwargs):
     d = get_device()
-    env = get_easy_env(kwargs.pop('mode', p.DIRECT), **kwargs)
+    env = get_env(kwargs.pop('mode', p.DIRECT), **kwargs)
     ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
 
     logger.info("initial random seed %d", rand.seed(seed))
@@ -321,7 +320,7 @@ class OfflineDataCollection:
     @staticmethod
     def push_against_wall_recovery():
         # get data in and around the bug trap we want to avoid in the future
-        env = get_easy_env(p.GUI, 1, log_video=True)
+        env = get_env(p.GUI, 1, log_video=True)
         u = []
         if isinstance(env, block_push.PushWithForceDirectlyEnv):
             seed = rand.seed(124512)
@@ -366,7 +365,7 @@ class OfflineDataCollection:
     def model_selector_evaluation(seed=5, level=1, relearn_dynamics=False,
                                   prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
         # load a reasonable model
-        env = get_easy_env(p.GUI, level=level, log_video=True)
+        env = get_env(p.GUI, level=level, log_video=True)
         ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
 
         logger.info("initial random seed %d", rand.seed(seed))
@@ -1333,7 +1332,7 @@ def verify_coordinate_transform():
 
     # comparison tolerance
     tol = 2e-4
-    env = get_easy_env(p.GUI)
+    env = get_env(p.GUI)
     ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
 
     tsf = CoordTransform.factory(env, ds)
@@ -1394,7 +1393,7 @@ def verify_coordinate_transform():
 def test_online_model():
     seed = 1
     d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    env = get_easy_env(p.DIRECT, level=0)
+    env = get_env(p.DIRECT, level=0)
     ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
 
     logger.info("initial random seed %d", rand.seed(seed))
@@ -1577,9 +1576,9 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     full_evaluation = True
     d = get_device()
     if plot_model_error:
-        env = get_easy_env(p.DIRECT, level=level)
+        env = get_env(p.DIRECT, level=level)
     else:
-        env = get_easy_env(p.GUI, level=level, log_video=True)
+        env = get_env(p.GUI, level=level, log_video=True)
 
     ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
 
@@ -1668,9 +1667,9 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     use_gp = False
     d = get_device()
     if plot_model_eval:
-        env = get_easy_env(p.DIRECT)
+        env = get_env(p.DIRECT)
     else:
-        env = get_easy_env(p.GUI, level=1, log_video=True)
+        env = get_env(p.GUI, level=1, log_video=True)
 
     logger.info("initial random seed %d", rand.seed(seed))
 
@@ -2106,7 +2105,7 @@ class Visualize:
     def model_actions_at_givne_state():
         seed = 1
         d = get_device()
-        env = get_easy_env(p.GUI, level=1)
+        env = get_env(p.GUI, level=1)
 
         logger.info("initial random seed %d", rand.seed(seed))
 
