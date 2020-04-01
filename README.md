@@ -9,7 +9,9 @@
 3. run scripts
 
 ## Scripts
-Scripts are located in `simulation`.
+Scripts are located in `scripts`. Those with `_main` suffix are 
+the main simulation scripts that have methods for collecting data,
+training model, and testing trained models on novel environments.
     
 ## Tensorboard logging
 `pip3 install tensorboardX`
