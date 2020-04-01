@@ -30,7 +30,241 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 
 REACTION_IN_STATE = True
 
+# have to be set after selecting an environment
+env_dir = None
 
+
+# --- SHARED GETTERS
+def get_data_dir(level=0):
+    return '{}{}.mat'.format(env_dir, level)
+
+
+def get_easy_env(mode=p.GUI, level=0, log_video=False):
+    global env_dir
+    init_block_pos = [-0.8, 0.12]
+    init_block_yaw = 0
+    init_pusher = 0
+    goal_pos = [0.85, -0.35]
+    # goal_pos = [-0.5, 0.12]
+    env_opts = {
+        'mode': mode,
+        'goal': goal_pos,
+        'init_pusher': init_pusher,
+        'log_video': log_video,
+        'init_block': init_block_pos,
+        'init_yaw': init_block_yaw,
+        'environment_level': level,
+    }
+    # env = interactive_block_pushing.PushAgainstWallEnv(**env_opts)
+    # env_dir = 'pushing/no_restriction'
+    # env = block_push.PushAgainstWallStickyEnv(**env_opts)
+    # env_dir = 'pushing/sticky'
+    # if REACTION_IN_STATE:
+    #     env = block_push.PushWithForceDirectlyReactionInStateEnv(**env_opts)
+    # else:
+    #     env = block_push.PushWithForceDirectlyEnv(**env_opts)
+    # env_dir = 'pushing/direct_force_mini_step'
+    env = block_push.PushPhysicallyAnyAlongEnv(**env_opts)
+    env_dir = 'pushing/physical'
+    # env = block_push.FixedPushDistPhysicalEnv(**env_opts)
+    # env_dir = 'pushing/fixed_mag_physical'
+    return env
+
+
+def get_controller_options(env):
+    d = get_device()
+    u_min, u_max = env.get_control_bounds()
+    Q = torch.tensor(env.state_cost(), dtype=torch.double)
+    R = 0.01
+    if env.nu is 3:
+        sigma = [0.3, 0.4, 0.8]
+        noise_mu = [0, 0.1, 0]
+        u_init = [0, 0.5, 0]
+    elif env.nu is 2:
+        sigma = [0.3, 0.2]
+        noise_mu = [0, 0]
+        u_init = [0, 0]
+    else:
+        raise RuntimeError("Unrecognized environment")
+    # tune this so that we figure out to make u-turns
+    sigma = torch.tensor(sigma, dtype=torch.double, device=d)
+    common_wrapper_opts = {
+        'Q': Q,
+        'R': R,
+        'u_min': u_min,
+        'u_max': u_max,
+        'compare_to_goal': env.state_difference,
+        'device': d,
+        'terminal_cost_multiplier': 50,
+        'adjust_model_pred_with_prev_error': False,
+        'use_orientation_terminal_cost': False,
+    }
+    mpc_opts = {
+        'num_samples': 1000,
+        'noise_sigma': torch.diag(sigma),
+        'noise_mu': torch.tensor(noise_mu, dtype=torch.double, device=d),
+        'lambda_': 1e-2,
+        'horizon': 40,
+        'u_init': torch.tensor(u_init, dtype=torch.double, device=d),
+        'sample_null_action': False,
+        'step_dependent_dynamics': True,
+    }
+    return common_wrapper_opts, mpc_opts
+
+
+def get_device():
+    return torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+
+
+def get_ds(env, data_dir, config=None, **kwargs):
+    d = get_device()
+    if config is None:
+        config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
+    ds = block_push.PushDataSource(env, data_dir=data_dir, config=config, device=d, **kwargs)
+    return ds, config
+
+
+def get_free_space_env_init(seed=1, **kwargs):
+    d = get_device()
+    env = get_easy_env(kwargs.pop('mode', p.DIRECT), **kwargs)
+    ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
+
+    logger.info("initial random seed %d", rand.seed(seed))
+    return d, env, config, ds
+
+
+def get_preprocessor_for_invariant_tsf(invariant_tsf, evaluate_transform=True):
+    if evaluate_transform:
+        losses = invariant_tsf.evaluate_validation(None)
+        logger.info("tsf on validation %s",
+                    "  ".join(
+                        ["{} {:.5f}".format(name, loss.mean().cpu().item()) if loss is not None else "" for name, loss
+                         in zip(invariant_tsf.loss_names(), losses)]))
+
+    # wrap the transform as a data preprocessor
+    preprocessor = preprocess.Compose(
+        [invariant.InvariantTransformer(invariant_tsf),
+         preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
+
+    return preprocessor
+
+
+def get_full_controller_name(pm, ctrl, tsf_name):
+    name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else "{}_{}".format(tsf_name, pm.__class__.__name__)
+    class_names = "{}".format(ctrl.__class__.__name__)
+    if isinstance(ctrl, controller.MPC):
+        class_names += "_{}".format(ctrl.dynamics.__class__.__name__)
+        if isinstance(ctrl.dynamics, online_model.OnlineGPMixing) and not ctrl.dynamics.use_independent_outputs:
+            class_names += "_full"
+    name = "{}_{}".format(class_names, name)
+    return name
+
+
+def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics):
+    d = get_device()
+    if prior_class is prior.NNPrior:
+        mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(ds.config).to(device=d)), ds,
+                           name="dynamics_{}".format(tsf_name))
+
+        pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(),
+                                     train_epochs=600)
+    elif prior_class is prior.NoPrior:
+        pm = prior.NoPrior()
+    else:
+        pm = prior_class.from_data(ds)
+    return pm
+
+
+class OnlineAdapt:
+    NONE = 0
+    LINEARIZE_LIKELIHOOD = 1
+    GP_KERNEL = 2
+
+
+def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.GP_KERNEL):
+    common_wrapper_opts, mpc_opts = get_controller_options(env)
+    d = common_wrapper_opts['device']
+    if online_adapt is not OnlineAdapt.NONE:
+        if online_adapt is OnlineAdapt.LINEARIZE_LIKELIHOOD:
+            dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds, env.state_difference,
+                                                          local_mix_weight_scale=50.0, xu_characteristic_length=10,
+                                                          const_local_mix_weight=False, sigreg=1e-10, device=d)
+        elif online_adapt is OnlineAdapt.GP_KERNEL:
+            dynamics = online_model.OnlineGPMixing(pm, ds, env.state_difference, device=d, max_data_points=50,
+                                                   use_independent_outputs=False, sample=False, training_iter=100,
+                                                   refit_strategy=online_model.RefitGPStrategy.RESET_DATA)
+        else:
+            raise RuntimeError("Unrecognized online adaption value {}".format(online_adapt))
+        ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
+                                            mpc_opts=mpc_opts)
+    else:
+        ctrl = controller.MPPI(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
+
+    return ctrl
+
+
+def translation_generator():
+    for d in [4, 10, 50]:
+        for trans in [[1, 1], [-1, 1], [-1, -1]]:
+            dd = (trans[0] * d, trans[1] * d)
+            yield dd
+
+
+# --- pushing specific data structures
+class PusherNetwork(model.NetworkModelWrapper):
+    """Network wrapper with some special validation evaluation"""
+
+    def evaluate_validation(self):
+        with torch.no_grad():
+            XUv, _, _ = self.ds.original_validation_set()
+            # try validation loss outside of our training region (by translating input)
+            for dd in translation_generator():
+                XU = torch.cat(
+                    (XUv[:, :2] + torch.tensor(dd, device=XUv.device, dtype=XUv.dtype),
+                     XUv[:, 2:]),
+                    dim=1)
+                if self.ds.preprocessor is not None:
+                    XU = self.ds.preprocessor.transform_x(XU)
+                vloss = self.user.compute_validation_loss(XU, self.Yv, self.ds)
+                self.writer.add_scalar("loss/validation_{}_{}".format(dd[0], dd[1]), vloss.mean(),
+                                       self.step)
+
+
+class PusherTransform(invariant.InvariantTransform):
+    def _move_data_out_of_distribution(self, data, move_params):
+        X, U, Y = data
+        translation = move_params
+        if translation:
+            X = torch.cat((X[:, :2] + torch.tensor(translation, device=X.device, dtype=X.dtype), X[:, 2:]), dim=1)
+        return X, U, Y
+
+    def evaluate_validation(self, writer):
+        losses = super(PusherTransform, self).evaluate_validation(writer)
+        if writer is not None:
+            for dd in translation_generator():
+                ls = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation, TransformToUse.LATENT_SPACE,
+                                                         move_params=dd)
+                self._record_metrics(writer, ls, suffix="/validation_{}_{}".format(dd[0], dd[1]))
+        return losses
+
+    def _is_in_neighbourhood(self, cur, candidate):
+        return abs(cur[3] - candidate[3]) < self.too_far_for_neighbour
+
+    def _calculate_pairwise_dist(self, X, U):
+        relevant_xu = torch.cat((X[:, 3].view(-1, 1), U), dim=1)
+        return torch.cdist(relevant_xu, relevant_xu)
+
+
+def constrain_state(state):
+    # yaw gets normalized
+    state[:, 2] = math_utils.angle_normalize(state[:, 2])
+    # along gets constrained
+    state[:, 3] = math_utils.clip(state[:, 3], torch.tensor(-1, dtype=torch.double, device=state.device),
+                                  torch.tensor(1, dtype=torch.double, device=state.device))
+    return state
+
+
+# --- offline data collection through predetermined or random controllers
 def random_touching_start(env, w=block_push.DIST_FOR_JUST_TOUCHING):
     init_block_pos = (np.random.random((2,)) - 0.5)
     init_block_yaw = (np.random.random() - 0.5) * 2 * math.pi
@@ -51,10 +285,6 @@ def random_touching_start(env, w=block_push.DIST_FOR_JUST_TOUCHING):
     else:
         raise RuntimeError("Unrecognized env type")
     return init_block_pos, init_block_yaw, init_pusher
-
-
-# have to be set after selecting an environment
-env_dir = None
 
 
 def collect_touching_freespace_data(trials=20, trial_length=40, level=0):
@@ -154,235 +384,6 @@ def collect_data_for_model_selector_evaluation(seed=5, level=1, relearn_dynamics
     ctrl = controller.PreDeterminedControllerWithPrediction(np.array(u), pm.dyn_net, *env.get_control_bounds())
     sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=False, save=True, stop_when_done=False)
     sim.run(seed, 'model_selector_evaluation')
-
-
-# --- SHARED GETTERS
-def get_data_dir(level=0):
-    return '{}{}.mat'.format(env_dir, level)
-
-
-def get_easy_env(mode=p.GUI, level=0, log_video=False):
-    global env_dir
-    init_block_pos = [-0.8, 0.12]
-    init_block_yaw = 0
-    init_pusher = 0
-    goal_pos = [0.85, -0.35]
-    # goal_pos = [-0.5, 0.12]
-    env_opts = {
-        'mode': mode,
-        'goal': goal_pos,
-        'init_pusher': init_pusher,
-        'log_video': log_video,
-        'init_block': init_block_pos,
-        'init_yaw': init_block_yaw,
-        'environment_level': level,
-    }
-    # env = interactive_block_pushing.PushAgainstWallEnv(**env_opts)
-    # env_dir = 'pushing/no_restriction'
-    # env = block_push.PushAgainstWallStickyEnv(**env_opts)
-    # env_dir = 'pushing/sticky'
-    # if REACTION_IN_STATE:
-    #     env = block_push.PushWithForceDirectlyReactionInStateEnv(**env_opts)
-    # else:
-    #     env = block_push.PushWithForceDirectlyEnv(**env_opts)
-    # env_dir = 'pushing/direct_force_mini_step'
-    env = block_push.PushPhysicallyAnyAlongEnv(**env_opts)
-    env_dir = 'pushing/physical'
-    # env = block_push.FixedPushDistPhysicalEnv(**env_opts)
-    # env_dir = 'pushing/fixed_mag_physical'
-    return env
-
-
-def get_device():
-    return torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-
-
-def get_ds(env, data_dir, config=None, **kwargs):
-    d = get_device()
-    if config is None:
-        config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-    ds = block_push.PushDataSource(env, data_dir=data_dir, config=config, device=d, **kwargs)
-    return ds, config
-
-
-def get_free_space_env_init(seed=1, **kwargs):
-    d = get_device()
-    env = get_easy_env(kwargs.pop('mode', p.DIRECT), **kwargs)
-    ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
-
-    logger.info("initial random seed %d", rand.seed(seed))
-    return d, env, config, ds
-
-
-def get_preprocessor_for_invariant_tsf(invariant_tsf, evaluate_transform=True):
-    if evaluate_transform:
-        losses = invariant_tsf.evaluate_validation(None)
-        logger.info("tsf on validation %s",
-                    "  ".join(
-                        ["{} {:.5f}".format(name, loss.mean().cpu().item()) if loss is not None else "" for name, loss
-                         in zip(invariant_tsf.loss_names(), losses)]))
-
-    # wrap the transform as a data preprocessor
-    preprocessor = preprocess.Compose(
-        [invariant.InvariantTransformer(invariant_tsf),
-         preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
-
-    return preprocessor
-
-
-def get_full_controller_name(pm, ctrl, tsf_name):
-    name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else "{}_{}".format(tsf_name, pm.__class__.__name__)
-    class_names = "{}".format(ctrl.__class__.__name__)
-    if isinstance(ctrl, controller.MPC):
-        class_names += "_{}".format(ctrl.dynamics.__class__.__name__)
-        if isinstance(ctrl.dynamics, online_model.OnlineGPMixing) and not ctrl.dynamics.use_independent_outputs:
-            class_names += "_full"
-    name = "{}_{}".format(class_names, name)
-    return name
-
-
-def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics):
-    d = get_device()
-    if prior_class is prior.NNPrior:
-        mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(ds.config).to(device=d)), ds,
-                           name="dynamics_{}".format(tsf_name))
-
-        pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(),
-                                     train_epochs=600)
-    elif prior_class is prior.NoPrior:
-        pm = prior.NoPrior()
-    else:
-        pm = prior_class.from_data(ds)
-    return pm
-
-
-def get_controller_options(env):
-    d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    u_min, u_max = env.get_control_bounds()
-    Q = torch.tensor(env.state_cost(), dtype=torch.double)
-    R = 0.01
-    if env.nu is 3:
-        sigma = [0.3, 0.4, 0.8]
-        noise_mu = [0, 0.1, 0]
-        u_init = [0, 0.5, 0]
-    elif env.nu is 2:
-        sigma = [0.3, 0.2]
-        noise_mu = [0, 0]
-        u_init = [0, 0]
-    else:
-        raise RuntimeError("Unrecognized environment")
-    # tune this so that we figure out to make u-turns
-    sigma = torch.tensor(sigma, dtype=torch.double, device=d)
-    common_wrapper_opts = {
-        'Q': Q,
-        'R': R,
-        'u_min': u_min,
-        'u_max': u_max,
-        'compare_to_goal': env.state_difference,
-        'device': d,
-        'terminal_cost_multiplier': 50,
-        'adjust_model_pred_with_prev_error': False,
-        'use_orientation_terminal_cost': False,
-    }
-    mpc_opts = {
-        'num_samples': 1000,
-        'noise_sigma': torch.diag(sigma),
-        'noise_mu': torch.tensor(noise_mu, dtype=torch.double, device=d),
-        'lambda_': 1e-2,
-        'horizon': 40,
-        'u_init': torch.tensor(u_init, dtype=torch.double, device=d),
-        'sample_null_action': False,
-        'step_dependent_dynamics': True,
-    }
-    return common_wrapper_opts, mpc_opts
-
-
-class OnlineAdapt:
-    NONE = 0
-    LINEARIZE_LIKELIHOOD = 1
-    GP_KERNEL = 2
-
-
-def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.GP_KERNEL):
-    common_wrapper_opts, mpc_opts = get_controller_options(env)
-    d = common_wrapper_opts['device']
-    if online_adapt is not OnlineAdapt.NONE:
-        if online_adapt is OnlineAdapt.LINEARIZE_LIKELIHOOD:
-            dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds, env.state_difference,
-                                                          local_mix_weight_scale=50.0, xu_characteristic_length=10,
-                                                          const_local_mix_weight=False, sigreg=1e-10, device=d)
-        elif online_adapt is OnlineAdapt.GP_KERNEL:
-            dynamics = online_model.OnlineGPMixing(pm, ds, env.state_difference, device=d, max_data_points=50,
-                                                   use_independent_outputs=False, sample=False, training_iter=100,
-                                                   refit_strategy=online_model.RefitGPStrategy.RESET_DATA)
-        else:
-            raise RuntimeError("Unrecognized online adaption value {}".format(online_adapt))
-        ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
-                                            mpc_opts=mpc_opts)
-    else:
-        ctrl = controller.MPPI(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
-
-    return ctrl
-
-
-def translation_generator():
-    for d in [4, 10, 50]:
-        for trans in [[1, 1], [-1, 1], [-1, -1]]:
-            dd = (trans[0] * d, trans[1] * d)
-            yield dd
-
-
-class PusherNetwork(model.NetworkModelWrapper):
-    """Network wrapper with some special validation evaluation"""
-
-    def evaluate_validation(self):
-        with torch.no_grad():
-            XUv, _, _ = self.ds.original_validation_set()
-            # try validation loss outside of our training region (by translating input)
-            for dd in translation_generator():
-                XU = torch.cat(
-                    (XUv[:, :2] + torch.tensor(dd, device=XUv.device, dtype=XUv.dtype),
-                     XUv[:, 2:]),
-                    dim=1)
-                if self.ds.preprocessor is not None:
-                    XU = self.ds.preprocessor.transform_x(XU)
-                vloss = self.user.compute_validation_loss(XU, self.Yv, self.ds)
-                self.writer.add_scalar("loss/validation_{}_{}".format(dd[0], dd[1]), vloss.mean(),
-                                       self.step)
-
-
-class PusherTransform(invariant.InvariantTransform):
-    def _move_data_out_of_distribution(self, data, move_params):
-        X, U, Y = data
-        translation = move_params
-        if translation:
-            X = torch.cat((X[:, :2] + torch.tensor(translation, device=X.device, dtype=X.dtype), X[:, 2:]), dim=1)
-        return X, U, Y
-
-    def evaluate_validation(self, writer):
-        losses = super(PusherTransform, self).evaluate_validation(writer)
-        if writer is not None:
-            for dd in translation_generator():
-                ls = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation, TransformToUse.LATENT_SPACE,
-                                                         move_params=dd)
-                self._record_metrics(writer, ls, suffix="/validation_{}_{}".format(dd[0], dd[1]))
-        return losses
-
-    def _is_in_neighbourhood(self, cur, candidate):
-        return abs(cur[3] - candidate[3]) < self.too_far_for_neighbour
-
-    def _calculate_pairwise_dist(self, X, U):
-        relevant_xu = torch.cat((X[:, 3].view(-1, 1), U), dim=1)
-        return torch.cdist(relevant_xu, relevant_xu)
-
-
-def constrain_state(state):
-    # yaw gets normalized
-    state[:, 2] = math_utils.angle_normalize(state[:, 2])
-    # along gets constrained
-    state[:, 3] = math_utils.clip(state[:, 3], torch.tensor(-1, dtype=torch.double, device=state.device),
-                                  torch.tensor(1, dtype=torch.double, device=state.device))
-    return state
 
 
 # ------- Hand designed coordinate transform classes using architecture 2
