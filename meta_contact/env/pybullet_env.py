@@ -15,7 +15,7 @@ class Mode:
     GUI = 1
 
 
-class MyPybulletEnv:
+class PybulletEnv:
     def __init__(self, mode=Mode.DIRECT, log_video=False):
         self.log_video = log_video
         self.mode = mode
@@ -41,7 +41,6 @@ class MyPybulletEnv:
         # use data provided by PyBullet
         p.setAdditionalSearchPath(pybullet_data.getDataPath())  # optionally
 
-        # TODO not sure if I have to set timestep also for real time simulation; I think not
         if self.realtime:
             p.setRealTimeSimulation(True)
         else:

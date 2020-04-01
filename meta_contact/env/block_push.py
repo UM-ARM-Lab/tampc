@@ -10,10 +10,10 @@ import numpy as np
 import torch
 from arm_pytorch_utilities import load_data as load_utils, math_utils
 from arm_pytorch_utilities.make_data import datasource
-from hybrid_sysid import simulation
+from arm_pytorch_utilities import simulation
 from matplotlib import pyplot as plt
 from meta_contact import cfg
-from meta_contact.env.myenv import MyPybulletEnv
+from meta_contact.env.pybullet_env import PybulletEnv
 from meta_contact.controller import controller
 
 logger = logging.getLogger(__name__)
@@ -364,7 +364,7 @@ def handle_data_format_for_state_diff(state_diff):
     return data_format_handler
 
 
-class PushAgainstWallEnv(MyPybulletEnv):
+class PushAgainstWallEnv(PybulletEnv):
     nu = 2
     nx = 5
     ny = 3
