@@ -128,13 +128,31 @@ def collect_push_against_wall_recovery_data():
     sim.run(seed)
 
 
-def collect_single_long_trajectory():
-    # get data in and around the bug trap we want to avoid in the future
-    env = get_easy_env(p.GUI, 0)
-    u_min, u_max = env.get_control_bounds()
-    ctrl = controller.FullRandomController(env.nu, u_min, u_max)
-    sim = block_push.InteractivePush(env, ctrl, num_frames=2000, plot=False, save=True, stop_when_done=False)
-    seed = rand.seed(11111)
+def collect_data_for_model_selector_evaluation(seed=5, level=1, relearn_dynamics=False,
+                                               prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
+    # load a reasonable model
+    env = get_easy_env(p.GUI, level=level, log_video=True)
+    ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
+
+    logger.info("initial random seed %d", rand.seed(seed))
+
+    untransformed_config, tsf_name, _ = update_ds_with_transform(env, ds, UseTransform.COORDINATE_TRANSFORM,
+                                                                 evaluate_transform=False)
+    pm = get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics)
+
+    u = []
+    for _ in range(10):
+        u.append([0.8 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.3, 0.7 + np.random.randn() * 0.4])
+    for _ in range(10):
+        u.append(
+            [-0.8 + np.random.randn() * 0.2, 0.8 + np.random.randn() * 0.1, -0.9 + np.random.randn() * 0.2])
+    for _ in range(5):
+        u.append([0.1 + np.random.randn() * 0.2, 0.7 + np.random.randn() * 0.1, 0.1 + np.random.randn() * 0.3])
+    for _ in range(100):
+        u.append([0.0 + np.random.randn() * 0.8, 0.7 + np.random.randn() * 0.3, 0.0 + np.random.randn() * 0.9])
+
+    ctrl = controller.PreDeterminedControllerWithPrediction(np.array(u), pm.dyn_net, *env.get_control_bounds())
+    sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=False, save=True, stop_when_done=False)
     sim.run(seed)
 
 
@@ -2169,10 +2187,10 @@ if __name__ == "__main__":
     level = 0
     # collect_touching_freespace_data(trials=200, trial_length=50, level=0)
     # collect_push_against_wall_recovery_data()
-    # collect_single_long_trajectory()
+    collect_data_for_model_selector_evaluation()
     # visualize_datasets()
     # visualize_model_actions_at_given_state()
-    visualize_dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
+    # visualize_dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
 
     # test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
