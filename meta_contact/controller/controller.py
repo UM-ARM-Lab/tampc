@@ -126,7 +126,54 @@ class PreDeterminedController(Controller):
         return u
 
 
-class MPC(Controller):
+class ControllerWithModelPrediction(Controller):
+    def __init__(self, *args, **kwargs):
+        super(ControllerWithModelPrediction, self).__init__(*args, **kwargs)
+        # give the predicted state from the last u output from command, or None if command wasn't called yet
+        self.predicted_next_state = None
+
+    def prediction_error(self, observed_x):
+        if self.predicted_next_state is None:
+            return None
+        return self.compare_to_goal(observed_x.reshape(1, -1), self.predicted_next_state)
+
+    @abc.abstractmethod
+    def predict_next_state(self, state, control):
+        """Given current state and selected control, predict the next state"""
+
+    def reset(self):
+        super(ControllerWithModelPrediction, self).reset()
+        self.predicted_next_state = None
+
+    def command(self, obs, info=None):
+        u = self._command(obs, info=info)
+        self.predicted_next_state = self.predict_next_state(obs, u)
+        return u
+
+    @abc.abstractmethod
+    def _command(self, obs, info=None):
+        pass
+
+
+class PreDeterminedControllerWithPrediction(PreDeterminedController, ControllerWithModelPrediction):
+    def __init__(self, controls, dynamics_model, *args, **kwargs):
+        super(PreDeterminedControllerWithPrediction, self).__init__(controls, *args, **kwargs)
+        self.dynamics = dynamics_model
+        self.d = self.dynamics.device()
+        self.dtype = self.dynamics.dtype()
+
+    def command(self, obs, info=None):
+        return ControllerWithModelPrediction.command(self, obs, info)
+
+    def _command(self, obs, info=None):
+        return PreDeterminedController.command(self, obs, info)
+
+    def predict_next_state(self, state, control):
+        state, control = tensor_utils.ensure_tensor(self.d, self.dtype, state, control)
+        return self.dynamics(state.view(1, -1), control.view(1, -1)).cpu().numpy()
+
+
+class MPC(ControllerWithModelPrediction):
     def __init__(self, dynamics, config, Q=1, R=1, compare_to_goal=torch.sub, u_min=None, u_max=None, device='cpu',
                  terminal_cost_multiplier=0., adjust_model_pred_with_prev_error=False,
                  use_orientation_terminal_cost=False):
@@ -150,8 +197,7 @@ class MPC(Controller):
         self.terminal_cost_multiplier = terminal_cost_multiplier
 
         # analysis
-        self.prediction_error = []
-        self.prev_predicted_x = None
+        self.pred_error_log = []
         self.prev_x = None
         self.prev_u = None
         self.diff_predicted = None
@@ -183,7 +229,7 @@ class MPC(Controller):
         return total_loss
 
     @abc.abstractmethod
-    def _command(self, obs):
+    def _mpc_command(self, obs):
         """
         Calculate the (nu) action to take given observing the (nx) observation
         :param obs:
@@ -203,35 +249,39 @@ class MPC(Controller):
         return next_state
 
     def reset(self):
-        error = torch.cat(self.prediction_error)
+        super(MPC, self).reset()
+        error = torch.cat(self.pred_error_log)
         median, _ = error.median(0)
         logger.debug("median relative error %s", median)
-        self.prediction_error = []
-        self.prev_predicted_x = None
+        self.pred_error_log = []
         self.diff_predicted = None
         self.context = None
 
     def command(self, obs, info=None):
+        original_obs = obs
         obs = tensor_utils.ensure_tensor(self.d, self.dtype, obs)
-        if self.prev_predicted_x is not None:
-            self.diff_predicted = self.compare_to_goal(obs.view(1, -1), self.prev_predicted_x)
+        if self.predicted_next_state is not None:
+            self.diff_predicted = torch.tensor(self.prediction_error(original_obs), device=self.d)
             diff_actual = self.compare_to_goal(obs.view(1, -1), self.prev_x)
             relative_residual = self.diff_predicted / diff_actual
-            # ignore along since it can be 0
-            self.prediction_error.append(relative_residual[:, :3].abs())
-            # try correcting for slide along
-            self.diff_predicted[:, 3] = 0
+            self.pred_error_log.append(relative_residual.abs())
 
         self.context = [info, self.diff_predicted]
 
-        u = self._command(obs)
+        u = self._mpc_command(obs)
         if self.u_max is not None:
             u = math_utils.clip(u, self.u_min, self.u_max)
 
-        self.prev_predicted_x = self._apply_dynamics(obs.view(1, -1), u.view(1, -1), -1)
         self.prev_x = obs
         self.prev_u = u
+        self.predicted_next_state = self.predict_next_state(obs, u)
         return u.cpu().numpy()
+
+    def _command(self, obs, info=None):
+        raise RuntimeError("Should not be calling this; command should override directly")
+
+    def predict_next_state(self, state, control):
+        return self._apply_dynamics(state.view(1, -1), control.view(1, -1), -1).cpu().numpy()
 
 
 class MPPI(MPC):
@@ -255,7 +305,7 @@ class MPPI(MPC):
         super().reset()
         self.mpc.reset()
 
-    def _command(self, obs):
+    def _mpc_command(self, obs):
         return self.mpc.command(obs)
 
     def _mpc_opts(self):

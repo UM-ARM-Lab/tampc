@@ -1278,7 +1278,7 @@ class InteractivePush(simulation.Simulation):
                                                                                                    self.time))
 
     def _predicts_state(self):
-        return isinstance(self.ctrl, controller.MPC)
+        return isinstance(self.ctrl, controller.ControllerWithModelPrediction)
 
     def _run_experiment(self):
         self.last_run_cost = []
@@ -1291,7 +1291,7 @@ class InteractivePush(simulation.Simulation):
             start = time.perf_counter()
 
             action = self.ctrl.command(obs, info)
-            if self.visualize_action_sample and self._predicts_state():
+            if self.visualize_action_sample and isinstance(self.ctrl, controller.MPPI):
                 self._plot_action_sample(self.ctrl.mpc.perturbed_action)
             # plot expected state rollouts from this point
             if self.visualize_rollouts:
@@ -1312,12 +1312,11 @@ class InteractivePush(simulation.Simulation):
             self.reaction_force[simTime + 1, :] = info['reaction']
             self.wall_contact[simTime + 1] = info['wall_contact']
             if self._predicts_state():
-                self.pred_traj[simTime + 1, :] = self.ctrl.prev_predicted_x.cpu().numpy()
+                self.pred_traj[simTime + 1, :] = self.ctrl.predicted_next_state
                 # model error from the previous prediction step (can only evaluate it at the current step)
-                if self.ctrl.diff_predicted is not None:
-                    self.model_error[simTime, :] = self.ctrl.diff_predicted.cpu().numpy()
+                self.model_error[simTime, :] = self.ctrl.prediction_error(obs)
                 if self.visualize_rollouts:
-                    self.env.visualize_prediction_error(self.ctrl.prev_predicted_x.view(-1).cpu().numpy())
+                    self.env.visualize_prediction_error(self.ctrl.predicted_next_state.reshape(-1))
 
             if done and self.stop_when_done:
                 logger.debug("done and stopping at step %d", simTime)
