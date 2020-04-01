@@ -125,7 +125,7 @@ def collect_push_against_wall_recovery_data():
 
     ctrl = controller.PreDeterminedController(np.array(u), *env.get_control_bounds())
     sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=False, save=True, stop_when_done=False)
-    sim.run(seed)
+    sim.run(seed, 'predetermined_bug_trap')
 
 
 def collect_data_for_model_selector_evaluation(seed=5, level=1, relearn_dynamics=False,
@@ -153,7 +153,7 @@ def collect_data_for_model_selector_evaluation(seed=5, level=1, relearn_dynamics
 
     ctrl = controller.PreDeterminedControllerWithPrediction(np.array(u), pm.dyn_net, *env.get_control_bounds())
     sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=False, save=True, stop_when_done=False)
-    sim.run(seed)
+    sim.run(seed, 'model_selector_evaluation')
 
 
 # --- SHARED GETTERS
@@ -1656,7 +1656,7 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
         sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=True, save=True, stop_when_done=False)
         seed = rand.seed(2)
         env.draw_user_text("try {}".format(seed), 2)
-        sim.run(seed)
+        sim.run(seed, 'evaluation{}'.format(seed))
         logger.info("last run cost %f", np.sum(sim.last_run_cost))
         plt.ioff()
         plt.show()
@@ -1868,7 +1868,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     env.draw_user_text(name, 14, left_offset=-1.5)
     sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=True, stop_when_done=False)
     seed = rand.seed()
-    sim.run(seed)
+    sim.run(seed, 'test_sufficiency{}'.format(seed))
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
     plt.ioff()
     plt.show()
