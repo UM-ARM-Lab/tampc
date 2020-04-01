@@ -214,12 +214,17 @@ class PushLoader(load_utils.DataLoader):
 
     def _apply_masks(self, d, x, y):
         """Handle common logic regardless of x and y"""
-        r = d['reaction'][1:]
-        e = d['model error'][1:]
-        if not self.info_desc:
-            self.info_desc['reaction'] = slice(0, r.shape[1])
-            self.info_desc['model_error'] = slice(r.shape[1], r.shape[1] + e.shape[1])
-        r = np.column_stack((r, e))
+        info_names = ['reaction', 'model error', 'wall contact']
+        info_index_offset = 0
+        info = []
+        for name in info_names:
+            if name in d:
+                info.append(d[name][1:])
+                dim = info[-1].shape[1]
+                self.info_desc[name] = slice(info_index_offset, info_index_offset + dim)
+                info_index_offset += dim
+
+        info = np.column_stack(info)
 
         u = d['U'][:-1]
         # potentially many trajectories, get rid of buffer state in between
@@ -235,7 +240,7 @@ class PushLoader(load_utils.DataLoader):
             # (xu, pxu)
             xu = np.column_stack((xu[1:], xu[:-1]))
             y = y[1:]
-            r = r[1:]
+            info = info[1:]
 
             mask = mask[1:-1]
         else:
@@ -244,11 +249,11 @@ class PushLoader(load_utils.DataLoader):
         mask = mask.reshape(-1) != 0
 
         xu = xu[mask]
-        r = r[mask]
+        info = info[mask]
         y = y[mask]
 
         self.config.load_data_info(x, u, y, xu)
-        return xu, y, r
+        return xu, y, info
 
     def _process_file_raw_data(self, d):
         x = d['X']
@@ -1348,7 +1353,7 @@ class InteractivePush(simulation.Simulation):
         u_norm = np.roll(u_norm, 1).reshape(-1, 1)
         scaled_model_error = np.divide(self.model_error, u_norm, out=np.zeros_like(self.model_error), where=u_norm != 0)
         return {'X': X, 'U': self.u, 'reaction': self.reaction_force, 'model error': self.model_error,
-                'scaled model error': scaled_model_error,
+                'scaled model error': scaled_model_error, 'wall contact': self.wall_contact.reshape(-1, 1),
                 'mask': mask.reshape(-1, 1)}
 
     def _start_plot_action_sample(self):
