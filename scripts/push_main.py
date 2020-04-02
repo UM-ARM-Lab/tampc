@@ -1992,6 +1992,9 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     ds_recovery, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
     ds_recovery.update_preprocessor(preprocessor)
 
+    selector = mode_selector.KDEProbabilitySelector([ds, ds_recovery])
+    # selector = mode_selector.NNSelector([ds, ds_recovery], k=3)
+
     # get evaluation data by getting definite positive samples from the freespace dataset
     pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)
     # get freespace model error as well
@@ -2024,8 +2027,6 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     target = torch.zeros(xu.shape[0], dtype=torch.long)
     target[num_pos_samples:] = 1
 
-    # selector = mode_selector.KDEProbabilitySelector([ds, ds_recovery])
-    selector = mode_selector.NNSelector([ds, ds_recovery], k=3)
     x, u = torch.split(xu, env.nx, dim=1)
     output = selector.sample_mode(x, u)
 
@@ -2061,6 +2062,7 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     ax2.set_ylabel('prob')
 
     plt.figure()
+
     lw = 2
     plt.plot(fpr, tpr, color='darkorange',
              lw=lw, label='ROC curve (area = %0.2f)' % m['ROC AUC'])
@@ -2069,7 +2071,7 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     plt.ylim([0.0, 1.05])
     plt.xlabel('False Positive Rate')
     plt.ylabel('True Positive Rate')
-    plt.title('ROC {}'.format(selector.name()))
+    plt.title('ROC {} (#neg={})'.format(selector.name(), num_pos_samples))
     plt.legend(loc="lower right")
     for x, y, txt in zip(fpr[::5], tpr[::5], thresholds[::5]):
         plt.annotate(np.round(txt, 3), (x, y - 0.04))
@@ -2077,6 +2079,27 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     plt.annotate('this point refers to the tpr and the fpr\n at a probability threshold of {}'.format(
         np.round(thresholds[rnd_idx], 3)),
         xy=(fpr[rnd_idx], tpr[rnd_idx]), xytext=(fpr[rnd_idx] + 0.2, tpr[rnd_idx] - 0.25),
+        arrowprops=dict(facecolor='black', lw=2, arrowstyle='->'), )
+
+    plt.figure()
+    precision, recall, thresholds = metrics.precision_recall_curve(target, y_score)
+    lw = 2
+    plt.plot(recall, precision, color='darkorange',
+             lw=lw, label='PR curve (AP = %0.2f)' % m['average precision'])
+    no_skill = len(target[target == 1]) / len(target)
+    # plot the no skill precision-recall curve
+    plt.plot([0, 1], [no_skill, no_skill], linestyle='--', label='No Skill')
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.title('PR {} (#neg={})'.format(selector.name(), num_pos_samples))
+    plt.legend(loc="lower left")
+    stride = len(thresholds) // 10
+    for x, y, txt in zip(recall[::stride], precision[::stride], thresholds[::stride]):
+        plt.annotate(np.round(txt, 2), (x + 0.02, y - 0.02))
+    rnd_idx = len(thresholds) // 2
+    plt.annotate('this point refers to the recall and the precision\n at a probability threshold of {}'.format(
+        np.round(thresholds[rnd_idx], 3)),
+        xy=(recall[rnd_idx], precision[rnd_idx]), xytext=(recall[rnd_idx] - 0.7, precision[rnd_idx] + 0.25),
         arrowprops=dict(facecolor='black', lw=2, arrowstyle='->'), )
 
     if plot_definite_negatives:
