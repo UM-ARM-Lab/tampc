@@ -1992,8 +1992,9 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     ds_recovery, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
     ds_recovery.update_preprocessor(preprocessor)
 
-    selector = mode_selector.KDEProbabilitySelector([ds, ds_recovery])
-    # selector = mode_selector.NNSelector([ds, ds_recovery], k=3)
+    # selector = mode_selector.ReactionForceHeuristicSelector(16, slice(env.nx - 2, None))
+    # selector = mode_selector.KDEProbabilitySelector([ds, ds_recovery])
+    selector = mode_selector.NNSelector([ds, ds_recovery], k=3)
 
     # get evaluation data by getting definite positive samples from the freespace dataset
     pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)
@@ -2089,18 +2090,20 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     no_skill = len(target[target == 1]) / len(target)
     # plot the no skill precision-recall curve
     plt.plot([0, 1], [no_skill, no_skill], linestyle='--', label='No Skill')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
     plt.xlabel('Recall')
     plt.ylabel('Precision')
     plt.title('PR {} (#neg={})'.format(selector.name(), num_pos_samples))
     plt.legend(loc="lower left")
-    stride = len(thresholds) // 10
+    stride = max(len(thresholds) // 10, 1)
     for x, y, txt in zip(recall[::stride], precision[::stride], thresholds[::stride]):
         plt.annotate(np.round(txt, 2), (x + 0.02, y - 0.02))
     rnd_idx = len(thresholds) // 2
-    plt.annotate('this point refers to the recall and the precision\n at a probability threshold of {}'.format(
-        np.round(thresholds[rnd_idx], 3)),
-        xy=(recall[rnd_idx], precision[rnd_idx]), xytext=(recall[rnd_idx] - 0.7, precision[rnd_idx] + 0.25),
-        arrowprops=dict(facecolor='black', lw=2, arrowstyle='->'), )
+    # plt.annotate('this point refers to the recall and the precision\n at a probability threshold of {}'.format(
+    #     np.round(thresholds[rnd_idx], 3)),
+    #     xy=(recall[rnd_idx], precision[rnd_idx]), xytext=(0.5, 0.7),
+    #     arrowprops=dict(facecolor='black', lw=2, arrowstyle='->'), )
 
     if plot_definite_negatives:
         from arm_pytorch_utilities import draw

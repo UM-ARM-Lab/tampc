@@ -36,11 +36,16 @@ class AlwaysSelectLocal(ModeSelector):
 
 
 class ReactionForceHeuristicSelector(ModeSelector):
+    def __init__(self, force_threshold, reaction_force_slice):
+        self.force_threshold = force_threshold
+        self.reaction_force_slice = reaction_force_slice
+
     def sample_mode(self, state, action, *args):
         # use local model if reaction force is beyond a certain threshold
         # doesn't work when we're using a small force to push into the wall
-        r = torch.norm(state[:, 4:6], dim=1)
-        mode = r > 16
+        r = torch.norm(state[:, self.reaction_force_slice], dim=1)
+        mode = r > self.force_threshold
+        self.relative_weights = torch.nn.functional.one_hot(mode.long()).double().transpose(0, 1).cpu().numpy()
         return mode.to(dtype=torch.long)
 
 

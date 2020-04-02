@@ -63,7 +63,7 @@ class OnlineMPC(OnlineController):
     """
 
     def __init__(self, *args, constrain_state=noop_constrain,
-                 mode_select: mode_selector.ModeSelector = mode_selector.ReactionForceHeuristicSelector(),
+                 mode_select: mode_selector.ModeSelector = mode_selector.AlwaysSelectNominal(),
                  **kwargs):
         self.constrain_state = constrain_state
         self.mpc = None
