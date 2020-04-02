@@ -80,9 +80,10 @@ class DataProbSelector(ModeSelector):
 
 
 class KDEProbabilitySelector(DataProbSelector):
-    def __init__(self, dss):
+    def __init__(self, dss, component_scale=None):
         super(KDEProbabilitySelector, self).__init__(dss)
         self.pdfs = [self.estimate_density(ds) for ds in dss]
+        self.component_scale = np.array(component_scale).reshape(-1, 1) if component_scale else None
 
     def estimate_density(self, ds):
         XU, _, _ = ds.training_set()
@@ -96,7 +97,9 @@ class KDEProbabilitySelector(DataProbSelector):
 
     def _get_weights(self, xu):
         xu = xu.transpose()
-        self.weights = [kernel(xu) for kernel in self.pdfs]
+        self.weights = np.stack([kernel(xu) for kernel in self.pdfs])
+        if self.component_scale is not None:
+            self.weights *= self.component_scale
         # scale the relative likelihoods so that we can sample from it by sampling from uniform(0,1)
         self.relative_weights = self.probs_to_relative_weights(self.weights)
 

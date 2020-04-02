@@ -1993,8 +1993,8 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     ds_recovery.update_preprocessor(preprocessor)
 
     # selector = mode_selector.ReactionForceHeuristicSelector(16, slice(env.nx - 2, None))
-    # selector = mode_selector.KDEProbabilitySelector([ds, ds_recovery])
-    selector = mode_selector.NNSelector([ds, ds_recovery], k=3)
+    selector = mode_selector.KDEProbabilitySelector([ds, ds_recovery], [1, 2])
+    # selector = mode_selector.NNSelector([ds, ds_recovery], k=3)
 
     # get evaluation data by getting definite positive samples from the freespace dataset
     pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)
