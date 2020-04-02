@@ -1,5 +1,6 @@
 import abc
 import torch
+import numpy as np
 
 
 class ModeSelector(abc.ABC):
@@ -37,17 +38,44 @@ class ReactionForceHeuristicSelector(ModeSelector):
         return mode.to(dtype=torch.int)
 
 
-class DisjointDataLikelihoodSelector(ModeSelector):
+class KDEProbabilitySelector(ModeSelector):
     def __init__(self, dss):
         self.num_components = len(dss)
         self.pdfs = [self.estimate_density(ds) for ds in dss]
+        self.nominal_ds = dss[0]
+        self.weights = None
+        self.relative_weights = None
 
     def estimate_density(self, ds):
-        # TODO use some standard distribution to model the likelihood and return it
-        pass
+        from scipy import stats
+        XU, _, _ = ds.training_set()
+        kernel = stats.gaussian_kde(XU.transpose(0, 1).cpu().numpy())
+        return kernel
+
+    def probs_to_relative_weights(self, probs):
+        # TODO could use other methods of combining the probabilities (ex. log them first to get smoother)
+        normalization = np.sum(probs, axis=0)
+        return np.divide(probs, normalization)
 
     def sample_mode(self, state, action, *args):
         xu = torch.cat((state, action), dim=1)
-        # TODO lookup likelihood of each sample for all components independently (batch process this)
-        # TODO generate random uniform numbers for each sample and sample from categorical
-        return torch.zeros((state.shape[0],), device=state.device, dtype=torch.int)
+        if self.nominal_ds.preprocessor:
+            xu = self.nominal_ds.preprocessor.transform_x(xu)
+
+        xu = xu.transpose(0, 1).cpu().numpy()
+        self.weights = [kernel(xu) for kernel in self.pdfs]
+
+        # scale the relative likelihoods so that we can sample from it by sampling from uniform(0,1)
+        self.relative_weights = self.probs_to_relative_weights(self.weights)
+
+        raw_sample = np.random.random(self.relative_weights.shape[1])
+        # since there are relatively few components compared to samples, we iterate over components
+        sample = np.zeros_like(raw_sample)
+        for i, weight in enumerate(self.relative_weights):
+            this_value = (raw_sample > 0) & (raw_sample < weight)
+            raw_sample -= weight
+            sample[this_value] = i
+
+        return torch.tensor(sample, device=state.device, dtype=torch.int)
+
+# TODO implement nearest neighbour, GMM, learned classifier selectors
