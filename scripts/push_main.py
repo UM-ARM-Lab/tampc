@@ -1984,7 +1984,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
 
 def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     plot_definite_negatives = False
-    num_pos_samples = 100  # start with balanced data
+    num_pos_samples = 5000  # start with balanced data
     _, env, _, ds = get_free_space_env_init()
     _, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
     ds_neg, _ = get_ds(env, "pushing/model_selector_evaluation.mat", validation_ratio=0.)
@@ -1992,9 +1992,16 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     ds_recovery, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
     ds_recovery.update_preprocessor(preprocessor)
 
+    from sklearn.neighbors import KNeighborsClassifier
+    from sklearn.gaussian_process import GaussianProcessClassifier
+    from sklearn.svm import SVC
+
+    dss = [ds, ds_recovery]
     # selector = mode_selector.ReactionForceHeuristicSelector(16, slice(env.nx - 2, None))
-    selector = mode_selector.KDEProbabilitySelector([ds, ds_recovery], [1, 2])
-    # selector = mode_selector.NNSelector([ds, ds_recovery], k=3)
+    # selector = mode_selector.KDEProbabilitySelector(dss, [1, 2])
+    # selector = mode_selector.SklearnClassifierSelector(dss, KNeighborsClassifier(n_neighbors=3))
+    # selector = mode_selector.SklearnClassifierSelector(dss, GaussianProcessClassifier( n_restarts_optimizer=5, random_state=0))
+    selector = mode_selector.SklearnClassifierSelector(dss, SVC(probability=True, gamma='auto'))
 
     # get evaluation data by getting definite positive samples from the freespace dataset
     pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)

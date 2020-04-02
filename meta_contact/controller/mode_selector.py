@@ -3,7 +3,6 @@ import torch
 import numpy as np
 
 from scipy import stats
-from sklearn.neighbors import KNeighborsClassifier
 
 
 class ModeSelector(abc.ABC):
@@ -104,10 +103,10 @@ class KDEProbabilitySelector(DataProbSelector):
         self.relative_weights = self.probs_to_relative_weights(self.weights)
 
 
-class NNSelector(DataProbSelector):
-    def __init__(self, dss, k=5):
-        super(NNSelector, self).__init__(dss)
-        self.neigh = KNeighborsClassifier(n_neighbors=k)
+class SklearnClassifierSelector(DataProbSelector):
+    def __init__(self, dss, classifier):
+        super(SklearnClassifierSelector, self).__init__(dss)
+        self.classifier = classifier
         xu = []
         component = []
         for i, ds in enumerate(dss):
@@ -116,13 +115,13 @@ class NNSelector(DataProbSelector):
             component.append(np.ones(XU.shape[0], dtype=int) * i)
         xu = np.row_stack(xu)
         component = np.concatenate(component)
-        self.neigh.fit(xu, component)
+        self.classifier.fit(xu, component)
 
     def name(self):
-        return '{}(k={})'.format(super(NNSelector, self).name(), self.neigh.n_neighbors)
+        return '{}'.format(self.classifier.__class__.__name__)
 
     def _get_weights(self, xu):
-        self.weights = self.neigh.predict_proba(xu).T
+        self.weights = self.classifier.predict_proba(xu).T
         self.relative_weights = self.weights
 
 # TODO implement GMM, learned classifier selectors
