@@ -380,9 +380,9 @@ class OfflineDataCollection:
         for _ in range(10):
             u.append([-0.8 + rn(0.2), 0.8 + rn(0.1), -0.9 + rn(0.2)])
         for _ in range(5):
-            u.append([0.1 + rn(0.2), 0.7 + rn(0.1), 0.1 + rn(0.3)])
+            u.append([0.5 + rn(0.5), 0.7 + rn(0.4), -0.2 + rn(0.5)])
         for _ in range(100):
-            u.append([0.0 + rn(0.8), 0.7 + rn(0.3), 0.0 + rn(0.9)])
+            u.append([0.1 + rn(0.8), 0.7 + rn(0.3), -0.2 + rn(0.7)])
 
         ctrl = controller.PreDeterminedControllerWithPrediction(np.array(u), pm.dyn_net, *env.get_control_bounds())
         sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=False, save=True, stop_when_done=False)
@@ -1981,6 +1981,69 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     return total_costs
 
 
+def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
+    plot_definite_negatives = False
+    num_pos_samples = 100 # start with balanced data
+    _, env, _, ds = get_free_space_env_init()
+    _, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
+    ds_neg, _ = get_ds(env, "pushing/model_selector_evaluation.mat", validation_ratio=0.)
+    ds_neg.update_preprocessor(preprocessor)
+    ds_recovery, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
+    ds_recovery.update_preprocessor(preprocessor)
+
+    # get evaluation data by getting definite positive samples from the freespace dataset
+    pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)
+    # get freespace model error as well
+    XUf, Yf, infof = ds.training_set(original=True)
+    Yhatf = pm.dyn_net.predict(XUf, get_next_state=False)
+    mef = Yhatf - Yf
+    memf = mef.norm(dim=1)
+    freespace_threshold = mef.abs().kthvalue(int(mef.shape[0] * 0.99), dim=0)[0]
+    logger.info("freespace error median %f max %f near max each dim %s", memf.median(), memf.max(),
+                freespace_threshold)
+    # look at evaluation dataset's model errors
+    XU, Y, info = ds_neg.training_set(original=True)
+    me = info[:, ds_neg.loader.info_desc['model error']]
+    contacts = info[:, ds_neg.loader.info_desc['wall contact']]
+
+    # get definitely positive data from the freespace set
+    above_thresh = mef.abs() < freespace_threshold
+    def_pos = above_thresh.all(dim=1)
+
+    # we label it as bad if any dim's error is above freespace threshold
+    above_thresh = me.abs() > freespace_threshold
+    def_neg = above_thresh.any(dim=1)
+
+    num_pos = def_pos.sum()
+    pos_ind = torch.randperm(num_pos)[:num_pos_samples]
+
+    # combine to form data to test on
+    xu = torch.cat((XUf[def_pos][pos_ind], XU[def_neg]), dim=0)
+    # label corresponds to the component the mode selector should pick
+    target = torch.zeros(xu.shape[0], dtype=torch.int)
+    target[num_pos_samples:] = 1
+
+    selector = mode_selector.DisjointDataLikelihoodSelector([ds, ds_recovery])
+    x, u = torch.split(xu, env.nx, dim=1)
+    output = selector.sample_mode(x, u)
+
+    # TODO metrics for binary classification and visualize
+
+    if plot_definite_negatives:
+        from arm_pytorch_utilities import draw
+        names = env.state_names()
+        f, ax = plt.subplots(len(names) + 1, 1, sharex=True)
+        N = me.shape[0]
+        for i, name in enumerate(names):
+            ax[i].set_ylabel('error {}'.format(name))
+            ax[i].plot(me[:, i].abs().cpu(), label='observed')
+            ax[i].plot([1, N], [freespace_threshold[i].cpu()] * 2, ':', label='freespace max')
+        ax[-1].set_ylabel('num contacts (oracle)')
+        ax[-1].plot(contacts.cpu())
+        draw.highlight_value_ranges(def_neg.to(dtype=torch.int), ax=ax[-1])
+        plt.show()
+
+
 class Learn:
     @staticmethod
     def invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
@@ -2154,11 +2217,12 @@ if __name__ == "__main__":
     level = 0
     # OfflineDataCollection.freespace(trials=200, trial_length=50, level=0)
     # OfflineDataCollection.push_against_wall_recovery()
-    OfflineDataCollection.model_selector_evaluation()
+    # OfflineDataCollection.model_selector_evaluation()
     # Visualize.dist_diff_nominal_and_bug_trap()
     # Visualize.model_actions_at_givne_state()
     # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
 
+    evaluate_model_selector()
     # test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD,

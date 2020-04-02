@@ -36,6 +36,18 @@ class ReactionForceHeuristicSelector(ModeSelector):
         mode = r > 16
         return mode.to(dtype=torch.int)
 
-# TODO implement likelihood selector
 
-# TODO evaluate selector on some validation data with hindsight labelling (nominal model error > threshold)
+class DisjointDataLikelihoodSelector(ModeSelector):
+    def __init__(self, dss):
+        self.num_components = len(dss)
+        self.pdfs = [self.estimate_density(ds) for ds in dss]
+
+    def estimate_density(self, ds):
+        # TODO use some standard distribution to model the likelihood and return it
+        pass
+
+    def sample_mode(self, state, action, *args):
+        xu = torch.cat((state, action), dim=1)
+        # TODO lookup likelihood of each sample for all components independently (batch process this)
+        # TODO generate random uniform numbers for each sample and sample from categorical
+        return torch.zeros((state.shape[0],), device=state.device, dtype=torch.int)
