@@ -29,7 +29,7 @@ class OnlineController(controller.MPC):
     def update_prior(self, prior):
         self.dynamics.prior = prior
 
-    def _command(self, obs):
+    def _mpc_command(self, obs):
         t = len(self.u_history)
         x = obs
         if t > 0:
@@ -63,7 +63,7 @@ class OnlineMPC(OnlineController):
     """
 
     def __init__(self, *args, constrain_state=noop_constrain,
-                 mode_select=mode_selector.ReactionForceHeuristicSelector(),
+                 mode_select: mode_selector.ModeSelector = mode_selector.ReactionForceHeuristicSelector(),
                  **kwargs):
         self.constrain_state = constrain_state
         self.mpc = None
@@ -97,8 +97,8 @@ class OnlineMPC(OnlineController):
 
 
 class OnlineMPPI(OnlineMPC, controller.MPPI):
-    def _command(self, obs):
-        return OnlineMPC._command(self, obs)
+    def _mpc_command(self, obs):
+        return OnlineMPC._mpc_command(self, obs)
 
     def _mpc_opts(self):
         # TODO move variance usage in biasing control sampling rather than as a loss function
