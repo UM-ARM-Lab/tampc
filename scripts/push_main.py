@@ -2024,7 +2024,8 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     target = torch.zeros(xu.shape[0], dtype=torch.long)
     target[num_pos_samples:] = 1
 
-    selector = mode_selector.KDEProbabilitySelector([ds, ds_recovery])
+    # selector = mode_selector.KDEProbabilitySelector([ds, ds_recovery])
+    selector = mode_selector.NNSelector([ds, ds_recovery], k=3)
     x, u = torch.split(xu, env.nx, dim=1)
     output = selector.sample_mode(x, u)
 
@@ -2037,7 +2038,7 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
 
     from sklearn import metrics
     m['average precision'] = metrics.average_precision_score(target, y_score)
-    fpr, tpr, _ = metrics.roc_curve(target, y_score)
+    fpr, tpr, thresholds = metrics.roc_curve(target, y_score)
     m['ROC AUC'] = metrics.auc(fpr, tpr)
     m['f1 (sample)'] = metrics.f1_score(target, output.cpu())
 
@@ -2070,6 +2071,13 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     plt.ylabel('True Positive Rate')
     plt.title('ROC {}'.format(selector.name()))
     plt.legend(loc="lower right")
+    for x, y, txt in zip(fpr[::5], tpr[::5], thresholds[::5]):
+        plt.annotate(np.round(txt, 3), (x, y - 0.04))
+    rnd_idx = len(thresholds) // 2
+    plt.annotate('this point refers to the tpr and the fpr\n at a probability threshold of {}'.format(
+        np.round(thresholds[rnd_idx], 3)),
+        xy=(fpr[rnd_idx], tpr[rnd_idx]), xytext=(fpr[rnd_idx] + 0.2, tpr[rnd_idx] - 0.25),
+        arrowprops=dict(facecolor='black', lw=2, arrowstyle='->'), )
 
     if plot_definite_negatives:
         from arm_pytorch_utilities import draw
