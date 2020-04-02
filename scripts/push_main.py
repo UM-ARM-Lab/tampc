@@ -1984,7 +1984,8 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
 
 def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     plot_definite_negatives = False
-    num_pos_samples = 5000  # start with balanced data
+    num_pos_samples = 100  # start with balanced data
+
     _, env, _, ds = get_free_space_env_init()
     _, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
     ds_neg, _ = get_ds(env, "pushing/model_selector_evaluation.mat", validation_ratio=0.)
@@ -1998,10 +1999,11 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
 
     dss = [ds, ds_recovery]
     # selector = mode_selector.ReactionForceHeuristicSelector(16, slice(env.nx - 2, None))
-    # selector = mode_selector.KDEProbabilitySelector(dss, [1, 2])
+    # selector = mode_selector.KDESelector(dss, [1, 0.2])
     # selector = mode_selector.SklearnClassifierSelector(dss, KNeighborsClassifier(n_neighbors=3))
     # selector = mode_selector.SklearnClassifierSelector(dss, GaussianProcessClassifier( n_restarts_optimizer=5, random_state=0))
-    selector = mode_selector.SklearnClassifierSelector(dss, SVC(probability=True, gamma='auto'))
+    # selector = mode_selector.SklearnClassifierSelector(dss, SVC(probability=True, gamma='auto'))
+    selector = mode_selector.GMMSelector(dss)
 
     # get evaluation data by getting definite positive samples from the freespace dataset
     pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)
@@ -2046,7 +2048,9 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     y_score = selector.relative_weights[1]
 
     from sklearn import metrics
+    precision, recall, pr_thresholds = metrics.precision_recall_curve(target, y_score)
     m['average precision'] = metrics.average_precision_score(target, y_score)
+    m['PR AUC'] = metrics.auc(recall, precision)
     fpr, tpr, thresholds = metrics.roc_curve(target, y_score)
     m['ROC AUC'] = metrics.auc(fpr, tpr)
     m['f1 (sample)'] = metrics.f1_score(target, output.cpu())
@@ -2069,31 +2073,29 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     ax1.set_ylabel('component')
     ax2.set_ylabel('prob')
 
-    plt.figure()
+    # lw = 2
+    # plt.figure()
+    # plt.plot(fpr, tpr, color='darkorange',
+    #          lw=lw, label='ROC curve (area = %0.2f)' % m['ROC AUC'])
+    # plt.plot([0, 1], [0, 1], color='navy', lw=lw, linestyle='--')
+    # plt.xlim([0.0, 1.0])
+    # plt.ylim([0.0, 1.05])
+    # plt.xlabel('False Positive Rate')
+    # plt.ylabel('True Positive Rate')
+    # plt.title('ROC {} (#neg={})'.format(selector.name(), num_pos_samples))
+    # plt.legend(loc="lower right")
+    # for x, y, txt in zip(fpr[::5], tpr[::5], thresholds[::5]):
+    #     plt.annotate(np.round(txt, 3), (x, y - 0.04))
+    # rnd_idx = len(thresholds) // 2
+    # plt.annotate('this point refers to the tpr and the fpr\n at a probability threshold of {}'.format(
+    #     np.round(thresholds[rnd_idx], 3)),
+    #     xy=(fpr[rnd_idx], tpr[rnd_idx]), xytext=(fpr[rnd_idx] + 0.2, tpr[rnd_idx] - 0.25),
+    #     arrowprops=dict(facecolor='black', lw=2, arrowstyle='->'), )
 
-    lw = 2
-    plt.plot(fpr, tpr, color='darkorange',
-             lw=lw, label='ROC curve (area = %0.2f)' % m['ROC AUC'])
-    plt.plot([0, 1], [0, 1], color='navy', lw=lw, linestyle='--')
-    plt.xlim([0.0, 1.0])
-    plt.ylim([0.0, 1.05])
-    plt.xlabel('False Positive Rate')
-    plt.ylabel('True Positive Rate')
-    plt.title('ROC {} (#neg={})'.format(selector.name(), num_pos_samples))
-    plt.legend(loc="lower right")
-    for x, y, txt in zip(fpr[::5], tpr[::5], thresholds[::5]):
-        plt.annotate(np.round(txt, 3), (x, y - 0.04))
-    rnd_idx = len(thresholds) // 2
-    plt.annotate('this point refers to the tpr and the fpr\n at a probability threshold of {}'.format(
-        np.round(thresholds[rnd_idx], 3)),
-        xy=(fpr[rnd_idx], tpr[rnd_idx]), xytext=(fpr[rnd_idx] + 0.2, tpr[rnd_idx] - 0.25),
-        arrowprops=dict(facecolor='black', lw=2, arrowstyle='->'), )
-
     plt.figure()
-    precision, recall, thresholds = metrics.precision_recall_curve(target, y_score)
     lw = 2
     plt.plot(recall, precision, color='darkorange',
-             lw=lw, label='PR curve (AP = %0.2f)' % m['average precision'])
+             lw=lw, label='PR curve (AP = {:.2f}, area = {:.2f})'.format(m['average precision'], m['PR AUC']))
     no_skill = len(target[target == 1]) / len(target)
     # plot the no skill precision-recall curve
     plt.plot([0, 1], [no_skill, no_skill], linestyle='--', label='No Skill')
@@ -2103,10 +2105,10 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     plt.ylabel('Precision')
     plt.title('PR {} (#neg={})'.format(selector.name(), num_pos_samples))
     plt.legend(loc="lower left")
-    stride = max(len(thresholds) // 10, 1)
-    for x, y, txt in zip(recall[::stride], precision[::stride], thresholds[::stride]):
+    stride = max(len(pr_thresholds) // 15, 1)
+    for x, y, txt in zip(recall[::stride], precision[::stride], pr_thresholds[::stride]):
         plt.annotate(np.round(txt, 2), (x + 0.02, y - 0.02))
-    rnd_idx = len(thresholds) // 2
+    # rnd_idx = len(pr_thresholds) // 2
     # plt.annotate('this point refers to the recall and the precision\n at a probability threshold of {}'.format(
     #     np.round(thresholds[rnd_idx], 3)),
     #     xy=(recall[rnd_idx], precision[rnd_idx]), xytext=(0.5, 0.7),

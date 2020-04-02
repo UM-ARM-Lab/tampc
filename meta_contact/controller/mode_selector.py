@@ -3,6 +3,7 @@ import torch
 import numpy as np
 
 from scipy import stats
+from sklearn import mixture
 
 
 class ModeSelector(abc.ABC):
@@ -78,29 +79,58 @@ class DataProbSelector(ModeSelector):
         pass
 
 
-class KDEProbabilitySelector(DataProbSelector):
+class DistributionLikelihoodSelector(DataProbSelector):
     def __init__(self, dss, component_scale=None):
-        super(KDEProbabilitySelector, self).__init__(dss)
-        self.pdfs = [self.estimate_density(ds) for ds in dss]
+        super().__init__(dss)
+        self.pdfs = [self._estimate_density(ds) for ds in dss]
         self.component_scale = np.array(component_scale).reshape(-1, 1) if component_scale else None
 
-    def estimate_density(self, ds):
-        XU, _, _ = ds.training_set()
-        kernel = stats.gaussian_kde(XU.transpose(0, 1).cpu().numpy())
-        return kernel
+    @abc.abstractmethod
+    def _estimate_density(self, ds):
+        """Get PDF or something that allows you to evaluate the PDF"""
+        return None
 
-    def probs_to_relative_weights(self, probs):
+    def _probs_to_relative_weights(self, probs):
         # TODO could use other methods of combining the probabilities (ex. log them first to get smoother)
         normalization = np.sum(probs, axis=0)
         return np.divide(probs, normalization)
 
+    @abc.abstractmethod
+    def _evaluate_pdf(self, pdf, xu):
+        """Get probabilities by evaluating pdf on xu"""
+
     def _get_weights(self, xu):
-        xu = xu.transpose()
-        self.weights = np.stack([kernel(xu) for kernel in self.pdfs])
+        self.weights = np.stack([self._evaluate_pdf(pdf, xu) for pdf in self.pdfs])
         if self.component_scale is not None:
             self.weights *= self.component_scale
         # scale the relative likelihoods so that we can sample from it by sampling from uniform(0,1)
-        self.relative_weights = self.probs_to_relative_weights(self.weights)
+        self.relative_weights = self._probs_to_relative_weights(self.weights)
+
+
+class KDESelector(DistributionLikelihoodSelector):
+    def _estimate_density(self, ds):
+        XU, _, _ = ds.training_set()
+        kernel = stats.gaussian_kde(XU.transpose(0, 1).cpu().numpy())
+        return kernel
+
+    def _evaluate_pdf(self, pdf, xu):
+        return pdf(xu.transpose())
+
+
+class GMMSelector(DistributionLikelihoodSelector):
+    def __init__(self, *args, mixture_components=5, **kwargs):
+        self.mixture_components = mixture_components
+        super().__init__(*args, **kwargs)
+
+    def _estimate_density(self, ds):
+        XU, _, _ = ds.training_set()
+        gmm = mixture.GaussianMixture(n_components=self.mixture_components, covariance_type='full')
+        gmm.fit(XU.cpu().numpy())
+        return gmm
+
+    def _evaluate_pdf(self, pdf, xu):
+        log_prob = pdf.score_samples(xu)
+        return np.exp(log_prob)
 
 
 class SklearnClassifierSelector(DataProbSelector):
@@ -124,4 +154,4 @@ class SklearnClassifierSelector(DataProbSelector):
         self.weights = self.classifier.predict_proba(xu).T
         self.relative_weights = self.weights
 
-# TODO implement GMM, learned classifier selectors
+# TODO implement learned classifier selectors
