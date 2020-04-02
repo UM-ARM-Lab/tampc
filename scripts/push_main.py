@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pybullet as p
 import torch
+import torch.nn
 from arm_pytorch_utilities import math_utils
 from arm_pytorch_utilities import linalg
 from arm_pytorch_utilities import preprocess
@@ -1983,7 +1984,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
 
 def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     plot_definite_negatives = False
-    num_pos_samples = 100 # start with balanced data
+    num_pos_samples = 100  # start with balanced data
     _, env, _, ds = get_free_space_env_init()
     _, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
     ds_neg, _ = get_ds(env, "pushing/model_selector_evaluation.mat", validation_ratio=0.)
@@ -2020,14 +2021,55 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     # combine to form data to test on
     xu = torch.cat((XUf[def_pos][pos_ind], XU[def_neg]), dim=0)
     # label corresponds to the component the mode selector should pick
-    target = torch.zeros(xu.shape[0], dtype=torch.int)
+    target = torch.zeros(xu.shape[0], dtype=torch.long)
     target[num_pos_samples:] = 1
 
-    selector = mode_selector.DisjointDataLikelihoodSelector([ds, ds_recovery])
+    selector = mode_selector.KDEProbabilitySelector([ds, ds_recovery])
     x, u = torch.split(xu, env.nx, dim=1)
     output = selector.sample_mode(x, u)
 
-    # TODO metrics for binary classification and visualize
+    # metrics for binary classification (since it's binary, we can reduce it to prob of not nominal model)
+    scores = torch.from_numpy(selector.relative_weights).transpose(0, 1)
+    loss = torch.nn.CrossEntropyLoss()
+    m = {'cross entropy': loss(scores, target).item()}
+
+    y_score = selector.relative_weights[1]
+
+    from sklearn import metrics
+    m['average precision'] = metrics.average_precision_score(target, y_score)
+    fpr, tpr, _ = metrics.roc_curve(target, y_score)
+    m['ROC AUC'] = metrics.auc(fpr, tpr)
+    m['f1 (sample)'] = metrics.f1_score(target, output.cpu())
+
+    print('{} {}'.format(selector.name(), num_pos_samples))
+    for key, value in m.items():
+        print('{}: {:.3f}'.format(key, value))
+
+    # visualize
+    N = x.shape[0]
+    f, ax1 = plt.subplots()
+    t = list(range(N))
+    ax1.scatter(t, output.cpu(), label='target', marker='*', color='k', alpha=0.5)
+    ax2 = ax1.twinx()
+    ax2.stackplot(t, selector.relative_weights,
+                  labels=['prob {}'.format(i) for i in range(selector.relative_weights.shape[0])], alpha=0.3)
+    plt.legend()
+    plt.title('Sample and relative weights {}'.format(selector.name()))
+    plt.xlabel('data point ({} separates target)'.format(num_pos_samples))
+    ax1.set_ylabel('component')
+    ax2.set_ylabel('prob')
+
+    plt.figure()
+    lw = 2
+    plt.plot(fpr, tpr, color='darkorange',
+             lw=lw, label='ROC curve (area = %0.2f)' % m['ROC AUC'])
+    plt.plot([0, 1], [0, 1], color='navy', lw=lw, linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('ROC {}'.format(selector.name()))
+    plt.legend(loc="lower right")
 
     if plot_definite_negatives:
         from arm_pytorch_utilities import draw
@@ -2041,7 +2083,7 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
         ax[-1].set_ylabel('num contacts (oracle)')
         ax[-1].plot(contacts.cpu())
         draw.highlight_value_ranges(def_neg.to(dtype=torch.int), ax=ax[-1])
-        plt.show()
+    plt.show()
 
 
 class Learn:

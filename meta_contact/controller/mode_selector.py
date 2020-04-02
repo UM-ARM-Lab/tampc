@@ -7,6 +7,9 @@ class ModeSelector(abc.ABC):
     """In mixture of experts we have that the posterior is a sum over weighted components.
     This class allows sampling over weights (as opposed to giving the value of the weights)"""
 
+    def name(self):
+        return self.__class__.__name__
+
     @abc.abstractmethod
     def sample_mode(self, state, action, *args):
         """Sample from pi(x) mode distribution and return mode index 0 to K-1
