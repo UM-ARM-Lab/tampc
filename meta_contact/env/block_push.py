@@ -387,7 +387,7 @@ class PushAgainstWallEnv(PybulletEnv):
         return state[2:5]
 
     @staticmethod
-    def get_pusher_pos(state):
+    def get_pusher_pos(state, action=None):
         return state[0:2]
 
     @staticmethod
@@ -610,7 +610,7 @@ class PushAgainstWallEnv(PybulletEnv):
         self._dd.draw_text('user{}'.format(location_index), text, location_index, left_offset)
 
     # --- set current state
-    def set_state(self, state):
+    def set_state(self, state, action=None):
         assert state.shape[0] == self.nx
         prev_block_pose = p.getBasePositionAndOrientation(self.blockId)
         zb = prev_block_pose[0][2]
@@ -620,7 +620,7 @@ class PushAgainstWallEnv(PybulletEnv):
         p.resetBasePositionAndOrientation(self.blockId, (block_pose[0], block_pose[1], zb),
                                           p.getQuaternionFromEuler([0, 0, block_pose[2]]))
 
-        pusher_pos = self.get_pusher_pos(state)
+        pusher_pos = self.get_pusher_pos(state, action)
         p.resetBasePositionAndOrientation(self.pusherId, (pusher_pos[0], pusher_pos[1], _PUSHER_MID),
                                           p.getQuaternionFromEuler([0, 0, 0]))
         self.state = state
@@ -822,7 +822,7 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         return state[:3]
 
     @staticmethod
-    def get_pusher_pos(state):
+    def get_pusher_pos(state, action=None):
         along = state[3]
         pos = pusher_pos_for_touching(state[:2], state[2], from_center=DIST_FOR_JUST_TOUCHING, face=BlockFace.LEFT,
                                       along_face=along * _MAX_ALONG)
@@ -1100,6 +1100,13 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
     @staticmethod
     def state_names():
         return ['$x_b$ (m)', '$y_b$ (m)', '$\\theta$ (rads)', '$r_x$ (N)', '$r_y$ (N)']
+
+    @staticmethod
+    def get_pusher_pos(state, action=None):
+        along = 0 if action is None else action[0]
+        pos = pusher_pos_for_touching(state[:2], state[2], from_center=DIST_FOR_JUST_TOUCHING, face=BlockFace.LEFT,
+                                      along_face=along * _MAX_ALONG)
+        return pos
 
     @staticmethod
     @handle_data_format_for_state_diff
