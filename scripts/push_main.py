@@ -1660,12 +1660,11 @@ def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dy
     env.close()
 
 
-def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM,
+def test_local_model_sufficiency_for_escaping_wall(plot_model_eval=True, plot_online_update=False, use_gp=True,
+                                                   use_tsf=UseTransform.COORDINATE_TRANSFORM,
                                                    prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
     seed = 1
-    plot_model_eval = True
-    plot_online_update = False
-    use_gp = False
+
     d = get_device()
     if plot_model_eval:
         env = get_env(p.DIRECT)
@@ -1685,7 +1684,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
     # train_slice = slice(15, 55)
     # data from predetermined policy for getting into and out of bug trap
     ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
-    train_slice = slice(90, 135)
+    train_slice = slice(10, 45)
 
     # use same preprocessor
     ds_wall.update_preprocessor(preprocessor)
@@ -1701,13 +1700,15 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
                                               device=d, training_iter=150, use_independent_outputs=False)
 
     if plot_model_eval:
-        ds_test, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
+        # TODO use selector and plot the model selector's choices
+        ds_test, config = get_ds(env, ("pushing/predetermined_bug_trap.mat", "pushing/physical0.mat"),
+                                 validation_ratio=0.)
         ds_test.update_preprocessor(preprocessor)
-        test_slice = slice(0, 170)
+        test_slice = slice(0, 150)
 
         # visualize data and linear fit onto it
-        t = np.arange(test_slice.start, test_slice.stop)
         xu, y, info = (v[test_slice] for v in ds_test.training_set())
+        t = np.arange(test_slice.start, test_slice.stop)
         reaction_forces = info[:, :2]
         model_errors = info[:, 2:]
 
@@ -1765,7 +1766,7 @@ def test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINA
             xu, y, yhat_freespace, yhat_linear, yhat_linear_online, reaction_forces))
 
         axis_name = ['d{}'.format(name) for name in env.state_names()]
-        to_plot_y_dims = [0, 2, 4, 5]
+        to_plot_y_dims = [0, 2, 3, 4]
         num_plots = len(to_plot_y_dims) + 1  # additional reaction force magnitude
         if not use_gp:
             num_plots += 1  # weights for local model (marginalized likelihood of data)
@@ -2310,8 +2311,8 @@ if __name__ == "__main__":
     # Visualize.model_actions_at_givne_state()
     # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
 
-    evaluate_model_selector()
-    # test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
+    # evaluate_model_selector()
+    test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD,
     #               override=True)
