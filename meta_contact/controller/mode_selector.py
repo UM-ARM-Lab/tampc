@@ -118,13 +118,25 @@ class KDESelector(DistributionLikelihoodSelector):
 
 
 class GMMSelector(DistributionLikelihoodSelector):
-    def __init__(self, *args, mixture_components=5, **kwargs):
-        self.mixture_components = mixture_components
+    def __init__(self, *args, variational=False, gmm_opts=None, **kwargs):
+        self.opts = {'n_components': 5}
+        if gmm_opts:
+            self.opts.update(gmm_opts)
+        self.variational = variational
         super().__init__(*args, **kwargs)
+
+    def name(self):
+        name = super().name()
+        if self.variational:
+            name += ' variational'
+        return name
 
     def _estimate_density(self, ds):
         XU, _, _ = ds.training_set()
-        gmm = mixture.GaussianMixture(n_components=self.mixture_components, covariance_type='full')
+        if self.variational:
+            gmm = mixture.BayesianGaussianMixture(**self.opts)
+        else:
+            gmm = mixture.GaussianMixture(**self.opts)
         gmm.fit(XU.cpu().numpy())
         return gmm
 

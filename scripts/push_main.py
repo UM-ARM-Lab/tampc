@@ -2003,7 +2003,8 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     # selector = mode_selector.SklearnClassifierSelector(dss, KNeighborsClassifier(n_neighbors=3))
     # selector = mode_selector.SklearnClassifierSelector(dss, GaussianProcessClassifier( n_restarts_optimizer=5, random_state=0))
     # selector = mode_selector.SklearnClassifierSelector(dss, SVC(probability=True, gamma='auto'))
-    selector = mode_selector.GMMSelector(dss)
+    selector = mode_selector.GMMSelector(dss, gmm_opts={'n_components': 3})
+    # selector = mode_selector.GMMSelector(dss, gmm_opts={'n_components': 10}, variational=True)
 
     # get evaluation data by getting definite positive samples from the freespace dataset
     pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)
