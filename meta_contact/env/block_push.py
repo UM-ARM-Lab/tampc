@@ -600,7 +600,7 @@ class PushAgainstWallEnv(PybulletEnv):
     def _draw_state(self):
         self._dd.draw_2d_pose('state', self.get_block_pose(self.state))
 
-    def _draw_action(self, action):
+    def _draw_action(self, action, debug=0):
         pass
 
     def _draw_reaction_force(self, r, name, color=(1, 0, 1)):
@@ -942,13 +942,16 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         # disable collision since we're applying a force directly on the block (pusher is for visualization for now)
         p.setCollisionFilterPair(self.pusherId, self.blockId, -1, -1, 0)
 
-    def _draw_action(self, action):
+    def _draw_action(self, action, debug=0):
         old_state = self._obs()
         d_along, f_mag, f_dir = self._unpack_action(action)
         f_dir_world = f_dir + old_state[2]
         start = self._observe_pusher()
         pointer = math_utils.rotate_wrt_origin((f_mag / self.MAX_FORCE, 0), f_dir_world)
-        self._dd.draw_2d_line('u', start, pointer, (1, 0, 0), scale=0.4)
+        if debug:
+            self._dd.draw_2d_line('u{}'.format(debug), start, pointer, (1, debug / 10, debug / 10), scale=0.4)
+        else:
+            self._dd.draw_2d_line('u', start, pointer, (1, 0, 0), scale=0.4)
 
     def _obs(self):
         xb, yb, yaw = self._observe_block()
@@ -1154,12 +1157,17 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         # NOTE this is visualizing the reaction from the previous action, rather than the instantaneous reaction
         self._draw_reaction_force(self.state[3:5], 'sr', (0, 0, 0))
 
-    def _draw_action(self, action):
+    def _draw_action(self, action, debug=0):
         old_state = self._obs()
         push_along, push_dist, push_dir = self._unpack_action(action)
-        start = self._observe_pusher()
+        start = pusher_pos_for_touching(old_state[:2], old_state[2], from_center=DIST_FOR_JUST_TOUCHING, face=self.face,
+                                        along_face=push_along)
+        start = np.concatenate((start, (self.initPusherPos[2],)))
         pointer = math_utils.rotate_wrt_origin((push_dist, 0), push_dir + old_state[2])
-        self._dd.draw_2d_line('u', start, pointer, (1, 0, 0), scale=5)
+        if debug:
+            self._dd.draw_2d_line('u{}'.format(debug), start, pointer, (1, debug / 10, debug / 10), scale=5)
+        else:
+            self._dd.draw_2d_line('u', start, pointer, (1, 0, 0), scale=5)
 
     def _obs(self):
         state = np.concatenate((self._observe_block(), self._observe_reaction_force()))
