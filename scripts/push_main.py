@@ -2142,10 +2142,19 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     plt.show()
 
 
+class RolloutMethod:
+    NONE = 0
+    STATES = 1
+    ACTIONS = 2
+
+
 def evaluate_ctrl_sampler():
     seed = 1
-    env = get_env(p.GUI, level=1)
+    rollout_method = RolloutMethod.ACTIONS
+    disp_dim = [4]
+    eval_i = 30
 
+    env = get_env(p.GUI, level=1)
     logger.info("initial random seed %d", rand.seed(seed))
 
     dynamics, ds, ds_wall, _ = get_mixed_model(env)
@@ -2153,9 +2162,9 @@ def evaluate_ctrl_sampler():
     XU, Y, info = ds_wall.training_set(original=True)
     X, U = torch.split(XU, env.nx, dim=1)
 
-    i = 30
-    x = X[i].cpu().numpy()
-    u = U[i].cpu().numpy()
+    # TODO evaluate on a non-recovery dataset to see if rolling out the actions from the recovery set is helpful
+    x = X[eval_i].cpu().numpy()
+    u = U[eval_i].cpu().numpy()
     env.set_state(x, u)
 
     from sklearn.svm import SVC
@@ -2172,16 +2181,28 @@ def evaluate_ctrl_sampler():
     ctrl = online_controller.OnlineMPPI(dynamics, ds.original_config(), **common_wrapper_opts, mpc_opts=mpc_opts,
                                         mode_select=selector)
     ctrl.set_goal(env.goal)
+
+    # have to rollout previous states up to now beacuse controller is stateful
+    if rollout_method is RolloutMethod.ACTIONS:
+        ctrl_rollout_steps = min(eval_i, ctrl.mpc.T)
+        ctrl.mpc.U[:ctrl_rollout_steps] = U[eval_i - ctrl_rollout_steps:ctrl_rollout_steps]
+    elif rollout_method is RolloutMethod.STATES:
+        for ii in range(eval_i):
+            ctrl.command(X[ii].cpu().numpy())
     # use controller to sample next action
     u_best = ctrl.command(x)
     u_sample = ctrl.mpc.actions[:, 0, :].cpu().numpy()  # only consider the first step
     next_x = dynamics.predict(None, None, np.tile(x, (N, 1)), u_sample)
     var = dynamics.last_prediction.variance.detach().cpu().numpy()
 
-    # TODO visualize best actions in simulator
+    # visualize best actions in simulator
+    path_cost = ctrl.mpc.cost_total.cpu()
+    v, ind = path_cost.sort()
+    num_best_actions_to_show = 6
+    for top_k in range(num_best_actions_to_show):
+        env._draw_action(u_sample[ind[top_k]], debug=top_k + 1)
 
     names = env.state_names()
-    disp_dim = [ 4]
 
     # f, axes = plt.subplots(len(disp_dim), 1)
     # if len(disp_dim) is 1:
@@ -2197,7 +2218,7 @@ def evaluate_ctrl_sampler():
     if len(disp_dim) is 1:
         axes = [axes]
     for j, dim in enumerate(disp_dim):
-        axes[j].scatter(var[:, dim], ctrl.mpc.cost_total.cpu(), alpha=0.3, label='d{}'.format(names[dim]))
+        axes[j].scatter(var[:, dim], path_cost, alpha=0.3, label='d{}'.format(names[dim]))
         axes[j].set_ylabel('cost')
         axes[j].legend()
     axes[-1].set_xlabel('variance')
