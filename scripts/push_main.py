@@ -150,6 +150,92 @@ def get_preprocessor_for_invariant_tsf(invariant_tsf, evaluate_transform=True):
     return preprocessor
 
 
+class UseTransform:
+    NO_TRANSFORM = 0
+    COORDINATE_TRANSFORM = 1
+    PARAMETERIZED_1 = 2
+    PARAMETERIZED_2 = 3
+    PARAMETERIZED_3 = 4
+    PARAMETERIZED_4 = 5
+    PARAMETERIZED_3_BATCH = 6
+    PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER = 7
+    PARAMETERIZED_ABLATE_NO_V = 8
+    COORDINATE_LEARN_DYNAMICS_TRANSFORM = 9
+    WITH_COMPRESSION_AND_PARTITION = 10
+
+
+def get_transform(env, ds, use_tsf):
+    # add in invariant transform here
+    d = get_device()
+    transforms = {
+        UseTransform.NO_TRANSFORM: None,
+        UseTransform.COORDINATE_TRANSFORM: CoordTransform.factory(env, ds),
+        UseTransform.PARAMETERIZED_1: LearnedTransform.ParameterizedYawSelect(ds, d, too_far_for_neighbour=0.3,
+                                                                              name="_s2"),
+        UseTransform.PARAMETERIZED_2: LearnedTransform.LinearComboLatentInput(ds, d, too_far_for_neighbour=0.3,
+                                                                              name="rand_start_s9"),
+        UseTransform.PARAMETERIZED_3: LearnedTransform.ParameterizeDecoder(ds, d, too_far_for_neighbour=0.3,
+                                                                           name="_s9"),
+        UseTransform.PARAMETERIZED_4: LearnedTransform.ParameterizeDecoder(ds, d, too_far_for_neighbour=0.3,
+                                                                           name="sincos_s2", use_sincos_angle=True),
+        UseTransform.PARAMETERIZED_3_BATCH: LearnedTransform.ParameterizeDecoderBatch(ds, d, name="_s1"),
+        UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER: AblationOnTransform.RelaxEncoder(ds, d,
+                                                                                                         name="_s0"),
+        UseTransform.PARAMETERIZED_ABLATE_NO_V: AblationOnTransform.UseDecoderForDynamics(ds, d, name="_s3"),
+        UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM: LearnedTransform.GroundTruthWithCompression(ds, d,
+                                                                                                      name="_s0"),
+        UseTransform.WITH_COMPRESSION_AND_PARTITION: LearnedTransform.LearnedPartialPassthrough(ds, d, name="_s0"),
+    }
+    transform_names = {
+        UseTransform.NO_TRANSFORM: 'none',
+        UseTransform.COORDINATE_TRANSFORM: 'coord',
+        UseTransform.PARAMETERIZED_1: 'param1',
+        UseTransform.PARAMETERIZED_2: 'param2',
+        UseTransform.PARAMETERIZED_3: 'param3',
+        UseTransform.PARAMETERIZED_4: 'param4',
+        UseTransform.PARAMETERIZED_3_BATCH: 'param3_batch',
+        UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER: 'ablate_linear_relax_encoder',
+        UseTransform.PARAMETERIZED_ABLATE_NO_V: 'ablate_no_v',
+        UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM: 'coord_learn',
+        UseTransform.WITH_COMPRESSION_AND_PARTITION: 'compression + partition',
+    }
+    return transforms[use_tsf], transform_names[use_tsf]
+
+
+class OnlineAdapt:
+    NONE = 0
+    LINEARIZE_LIKELIHOOD = 1
+    GP_KERNEL = 2
+
+
+def get_mixed_model(env, use_tsf=UseTransform.COORDINATE_TRANSFORM,
+                    prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior, allow_update=False,
+                    d=get_device(), online_adapt=OnlineAdapt.GP_KERNEL):
+    ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
+    untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
+    pm = get_loaded_prior(prior_class, ds, tsf_name, False)
+
+    # data from predetermined policy for getting into and out of bug trap
+    ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
+    train_slice = slice(10, 45)
+
+    # use same preprocessor
+    ds_wall.update_preprocessor(preprocessor)
+
+    dynamics = pm.dyn_net
+    if online_adapt is OnlineAdapt.LINEARIZE_LIKELIHOOD:
+        dynamics = online_model.OnlineLinearizeMixing(0.0, pm, ds_wall, env.state_difference,
+                                                      local_mix_weight_scale=50, xu_characteristic_length=10,
+                                                      const_local_mix_weight=False, sigreg=1e-10,
+                                                      slice_to_use=train_slice, device=d)
+    elif online_adapt is OnlineAdapt.GP_KERNEL:
+        dynamics = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice,
+                                               allow_update=allow_update, sample=False,
+                                               refit_strategy=online_model.RefitGPStrategy.RESET_DATA,
+                                               device=d, training_iter=150, use_independent_outputs=False)
+    return dynamics, ds, ds_wall, train_slice
+
+
 def get_full_controller_name(pm, ctrl, tsf_name):
     name = pm.dyn_net.name if isinstance(pm, prior.NNPrior) else "{}_{}".format(tsf_name, pm.__class__.__name__)
     class_names = "{}".format(ctrl.__class__.__name__)
@@ -176,16 +262,11 @@ def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics):
     return pm
 
 
-class OnlineAdapt:
-    NONE = 0
-    LINEARIZE_LIKELIHOOD = 1
-    GP_KERNEL = 2
-
-
 def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.GP_KERNEL):
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     d = common_wrapper_opts['device']
     if online_adapt is not OnlineAdapt.NONE:
+        # TODO use get_mixed_model for getting mixed dynamics
         if online_adapt is OnlineAdapt.LINEARIZE_LIKELIHOOD:
             dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds, env.state_difference,
                                                           local_mix_weight_scale=50.0, xu_characteristic_length=10,
@@ -1496,58 +1577,6 @@ def test_online_model():
     plt.show()
 
 
-class UseTransform:
-    NO_TRANSFORM = 0
-    COORDINATE_TRANSFORM = 1
-    PARAMETERIZED_1 = 2
-    PARAMETERIZED_2 = 3
-    PARAMETERIZED_3 = 4
-    PARAMETERIZED_4 = 5
-    PARAMETERIZED_3_BATCH = 6
-    PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER = 7
-    PARAMETERIZED_ABLATE_NO_V = 8
-    COORDINATE_LEARN_DYNAMICS_TRANSFORM = 9
-    WITH_COMPRESSION_AND_PARTITION = 10
-
-
-def get_transform(env, ds, use_tsf):
-    # add in invariant transform here
-    d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    transforms = {
-        UseTransform.NO_TRANSFORM: None,
-        UseTransform.COORDINATE_TRANSFORM: CoordTransform.factory(env, ds),
-        UseTransform.PARAMETERIZED_1: LearnedTransform.ParameterizedYawSelect(ds, d, too_far_for_neighbour=0.3,
-                                                                              name="_s2"),
-        UseTransform.PARAMETERIZED_2: LearnedTransform.LinearComboLatentInput(ds, d, too_far_for_neighbour=0.3,
-                                                                              name="rand_start_s9"),
-        UseTransform.PARAMETERIZED_3: LearnedTransform.ParameterizeDecoder(ds, d, too_far_for_neighbour=0.3,
-                                                                           name="_s9"),
-        UseTransform.PARAMETERIZED_4: LearnedTransform.ParameterizeDecoder(ds, d, too_far_for_neighbour=0.3,
-                                                                           name="sincos_s2", use_sincos_angle=True),
-        UseTransform.PARAMETERIZED_3_BATCH: LearnedTransform.ParameterizeDecoderBatch(ds, d, name="_s1"),
-        UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER: AblationOnTransform.RelaxEncoder(ds, d,
-                                                                                                         name="_s0"),
-        UseTransform.PARAMETERIZED_ABLATE_NO_V: AblationOnTransform.UseDecoderForDynamics(ds, d, name="_s3"),
-        UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM: LearnedTransform.GroundTruthWithCompression(ds, d,
-                                                                                                      name="_s0"),
-        UseTransform.WITH_COMPRESSION_AND_PARTITION: LearnedTransform.LearnedPartialPassthrough(ds, d, name="_s0"),
-    }
-    transform_names = {
-        UseTransform.NO_TRANSFORM: 'none',
-        UseTransform.COORDINATE_TRANSFORM: 'coord',
-        UseTransform.PARAMETERIZED_1: 'param1',
-        UseTransform.PARAMETERIZED_2: 'param2',
-        UseTransform.PARAMETERIZED_3: 'param3',
-        UseTransform.PARAMETERIZED_4: 'param4',
-        UseTransform.PARAMETERIZED_3_BATCH: 'param3_batch',
-        UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER: 'ablate_linear_relax_encoder',
-        UseTransform.PARAMETERIZED_ABLATE_NO_V: 'ablate_no_v',
-        UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM: 'coord_learn',
-        UseTransform.WITH_COMPRESSION_AND_PARTITION: 'compression + partition',
-    }
-    return transforms[use_tsf], transform_names[use_tsf]
-
-
 def update_ds_with_transform(env, ds, use_tsf, **kwargs):
     invariant_tsf, tsf_name = get_transform(env, ds, use_tsf)
 
@@ -1673,37 +1702,17 @@ def test_local_model_sufficiency_for_escaping_wall(plot_model_eval=True, plot_on
 
     logger.info("initial random seed %d", rand.seed(seed))
 
-    ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
-    untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
-    pm = get_loaded_prior(prior_class, ds, tsf_name, False)
+    dynamics, _, _, _ = get_mixed_model(env, use_tsf=use_tsf, prior_class=prior_class,
+                                        online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD, allow_update=plot_online_update)
+    dynamics_gp, ds, ds_wall, train_slice = get_mixed_model(env, use_tsf=use_tsf, prior_class=prior_class,
+                                                            allow_update=plot_online_update)
 
-    # use data of transition out of bug trap rather than just inside the bug trap
-    # get some data when we're next to a wall and use it fit a local model
-    # data from previous policy that got out of bug trap
-    # ds_wall, config = get_ds(env, "pushing/push_recovery_global.mat", validation_ratio=0.)
-    # train_slice = slice(15, 55)
-    # data from predetermined policy for getting into and out of bug trap
-    ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
-    train_slice = slice(10, 45)
-
-    # use same preprocessor
-    ds_wall.update_preprocessor(preprocessor)
-
-    # don't use all of the data; use just the part that's stuck against a wall?
-    dynamics = online_model.OnlineLinearizeMixing(0.0, pm, ds_wall, env.state_difference,
-                                                  local_mix_weight_scale=50, xu_characteristic_length=10,
-                                                  const_local_mix_weight=False, sigreg=1e-10,
-                                                  slice_to_use=train_slice, device=d)
-    dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice,
-                                              allow_update=plot_online_update, sample=False,
-                                              refit_strategy=online_model.RefitGPStrategy.RESET_DATA,
-                                              device=d, training_iter=150, use_independent_outputs=False)
-
+    pm = dynamics_gp.prior
     if plot_model_eval:
         # TODO use selector and plot the model selector's choices
         ds_test, config = get_ds(env, ("pushing/predetermined_bug_trap.mat", "pushing/physical0.mat"),
                                  validation_ratio=0.)
-        ds_test.update_preprocessor(preprocessor)
+        ds_test.update_preprocessor(ds.preprocessor)
         test_slice = slice(0, 150)
 
         # visualize data and linear fit onto it
@@ -1839,9 +1848,10 @@ def test_local_model_sufficiency_for_escaping_wall(plot_model_eval=True, plot_on
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     common_wrapper_opts['adjust_model_pred_with_prev_error'] = False
-    ctrl = online_controller.OnlineMPPI(dynamics_gp if use_gp else dynamics, untransformed_config,
+    ctrl = online_controller.OnlineMPPI(dynamics_gp if use_gp else dynamics, ds.original_config(),
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
 
+    _, tsf_name = get_transform(env, ds, use_tsf)
     name = get_full_controller_name(pm, ctrl, tsf_name)
 
     env.draw_user_text(name, 14, left_offset=-1.5)
@@ -2254,29 +2264,13 @@ class Visualize:
         plt.show()
 
     @staticmethod
-    def model_actions_at_givne_state():
+    def model_actions_at_given_state():
         seed = 1
-        d = get_device()
         env = get_env(p.GUI, level=1)
 
         logger.info("initial random seed %d", rand.seed(seed))
 
-        # TODO encapsulate getting loaded online model in a separate function
-        ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
-        untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds,
-                                                                                UseTransform.COORDINATE_TRANSFORM,
-                                                                                evaluate_transform=False)
-        pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)
-
-        ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
-        train_slice = slice(90, 135)
-
-        # use same preprocessor
-        ds_wall.update_preprocessor(preprocessor)
-        dynamics_gp = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice,
-                                                  allow_update=False, sample=True,
-                                                  refit_strategy=online_model.RefitGPStrategy.RESET_DATA,
-                                                  device=d, training_iter=150, use_independent_outputs=False)
+        dynamics_gp, ds, ds_wall, _ = get_mixed_model(env)
 
         XU, Y, info = ds_wall.training_set(original=True)
         X, U = torch.split(XU, env.nx, dim=1)
