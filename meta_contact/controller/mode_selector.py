@@ -166,4 +166,4 @@ class SklearnClassifierSelector(DataProbSelector):
         self.weights = self.classifier.predict_proba(xu).T
         self.relative_weights = self.weights
 
-# TODO implement learned classifier selectors
+# TODO implement NN classifier in torch

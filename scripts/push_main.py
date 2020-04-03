@@ -1984,7 +1984,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
 
 def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     plot_definite_negatives = False
-    num_pos_samples = 100  # start with balanced data
+    num_pos_samples = 5000  # start with balanced data
 
     _, env, _, ds = get_free_space_env_init()
     _, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
@@ -1996,6 +1996,7 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     from sklearn.neighbors import KNeighborsClassifier
     from sklearn.gaussian_process import GaussianProcessClassifier
     from sklearn.svm import SVC
+    from sklearn.neural_network import MLPClassifier
 
     dss = [ds, ds_recovery]
     # selector = mode_selector.ReactionForceHeuristicSelector(16, slice(env.nx - 2, None))
@@ -2003,7 +2004,8 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     # selector = mode_selector.SklearnClassifierSelector(dss, KNeighborsClassifier(n_neighbors=3))
     # selector = mode_selector.SklearnClassifierSelector(dss, GaussianProcessClassifier( n_restarts_optimizer=5, random_state=0))
     # selector = mode_selector.SklearnClassifierSelector(dss, SVC(probability=True, gamma='auto'))
-    selector = mode_selector.GMMSelector(dss, gmm_opts={'n_components': 3})
+    selector = mode_selector.SklearnClassifierSelector(dss, MLPClassifier())
+    # selector = mode_selector.GMMSelector(dss, gmm_opts={'n_components': 3})
     # selector = mode_selector.GMMSelector(dss, gmm_opts={'n_components': 10}, variational=True)
 
     # get evaluation data by getting definite positive samples from the freespace dataset
