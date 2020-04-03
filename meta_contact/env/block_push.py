@@ -600,6 +600,9 @@ class PushAgainstWallEnv(PybulletEnv):
     def _draw_state(self):
         self._dd.draw_2d_pose('state', self.get_block_pose(self.state))
 
+    def _draw_action(self, action):
+        pass
+
     def _draw_reaction_force(self, r, name, color=(1, 0, 1)):
         start = self._observe_pusher()
         self._dd.draw_2d_line(name, start, r, size=np.linalg.norm(r), scale=0.03, color=color)
@@ -625,6 +628,7 @@ class PushAgainstWallEnv(PybulletEnv):
                                           p.getQuaternionFromEuler([0, 0, 0]))
         self.state = state
         self._draw_state()
+        self._draw_action(action)
 
     # --- observing state from simulation
     def _obs(self):
@@ -938,7 +942,10 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         # disable collision since we're applying a force directly on the block (pusher is for visualization for now)
         p.setCollisionFilterPair(self.pusherId, self.blockId, -1, -1, 0)
 
-    def _draw_action(self, f_mag, f_dir_world):
+    def _draw_action(self, action):
+        old_state = self._obs()
+        d_along, f_mag, f_dir = self._unpack_action(action)
+        f_dir_world = f_dir + old_state[2]
         start = self._observe_pusher()
         pointer = math_utils.rotate_wrt_origin((f_mag / self.MAX_FORCE, 0), f_dir_world)
         self._dd.draw_2d_line('u', start, pointer, (1, 0, 0), scale=0.4)
@@ -989,8 +996,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         eePos = np.concatenate((pos, (z,)))
         self._move_pusher(eePos)
 
-    def step(self, action):
-        old_state = self._obs()
+    def _unpack_action(self, action):
         # normalize action such that the input can be within a fixed range
         # first action is difference in along
         d_along = action[0] * self.MAX_SLIDE
@@ -998,8 +1004,14 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         f_mag = max(0, action[1] * self.MAX_FORCE)
         # third option is push angle (0 being perpendicular to face)
         f_dir = np.clip(action[2], -1, 1) * self.MAX_PUSH_ANGLE
+        return d_along, f_mag, f_dir
+
+    def step(self, action):
+        old_state = self._obs()
         if self._debug_visualizations[DebugVisualization.ACTION]:
-            self._draw_action(f_mag, f_dir + old_state[2])
+            self._draw_action(action)
+
+        d_along, f_mag, f_dir = self._unpack_action(action)
 
         # execute action
         ft = math.sin(f_dir) * f_mag
@@ -1142,9 +1154,11 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         # NOTE this is visualizing the reaction from the previous action, rather than the instantaneous reaction
         self._draw_reaction_force(self.state[3:5], 'sr', (0, 0, 0))
 
-    def _draw_action(self, push_dist, push_dir_world):
+    def _draw_action(self, action):
+        old_state = self._obs()
+        push_along, push_dist, push_dir = self._unpack_action(action)
         start = self._observe_pusher()
-        pointer = math_utils.rotate_wrt_origin((push_dist, 0), push_dir_world)
+        pointer = math_utils.rotate_wrt_origin((push_dist, 0), push_dir + old_state[2])
         self._dd.draw_2d_line('u', start, pointer, (1, 0, 0), scale=5)
 
     def _obs(self):
@@ -1168,15 +1182,17 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
 
         self._observe_raw_reaction_force(info, reaction_force, visualize)
 
+    def _unpack_action(self, action):
+        push_along = action[0] * (_MAX_ALONG * 0.98)  # avoid corner to avoid leaving contact
+        push_dist = action[1] * self.MAX_PUSH_DIST
+        push_dir = action[2] * self.MAX_PUSH_ANGLE
+        return push_along, push_dist, push_dir
+
     def step(self, action):
         action = np.clip(action, *self.get_control_bounds())
         # normalize action such that the input can be within a fixed range
-        physical_push = self._get_physical_push_from_action(action)
-        push_along = physical_push[0] * (_MAX_ALONG * 0.98)  # avoid corner to avoid leaving contact
-        push_dist = physical_push[1] * self.MAX_PUSH_DIST
-        push_dir = physical_push[2] * self.MAX_PUSH_ANGLE
-
         old_state = self._obs()
+        push_along, push_dist, push_dir = self._unpack_action(action)
 
         pos = pusher_pos_for_touching(old_state[:2], old_state[2], from_center=DIST_FOR_JUST_TOUCHING, face=self.face,
                                       along_face=push_along)
@@ -1189,7 +1205,7 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         p.resetBasePositionAndOrientation(self.pusherId, start_ee_pos, p.getQuaternionFromEuler([0, 0, 0]))
 
         if self._debug_visualizations[DebugVisualization.ACTION]:
-            self._draw_action(push_dist, push_dir + old_state[2])
+            self._draw_action(action)
 
         dx = np.cos(push_dir) * push_dist
         dy = np.sin(push_dir) * push_dist
@@ -1206,29 +1222,6 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         cost, done, info = self._finish_action(old_state, action)
 
         return np.copy(self.state), -cost, done, info
-
-    def _get_physical_push_from_action(self, action):
-        return action
-
-
-class FixedPushDistPhysicalEnv(PushPhysicallyAnyAlongEnv):
-    """
-    Same as before, but simplified such that push dist is always max
-    """
-    nu = 2
-
-    @staticmethod
-    def control_names():
-        return ['$p$', '$\\beta$ push angle (wrt normal)']
-
-    @staticmethod
-    def get_control_bounds():
-        u_min = np.array([-1, -1])
-        u_max = np.array([1, 1])
-        return u_min, u_max
-
-    def _get_physical_push_from_action(self, action):
-        return action[0], 1, action[1]
 
 
 def interpolate_pos(start, end, t):
@@ -1442,8 +1435,7 @@ class PushDataSource(datasource.FileDataSource):
                   PushAgainstWallStickyEnv: PushLoaderRestricted,
                   PushWithForceDirectlyEnv: PushLoaderRestricted,
                   PushWithForceDirectlyReactionInStateEnv: PushLoaderWithReaction,
-                  PushPhysicallyAnyAlongEnv: PushLoaderPhysicalPusherWithReaction,
-                  FixedPushDistPhysicalEnv: PushLoaderPhysicalPusherWithReaction}
+                  PushPhysicallyAnyAlongEnv: PushLoaderPhysicalPusherWithReaction, }
 
     def __init__(self, env, data_dir='pushing', **kwargs):
         loader_class = self.loader_map.get(type(env), None)
