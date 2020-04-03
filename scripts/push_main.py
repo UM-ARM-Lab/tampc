@@ -2185,7 +2185,8 @@ def evaluate_ctrl_sampler():
     # have to rollout previous states up to now beacuse controller is stateful
     if rollout_method is RolloutMethod.ACTIONS:
         ctrl_rollout_steps = min(eval_i, ctrl.mpc.T)
-        ctrl.mpc.U[:ctrl_rollout_steps] = U[eval_i - ctrl_rollout_steps:ctrl_rollout_steps]
+        # need to reverse because the stored U is reverse chronological
+        ctrl.mpc.U[:ctrl_rollout_steps] = U[eval_i - ctrl_rollout_steps:ctrl_rollout_steps].flip(0)
     elif rollout_method is RolloutMethod.STATES:
         for ii in range(eval_i):
             ctrl.command(X[ii].cpu().numpy())
