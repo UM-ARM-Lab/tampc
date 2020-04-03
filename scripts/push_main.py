@@ -5,6 +5,7 @@ import os
 import pickle
 
 import matplotlib.pyplot as plt
+import seaborn as sns
 import numpy as np
 import pybullet as p
 import torch
@@ -478,8 +479,7 @@ class CoordTransform:
         tsfs = {block_push.PushAgainstWallStickyEnv: CoordTransform.StickyEnv,
                 block_push.PushWithForceDirectlyEnv: CoordTransform.Direct,
                 block_push.PushWithForceDirectlyReactionInStateEnv: CoordTransform.ReactionInState,
-                block_push.PushPhysicallyAnyAlongEnv: CoordTransform.Physical,
-                block_push.FixedPushDistPhysicalEnv: CoordTransform.Physical}
+                block_push.PushPhysicallyAnyAlongEnv: CoordTransform.Physical, }
         tsf_type = tsfs.get(type(env), None)
         if tsf_type is None:
             raise RuntimeError("No tsf specified for env type {}".format(type(env)))
@@ -1694,7 +1694,6 @@ def test_local_model_sufficiency_for_escaping_wall(plot_model_eval=True, plot_on
                                                    prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
     seed = 1
 
-    d = get_device()
     if plot_model_eval:
         env = get_env(p.DIRECT)
     else:
@@ -2143,6 +2142,71 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     plt.show()
 
 
+def evaluate_ctrl_sampler():
+    seed = 1
+    env = get_env(p.GUI, level=1)
+
+    logger.info("initial random seed %d", rand.seed(seed))
+
+    dynamics, ds, ds_wall, _ = get_mixed_model(env)
+
+    XU, Y, info = ds_wall.training_set(original=True)
+    X, U = torch.split(XU, env.nx, dim=1)
+
+    i = 30
+    x = X[i].cpu().numpy()
+    u = U[i].cpu().numpy()
+    env.set_state(x, u)
+
+    from sklearn.svm import SVC
+
+    dss = [ds, ds_wall]
+    # selector = mode_selector.ReactionForceHeuristicSelector(16, slice(env.nx - 2, None))
+    # selector = mode_selector.KDESelector(dss, [1, 0.2])
+    selector = mode_selector.SklearnClassifierSelector(dss, SVC(probability=True, gamma='auto'))
+
+    common_wrapper_opts, mpc_opts = get_controller_options(env)
+    N = 1000
+    mpc_opts['num_samples'] = N
+    mpc_opts['lambda_'] = 1
+    ctrl = online_controller.OnlineMPPI(dynamics, ds.original_config(), **common_wrapper_opts, mpc_opts=mpc_opts,
+                                        mode_select=selector)
+    ctrl.set_goal(env.goal)
+    # use controller to sample next action
+    u_best = ctrl.command(x)
+    u_sample = ctrl.mpc.actions[:, 0, :].cpu().numpy()  # only consider the first step
+    next_x = dynamics.predict(None, None, np.tile(x, (N, 1)), u_sample)
+    var = dynamics.last_prediction.variance.detach().cpu().numpy()
+
+    # TODO visualize best actions in simulator
+
+    names = env.state_names()
+    disp_dim = [ 4]
+
+    # f, axes = plt.subplots(len(disp_dim), 1)
+    # if len(disp_dim) is 1:
+    #     axes = [axes]
+    # for j, dim in enumerate(disp_dim):
+    #     sns.distplot(var[:, dim], ax=axes[j])
+    #     axes[j].set_ylabel('d{}'.format(names[dim]))
+    # axes[-1].set_xlabel('variance')
+    # f.suptitle('distribution variance in sampled actions')
+    # f.tight_layout()
+
+    f, axes = plt.subplots(len(disp_dim), 1)
+    if len(disp_dim) is 1:
+        axes = [axes]
+    for j, dim in enumerate(disp_dim):
+        axes[j].scatter(var[:, dim], ctrl.mpc.cost_total.cpu(), alpha=0.3, label='d{}'.format(names[dim]))
+        axes[j].set_ylabel('cost')
+        axes[j].legend()
+    axes[-1].set_xlabel('variance')
+    f.suptitle('trajectory cost vs variance in sampled actions')
+    f.tight_layout()
+    plt.show()
+    input('do visualization')
+
+
 class Learn:
     @staticmethod
     def invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
@@ -2169,7 +2233,7 @@ class Visualize:
 
     @staticmethod
     def _dataset_training_dist(env, ds, z_names=None, v_names=None, fs=(None, None, None), axes=(None, None, None)):
-        import seaborn as sns
+
         plt.ioff()
 
         XU, Y, _ = ds.training_set()
@@ -2306,7 +2370,8 @@ if __name__ == "__main__":
     # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
 
     # evaluate_model_selector()
-    test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
+    evaluate_ctrl_sampler()
+    # test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD,
     #               override=True)

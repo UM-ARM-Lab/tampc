@@ -104,11 +104,11 @@ class OnlineMPPI(OnlineMPC, controller.MPPI):
         # TODO move variance usage in biasing control sampling rather than as a loss function
         opts = super()._mpc_opts()
         # use variance cost if possible (when not sampling)
-        if isinstance(self.dynamics, online_model.OnlineGPMixing) and self.dynamics.sample_dynamics is False:
-            q = 10000
-            self.Q_variance = torch.diag(torch.tensor([q, q, q, q, 0, 0], device=self.d, dtype=self.dtype))
-            opts['dynamics_variance'] = self._dynamics_variance
-            opts['running_cost_variance'] = self._running_cost_variance
+        # if isinstance(self.dynamics, online_model.OnlineGPMixing) and self.dynamics.sample_dynamics is False:
+        #     q = 10000
+        #     self.Q_variance = torch.diag(torch.tensor([q, q, q, q, 0, 0], device=self.d, dtype=self.dtype))
+        #     opts['dynamics_variance'] = self._dynamics_variance
+        #     opts['running_cost_variance'] = self._running_cost_variance
         return opts
 
     def _dynamics_variance(self, next_state):
