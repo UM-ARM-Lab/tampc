@@ -1353,7 +1353,7 @@ class InteractivePush(simulation.Simulation):
         # mark the end of the trajectory (the last time is not valid)
         mask = np.ones(X.shape[0], dtype=int)
         # need to also throw out first step if predicting reaction force since there's no previous state
-        if isinstance(self.env, PushWithForceDirectlyReactionInStateEnv):
+        if isinstance(self.env, (PushWithForceDirectlyReactionInStateEnv, PushPhysicallyAnyAlongEnv)):
             mask[0] = 0
         mask[-1] = 0
         u_norm = np.linalg.norm(self.u, axis=1)
