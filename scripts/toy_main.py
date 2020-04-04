@@ -9,13 +9,13 @@ from arm_pytorch_utilities import preprocess
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.model import make
 from meta_contact import cfg
-from meta_contact import invariant
+from meta_contact.transform import invariant
 from meta_contact.dynamics import online_model, model, prior
 from meta_contact.controller import controller
 from meta_contact.controller import online_controller
 from meta_contact.env import myenv
 from meta_contact.env import toy
-from meta_contact.invariant import InvariantTransform
+from meta_contact.transform.invariant import InvariantTransform
 from sklearn.preprocessing import PolynomialFeatures
 from torch.nn.functional import cosine_similarity
 
