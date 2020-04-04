@@ -338,7 +338,7 @@ class OfflineDataCollection:
         elif env_type in (block_push.PushAgainstWallStickyEnv, block_push.PushWithForceDirectlyEnv,
                           block_push.PushWithForceDirectlyReactionInStateEnv):
             init_pusher = np.random.uniform(-1, 1)
-        elif env_type in (block_push.PushPhysicallyAnyAlongEnv, block_push.FixedPushDistPhysicalEnv):
+        elif env_type in (block_push.PushPhysicallyAnyAlongEnv,):
             init_pusher = 0
         else:
             raise RuntimeError("Unrecognized env type")
@@ -1410,7 +1410,7 @@ class Visualize:
 
 if __name__ == "__main__":
     level = 0
-    # OfflineDataCollection.freespace(trials=200, trial_length=50, level=0)
+    OfflineDataCollection.freespace(trials=200, trial_length=50, level=0)
     # OfflineDataCollection.push_against_wall_recovery()
     # OfflineDataCollection.model_selector_evaluation()
     # Visualize.dist_diff_nominal_and_bug_trap()
@@ -1430,5 +1430,5 @@ if __name__ == "__main__":
     # test_online_model()
     # for seed in range(1):
     #     Learn.invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
-    for seed in range(1):
-        Learn.model(UseTransform.COORDINATE_TRANSFORM, seed=seed, name="physical r in body")
+    # for seed in range(1):
+    #     Learn.model(UseTransform.COORDINATE_TRANSFORM, seed=seed, name="physical r in body")
