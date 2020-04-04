@@ -1854,7 +1854,7 @@ def test_local_model_sufficiency_for_escaping_wall(plot_model_eval=True, plot_on
     name = get_full_controller_name(pm, ctrl, tsf_name)
 
     env.draw_user_text(name, 14, left_offset=-1.5)
-    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=True, stop_when_done=False)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=100, plot=False, save=True, stop_when_done=False)
     seed = rand.seed()
     sim.run(seed, 'test_sufficiency{}'.format(seed))
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
@@ -2146,23 +2146,30 @@ class RolloutMethod:
     NONE = 0
     STATES = 1
     ACTIONS = 2
+    ORIG_ACTIONS = 3
 
 
 def evaluate_ctrl_sampler():
     seed = 1
     rollout_method = RolloutMethod.ACTIONS
     disp_dim = [4]
-    eval_i = 30
+    eval_i = 59
+    train_i = 29
 
     env = get_env(p.GUI, level=1)
     logger.info("initial random seed %d", rand.seed(seed))
 
     dynamics, ds, ds_wall, _ = get_mixed_model(env)
+    ds_eval, _ = get_ds(env, 'pushing/test_sufficiency140891.mat', validation_ratio=0.)
+    ds_eval.update_preprocessor(ds.preprocessor)
 
     XU, Y, info = ds_wall.training_set(original=True)
+    X_train, U_train = torch.split(XU, env.nx, dim=1)
+
+    # evaluate on a non-recovery dataset to see if rolling out the actions from the recovery set is helpful
+    XU, Y, info = ds_eval.training_set(original=True)
     X, U = torch.split(XU, env.nx, dim=1)
 
-    # TODO evaluate on a non-recovery dataset to see if rolling out the actions from the recovery set is helpful
     x = X[eval_i].cpu().numpy()
     u = U[eval_i].cpu().numpy()
     env.set_state(x, u)
@@ -2184,12 +2191,16 @@ def evaluate_ctrl_sampler():
 
     # have to rollout previous states up to now beacuse controller is stateful
     if rollout_method is RolloutMethod.ACTIONS:
-        ctrl_rollout_steps = min(eval_i, ctrl.mpc.T)
+        ctrl_rollout_steps = min(train_i, ctrl.mpc.T)
         # need to reverse because the stored U is reverse chronological
-        ctrl.mpc.U[:ctrl_rollout_steps] = U[eval_i - ctrl_rollout_steps:ctrl_rollout_steps].flip(0)
+        ctrl.mpc.U[:ctrl_rollout_steps] = U_train[train_i - ctrl_rollout_steps:train_i].flip(0)
     elif rollout_method is RolloutMethod.STATES:
-        for ii in range(eval_i):
-            ctrl.command(X[ii].cpu().numpy())
+        for ii in range(train_i):
+            ctrl.command(X_train[ii].cpu().numpy())
+    elif rollout_method is RolloutMethod.ORIG_ACTIONS:
+        ctrl_rollout_steps = min(eval_i, ctrl.mpc.T)
+        ctrl.mpc.U[:ctrl_rollout_steps] = U[eval_i - ctrl_rollout_steps:eval_i].flip(0)
+
     # use controller to sample next action
     u_best = ctrl.command(x)
     u_sample = ctrl.mpc.actions[:, 0, :].cpu().numpy()  # only consider the first step
@@ -2393,7 +2404,7 @@ if __name__ == "__main__":
 
     # evaluate_model_selector()
     evaluate_ctrl_sampler()
-    # test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTransform.COORDINATE_TRANSFORM)
+    # test_local_model_sufficiency_for_escaping_wall(plot_model_eval=False, use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD,
     #               override=True)
