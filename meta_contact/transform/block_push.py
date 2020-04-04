@@ -1,6 +1,6 @@
 import torch.nn
 import torch
-from arm_pytorch_utilities import math_utils, load_data, linalg
+from arm_pytorch_utilities import math_utils, load_data, linalg, tensor_utils
 from arm_pytorch_utilities.model import make
 from meta_contact.dynamics import model
 from meta_contact.env import block_push
@@ -71,20 +71,15 @@ class CoordTransform:
         def get_v(self, x, dx, z):
             return self.dx_to_v(x, dx)
 
+        @tensor_utils.ensure_2d_input
         def xu_to_z(self, state, action):
-            if len(state.shape) < 2:
-                state = state.reshape(1, -1)
-                action = action.reshape(1, -1)
-
             # (along, d_along, push magnitude, push direction)
             z = torch.cat((state[:, 3].view(-1, 1), action), dim=1)
             z = self._add_passthrough_states(z, state)
             return z
 
+        @tensor_utils.ensure_2d_input
         def dx_to_v(self, x, dx):
-            if len(x.shape) == 1:
-                x = x.view(1, -1)
-                dx = dx.view(1, -1)
             # convert world frame to body frame
             dpos_body = math_utils.batch_rotate_wrt_origin(dx[:, :2], -x[:, 2])
             # second last element is dyaw, which also gets passed along directly
@@ -95,10 +90,8 @@ class CoordTransform:
             v = self._add_passthrough_states(v, dx)
             return v
 
+        @tensor_utils.ensure_2d_input
         def get_dx(self, x, v):
-            if len(x.shape) == 1:
-                x = x.view(1, -1)
-                v = v.view(1, -1)
             # convert (dx, dy) from body frame back to world frame
             dpos_world = math_utils.batch_rotate_wrt_origin(v[:, :2], x[:, 2])
             # second last element is dyaw, which also gets passed along directly
@@ -144,11 +137,8 @@ class CoordTransform:
         def __init__(self, ds, **kwargs):
             super().__init__(ds, 5, **kwargs)
 
+        @tensor_utils.ensure_2d_input
         def xu_to_z(self, state, action):
-            if len(state.shape) < 2:
-                state = state.reshape(1, -1)
-                action = action.reshape(1, -1)
-
             # NOTE we could just as well make the model work for free-space if we rotate reaction force to be in body frame
             # but then it wouldn't work for pushing against a wall since it's no longer rotationally invariant
             # additionally need theta in z to estimate reaction force direction
@@ -161,19 +151,14 @@ class CoordTransform:
         def __init__(self, ds, **kwargs):
             super().__init__(ds, ds.config.nu + 1, nv=3, reaction_force_start_index=3, **kwargs)
 
+        @tensor_utils.ensure_2d_input
         def xu_to_z(self, state, action):
-            if len(state.shape) < 2:
-                state = state.reshape(1, -1)
-                action = action.reshape(1, -1)
-
             z = torch.cat((state[:, 2].view(-1, 1), action), dim=1)
             z = self._add_passthrough_states(z, state)
             return z
 
+        @tensor_utils.ensure_2d_input
         def dx_to_v(self, x, dx):
-            if len(x.shape) == 1:
-                x = x.view(1, -1)
-                dx = dx.view(1, -1)
             # convert world frame to body frame
             dpos_body = math_utils.batch_rotate_wrt_origin(dx[:, :2], -x[:, 2])
             # second last element is dyaw, which also gets passed along directly
@@ -182,10 +167,8 @@ class CoordTransform:
             v = self._add_passthrough_states(v, dx)
             return v
 
+        @tensor_utils.ensure_2d_input
         def get_dx(self, x, v):
-            if len(x.shape) == 1:
-                x = x.view(1, -1)
-                v = v.view(1, -1)
             # convert (dx, dy) from body frame back to world frame
             dpos_world = math_utils.batch_rotate_wrt_origin(v[:, :2], x[:, 2])
             # second last element is dyaw, which also gets passed along directly
@@ -257,11 +240,8 @@ class LearnedTransform:
             B = z.shape[0]
             return self.linear_model_producer.sample(z).view(B, self.nv, self.nz)
 
+        @tensor_utils.ensure_2d_input
         def xu_to_z(self, state, action):
-            if len(state.shape) < 2:
-                state = state.reshape(1, -1)
-                action = action.reshape(1, -1)
-
             # (along, d_along, push magnitude)
             z = torch.cat((state[:, -1].view(-1, 1), action), dim=1)
             return z
@@ -269,11 +249,8 @@ class LearnedTransform:
         def dx_to_v(self, x, dx):
             raise RuntimeError("Shouldn't have to convert from dx to v")
 
+        @tensor_utils.ensure_2d_input
         def get_dx(self, x, v):
-            if len(x.shape) == 1:
-                x = x.view(1, -1)
-                v = v.view(1, -1)
-
             # choose which component of x to take as rotation (should select just theta)
             yaw = self.yaw_selector(x)
 
@@ -333,11 +310,8 @@ class LearnedTransform:
         def _name_prefix(self):
             return "z_select"
 
+        @tensor_utils.ensure_2d_input
         def xu_to_z(self, state, action):
-            if len(state.shape) < 2:
-                state = state.reshape(1, -1)
-                action = action.reshape(1, -1)
-
             # more general parameterized versions where we select which components to take
             xu = torch.cat((state, action), dim=1)
             z = self.z_selector(xu)
@@ -390,11 +364,8 @@ class LearnedTransform:
             B = z.shape[0]
             return self.linear_model_producer.sample(z).view(B, self.nv, self.nz)
 
+        @tensor_utils.ensure_2d_input
         def get_dx(self, x, v):
-            if len(x.shape) == 1:
-                x = x.view(1, -1)
-                v = v.view(1, -1)
-
             # make state-dependent linear transforms (matrices) that multiply v to get dx
             B, nx = x.shape
             if self.use_sincos_angle:
@@ -427,11 +398,8 @@ class LearnedTransform:
         def _name_prefix(self):
             return 'linear_relax_encoder'
 
+        @tensor_utils.ensure_2d_input
         def xu_to_z(self, state, action):
-            if len(state.shape) < 2:
-                state = state.reshape(1, -1)
-                action = action.reshape(1, -1)
-
             xu = torch.cat((state, action), dim=1)
             z = self.encoder.sample(xu)
             return z
@@ -547,11 +515,8 @@ class LearnedTransform:
             super()._load_model_state_dict(saved_state_dict)
             self.partial_decoder.model.load_state_dict(saved_state_dict['pd'])
 
+        @tensor_utils.ensure_2d_input
         def get_dx(self, x, v):
-            if len(x.shape) == 1:
-                x = x.view(1, -1)
-                v = v.view(1, -1)
-
             B, nx = x.shape
             angle_index = 2
             s = torch.sin(x[:, angle_index]).view(-1, 1)
@@ -613,11 +578,8 @@ class LearnedTransform:
             self.partial_decoder.model.load_state_dict(saved_state_dict['pd'])
             self.x_extractor.load_state_dict(saved_state_dict['extract'])
 
+        @tensor_utils.ensure_2d_input
         def get_dx(self, x, v):
-            if len(x.shape) == 1:
-                x = x.view(1, -1)
-                v = v.view(1, -1)
-
             B, nx = x.shape
             extracted_from_x = self.x_extractor(x)
             linear_tsf = self.partial_decoder.sample(extracted_from_x).view(B, nx, self.nv)
@@ -630,20 +592,14 @@ class LearnedTransform:
         def _name_prefix(self):
             return 'ground_truth'
 
+        @tensor_utils.ensure_2d_input
         def xu_to_z(self, state, action):
-            if len(state.shape) < 2:
-                state = state.reshape(1, -1)
-                action = action.reshape(1, -1)
-
             # (along, d_along, push magnitude)
             z = torch.cat((state[:, 3].view(-1, 1), action), dim=1)
             return z
 
+        @tensor_utils.ensure_2d_input
         def get_dx(self, x, v):
-            if len(x.shape) == 1:
-                x = x.view(1, -1)
-                v = v.view(1, -1)
-
             yaw = x[:, 2]
             N = v.shape[0]
             dx = torch.zeros((N, 4), dtype=v.dtype, device=v.device)
@@ -704,11 +660,8 @@ class AblationOnTransform:
             super()._load_model_state_dict(saved_state_dict)
             self.decoder.model.load_state_dict(saved_state_dict['decoder'])
 
+        @tensor_utils.ensure_2d_input
         def get_dx(self, x, v):
-            if len(x.shape) == 1:
-                x = x.view(1, -1)
-                v = v.view(1, -1)
-
             decoder_input = torch.cat((x, v), dim=1)
             dx = self.decoder.sample(decoder_input)
             return dx
@@ -809,11 +762,8 @@ class AblationOnTransform:
             self.decoder.model.load_state_dict(saved_state_dict['decoder'])
             self.dynamics.model.load_state_dict(saved_state_dict['dynamics'])
 
+        @tensor_utils.ensure_2d_input
         def get_dx(self, x, v):
-            if len(x.shape) == 1:
-                x = x.view(1, -1)
-                v = v.view(1, -1)
-
             decoder_input = torch.cat((x, v), dim=1)
             dx = self.decoder.sample(decoder_input)
             return dx
@@ -861,11 +811,8 @@ class AblationOnTransform:
         def _name_prefix(self):
             return 'ablation_relax_encoder'
 
+        @tensor_utils.ensure_2d_input
         def xu_to_z(self, state, action):
-            if len(state.shape) < 2:
-                state = state.reshape(1, -1)
-                action = action.reshape(1, -1)
-
             xu = torch.cat((state, action), dim=1)
             z = self.encoder.sample(xu)
             return z
@@ -932,10 +879,8 @@ class AblationOnTransform:
             super()._load_model_state_dict(saved_state_dict)
             self.direct_decoder.model.load_state_dict(saved_state_dict['d2'])
 
+        @tensor_utils.ensure_2d_input
         def get_dx(self, x, v):
-            if len(x.shape) == 1:
-                v = v.view(1, -1)
-
             dx = self.direct_decoder.sample(v)
             return dx
 
