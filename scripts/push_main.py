@@ -441,78 +441,53 @@ class OfflineDataCollection:
         sim.run(seed, 'model_selector_evaluation')
 
 
-# ------- Learned transform classes using architecture 3
-
-
-# ------- Ablations on architecture 3
-
-
-def verify_coordinate_transform():
-    def get_dx(px, cx):
-        dpos = cx[:2] - px[:2]
-        dyaw = math_utils.angular_diff(cx[2], px[2])
-        dalong = cx[3] - px[3]
-        dx = torch.from_numpy(np.r_[dpos, dyaw, dalong])
-        return dx
-
+def verify_coordinate_transform(seed=6, use_tsf=UseTransform.COORDINATE_TRANSFORM):
     # comparison tolerance
     tol = 2e-4
-    env = get_env(p.GUI)
+    name = 'same_action_repeated'
+    env = get_env(p.DIRECT, level=0)
     ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
 
-    tsf = CoordTransform.factory(env, ds)
+    tsf, _ = get_transform(env, ds, use_tsf=use_tsf)
+    # tsf = invariant.InvariantTransformer(tsf)
+    tsf = preprocess.Compose(
+        [invariant.InvariantTransformer(tsf),
+         preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
 
-    along = 0.7
-    init_block_pos = [0, 0]
-    init_block_yaw = 0
-    env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw, init_pusher=along)
-    action = np.array([0, 0.4, 0])
-    # push with original yaw (try this N times to confirm that all pushes are consistent)
-    N = 10
-    px, dx = None, None
-    dxes = torch.zeros((N, env.ny))
-    for i in range(N):
-        px = env.reset()
-        cx, _, _, _ = env.step(action)
-        # get actual difference dx
-        dx = get_dx(px, cx)
-        dxes[i] = dx
-    assert torch.allclose(dxes.std(0), torch.zeros(env.ny))
-    assert px is not None
-    # get input in latent space
-    px = torch.from_numpy(px)
-    z = tsf.xu_to_z(px, action)
-    # try inverting the transforms
-    v_1 = tsf.dx_to_v(px, dx)
-    dx_inverted = tsf.get_dx(px, v_1)
-    assert torch.allclose(dx, dx_inverted)
-    # same push with yaw, should result in the same z and the dx should give the same v but different dx
+    # confirm that inversion is correct
+    XU, Y, _ = ds.training_set(True)
+    tsf.fit(XU, Y)
+    Z, V, _ = tsf.transform(XU, Y)
+    X, U = torch.split(XU, env.nx, dim=1)
+    Yhat = tsf.invert_transform(V, X)
 
-    N = 16
-    dxes = torch.zeros((N, env.ny))
-    vs = torch.zeros((N, env.ny))
-    # for i, yaw_shift in enumerate(np.linspace(0, math.pi*2, 4)):
-    for i, yaw_shift in enumerate(np.linspace(0, math.pi * 2, N)):
-        env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw + yaw_shift, init_pusher=along)
-        px = env.reset()
-        cx, _, _, _ = env.step(action)
-        # get actual difference dx
-        dx = get_dx(px, cx)
-        px = torch.from_numpy(px)
-        z_2 = tsf.xu_to_z(px, action)
-        assert torch.allclose(z, z_2, atol=tol / 10)
-        v_2 = tsf.dx_to_v(px, dx)
-        vs[i] = v_2
-        dxes[i] = dx
-        dx_inverted_2 = tsf.get_dx(px, v_2)
-        assert torch.allclose(dx, dx_inverted_2)
-    # change in body frame should be exactly the same
-    logger.info(vs)
-    # relative standard deviation
-    logger.info(vs.std(0) / torch.abs(vs.mean(0)))
-    assert torch.allclose(vs.std(0), torch.zeros(4), atol=tol)
-    # actual dx should be different since we have yaw
-    assert not torch.allclose(dxes.std(0), torch.zeros(4), atol=tol)
+    torch.allclose(Y, Yhat)
+
+    # assuming we have translational and rotational invariance, doing the same action should result in same delta
+    while True:
+        try:
+            ds_test, config = get_ds(env, 'pushing/{}.mat'.format(name), validation_ratio=0.)
+        except IOError:
+            # collect data if we don't have any yet
+            seed = rand.seed(seed)
+            u = [rn(0.8), 0.7 + rn(0.2), rn(0.8)]
+            u = [u for _ in range(50)]
+            ctrl = controller.PreDeterminedController(np.array(u), *env.get_control_bounds())
+            sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=False, save=True, stop_when_done=False)
+            sim.run(seed, name)
+            continue
+        break
+
+    def abs_std(X):
+        return (X.std(dim=0) / X.abs().mean(dim=0)).cpu().numpy()
+
+    XU, Y, _ = ds_test.training_set(True)
+    logger.info('before tsf x std/mean %s', abs_std(XU[:, :env.nx]))
+    logger.info('before tsf y std/mean %s', abs_std(Y))
+    # after transform the outputs Y should be the same
+    Z, V, _ = tsf.transform(XU, Y)
+    logger.info('after tsf z std/mean %s', abs_std(Z))
+    logger.info('after tsf v std/mean %s', abs_std(V))
 
 
 def test_online_model():
@@ -1442,8 +1417,9 @@ if __name__ == "__main__":
     # Visualize.model_actions_at_givne_state()
     # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
 
+    # verify_coordinate_transform(UseTransform.COORDINATE_TRANSFORM)
     # evaluate_model_selector()
-    evaluate_ctrl_sampler()
+    # evaluate_ctrl_sampler()
     # test_local_model_sufficiency_for_escaping_wall(plot_model_eval=False, use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
     # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD,
@@ -1454,5 +1430,5 @@ if __name__ == "__main__":
     # test_online_model()
     # for seed in range(1):
     #     Learn.invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
-    # for seed in range(1):
-    #     Learn.model(UseTransform.NO_TRANSFORM, seed=seed, name="physical first")
+    for seed in range(1):
+        Learn.model(UseTransform.COORDINATE_TRANSFORM, seed=seed, name="physical r in body")

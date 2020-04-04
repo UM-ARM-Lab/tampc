@@ -58,15 +58,8 @@ class CoordTransform:
     class Base(PusherTransform):
         def __init__(self, ds, nz, nv=4, reaction_force_start_index=4, **kwargs):
             # assume 4 states; anything after we should just passthrough
-            self.passthrough_states = ds.config.nx - reaction_force_start_index
             # v is dx, dy, dyaw in body frame and d_along
-            super().__init__(ds, nz + self.passthrough_states, nv + self.passthrough_states, name='coord', **kwargs)
-
-        def _add_passthrough_states(self, z, x):
-            # we always use the last few dims for passthrough; so use the same for v
-            if self.passthrough_states:
-                z = torch.cat((z, x[:, -self.passthrough_states:].view(-1, self.passthrough_states)), dim=1)
-            return z
+            super().__init__(ds, nz, nv, name='coord', **kwargs)
 
         def get_v(self, x, dx, z):
             return self.dx_to_v(x, dx)
@@ -75,7 +68,6 @@ class CoordTransform:
         def xu_to_z(self, state, action):
             # (along, d_along, push magnitude, push direction)
             z = torch.cat((state[:, 3].view(-1, 1), action), dim=1)
-            z = self._add_passthrough_states(z, state)
             return z
 
         @tensor_utils.ensure_2d_input
@@ -87,7 +79,6 @@ class CoordTransform:
             # last element is d_along, which gets passed along directly
             dalong = dx[:, 3]
             v = torch.cat((dpos_body, dyaw.view(-1, 1), dalong.view(-1, 1)), dim=1)
-            v = self._add_passthrough_states(v, dx)
             return v
 
         @tensor_utils.ensure_2d_input
@@ -99,7 +90,6 @@ class CoordTransform:
             # last element is d_along, which gets passed along directly
             dalong = v[:, 3]
             dx = torch.cat((dpos_world, dyaw.view(-1, 1), dalong.view(-1, 1)), dim=1)
-            dx = self._add_passthrough_states(dx, v)
             return dx
 
         def parameters(self):
@@ -139,42 +129,42 @@ class CoordTransform:
 
         @tensor_utils.ensure_2d_input
         def xu_to_z(self, state, action):
+            # TODO fix this env transform to pass r_body
+            raise RuntimeError('Not implemented')
             # NOTE we could just as well make the model work for free-space if we rotate reaction force to be in body frame
             # but then it wouldn't work for pushing against a wall since it's no longer rotationally invariant
             # additionally need theta in z to estimate reaction force direction
             # (theta, along, d_along, push magnitude, push direction)
             z = torch.cat((state[:, 2:4], action), dim=1)
-            z = self._add_passthrough_states(z, state)
             return z
 
     class Physical(Base):
         def __init__(self, ds, **kwargs):
-            super().__init__(ds, ds.config.nu + 1, nv=3, reaction_force_start_index=3, **kwargs)
+            # v is dpose and dr in body frame
+            super().__init__(ds, ds.config.nu + 2, nv=3 + 2, **kwargs)
 
         @tensor_utils.ensure_2d_input
         def xu_to_z(self, state, action):
-            z = torch.cat((state[:, 2].view(-1, 1), action), dim=1)
-            z = self._add_passthrough_states(z, state)
+            r_body = math_utils.batch_rotate_wrt_origin(state[:, -2:], -state[:, 2])
+            z = torch.cat((action, r_body), dim=1)
             return z
 
         @tensor_utils.ensure_2d_input
         def dx_to_v(self, x, dx):
             # convert world frame to body frame
             dpos_body = math_utils.batch_rotate_wrt_origin(dx[:, :2], -x[:, 2])
-            # second last element is dyaw, which also gets passed along directly
+            dr_body = math_utils.batch_rotate_wrt_origin(dx[:, -2:], -x[:, 2])
             dyaw = dx[:, 2]
-            v = torch.cat((dpos_body, dyaw.view(-1, 1)), dim=1)
-            v = self._add_passthrough_states(v, dx)
+            v = torch.cat((dpos_body, dyaw.view(-1, 1), dr_body), dim=1)
             return v
 
         @tensor_utils.ensure_2d_input
         def get_dx(self, x, v):
             # convert (dx, dy) from body frame back to world frame
             dpos_world = math_utils.batch_rotate_wrt_origin(v[:, :2], x[:, 2])
-            # second last element is dyaw, which also gets passed along directly
+            dr_world = math_utils.batch_rotate_wrt_origin(v[:, -2:], x[:, 2])
             dyaw = v[:, 2]
-            dx = torch.cat((dpos_world, dyaw.view(-1, 1)), dim=1)
-            dx = self._add_passthrough_states(dx, v)
+            dx = torch.cat((dpos_world, dyaw.view(-1, 1), dr_world), dim=1)
             return dx
 
 
