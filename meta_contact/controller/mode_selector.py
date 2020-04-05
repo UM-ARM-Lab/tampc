@@ -219,7 +219,7 @@ class MLPSelector(LearnableParameterizedModel, ModeSelector):
         self.relative_weights = self.model(xu).transpose(0, 1)
 
         sample = sample_discrete_probs(self.relative_weights, use_numpy=False)
-        return torch.tensor(sample, device=state.device, dtype=torch.long)
+        return sample
 
     def parameters(self):
         return self.model.parameters()
@@ -252,7 +252,10 @@ class MLPSelector(LearnableParameterizedModel, ModeSelector):
         train_loader = torch.utils.data.DataLoader(load_data.SimpleDataset(xu, y), batch_size=batch_N, shuffle=True)
 
         save_checkpoint_every_n_epochs = max(max_epoch // 20, 5)
-        criterion = torch.nn.CrossEntropyLoss(reduction='none')
+
+        weight = None
+        # weight = torch.sqrt(y.shape[0] / y.unique(sorted=True, return_counts=True)[1].double())
+        criterion = torch.nn.CrossEntropyLoss(reduction='none', weight=weight)
 
         for epoch in range(0, max_epoch):  # loop over the dataset multiple times
             if self.writer is None:
