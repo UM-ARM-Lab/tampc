@@ -616,12 +616,9 @@ def update_ds_with_transform(env, ds, use_tsf, **kwargs):
     return untransformed_config, tsf_name, preprocessor
 
 
-def test_dynamics(level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False, override=False,
+def test_dynamics(seed=1, level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False, override=False,
+                  plot_model_error=False, enforce_model_rollout=False, full_evaluation=True,
                   prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior, **kwargs):
-    seed = 1
-    plot_model_error = False
-    enforce_model_rollout = False
-    full_evaluation = True
     d = get_device()
     if plot_model_error:
         env = get_env(p.DIRECT, level=level)
@@ -1022,6 +1019,7 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     ds_recovery.update_preprocessor(preprocessor)
 
     from sklearn.neural_network import MLPClassifier
+    from sklearn.svm import SVC
 
     dss = [ds, ds_recovery]
     # selector = mode_selector.ReactionForceHeuristicSelector(16, slice(env.nx - 2, None))
@@ -1029,9 +1027,10 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     # selector = mode_selector.SklearnClassifierSelector(dss, KNeighborsClassifier(n_neighbors=3))
     # selector = mode_selector.SklearnClassifierSelector(dss, GaussianProcessClassifier( n_restarts_optimizer=5, random_state=0))
     # selector = mode_selector.SklearnClassifierSelector(dss, SVC(probability=True, gamma='auto'))
-    selector = mode_selector.SklearnClassifierSelector(dss, MLPClassifier())
+    # selector = mode_selector.SklearnClassifierSelector(dss, MLPClassifier())
     # selector = mode_selector.GMMSelector(dss, gmm_opts={'n_components': 3})
     # selector = mode_selector.GMMSelector(dss, gmm_opts={'n_components': 10}, variational=True)
+    selector = mode_selector.MLPSelector(dss, retrain=False)
 
     # get evaluation data by getting definite positive samples from the freespace dataset
     pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)
@@ -1069,6 +1068,8 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     output = selector.sample_mode(x, u)
 
     # metrics for binary classification (since it's binary, we can reduce it to prob of not nominal model)
+    if torch.is_tensor(selector.relative_weights):
+        selector.relative_weights = selector.relative_weights.cpu().numpy()
     scores = torch.from_numpy(selector.relative_weights).transpose(0, 1)
     loss = torch.nn.CrossEntropyLoss()
     m = {'cross entropy': loss(scores, target).item()}
@@ -1083,7 +1084,7 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     m['ROC AUC'] = metrics.auc(fpr, tpr)
     m['f1 (sample)'] = metrics.f1_score(target, output.cpu())
 
-    print('{} {}'.format(selector.name(), num_pos_samples))
+    print('{} {}'.format(selector.name, num_pos_samples))
     for key, value in m.items():
         print('{}: {:.3f}'.format(key, value))
 
@@ -1096,7 +1097,7 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     ax2.stackplot(t, selector.relative_weights,
                   labels=['prob {}'.format(i) for i in range(selector.relative_weights.shape[0])], alpha=0.3)
     plt.legend()
-    plt.title('Sample and relative weights {}'.format(selector.name()))
+    plt.title('Sample and relative weights {}'.format(selector.name))
     plt.xlabel('data point ({} separates target)'.format(num_pos_samples))
     ax1.set_ylabel('component')
     ax2.set_ylabel('prob')
@@ -1131,7 +1132,7 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     plt.ylim([0.0, 1.05])
     plt.xlabel('Recall')
     plt.ylabel('Precision')
-    plt.title('PR {} (#neg={})'.format(selector.name(), num_pos_samples))
+    plt.title('PR {} (#neg={})'.format(selector.name, num_pos_samples))
     plt.legend(loc="lower left")
     stride = max(len(pr_thresholds) // 15, 1)
     for x, y, txt in zip(recall[::stride], precision[::stride], pr_thresholds[::stride]):
@@ -1410,22 +1411,23 @@ class Visualize:
 
 if __name__ == "__main__":
     level = 0
-    OfflineDataCollection.freespace(trials=200, trial_length=50, level=0)
+    # OfflineDataCollection.freespace(trials=200, trial_length=50, level=0)
     # OfflineDataCollection.push_against_wall_recovery()
     # OfflineDataCollection.model_selector_evaluation()
     # Visualize.dist_diff_nominal_and_bug_trap()
-    # Visualize.model_actions_at_givne_state()
+    # Visualize.model_actions_at_given_state()
     # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
 
     # verify_coordinate_transform(UseTransform.COORDINATE_TRANSFORM)
-    # evaluate_model_selector()
+    evaluate_model_selector()
     # evaluate_ctrl_sampler()
     # test_local_model_sufficiency_for_escaping_wall(plot_model_eval=False, use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
-    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD,
+    # test_dynamics(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD,
     #               override=True)
-    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE, override=True)
-    # test_dynamics(level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.GP_KERNEL, override=True)
+    # test_dynamics(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE, override=True,
+    #               full_evaluation=False)
+    # test_dynamics(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.GP_KERNEL, override=True)
 
     # test_online_model()
     # for seed in range(1):

@@ -1,17 +1,27 @@
 import abc
 import torch
 import numpy as np
+import os
+import logging
+import copy
 
 from scipy import stats
 from sklearn import mixture
+from arm_pytorch_utilities.model.common import LearnableParameterizedModel
+from arm_pytorch_utilities import load_data
+from arm_pytorch_utilities.model import make
+from meta_contact import cfg
+from tensorboardX import SummaryWriter
+
+logger = logging.getLogger(__name__)
 
 
 class ModeSelector(abc.ABC):
     """In mixture of experts we have that the posterior is a sum over weighted components.
     This class allows sampling over weights (as opposed to giving the value of the weights)"""
 
-    def name(self):
-        return self.__class__.__name__
+    def __init__(self):
+        self.name = self.__class__.__name__
 
     @abc.abstractmethod
     def sample_mode(self, state, action, *args):
@@ -37,6 +47,7 @@ class AlwaysSelectLocal(ModeSelector):
 
 class ReactionForceHeuristicSelector(ModeSelector):
     def __init__(self, force_threshold, reaction_force_slice):
+        super(ReactionForceHeuristicSelector, self).__init__()
         self.force_threshold = force_threshold
         self.reaction_force_slice = reaction_force_slice
 
@@ -49,8 +60,30 @@ class ReactionForceHeuristicSelector(ModeSelector):
         return mode.to(dtype=torch.long)
 
 
+def sample_discrete_probs(probs, use_numpy=True):
+    """Sample from probabilities independently
+
+    :param probs (C x N) where each column is a distribution and so should sum to 1
+    """
+    C, N = probs.shape
+    if use_numpy:
+        raw_sample = np.random.random(N)
+        sample = np.zeros_like(raw_sample)
+    else:
+        raw_sample = torch.rand(N, device=probs.device)
+        sample = torch.zeros(N, device=probs.device, dtype=torch.long)
+
+    for i, weight in enumerate(probs):
+        this_value = (raw_sample > 0) & (raw_sample < weight)
+        raw_sample -= weight
+        sample[this_value] = i
+
+    return sample
+
+
 class DataProbSelector(ModeSelector):
     def __init__(self, dss):
+        super(DataProbSelector, self).__init__()
         self.num_components = len(dss)
         self.nominal_ds = dss[0]
         # will end up being (num_components x num_samples)
@@ -64,14 +97,7 @@ class DataProbSelector(ModeSelector):
 
         self._get_weights(xu.cpu().numpy())
 
-        raw_sample = np.random.random(self.relative_weights.shape[1])
-        # since there are relatively few components compared to samples, we iterate over components
-        sample = np.zeros_like(raw_sample)
-        for i, weight in enumerate(self.relative_weights):
-            this_value = (raw_sample > 0) & (raw_sample < weight)
-            raw_sample -= weight
-            sample[this_value] = i
-
+        sample = sample_discrete_probs(self.relative_weights, use_numpy=True)
         return torch.tensor(sample, device=state.device, dtype=torch.long)
 
     @abc.abstractmethod
@@ -124,12 +150,8 @@ class GMMSelector(DistributionLikelihoodSelector):
             self.opts.update(gmm_opts)
         self.variational = variational
         super().__init__(*args, **kwargs)
-
-    def name(self):
-        name = super().name()
         if self.variational:
-            name += ' variational'
-        return name
+            self.name += ' variational'
 
     def _estimate_density(self, ds):
         XU, _, _ = ds.training_set()
@@ -158,12 +180,103 @@ class SklearnClassifierSelector(DataProbSelector):
         xu = np.row_stack(xu)
         component = np.concatenate(component)
         self.classifier.fit(xu, component)
-
-    def name(self):
-        return '{}'.format(self.classifier.__class__.__name__)
+        self.name = '{}'.format(self.classifier.__class__.__name__)
 
     def _get_weights(self, xu):
         self.weights = self.classifier.predict_proba(xu).T
         self.relative_weights = self.weights
 
-# TODO implement NN classifier in torch
+
+class MLPSelector(LearnableParameterizedModel, ModeSelector):
+    def __init__(self, dss, retrain=False, model_opts=None, **kwargs):
+        self.num_components = len(dss)
+        self.nominal_ds = dss[0]
+        self.relative_weights = None
+
+        self.writer = None
+        opts = {'end_block_factory': make.make_linear_end_block(activation=torch.nn.Softmax(dim=1))}
+        if model_opts is not None:
+            opts.update(model_opts)
+
+        config = copy.copy(self.nominal_ds.config)
+        config.ny = self.num_components
+
+        self.model = make.make_sequential_network(config, **opts).to(device=self.nominal_ds.d)
+
+        LearnableParameterizedModel.__init__(self, cfg.ROOT_DIR, **kwargs)
+        self.name = "selector_{}_{}".format(self.name, self.nominal_ds.config)
+
+        if retrain or not self.load(self.get_last_checkpoint()):
+            self.learn_model(dss)
+        self.freeze()
+
+    def sample_mode(self, state, action, *args):
+        xu = torch.cat((state, action), dim=1)
+        if self.nominal_ds.preprocessor:
+            xu = self.nominal_ds.preprocessor.transform_x(xu)
+
+        # compute relative weights (just the softmax output of the model)
+        self.relative_weights = self.model(xu).transpose(0, 1)
+
+        sample = sample_discrete_probs(self.relative_weights, use_numpy=False)
+        return torch.tensor(sample, device=state.device, dtype=torch.long)
+
+    def parameters(self):
+        return self.model.parameters()
+
+    def _model_state_dict(self):
+        return self.model.state_dict()
+
+    def _load_model_state_dict(self, saved_state_dict):
+        self.model.load_state_dict(saved_state_dict)
+
+    @staticmethod
+    def _cat_data(dss, training=True):
+        xu = []
+        y = []
+        for i, ds in enumerate(dss):
+            data = ds.training_set() if training else ds.validation_set()
+            XU, _, _ = data
+            if len(XU):
+                xu.append(XU)
+                y.append(torch.ones(XU.shape[0], dtype=torch.long, device=XU.device) * i)
+        xu = torch.cat(xu, dim=0)
+        y = torch.cat(y, dim=0)
+        return xu, y
+
+    def learn_model(self, dss, max_epoch=200, batch_N=500):
+        xu, y = self._cat_data(dss, training=True)
+        xuv, yv = self._cat_data(dss, training=False)
+
+        # TODO what to do about imbalanced dataset (use weight in criterion)
+        train_loader = torch.utils.data.DataLoader(load_data.SimpleDataset(xu, y), batch_size=batch_N, shuffle=True)
+
+        save_checkpoint_every_n_epochs = max(max_epoch // 20, 5)
+        criterion = torch.nn.CrossEntropyLoss(reduction='none')
+
+        for epoch in range(0, max_epoch):  # loop over the dataset multiple times
+            if self.writer is None:
+                self.writer = SummaryWriter(flush_secs=20, comment=os.path.basename(self.name))
+            if save_checkpoint_every_n_epochs and epoch % save_checkpoint_every_n_epochs == 0:
+                self.save()
+
+            for i_batch, data in enumerate(train_loader):
+                self.step += 1
+
+                XU, Y = data
+
+                self.optimizer.zero_grad()
+                Yhat = self.model(XU)
+                loss = criterion(Yhat, Y)
+                # validation and other analysis
+                with torch.no_grad():
+                    self.writer.add_scalar('loss/training', loss.mean(), self.step)
+                    vloss = criterion(self.model(xuv), yv)
+                    self.writer.add_scalar('loss/validation', vloss.mean(), self.step)
+                    logger.debug("Epoch %d loss %f vloss %f", epoch, loss.mean().item(), vloss.mean().item())
+
+                loss.mean().backward()
+                self.optimizer.step()
+
+        # save after training
+        self.save(last=True)
