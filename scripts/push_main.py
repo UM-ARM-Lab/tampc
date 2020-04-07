@@ -644,9 +644,10 @@ def update_ds_with_transform(env, ds, use_tsf, **kwargs):
     return untransformed_config, tsf_name, preprocessor
 
 
-def test_dynamics(seed=1, level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False, override=False,
-                  plot_model_error=False, enforce_model_rollout=False, full_evaluation=True,
-                  prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior, **kwargs):
+def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False,
+                               override=False, plot_model_error=False, enforce_model_rollout=False,
+                               full_evaluation=True,
+                               prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior, **kwargs):
     d = get_device()
     if plot_model_error:
         env = get_env(p.DIRECT, level=level)
@@ -1440,11 +1441,12 @@ if __name__ == "__main__":
     # evaluate_ctrl_sampler()
     # test_local_model_sufficiency_for_escaping_wall(plot_model_eval=False, use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
-    # test_dynamics(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD,
-    #               override=True)
-    # test_dynamics(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE, override=True,
-    #               full_evaluation=False)
-    # test_dynamics(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.GP_KERNEL, override=True)
+    # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM,
+    #                            online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD, override=True)
+    # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE,
+    #                            override=True, full_evaluation=False)
+    # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM,
+    #                            online_adapt=OnlineAdapt.GP_KERNEL, override=True)
 
     # test_online_model()
     # for seed in range(1):
