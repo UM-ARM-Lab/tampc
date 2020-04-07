@@ -264,6 +264,34 @@ def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics):
     return pm
 
 
+class UseSelector:
+    MLP = 0
+    KDE = 1
+    GMM = 2
+    TREE = 3
+
+
+def get_selector(dss, use_selector=UseSelector.TREE, *args, **kwargs):
+    from sklearn.tree import DecisionTreeClassifier
+
+    component_scale = [1, 0.2]
+
+    if use_selector is UseSelector.MLP:
+        selector = mode_selector.MLPSelector(dss, *args, **kwargs)
+    elif use_selector is UseSelector.KDE:
+        selector = mode_selector.KDESelector(dss, component_scale=component_scale)
+    elif use_selector is UseSelector.GMM:
+        opts = {'n_components': 10, }
+        if kwargs is not None:
+            opts.update(kwargs)
+        selector = mode_selector.GMMSelector(dss, gmm_opts=opts, variational=True, component_scale=component_scale)
+    elif use_selector is UseSelector.TREE:
+        selector = mode_selector.SklearnClassifierSelector(dss, DecisionTreeClassifier(**kwargs))
+    else:
+        raise RuntimeError("Unrecognized selector option")
+    return selector
+
+
 def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.GP_KERNEL):
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     d = common_wrapper_opts['device']
@@ -1009,7 +1037,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
 
 def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     plot_definite_negatives = False
-    num_pos_samples = 100  # start with balanced data
+    num_pos_samples = 5000  # start with balanced data
     rand.seed(10)
 
     _, env, _, ds = get_free_space_env_init()
@@ -1019,21 +1047,7 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     ds_recovery, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
     ds_recovery.update_preprocessor(preprocessor)
 
-    from sklearn.neural_network import MLPClassifier
-    from sklearn.svm import SVC
-    from sklearn.tree import DecisionTreeClassifier
-
-    dss = [ds, ds_recovery]
-    # selector = mode_selector.ReactionForceHeuristicSelector(16, slice(env.nx - 2, None))
-    # selector = mode_selector.KDESelector(dss, [1, 0.2])
-    # selector = mode_selector.SklearnClassifierSelector(dss, KNeighborsClassifier(n_neighbors=3))
-    # selector = mode_selector.SklearnClassifierSelector(dss, GaussianProcessClassifier( n_restarts_optimizer=5, random_state=0))
-    # selector = mode_selector.SklearnClassifierSelector(dss, SVC(probability=True, gamma='auto'))
-    # selector = mode_selector.SklearnClassifierSelector(dss, MLPClassifier())
-    selector = mode_selector.SklearnClassifierSelector(dss, DecisionTreeClassifier())
-    # selector = mode_selector.GMMSelector(dss, gmm_opts={'n_components': 3})
-    # selector = mode_selector.GMMSelector(dss, gmm_opts={'n_components': 10}, variational=True)
-    # selector = mode_selector.MLPSelector(dss, retrain=True)
+    selector = get_selector([ds, ds_recovery], use_selector=UseSelector.TREE)
 
     # get evaluation data by getting definite positive samples from the freespace dataset
     pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)

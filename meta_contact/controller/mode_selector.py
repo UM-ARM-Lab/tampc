@@ -248,7 +248,6 @@ class MLPSelector(LearnableParameterizedModel, ModeSelector):
         xu, y = self._cat_data(dss, training=True)
         xuv, yv = self._cat_data(dss, training=False)
 
-        # TODO what to do about imbalanced dataset (use weight in criterion)
         train_loader = torch.utils.data.DataLoader(load_data.SimpleDataset(xu, y), batch_size=batch_N, shuffle=True)
 
         save_checkpoint_every_n_epochs = max(max_epoch // 20, 5)
