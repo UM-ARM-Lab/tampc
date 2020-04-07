@@ -734,8 +734,7 @@ def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTransform.COORDINATE_
 
 
 def test_local_model_sufficiency_for_escaping_wall(plot_model_eval=True, plot_online_update=False, use_gp=True,
-                                                   use_tsf=UseTransform.COORDINATE_TRANSFORM,
-                                                   prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
+                                                   use_tsf=UseTransform.COORDINATE_TRANSFORM, **kwargs):
     seed = 1
 
     if plot_model_eval:
@@ -745,10 +744,11 @@ def test_local_model_sufficiency_for_escaping_wall(plot_model_eval=True, plot_on
 
     logger.info("initial random seed %d", rand.seed(seed))
 
-    dynamics, _, _, _ = get_mixed_model(env, use_tsf=use_tsf, prior_class=prior_class,
-                                        online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD, allow_update=plot_online_update)
-    dynamics_gp, ds, ds_wall, train_slice = get_mixed_model(env, use_tsf=use_tsf, prior_class=prior_class,
-                                                            allow_update=plot_online_update)
+    dynamics, _, _, _ = get_mixed_model(env, use_tsf=use_tsf, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD,
+                                        allow_update=plot_online_update, **kwargs)
+    dynamics_gp, ds, ds_wall, train_slice = get_mixed_model(env, use_tsf=use_tsf, allow_update=plot_online_update,
+                                                            **kwargs)
+    selector = get_selector([ds, ds_wall])
 
     pm = dynamics_gp.prior
     if plot_model_eval:
@@ -763,6 +763,10 @@ def test_local_model_sufficiency_for_escaping_wall(plot_model_eval=True, plot_on
         t = np.arange(test_slice.start, test_slice.stop)
         reaction_forces = info[:, :2]
         model_errors = info[:, 2:]
+
+        xuo, _, _ = (v[test_slice] for v in ds_test.training_set(original=True))
+        x, u = torch.split(xuo, env.nx, dim=1)
+        modes = selector.sample_mode(x, u)
 
         yhat_freespace = pm.dyn_net.user.sample(xu)
         cx, cu = xu[:, :config.nx], xu[:, config.nx:]
@@ -819,7 +823,7 @@ def test_local_model_sufficiency_for_escaping_wall(plot_model_eval=True, plot_on
 
         axis_name = ['d{}'.format(name) for name in env.state_names()]
         to_plot_y_dims = [0, 2, 3, 4]
-        num_plots = len(to_plot_y_dims) + 1  # additional reaction force magnitude
+        num_plots = len(to_plot_y_dims) + 2  # additional reaction force magnitude and mode selector
         if not use_gp:
             num_plots += 1  # weights for local model (marginalized likelihood of data)
         f, axes = plt.subplots(num_plots, 1, sharex=True)
@@ -860,6 +864,8 @@ def test_local_model_sufficiency_for_escaping_wall(plot_model_eval=True, plot_on
         axes[-1].set_ybound(0., 50)
         axes[-1].axvspan(train_slice.start, train_slice.stop, alpha=0.3)
         axes[-1].text((train_slice.start + train_slice.stop) * 0.5, 20, 'local train interval')
+        axes[-2].plot(t, modes.cpu())
+        axes[-2].set_ylabel('selector mode')
 
         if plot_online_update:
             f, axes = plt.subplots(2, 1, sharex=True)
@@ -891,7 +897,7 @@ def test_local_model_sufficiency_for_escaping_wall(plot_model_eval=True, plot_on
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     common_wrapper_opts['adjust_model_pred_with_prev_error'] = False
-    ctrl = online_controller.OnlineMPPI(dynamics_gp if use_gp else dynamics, ds.original_config(),
+    ctrl = online_controller.OnlineMPPI(dynamics_gp if use_gp else dynamics, ds.original_config(), mode_select=selector,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
 
     _, tsf_name = get_transform(env, ds, use_tsf)
@@ -1437,9 +1443,9 @@ if __name__ == "__main__":
     # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
 
     # verify_coordinate_transform(UseTransform.COORDINATE_TRANSFORM)
-    evaluate_model_selector()
+    # evaluate_model_selector()
     # evaluate_ctrl_sampler()
-    # test_local_model_sufficiency_for_escaping_wall(plot_model_eval=False, use_tsf=UseTransform.COORDINATE_TRANSFORM)
+    test_local_model_sufficiency_for_escaping_wall(plot_model_eval=True, use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
     # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM,
     #                            online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD, override=True)
