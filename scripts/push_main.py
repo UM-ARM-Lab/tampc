@@ -45,7 +45,7 @@ def get_data_dir(level=0):
 
 def get_env(mode=p.GUI, level=0, log_video=False):
     global env_dir
-    init_block_pos = [-0.8, 0.12]
+    init_block_pos = [-0.8, 0.12 - 0.025]
     init_block_yaw = 0
     init_pusher = 0
     goal_pos = [0.85, -0.35]
@@ -219,7 +219,7 @@ def get_mixed_model(env, use_tsf=UseTransform.COORDINATE_TRANSFORM,
 
     # data from predetermined policy for getting into and out of bug trap
     ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
-    train_slice = slice(10, 45)
+    train_slice = slice(0, 26)
 
     # use same preprocessor
     ds_wall.update_preprocessor(preprocessor)
@@ -421,12 +421,12 @@ class OfflineDataCollection:
             # different friction between wall and block leads to very different behaviour
             high_friction = True
             if high_friction:
-                for _ in range(25):
-                    u.append([0.8 + rn(0.2), 0.7 + rn(0.3), 0.7 + rn(0.4)])
-                for _ in range(15):
-                    u.append([-0.8 + rn(0.2), 0.8 + rn(0.1), -0.9 + rn(0.2)])
+                for _ in range(12):
+                    u.append([0.8 + rn(0.2), 0.8 + rn(0.2), 0.7 + rn(0.4)])
                 for _ in range(10):
-                    u.append([0.1 + rn(0.2), 0.7 + rn(0.1), 0.1 + rn(0.3)])
+                    u.append([-0.9 + rn(0.1), 0.8 + rn(0.1), -0.9 + rn(0.2)])
+                for _ in range(6):
+                    u.append([0.0 + rn(0.2), 0.7 + rn(0.1), 0.1 + rn(0.1)])
             else:
                 for _ in range(20):
                     u.append([0.8 + rn(0.2), 0.7 + rn(0.3), 0.7 + rn(0.4)])
