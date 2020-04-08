@@ -68,6 +68,7 @@ class OnlineMPC(OnlineController):
         self.constrain_state = constrain_state
         self.mpc = None
         self.mode_select = mode_select
+        self.dynamics_mode = None
         super().__init__(*args, **kwargs)
 
     def _apply_dynamics(self, state, u, t=0):
@@ -75,11 +76,11 @@ class OnlineMPC(OnlineController):
             state = state.view(1, -1)
             u = u.view(1, -1)
 
-        dynamics_mode = self.mode_select.sample_mode(state, u)
+        self.dynamics_mode = self.mode_select.sample_mode(state, u)
         next_state = torch.zeros_like(state)
         # TODO we should generalize to more than 2 modes
-        nominal_mode = dynamics_mode == 0
-        local_mode = dynamics_mode == 1
+        nominal_mode = self.dynamics_mode == 0
+        local_mode = self.dynamics_mode == 1
         if torch.any(nominal_mode):
             next_state[nominal_mode] = self.dynamics.prior.dyn_net.predict(
                 torch.cat((state[nominal_mode], u[nominal_mode]), dim=1))

@@ -15,6 +15,7 @@ from matplotlib import pyplot as plt
 from meta_contact import cfg
 from meta_contact.env.pybullet_env import PybulletEnv
 from meta_contact.controller import controller
+from meta_contact.controller import online_controller
 
 logger = logging.getLogger(__name__)
 
@@ -1283,19 +1284,24 @@ class InteractivePush(simulation.Simulation):
         self.wall_contact = np.zeros((self.num_frames,))
         self.model_error = np.zeros_like(self.traj)
         self.time = np.arange(0, self.num_frames * self.sim_step_s, self.sim_step_s)
+        self.pred_mode = np.zeros_like(self.wall_contact)
         return simulation.ReturnMeaning.SUCCESS
 
     def _truncate_data(self, frame):
-        self.traj, self.u, self.reaction_force, self.wall_contact, self.model_error, self.time = (data[:frame] for data
-                                                                                                  in
-                                                                                                  (self.traj, self.u,
-                                                                                                   self.reaction_force,
-                                                                                                   self.wall_contact,
-                                                                                                   self.model_error,
-                                                                                                   self.time))
+        self.traj, self.u, self.reaction_force, self.wall_contact, self.model_error, self.time, self.pred_mode = (
+            data[:frame] for data
+            in
+            (self.traj, self.u,
+             self.reaction_force,
+             self.wall_contact,
+             self.model_error,
+             self.time, self.pred_mode))
 
     def _predicts_state(self):
         return isinstance(self.ctrl, controller.ControllerWithModelPrediction)
+
+    def _predicts_mode(self):
+        return isinstance(self.ctrl, online_controller.OnlineMPC)
 
     def _run_experiment(self):
         self.last_run_cost = []
@@ -1332,8 +1338,9 @@ class InteractivePush(simulation.Simulation):
                 self.pred_traj[simTime + 1, :] = self.ctrl.predicted_next_state
                 # model error from the previous prediction step (can only evaluate it at the current step)
                 self.model_error[simTime, :] = self.ctrl.prediction_error(obs)
-                if self.visualize_rollouts:
-                    self.env.visualize_prediction_error(self.ctrl.predicted_next_state.reshape(-1))
+                self.env.visualize_prediction_error(self.ctrl.predicted_next_state.reshape(-1))
+                if self._predicts_mode():
+                    self.env.draw_user_text("mode {}".format(self.ctrl.dynamics_mode.item()), 2)
 
             if done and self.stop_when_done:
                 logger.debug("done and stopping at step %d", simTime)
@@ -1362,7 +1369,7 @@ class InteractivePush(simulation.Simulation):
         scaled_model_error = np.divide(self.model_error, u_norm, out=np.zeros_like(self.model_error), where=u_norm != 0)
         return {'X': X, 'U': self.u, 'reaction': self.reaction_force, 'model error': self.model_error,
                 'scaled model error': scaled_model_error, 'wall contact': self.wall_contact.reshape(-1, 1),
-                'mask': mask.reshape(-1, 1)}
+                'mask': mask.reshape(-1, 1), 'predicted mode': self.pred_mode.reshape(-1, 1)}
 
     def _start_plot_action_sample(self):
         self.fu_sample, self.au_sample = plt.subplots(self.env.nu, 1)
@@ -1398,9 +1405,10 @@ class InteractivePush(simulation.Simulation):
         if self._predicts_state():
             self.fd, self.ad = plt.subplots(state_dim, 1, sharex=True)
         # plot of other info
-        self.fo, self.ao = plt.subplots(2, 1, sharex=True)
+        self.fo, self.ao = plt.subplots(3, 1, sharex=True)
         self.ao[0].set_ylabel('reaction magitude')
         self.ao[1].set_ylabel('wall contacts')
+        self.ao[2].set_ylabel('predicted mode')
 
         for i in range(state_dim):
             self.axes[i].set_ylabel(axis_name[i])
@@ -1428,6 +1436,7 @@ class InteractivePush(simulation.Simulation):
         mag = np.linalg.norm(self.reaction_force, axis=1)
         self.ao[0].plot(mag)
         self.ao[1].plot(self.wall_contact)
+        self.ao[2].plot(self.pred_mode)
 
         self.fig.canvas.draw()
         for i in range(self.u.shape[1]):
