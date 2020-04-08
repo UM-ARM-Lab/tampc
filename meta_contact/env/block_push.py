@@ -1314,11 +1314,18 @@ class InteractivePush(simulation.Simulation):
             start = time.perf_counter()
 
             action = self.ctrl.command(obs, info)
-            if self.visualize_action_sample and isinstance(self.ctrl, controller.MPPI):
+
+            # visualizations before taking action
+            if self._predicts_mode():
+                o, a = [torch.tensor(v).to(device=self.ctrl.d).view(1, -1) for v in (obs, action)]
+                this_mode = self.ctrl.mode_select.sample_mode(o, a).item()
+                self.pred_mode[simTime] = this_mode
+                self.env.draw_user_text("mode {}".format(this_mode), 2)
+            if self.visualize_action_sample and isinstance(self.ctrl, controller.MPPI_MPC):
                 self._plot_action_sample(self.ctrl.mpc.perturbed_action)
-            # plot expected state rollouts from this point
             if self.visualize_rollouts:
                 self.env.visualize_rollouts(self.ctrl.get_rollouts(obs))
+
             # sanitize action
             if torch.is_tensor(action):
                 action = action.cpu()
@@ -1339,8 +1346,6 @@ class InteractivePush(simulation.Simulation):
                 # model error from the previous prediction step (can only evaluate it at the current step)
                 self.model_error[simTime, :] = self.ctrl.prediction_error(obs)
                 self.env.visualize_prediction_error(self.ctrl.predicted_next_state.reshape(-1))
-                if self._predicts_mode():
-                    self.env.draw_user_text("mode {}".format(self.ctrl.dynamics_mode.item()), 2)
 
             if done and self.stop_when_done:
                 logger.debug("done and stopping at step %d", simTime)
