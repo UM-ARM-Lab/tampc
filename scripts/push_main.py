@@ -232,7 +232,7 @@ def get_mixed_model(env, use_tsf=UseTransform.COORDINATE_TRANSFORM,
                                                       slice_to_use=train_slice, device=d)
     elif online_adapt is OnlineAdapt.GP_KERNEL:
         dynamics = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice,
-                                               allow_update=allow_update, sample=False,
+                                               allow_update=allow_update, sample=True,
                                                refit_strategy=online_model.RefitGPStrategy.RESET_DATA,
                                                device=d, training_iter=150, use_independent_outputs=False)
     return dynamics, ds, ds_wall, train_slice
@@ -338,9 +338,6 @@ class PusherNetwork(model.NetworkModelWrapper):
 def constrain_state(state):
     # yaw gets normalized
     state[:, 2] = math_utils.angle_normalize(state[:, 2])
-    # along gets constrained
-    state[:, 3] = math_utils.clip(state[:, 3], torch.tensor(-1, dtype=torch.double, device=state.device),
-                                  torch.tensor(1, dtype=torch.double, device=state.device))
     return state
 
 
@@ -1445,7 +1442,7 @@ if __name__ == "__main__":
     # verify_coordinate_transform(UseTransform.COORDINATE_TRANSFORM)
     # evaluate_model_selector()
     # evaluate_ctrl_sampler()
-    test_local_model_sufficiency_for_escaping_wall(plot_model_eval=True, use_tsf=UseTransform.COORDINATE_TRANSFORM)
+    test_local_model_sufficiency_for_escaping_wall(plot_model_eval=False, use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
     # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM,
     #                            online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD, override=True)
