@@ -275,18 +275,22 @@ def get_selector(dss, use_selector=UseSelector.TREE, *args, **kwargs):
     from sklearn.tree import DecisionTreeClassifier
 
     component_scale = [1, 0.2]
+    # TODO this is specific to coordinate transform to slice just the body frame reaction force
+    input_slice = slice(3, None)
 
     if use_selector is UseSelector.MLP:
-        selector = mode_selector.MLPSelector(dss, *args, **kwargs)
+        selector = mode_selector.MLPSelector(dss, *args, **kwargs, input_slice=input_slice)
     elif use_selector is UseSelector.KDE:
-        selector = mode_selector.KDESelector(dss, component_scale=component_scale)
+        selector = mode_selector.KDESelector(dss, component_scale=component_scale, input_slice=input_slice)
     elif use_selector is UseSelector.GMM:
         opts = {'n_components': 10, }
         if kwargs is not None:
             opts.update(kwargs)
-        selector = mode_selector.GMMSelector(dss, gmm_opts=opts, variational=True, component_scale=component_scale)
+        selector = mode_selector.GMMSelector(dss, gmm_opts=opts, variational=True, component_scale=component_scale,
+                                             input_slice=input_slice)
     elif use_selector is UseSelector.TREE:
-        selector = mode_selector.SklearnClassifierSelector(dss, DecisionTreeClassifier(**kwargs))
+        selector = mode_selector.SklearnClassifierSelector(dss, DecisionTreeClassifier(**kwargs),
+                                                           input_slice=input_slice)
     else:
         raise RuntimeError("Unrecognized selector option")
     return selector
@@ -1041,7 +1045,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
 
 def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     plot_definite_negatives = False
-    num_pos_samples = 5000  # start with balanced data
+    num_pos_samples = 100  # start with balanced data
     rand.seed(10)
 
     _, env, _, ds = get_free_space_env_init()
@@ -1440,9 +1444,9 @@ if __name__ == "__main__":
     # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
 
     # verify_coordinate_transform(UseTransform.COORDINATE_TRANSFORM)
-    # evaluate_model_selector()
+    evaluate_model_selector()
     # evaluate_ctrl_sampler()
-    test_local_model_sufficiency_for_escaping_wall(plot_model_eval=False, use_tsf=UseTransform.COORDINATE_TRANSFORM)
+    # test_local_model_sufficiency_for_escaping_wall(plot_model_eval=False, use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
     # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM,
     #                            online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD, override=True)

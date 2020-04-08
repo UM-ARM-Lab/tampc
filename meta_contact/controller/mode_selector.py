@@ -20,8 +20,14 @@ class ModeSelector(abc.ABC):
     """In mixture of experts we have that the posterior is a sum over weighted components.
     This class allows sampling over weights (as opposed to giving the value of the weights)"""
 
-    def __init__(self):
+    def __init__(self, input_slice=None):
         self.name = self.__class__.__name__
+        self.input_slice = input_slice
+
+    def _slice_input(self, xu):
+        if self.input_slice:
+            xu = xu[:, self.input_slice]
+        return xu
 
     @abc.abstractmethod
     def sample_mode(self, state, action, *args):
@@ -82,8 +88,8 @@ def sample_discrete_probs(probs, use_numpy=True):
 
 
 class DataProbSelector(ModeSelector):
-    def __init__(self, dss):
-        super(DataProbSelector, self).__init__()
+    def __init__(self, dss, **kwargs):
+        super(DataProbSelector, self).__init__(**kwargs)
         self.num_components = len(dss)
         self.nominal_ds = dss[0]
         # will end up being (num_components x num_samples)
@@ -94,6 +100,8 @@ class DataProbSelector(ModeSelector):
         xu = torch.cat((state, action), dim=1)
         if self.nominal_ds.preprocessor:
             xu = self.nominal_ds.preprocessor.transform_x(xu)
+
+        xu = self._slice_input(xu)
 
         self._get_weights(xu.cpu().numpy())
 
@@ -106,8 +114,8 @@ class DataProbSelector(ModeSelector):
 
 
 class DistributionLikelihoodSelector(DataProbSelector):
-    def __init__(self, dss, component_scale=None):
-        super().__init__(dss)
+    def __init__(self, dss, component_scale=None, **kwargs):
+        super().__init__(dss, **kwargs)
         self.pdfs = [self._estimate_density(ds) for ds in dss]
         self.component_scale = np.array(component_scale).reshape(-1, 1) if component_scale else None
 
@@ -136,6 +144,7 @@ class DistributionLikelihoodSelector(DataProbSelector):
 class KDESelector(DistributionLikelihoodSelector):
     def _estimate_density(self, ds):
         XU, _, _ = ds.training_set()
+        XU = self._slice_input(XU)
         kernel = stats.gaussian_kde(XU.transpose(0, 1).cpu().numpy())
         return kernel
 
@@ -155,6 +164,7 @@ class GMMSelector(DistributionLikelihoodSelector):
 
     def _estimate_density(self, ds):
         XU, _, _ = ds.training_set()
+        XU = self._slice_input(XU)
         if self.variational:
             gmm = mixture.BayesianGaussianMixture(**self.opts)
         else:
@@ -168,13 +178,14 @@ class GMMSelector(DistributionLikelihoodSelector):
 
 
 class SklearnClassifierSelector(DataProbSelector):
-    def __init__(self, dss, classifier):
-        super(SklearnClassifierSelector, self).__init__(dss)
+    def __init__(self, dss, classifier, **kwargs):
+        super(SklearnClassifierSelector, self).__init__(dss, **kwargs)
         self.classifier = classifier
         xu = []
         component = []
         for i, ds in enumerate(dss):
             XU, _, _ = ds.training_set()
+            XU = self._slice_input(XU)
             xu.append(XU.cpu().numpy())
             component.append(np.ones(XU.shape[0], dtype=int) * i)
         xu = np.row_stack(xu)
@@ -192,6 +203,7 @@ class MLPSelector(LearnableParameterizedModel, ModeSelector):
         self.num_components = len(dss)
         self.nominal_ds = dss[0]
         self.relative_weights = None
+        self.input_slice = kwargs.pop('input_slice', None)
 
         self.writer = None
         opts = {'end_block_factory': make.make_linear_end_block(activation=torch.nn.Softmax(dim=1))}
@@ -199,12 +211,16 @@ class MLPSelector(LearnableParameterizedModel, ModeSelector):
             opts.update(model_opts)
 
         config = copy.copy(self.nominal_ds.config)
+        if self.input_slice:
+            xu = self.nominal_ds.training_set()[0][:, self.input_slice]
+            config.nx = xu.shape[1]
+            config.n_input = xu.shape[1]
         config.ny = self.num_components
 
         self.model = make.make_sequential_network(config, **opts).to(device=self.nominal_ds.d)
 
         LearnableParameterizedModel.__init__(self, cfg.ROOT_DIR, **kwargs)
-        self.name = "selector_{}_{}".format(self.name, self.nominal_ds.config)
+        self.name = "selector_{}_{}".format(self.name, config)
 
         if retrain or not self.load(self.get_last_checkpoint()):
             self.learn_model(dss)
@@ -214,6 +230,8 @@ class MLPSelector(LearnableParameterizedModel, ModeSelector):
         xu = torch.cat((state, action), dim=1)
         if self.nominal_ds.preprocessor:
             xu = self.nominal_ds.preprocessor.transform_x(xu)
+
+        xu = self._slice_input(xu)
 
         # compute relative weights (just the softmax output of the model)
         self.relative_weights = self.model(xu).transpose(0, 1)
@@ -230,15 +248,14 @@ class MLPSelector(LearnableParameterizedModel, ModeSelector):
     def _load_model_state_dict(self, saved_state_dict):
         self.model.load_state_dict(saved_state_dict)
 
-    @staticmethod
-    def _cat_data(dss, training=True):
+    def _cat_data(self, dss, training=True):
         xu = []
         y = []
         for i, ds in enumerate(dss):
             data = ds.training_set() if training else ds.validation_set()
             XU, _, _ = data
             if len(XU):
-                xu.append(XU)
+                xu.append(self._slice_input(XU))
                 y.append(torch.ones(XU.shape[0], dtype=torch.long, device=XU.device) * i)
         xu = torch.cat(xu, dim=0)
         y = torch.cat(y, dim=0)
