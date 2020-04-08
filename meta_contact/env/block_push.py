@@ -1321,6 +1321,14 @@ class InteractivePush(simulation.Simulation):
                 this_mode = self.ctrl.mode_select.sample_mode(o, a).item()
                 self.pred_mode[simTime] = this_mode
                 self.env.draw_user_text("mode {}".format(this_mode), 2)
+                for i in range(4):
+                    modes = self.ctrl.dynamics_mode[i]
+                    nom_count = (modes == 0).sum()
+                    text = "nom: {:.2f}".format(nom_count.float() / len(modes))
+                    # mode, counts = modes.unique(return_counts=True)
+                    # text = " ".join(
+                    #     ["{}:{:.2f}".format(m.item(), (c.float() / counts.sum()).item()) for m, c in zip(mode, counts)])
+                    self.env.draw_user_text("t={} {}".format(i, text), 3 + i)
             if self.visualize_action_sample and isinstance(self.ctrl, controller.MPPI_MPC):
                 self._plot_action_sample(self.ctrl.mpc.perturbed_action)
             if self.visualize_rollouts:

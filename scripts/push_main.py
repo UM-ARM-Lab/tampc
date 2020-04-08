@@ -269,6 +269,7 @@ class UseSelector:
     KDE = 1
     GMM = 2
     TREE = 3
+    FORCE = 4
 
 
 def get_selector(dss, use_selector=UseSelector.TREE, *args, **kwargs):
@@ -276,7 +277,8 @@ def get_selector(dss, use_selector=UseSelector.TREE, *args, **kwargs):
 
     component_scale = [1, 0.2]
     # TODO this is specific to coordinate transform to slice just the body frame reaction force
-    input_slice = slice(3, None)
+    # input_slice = slice(3, None)
+    input_slice = None
 
     if use_selector is UseSelector.MLP:
         selector = mode_selector.MLPSelector(dss, *args, **kwargs, input_slice=input_slice)
@@ -291,6 +293,8 @@ def get_selector(dss, use_selector=UseSelector.TREE, *args, **kwargs):
     elif use_selector is UseSelector.TREE:
         selector = mode_selector.SklearnClassifierSelector(dss, DecisionTreeClassifier(**kwargs),
                                                            input_slice=input_slice)
+    elif use_selector is UseSelector.FORCE:
+        selector = mode_selector.ReactionForceHeuristicSelector(12, slice(3, None))
     else:
         raise RuntimeError("Unrecognized selector option")
     return selector
@@ -314,7 +318,7 @@ def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.G
         ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
                                             mpc_opts=mpc_opts)
     else:
-        ctrl = controller.MPPI(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
+        ctrl = controller.MPPI_MPC(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
 
     return ctrl
 
@@ -907,7 +911,7 @@ def test_local_model_sufficiency_for_escaping_wall(plot_model_eval=True, plot_on
     env.draw_user_text(name, 14, left_offset=-1.5)
     sim = block_push.InteractivePush(env, ctrl, num_frames=100, plot=False, save=True, stop_when_done=False)
     seed = rand.seed()
-    sim.run(seed, 'test_sufficiency{}'.format(seed))
+    sim.run(seed, 'test_sufficiency_{}_{}'.format(selector.name, seed))
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
     plt.ioff()
     plt.show()
@@ -1444,9 +1448,9 @@ if __name__ == "__main__":
     # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
 
     # verify_coordinate_transform(UseTransform.COORDINATE_TRANSFORM)
-    evaluate_model_selector()
+    # evaluate_model_selector()
     # evaluate_ctrl_sampler()
-    # test_local_model_sufficiency_for_escaping_wall(plot_model_eval=False, use_tsf=UseTransform.COORDINATE_TRANSFORM)
+    test_local_model_sufficiency_for_escaping_wall(plot_model_eval=False, use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
     # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM,
     #                            online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD, override=True)

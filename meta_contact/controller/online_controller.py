@@ -3,7 +3,7 @@ import logging
 import numpy as np
 import torch
 
-from arm_pytorch_utilities import math_utils, linalg
+from arm_pytorch_utilities import math_utils, linalg, tensor_utils
 from meta_contact.dynamics import online_model
 from meta_contact.controller import controller, mode_selector
 
@@ -68,19 +68,21 @@ class OnlineMPC(OnlineController):
         self.constrain_state = constrain_state
         self.mpc = None
         self.mode_select = mode_select
-        self.dynamics_mode = None
+        self.dynamics_mode = {}
         super().__init__(*args, **kwargs)
 
-    def _apply_dynamics(self, state, u, t=0):
-        if state.dim() is 1 or u.dim() is 1:
-            state = state.view(1, -1)
-            u = u.view(1, -1)
+    def reset(self):
+        super(OnlineMPC, self).reset()
+        self.dynamics_mode = {}
 
-        self.dynamics_mode = self.mode_select.sample_mode(state, u)
+    @tensor_utils.ensure_2d_input
+    def _apply_dynamics(self, state, u, t=0):
+        mode = self.mode_select.sample_mode(state, u)
+        self.dynamics_mode[t] = mode
         next_state = torch.zeros_like(state)
         # TODO we should generalize to more than 2 modes
-        nominal_mode = self.dynamics_mode == 0
-        local_mode = self.dynamics_mode == 1
+        nominal_mode = mode == 0
+        local_mode = mode == 1
         if torch.any(nominal_mode):
             next_state[nominal_mode] = self.dynamics.prior.dyn_net.predict(
                 torch.cat((state[nominal_mode], u[nominal_mode]), dim=1))
@@ -97,7 +99,7 @@ class OnlineMPC(OnlineController):
         return u
 
 
-class OnlineMPPI(OnlineMPC, controller.MPPI):
+class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def _mpc_command(self, obs):
         return OnlineMPC._mpc_command(self, obs)
 
