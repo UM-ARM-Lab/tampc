@@ -284,7 +284,66 @@ class MPC(ControllerWithModelPrediction):
         return self._apply_dynamics(state.view(1, -1), control.view(1, -1), -1).cpu().numpy()
 
 
-class MPPI(MPC):
+class ExperimentalMPPI(mppi.MPPI):
+    def __init__(self, *args, rollout_samples=5, **kwargs):
+        super(ExperimentalMPPI, self).__init__(*args, **kwargs)
+        self.M = rollout_samples
+
+    @tensor_utils.handle_batch_input
+    def _dynamics(self, state, u, t):
+        return super(ExperimentalMPPI, self)._dynamics(state, u, t)
+
+    def _compute_total_cost_batch(self):
+        # parallelize sampling across trajectories
+        self.cost_total = torch.zeros(self.K, device=self.d, dtype=self.dtype)
+
+        # allow propagation of a sample of states (ex. to carry a distribution), or to start with a single state
+        # TODO rollout action trajectory M times to estimate expected cost
+        if self.state.shape == (self.K, self.nx):
+            state = self.state
+        else:
+            state = self.state.view(1, -1).repeat(self.K, 1)
+
+        # resample noise each time we take an action
+        self.noise = self.noise_dist.sample((self.K, self.T))
+        # broadcast own control to noise over samples; now it's K x T x nu
+        self.perturbed_action = self.U + self.noise
+        if self.sample_null_action:
+            self.perturbed_action[self.K - 1] = 0
+        # naively bound control
+        self.perturbed_action = self._bound_action(self.perturbed_action)
+        # bounded noise after bounding (some got cut off, so we don't penalize that in action cost)
+        self.noise = self.perturbed_action - self.U
+        action_cost = self.lambda_ * self.noise @ self.noise_sigma_inv
+
+        self.states = []
+        self.actions = []
+        for t in range(self.T):
+            u = self.perturbed_action[:, t]
+            state = self._dynamics(state, u, t)
+            self.cost_total += self.running_cost(state, u)
+            if self.dynamics_variance is not None:
+                self.cost_total += self.running_cost_variance(self.dynamics_variance(state))
+
+            # Save total states/actions
+            self.states.append(state)
+            self.actions.append(u)
+
+        # Actions is K x T x nu
+        # States is K x T x nx
+        self.actions = torch.stack(self.actions, dim=1)
+        self.states = torch.stack(self.states, dim=1)
+
+        # action perturbation cost
+        perturbation_cost = torch.sum(self.perturbed_action * action_cost, dim=(1, 2))
+        if self.terminal_state_cost:
+            self.cost_total += self.terminal_state_cost(self.states, self.actions)
+        self.cost_total += perturbation_cost
+        return self.cost_total
+
+
+
+class MPPI_MPC(MPC):
     def __init__(self, *args, mpc_opts=None, **kwargs):
         if mpc_opts is None:
             mpc_opts = {}
@@ -297,9 +356,9 @@ class MPPI(MPC):
             else:
                 noise_mult = self.u_max if self.u_max is not None else 1
                 noise_sigma = torch.eye(self.nu, dtype=self.dtype) * noise_mult
-        self.mpc = mppi.MPPI(self._apply_dynamics, self._running_cost, self.nx, u_min=self.u_min, u_max=self.u_max,
-                             noise_sigma=noise_sigma, device=self.d, terminal_state_cost=self._terminal_cost,
-                             **mpc_opts, **self._mpc_opts())
+        self.mpc = ExperimentalMPPI(self._apply_dynamics, self._running_cost, self.nx, u_min=self.u_min, u_max=self.u_max,
+                                    noise_sigma=noise_sigma, device=self.d, terminal_state_cost=self._terminal_cost,
+                                    **mpc_opts, **self._mpc_opts())
 
     def reset(self):
         super().reset()
