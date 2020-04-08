@@ -5,6 +5,7 @@ import os
 import numpy as np
 import torch
 from arm_pytorch_utilities import load_data
+from arm_pytorch_utilities import tensor_utils
 from arm_pytorch_utilities.model.common import LearnableParameterizedModel
 from arm_pytorch_utilities.model.mdn import MixtureDensityNetwork
 from arm_pytorch_utilities.make_data import datasource
@@ -153,9 +154,9 @@ class DynamicsModel(abc.ABC):
 
     def __init__(self, ds, use_np=False):
         self.ds = ds
-        # TODO check correctness of advance state function when we have have a transform (data is not xux' or xudx)
         self.advance = advance_state(ds.original_config(), use_np=use_np)
 
+    @tensor_utils.handle_batch_input
     def predict(self, xu, already_transformed=False, get_next_state=True):
         """
         Predict next state; will return with the same dimensions as xu
@@ -164,11 +165,6 @@ class DynamicsModel(abc.ABC):
         :param get_next_state: whether to output the next state, or the output of the model without advancing state
         :return: B x N x nx or N x nx next states
         """
-        orig_shape = xu.shape
-        if len(orig_shape) > 2:
-            # reduce all batch dimensions down to the first one
-            xu = xu.view(-1, orig_shape[-1])
-
         if self.ds.preprocessor and not already_transformed:
             dxb = self._apply_model(self.ds.preprocessor.transform_x(xu))
         else:
@@ -180,23 +176,13 @@ class DynamicsModel(abc.ABC):
 
         if get_next_state:
             x = self.advance(xu, dxb)
-            if len(orig_shape) > 2:
-                # restore original batch dimensions; keep variable dimension (nx)
-                x = x.view(*orig_shape[:-1], -1)
             return x
         else:
             return dxb
 
+    @tensor_utils.handle_batch_input
     def _batch_apply_model(self, xu):
-        orig_shape = xu.shape
-        if len(orig_shape) > 2:
-            xu = xu.view(-1, orig_shape[-1])
-
-        dxb = self._apply_model(xu)
-
-        if len(orig_shape) > 2:
-            dxb = dxb.view(*orig_shape[:-1], -1)
-        return dxb
+        return self._apply_model(xu)
 
     @abc.abstractmethod
     def _apply_model(self, xu):
