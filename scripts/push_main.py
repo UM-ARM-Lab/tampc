@@ -1188,17 +1188,19 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     plt.show()
 
 
-class RolloutMethod:
-    NONE = 0
-    STATES = 1
-    ACTIONS = 2
-    ORIG_ACTIONS = 3
+class NominalTrajFrom:
+    RANDOM = 0
+    ROLLOUT_FROM_RECOVERY_STATES = 1
+    RECOVERY_ACTIONS = 2
+    # ORIG_ACTIONS = 3
+    ROLLOUT_WITH_ORIG_ACTIONS = 4
 
 
-def evaluate_ctrl_sampler(seed=1, disp_dim=(4,), rollout_method=RolloutMethod.ACTIONS):
-    eval_i = 41
+def evaluate_ctrl_sampler(seed=1, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS, num_best_actions_to_show=6):
+    eval_i = 43
     # TODO be able to select this automatically from data
-    train_i = 23
+    train_i = 12
+    max_rollout_steps = 10
 
     env = get_env(p.GUI, level=1)
     logger.info("initial random seed %d", rand.seed(seed))
@@ -1237,17 +1239,19 @@ def evaluate_ctrl_sampler(seed=1, disp_dim=(4,), rollout_method=RolloutMethod.AC
                                         mode_select=selector)
     ctrl.set_goal(env.goal)
 
-    # have to rollout previous states up to now beacuse controller is stateful
-    if rollout_method is RolloutMethod.ACTIONS:
-        ctrl_rollout_steps = min(train_i, ctrl.mpc.T)
-        # need to reverse because the stored U is reverse chronological
-        ctrl.mpc.U[:ctrl_rollout_steps] = U_train[train_i - ctrl_rollout_steps:train_i].flip(0)
-    elif rollout_method is RolloutMethod.STATES:
-        for ii in range(train_i):
+    # use future actions from the current state in the recovery trajectory associated with the current state
+    if nom_traj_from is NominalTrajFrom.RECOVERY_ACTIONS:
+        ctrl_rollout_steps = min(len(X_train) - train_i, ctrl.mpc.T)
+        ctrl.mpc.U[:ctrl_rollout_steps] = U_train[train_i:train_i + ctrl_rollout_steps]
+    elif nom_traj_from is NominalTrajFrom.ROLLOUT_FROM_RECOVERY_STATES:
+        for ii in range(max(0, train_i - max_rollout_steps), train_i):
             ctrl.command(X_train[ii].cpu().numpy())
-    elif rollout_method is RolloutMethod.ORIG_ACTIONS:
-        ctrl_rollout_steps = min(eval_i, ctrl.mpc.T)
-        ctrl.mpc.U[:ctrl_rollout_steps] = U[eval_i - ctrl_rollout_steps:eval_i].flip(0)
+    # elif nom_traj_from is NominalTrajFrom.ORIG_ACTIONS:
+    #     ctrl_rollout_steps = min(len(X) - eval_i, ctrl.mpc.T)
+    #     ctrl.mpc.U[:ctrl_rollout_steps] = U[eval_i:eval_i + ctrl_rollout_steps]
+    elif nom_traj_from is NominalTrajFrom.ROLLOUT_WITH_ORIG_ACTIONS:
+        for ii in range(max(0, eval_i - max_rollout_steps), eval_i):
+            ctrl.command(X[ii].cpu().numpy())
 
     # use controller to sample next action
     u_best = ctrl.command(x)
@@ -1258,7 +1262,6 @@ def evaluate_ctrl_sampler(seed=1, disp_dim=(4,), rollout_method=RolloutMethod.AC
     # visualize best actions in simulator
     path_cost = ctrl.mpc.cost_total.cpu()
     v, ind = path_cost.sort()
-    num_best_actions_to_show = 6
     for top_k in range(num_best_actions_to_show):
         env._draw_action(u_sample[ind[top_k]], debug=top_k + 1)
 
@@ -1459,7 +1462,7 @@ if __name__ == "__main__":
 
     # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM,
     #                            online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD, override=True)
-    # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.NONE,
+    # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.RANDOM,
     #                            override=True, full_evaluation=False)
     # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM,
     #                            online_adapt=OnlineAdapt.GP_KERNEL, override=True)
