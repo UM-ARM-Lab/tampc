@@ -104,7 +104,7 @@ def get_controller_options(env):
         'use_orientation_terminal_cost': False,
     }
     mpc_opts = {
-        'num_samples': 1000,
+        'num_samples': 500,
         'noise_sigma': torch.diag(sigma),
         'noise_mu': torch.tensor(noise_mu, dtype=torch.double, device=d),
         'lambda_': 1e-2,
@@ -272,7 +272,7 @@ class UseSelector:
     FORCE = 4
 
 
-def get_selector(dss, use_selector=UseSelector.TREE, *args, **kwargs):
+def get_selector(dss, use_selector=UseSelector.MLP, *args, **kwargs):
     from sklearn.tree import DecisionTreeClassifier
 
     component_scale = [1, 0.2]
@@ -909,6 +909,7 @@ def test_local_model_sufficiency_for_escaping_wall(plot_model_eval=True, plot_on
     name = get_full_controller_name(pm, ctrl, tsf_name)
 
     env.draw_user_text(name, 14, left_offset=-1.5)
+    env.draw_user_text(selector.name, 13, left_offset=-1.5)
     sim = block_push.InteractivePush(env, ctrl, num_frames=100, plot=False, save=True, stop_when_done=False)
     seed = rand.seed()
     sim.run(seed, 'test_sufficiency_{}_{}'.format(selector.name, seed))
@@ -1059,7 +1060,7 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     ds_recovery, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
     ds_recovery.update_preprocessor(preprocessor)
 
-    selector = get_selector([ds, ds_recovery], use_selector=UseSelector.TREE)
+    selector = get_selector([ds, ds_recovery])
 
     # get evaluation data by getting definite positive samples from the freespace dataset
     pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)
@@ -1194,22 +1195,22 @@ class RolloutMethod:
     ORIG_ACTIONS = 3
 
 
-def evaluate_ctrl_sampler():
-    seed = 1
-    rollout_method = RolloutMethod.ACTIONS
-    disp_dim = [4]
-    eval_i = 59
-    train_i = 29
+def evaluate_ctrl_sampler(seed=1, disp_dim=(4,), rollout_method=RolloutMethod.ACTIONS):
+    eval_i = 41
+    # TODO be able to select this automatically from data
+    train_i = 23
 
     env = get_env(p.GUI, level=1)
     logger.info("initial random seed %d", rand.seed(seed))
 
     dynamics, ds, ds_wall, _ = get_mixed_model(env)
-    ds_eval, _ = get_ds(env, 'pushing/test_sufficiency140891.mat', validation_ratio=0.)
+    ds_eval, _ = get_ds(env, 'pushing/test_sufficiency_selector__i5_o2_s1_pd1_pa1_a0_e0_y0_140891.mat',
+                        validation_ratio=0.)
     ds_eval.update_preprocessor(ds.preprocessor)
 
     XU, Y, info = ds_wall.training_set(original=True)
     X_train, U_train = torch.split(XU, env.nx, dim=1)
+    assert train_i < len(X_train)
 
     # evaluate on a non-recovery dataset to see if rolling out the actions from the recovery set is helpful
     XU, Y, info = ds_eval.training_set(original=True)
@@ -1227,8 +1228,10 @@ def evaluate_ctrl_sampler():
     selector = mode_selector.SklearnClassifierSelector(dss, SVC(probability=True, gamma='auto'))
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
-    N = 1000
+    N = 500
+    M = 20
     mpc_opts['num_samples'] = N
+    mpc_opts['rollout_samples'] = M
     mpc_opts['lambda_'] = 1
     ctrl = online_controller.OnlineMPPI(dynamics, ds.original_config(), **common_wrapper_opts, mpc_opts=mpc_opts,
                                         mode_select=selector)
@@ -1248,9 +1251,9 @@ def evaluate_ctrl_sampler():
 
     # use controller to sample next action
     u_best = ctrl.command(x)
-    u_sample = ctrl.mpc.actions[:, 0, :].cpu().numpy()  # only consider the first step
-    next_x = dynamics.predict(None, None, np.tile(x, (N, 1)), u_sample)
-    var = dynamics.last_prediction.variance.detach().cpu().numpy()
+    u_sample = ctrl.mpc.actions[0, :, 0, :].cpu().numpy()  # only consider the first step
+    # next_x = dynamics.predict(None, None, np.tile(x, (N, 1)), u_sample)
+    # var = dynamics.last_prediction.variance.detach().cpu().numpy()
 
     # visualize best actions in simulator
     path_cost = ctrl.mpc.cost_total.cpu()
@@ -1259,30 +1262,32 @@ def evaluate_ctrl_sampler():
     for top_k in range(num_best_actions_to_show):
         env._draw_action(u_sample[ind[top_k]], debug=top_k + 1)
 
-    names = env.state_names()
+    f, axes = plt.subplots(2, 1, sharex=True)
+    path_sampled_cost = ctrl.mpc.cost_samples[:, ind]
+    t = np.arange(N)
+    axes[0].scatter(np.tile(t, (M, 1)), path_sampled_cost.cpu(), alpha=0.2)
+    axes[0].set_ylabel('cost')
 
+    modes = [ctrl.dynamics_mode[i].view(20, -1) for i in range(ctrl.mpc.T)]
+    modes = torch.stack(modes, dim=0)
+    modes = (modes == 0).sum(dim=0)
+    axes[1].scatter(np.tile(t, (M, 1)), modes[:, ind].cpu(), alpha=0.2)
+    axes[1].set_ylabel('# nominal mode in traj')
+    axes[-1].set_xlabel('u sample')
+
+    # names = env.state_names()
     # f, axes = plt.subplots(len(disp_dim), 1)
     # if len(disp_dim) is 1:
     #     axes = [axes]
     # for j, dim in enumerate(disp_dim):
-    #     sns.distplot(var[:, dim], ax=axes[j])
-    #     axes[j].set_ylabel('d{}'.format(names[dim]))
+    #     axes[j].scatter(var[:, dim], path_cost, alpha=0.3, label='d{}'.format(names[dim]))
+    #     axes[j].set_ylabel('cost')
+    #     axes[j].legend()
     # axes[-1].set_xlabel('variance')
-    # f.suptitle('distribution variance in sampled actions')
+    # f.suptitle('trajectory cost vs variance in sampled actions')
     # f.tight_layout()
 
-    f, axes = plt.subplots(len(disp_dim), 1)
-    if len(disp_dim) is 1:
-        axes = [axes]
-    for j, dim in enumerate(disp_dim):
-        axes[j].scatter(var[:, dim], path_cost, alpha=0.3, label='d{}'.format(names[dim]))
-        axes[j].set_ylabel('cost')
-        axes[j].legend()
-    axes[-1].set_xlabel('variance')
-    f.suptitle('trajectory cost vs variance in sampled actions')
-    f.tight_layout()
     plt.show()
-    input('do visualization')
 
 
 class Learn:
@@ -1449,8 +1454,8 @@ if __name__ == "__main__":
 
     # verify_coordinate_transform(UseTransform.COORDINATE_TRANSFORM)
     # evaluate_model_selector()
-    # evaluate_ctrl_sampler()
-    test_local_model_sufficiency_for_escaping_wall(plot_model_eval=False, use_tsf=UseTransform.COORDINATE_TRANSFORM)
+    evaluate_ctrl_sampler()
+    # test_local_model_sufficiency_for_escaping_wall(plot_model_eval=False, use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
     # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM,
     #                            online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD, override=True)
