@@ -1,6 +1,6 @@
 """ This file defines utility classes and functions for costs from GPS. """
 import torch
-from arm_pytorch_utilities import linalg
+from arm_pytorch_utilities import linalg, tensor_utils
 
 
 class CostQROnlineTorch:
@@ -10,6 +10,7 @@ class CostQROnlineTorch:
         self.eetgt = target
         self.compare_to_goal = compare_to_goal
 
+    @tensor_utils.handle_batch_input
     def __call__(self, X, U=None, terminal=False):
         X = self.compare_to_goal(X, self.eetgt)
         loss = linalg.batch_quadratic_product(X, self.Q)

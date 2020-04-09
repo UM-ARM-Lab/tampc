@@ -212,9 +212,11 @@ class MPC(ControllerWithModelPrediction):
         return self.cost(state, action)
 
     def _terminal_cost(self, state, action):
-        # extract the last state; assume if given 3 dimensions then it's (B x T x nx)
+        # extract the last state; assume if given 3 dimensions then it's (B x T x nx) or (M x B x T x nx)
         if len(state.shape) is 3:
             state = state[:, -1, :]
+        elif len(state.shape) is 4:
+            state = state[:, :, -1, :]
         state_loss = self.terminal_cost_multiplier * self.cost(state, action, terminal=True)
         total_loss = state_loss
         # TODO specific to block pushing (want final pose to point towards goal) - should push to inherited class
@@ -293,12 +295,15 @@ class ExperimentalMPPI(mppi.MPPI):
     def _dynamics(self, state, u, t):
         return super(ExperimentalMPPI, self)._dynamics(state, u, t)
 
+    @tensor_utils.handle_batch_input
+    def _running_cost(self, state, u):
+        return self.running_cost(state, u)
+
     def _compute_total_cost_batch(self):
         # parallelize sampling across trajectories
         self.cost_total = torch.zeros(self.K, device=self.d, dtype=self.dtype)
 
         # allow propagation of a sample of states (ex. to carry a distribution), or to start with a single state
-        # TODO rollout action trajectory M times to estimate expected cost
         if self.state.shape == (self.K, self.nx):
             state = self.state
         else:
@@ -316,12 +321,19 @@ class ExperimentalMPPI(mppi.MPPI):
         self.noise = self.perturbed_action - self.U
         action_cost = self.lambda_ * self.noise @ self.noise_sigma_inv
 
+        # rollout action trajectory M times to estimate expected cost
+        state = state.repeat(self.M, 1, 1)
+
         self.states = []
         self.actions = []
         for t in range(self.T):
-            u = self.perturbed_action[:, t]
+            u = self.perturbed_action[:, t].repeat(self.M, 1, 1)
             state = self._dynamics(state, u, t)
-            self.cost_total += self.running_cost(state, u)
+            c = self.running_cost(state, u)
+            # TODO try adding this to cost instead of the explicit dynamics variance cost
+            # std sampled across trajectory rollouts
+            cost_std = c.std(dim=0)
+            self.cost_total += c.mean(dim=0)
             if self.dynamics_variance is not None:
                 self.cost_total += self.running_cost_variance(self.dynamics_variance(state))
 
@@ -331,16 +343,16 @@ class ExperimentalMPPI(mppi.MPPI):
 
         # Actions is K x T x nu
         # States is K x T x nx
-        self.actions = torch.stack(self.actions, dim=1)
-        self.states = torch.stack(self.states, dim=1)
+        self.actions = torch.stack(self.actions, dim=-2)
+        self.states = torch.stack(self.states, dim=-2)
 
         # action perturbation cost
         perturbation_cost = torch.sum(self.perturbed_action * action_cost, dim=(1, 2))
         if self.terminal_state_cost:
-            self.cost_total += self.terminal_state_cost(self.states, self.actions)
+            c = self.terminal_state_cost(self.states, self.actions)
+            self.cost_total += c.mean(dim=0)
         self.cost_total += perturbation_cost
         return self.cost_total
-
 
 
 class MPPI_MPC(MPC):
@@ -356,7 +368,8 @@ class MPPI_MPC(MPC):
             else:
                 noise_mult = self.u_max if self.u_max is not None else 1
                 noise_sigma = torch.eye(self.nu, dtype=self.dtype) * noise_mult
-        self.mpc = ExperimentalMPPI(self._apply_dynamics, self._running_cost, self.nx, u_min=self.u_min, u_max=self.u_max,
+        self.mpc = ExperimentalMPPI(self._apply_dynamics, self._running_cost, self.nx, u_min=self.u_min,
+                                    u_max=self.u_max,
                                     noise_sigma=noise_sigma, device=self.d, terminal_state_cost=self._terminal_cost,
                                     **mpc_opts, **self._mpc_opts())
 
