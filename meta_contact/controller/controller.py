@@ -287,9 +287,10 @@ class MPC(ControllerWithModelPrediction):
 
 
 class ExperimentalMPPI(mppi.MPPI):
-    def __init__(self, *args, rollout_samples=5, **kwargs):
+    def __init__(self, *args, rollout_samples=20, **kwargs):
         super(ExperimentalMPPI, self).__init__(*args, **kwargs)
         self.M = rollout_samples
+        self.cost_samples = None
 
     @tensor_utils.handle_batch_input
     def _dynamics(self, state, u, t):
@@ -302,6 +303,7 @@ class ExperimentalMPPI(mppi.MPPI):
     def _compute_total_cost_batch(self):
         # parallelize sampling across trajectories
         self.cost_total = torch.zeros(self.K, device=self.d, dtype=self.dtype)
+        self.cost_samples = self.cost_total.repeat(self.M, 1)
 
         # allow propagation of a sample of states (ex. to carry a distribution), or to start with a single state
         if self.state.shape == (self.K, self.nx):
@@ -330,10 +332,7 @@ class ExperimentalMPPI(mppi.MPPI):
             u = self.perturbed_action[:, t].repeat(self.M, 1, 1)
             state = self._dynamics(state, u, t)
             c = self.running_cost(state, u)
-            # TODO try adding this to cost instead of the explicit dynamics variance cost
-            # std sampled across trajectory rollouts
-            cost_std = c.std(dim=0)
-            self.cost_total += c.mean(dim=0)
+            self.cost_samples += c
             if self.dynamics_variance is not None:
                 self.cost_total += self.running_cost_variance(self.dynamics_variance(state))
 
@@ -350,7 +349,11 @@ class ExperimentalMPPI(mppi.MPPI):
         perturbation_cost = torch.sum(self.perturbed_action * action_cost, dim=(1, 2))
         if self.terminal_state_cost:
             c = self.terminal_state_cost(self.states, self.actions)
-            self.cost_total += c.mean(dim=0)
+            self.cost_samples += c
+        # TODO try adding std to cost instead of the explicit dynamics variance cost
+        # std sampled across trajectory rollouts
+        cost_std = self.cost_samples.std(dim=0)
+        self.cost_total += self.cost_samples.mean(dim=0)
         self.cost_total += perturbation_cost
         return self.cost_total
 
