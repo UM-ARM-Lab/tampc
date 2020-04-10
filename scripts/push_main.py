@@ -52,6 +52,15 @@ def get_env(mode=p.GUI, level=0, log_video=False):
     init_pusher = 0
     goal_pos = [0.85, -0.35]
     # goal_pos = [-0.5, 0.12]
+    if level is 2:
+        init_block_pos = [0.3, 0.6]
+        init_block_yaw = -3 * math.pi / 4
+        goal_pos = [0.7, -0.35]
+    elif level is 3:
+        init_block_pos = [0., 0.6]
+        init_block_yaw = -math.pi / 4
+        goal_pos = [-0.2, -0.45]
+
     env_opts = {
         'mode': mode,
         'goal': goal_pos,
@@ -82,16 +91,9 @@ def get_controller_options(env):
     u_min, u_max = env.get_control_bounds()
     Q = torch.tensor(env.state_cost(), dtype=torch.double)
     R = 0.01
-    if env.nu is 3:
-        sigma = [0.2, 0.4, 0.7]
-        noise_mu = [0, 0.1, 0]
-        u_init = [0, 0.5, 0]
-    elif env.nu is 2:
-        sigma = [0.3, 0.2]
-        noise_mu = [0, 0]
-        u_init = [0, 0]
-    else:
-        raise RuntimeError("Unrecognized environment")
+    sigma = [0.2, 0.4, 0.7]
+    noise_mu = [0, 0.1, 0]
+    u_init = [0, 0.5, 0]
     # tune this so that we figure out to make u-turns
     sigma = torch.tensor(sigma, dtype=torch.double, device=d)
     common_wrapper_opts = {
@@ -742,14 +744,14 @@ def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTransform.COORDINATE_
     env.close()
 
 
-def test_local_model_sufficiency_for_escaping_wall(plot_model_eval=True, plot_online_update=False, use_gp=True,
+def test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=True, plot_online_update=False, use_gp=True,
                                                    use_tsf=UseTransform.COORDINATE_TRANSFORM, **kwargs):
     seed = 1
 
     if plot_model_eval:
         env = get_env(p.DIRECT)
     else:
-        env = get_env(p.GUI, level=1, log_video=True)
+        env = get_env(p.GUI, level=level, log_video=True)
 
     logger.info("initial random seed %d", rand.seed(seed))
 
@@ -909,6 +911,7 @@ def test_local_model_sufficiency_for_escaping_wall(plot_model_eval=True, plot_on
     common_wrapper_opts['adjust_model_pred_with_prev_error'] = False
     ctrl = online_controller.OnlineMPPI(dynamics_gp if use_gp else dynamics, ds.original_config(), mode_select=selector,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
+    ctrl.set_goal(env.goal)
     nom_traj_manager = MPPINominalTrajManager(ctrl, dss, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS)
 
     _, tsf_name = get_transform(env, ds, use_tsf)
@@ -916,7 +919,7 @@ def test_local_model_sufficiency_for_escaping_wall(plot_model_eval=True, plot_on
 
     env.draw_user_text(name, 14, left_offset=-1.5)
     env.draw_user_text(selector.name, 13, left_offset=-1.5)
-    sim = block_push.InteractivePush(env, ctrl, num_frames=100, plot=False, save=True, stop_when_done=False,
+    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=True, stop_when_done=False,
                                      nom_traj_manager=nom_traj_manager)
     seed = rand.seed()
     sim.run(seed, 'test_sufficiency_{}_{}'.format(selector.name, seed))
@@ -1443,7 +1446,8 @@ if __name__ == "__main__":
     # verify_coordinate_transform(UseTransform.COORDINATE_TRANSFORM)
     # evaluate_model_selector()
     # evaluate_ctrl_sampler()
-    test_local_model_sufficiency_for_escaping_wall(plot_model_eval=False, use_tsf=UseTransform.COORDINATE_TRANSFORM)
+    test_local_model_sufficiency_for_escaping_wall(level=3, plot_model_eval=False,
+                                                   use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
     # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM,
     #                            online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD, override=True)
