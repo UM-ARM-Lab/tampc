@@ -114,6 +114,7 @@ def get_controller_options(env):
         'u_init': torch.tensor(u_init, dtype=torch.double, device=d),
         'sample_null_action': False,
         'step_dependent_dynamics': True,
+        'rollout_var_cost': 0,
     }
     return common_wrapper_opts, mpc_opts
 
@@ -1190,7 +1191,7 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     plt.show()
 
 
-def evaluate_ctrl_sampler(seed=1, nom_traj_from=NominalTrajFrom.ROLLOUT_WITH_ORIG_ACTIONS, num_best_actions_to_show=6,
+def evaluate_ctrl_sampler(seed=1, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS, num_best_actions_to_show=6,
                           do_rollout_best_action=True):
     eval_i = 43
 
@@ -1220,10 +1221,15 @@ def evaluate_ctrl_sampler(seed=1, nom_traj_from=NominalTrajFrom.ROLLOUT_WITH_ORI
     M = 20
     mpc_opts['num_samples'] = N
     mpc_opts['rollout_samples'] = M
+    mpc_opts['rollout_var_cost'] = 0
     ctrl = online_controller.OnlineMPPI(dynamics, ds.original_config(), **common_wrapper_opts, mpc_opts=mpc_opts,
                                         mode_select=selector)
     ctrl.set_goal(env.goal)
     nom_traj_manager = MPPINominalTrajManager(ctrl, dss, nom_traj_from=nom_traj_from)
+
+    env.draw_user_text(
+        "rollout var cost {} discount {}".format(ctrl.mpc.rollout_var_cost, ctrl.mpc.rollout_var_discount), 12,
+        left_offset=-1.5)
 
     if nom_traj_from is NominalTrajFrom.ROLLOUT_WITH_ORIG_ACTIONS:
         for ii in range(max(0, eval_i - 10), eval_i):

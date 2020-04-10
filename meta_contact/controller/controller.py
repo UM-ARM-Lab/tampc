@@ -287,10 +287,12 @@ class MPC(ControllerWithModelPrediction):
 
 
 class ExperimentalMPPI(mppi.MPPI):
-    def __init__(self, *args, rollout_samples=20, **kwargs):
+    def __init__(self, *args, rollout_samples=20, rollout_var_cost=0.5, rollout_var_discount=0.95, **kwargs):
         super(ExperimentalMPPI, self).__init__(*args, **kwargs)
         self.M = rollout_samples
         self.cost_samples = None
+        self.rollout_var_cost = rollout_var_cost
+        self.rollout_var_discount = rollout_var_discount
 
     @tensor_utils.handle_batch_input
     def _dynamics(self, state, u, t):
@@ -304,6 +306,7 @@ class ExperimentalMPPI(mppi.MPPI):
         # parallelize sampling across trajectories
         self.cost_total = torch.zeros(self.K, device=self.d, dtype=self.dtype)
         self.cost_samples = self.cost_total.repeat(self.M, 1)
+        cost_var = torch.zeros_like(self.cost_total)
 
         # allow propagation of a sample of states (ex. to carry a distribution), or to start with a single state
         if self.state.shape == (self.K, self.nx):
@@ -333,6 +336,7 @@ class ExperimentalMPPI(mppi.MPPI):
             state = self._dynamics(state, u, t)
             c = self.running_cost(state, u)
             self.cost_samples += c
+            cost_var += c.var(dim=0) * (self.rollout_var_discount ** t)
             if self.dynamics_variance is not None:
                 self.cost_total += self.running_cost_variance(self.dynamics_variance(state))
 
@@ -350,11 +354,9 @@ class ExperimentalMPPI(mppi.MPPI):
         if self.terminal_state_cost:
             c = self.terminal_state_cost(self.states, self.actions)
             self.cost_samples += c
-        # TODO try adding std to cost instead of the explicit dynamics variance cost
-        # std sampled across trajectory rollouts
-        cost_std = self.cost_samples.std(dim=0)
         self.cost_total += self.cost_samples.mean(dim=0)
         self.cost_total += perturbation_cost
+        self.cost_total += cost_var * self.rollout_var_cost
         return self.cost_total
 
 
