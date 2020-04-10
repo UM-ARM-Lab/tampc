@@ -170,7 +170,8 @@ class MPPINominalTrajManager:
 
     def update_nominal_trajectory(self, state, action):
         if self.nom_traj_from is NominalTrajFrom.ROLLOUT_WITH_ORIG_ACTIONS:
-            return
+            return False
+        adjusted_trajectory = False
         mode = self.ctrl.mode_select.sample_mode(state, action)
         # TODO generalize this to multiple modes
         # try always using the recovery policy while in this mode
@@ -178,8 +179,11 @@ class MPPINominalTrajManager:
         if mode == 1:
             if self.nom_traj_from is NominalTrajFrom.RANDOM:
                 self.ctrl.mpc.U = self.ctrl.mpc.noise_dist.sample((self.ctrl.mpc.T,))
+                adjusted_trajectory = True
             # if we're not using the fixed recovery nom, then we set it if we're entering from another mode
             if self.fixed_recovery_nominal_traj or self.last_mode != mode:
                 self.ctrl.mpc.U = self.U_recovery.clone()
+                adjusted_trajectory = True
 
         self.last_mode = mode
+        return adjusted_trajectory
