@@ -4,7 +4,6 @@ import typing
 import os
 import time
 import pickle
-from enum import Enum
 
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -16,6 +15,7 @@ from arm_pytorch_utilities import math_utils
 from arm_pytorch_utilities import preprocess
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.model import make
+from meta_contact.controller.online_controller import NominalTrajFrom, MPPINominalTrajManager
 from meta_contact.transform.block_push import CoordTransform, LearnedTransform, AblationOnTransform, \
     translation_generator
 from tensorboardX import SummaryWriter
@@ -279,8 +279,8 @@ def get_selector(dss, use_selector=UseSelector.MLP, *args, **kwargs):
 
     component_scale = [1, 0.2]
     # TODO this is specific to coordinate transform to slice just the body frame reaction force
-    input_slice = slice(3, None)
-    # input_slice = None
+    # input_slice = slice(3, None)
+    input_slice = None
 
     if use_selector is UseSelector.MLP:
         selector = mode_selector.MLPSelector(dss, *args, **kwargs, input_slice=input_slice)
@@ -1190,33 +1190,19 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     plt.show()
 
 
-class NominalTrajFrom(Enum):
-    RANDOM = 0
-    ROLLOUT_FROM_RECOVERY_STATES = 1
-    RECOVERY_ACTIONS = 2
-    ROLLOUT_WITH_ORIG_ACTIONS = 3
-
-
-def evaluate_ctrl_sampler(seed=1, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS, num_best_actions_to_show=6):
+def evaluate_ctrl_sampler(seed=1, nom_traj_from=NominalTrajFrom.ROLLOUT_WITH_ORIG_ACTIONS, num_best_actions_to_show=6,
+                          do_rollout_best_action=True):
     eval_i = 43
-    # TODO be able to select this automatically from data
-    train_i = 14
-    max_rollout_steps = 10
-    do_rollout_best_action = True
 
     env = get_env(p.GUI, level=1, log_video=do_rollout_best_action)
     env.draw_user_text("nominal traj from {}".format(nom_traj_from.name), 14, left_offset=-1.5)
-    env.draw_user_text("eval index {} recovery index {}".format(eval_i, train_i), 13, left_offset=-1.5)
+    env.draw_user_text("eval index {}".format(eval_i), 13, left_offset=-1.5)
     logger.info("initial random seed %d", rand.seed(seed))
 
     dynamics, ds, ds_wall, _ = get_mixed_model(env)
     ds_eval, _ = get_ds(env, 'pushing/test_sufficiency_selector__i5_o2_s1_pd1_pa1_a0_e0_y0_140891.mat',
                         validation_ratio=0.)
     ds_eval.update_preprocessor(ds.preprocessor)
-
-    XU, Y, info = ds_wall.training_set(original=True)
-    X_train, U_train = torch.split(XU, env.nx, dim=1)
-    assert train_i < len(X_train)
 
     # evaluate on a non-recovery dataset to see if rolling out the actions from the recovery set is helpful
     XU, Y, info = ds_eval.training_set(original=True)
@@ -1226,28 +1212,21 @@ def evaluate_ctrl_sampler(seed=1, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS
     u = U[eval_i].cpu().numpy()
     env.set_state(x, u)
 
-    from sklearn.svm import SVC
-    selector = get_selector([ds, ds_wall])
+    dss = [ds, ds_wall]
+    selector = get_selector(dss)
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     N = 500
     M = 20
     mpc_opts['num_samples'] = N
     mpc_opts['rollout_samples'] = M
-    # mpc_opts['lambda_'] = 1
     ctrl = online_controller.OnlineMPPI(dynamics, ds.original_config(), **common_wrapper_opts, mpc_opts=mpc_opts,
                                         mode_select=selector)
     ctrl.set_goal(env.goal)
+    nom_traj_manager = MPPINominalTrajManager(ctrl, dss, nom_traj_from=nom_traj_from)
 
-    # use future actions from the current state in the recovery trajectory associated with the current state
-    if nom_traj_from is NominalTrajFrom.RECOVERY_ACTIONS:
-        ctrl_rollout_steps = min(len(X_train) - train_i, ctrl.mpc.T)
-        ctrl.mpc.U[:ctrl_rollout_steps] = U_train[train_i:train_i + ctrl_rollout_steps]
-    elif nom_traj_from is NominalTrajFrom.ROLLOUT_FROM_RECOVERY_STATES:
-        for ii in range(max(0, train_i - max_rollout_steps), train_i):
-            ctrl.command(X_train[ii].cpu().numpy())
-    elif nom_traj_from is NominalTrajFrom.ROLLOUT_WITH_ORIG_ACTIONS:
-        for ii in range(max(0, eval_i - max_rollout_steps), eval_i):
+    if nom_traj_from is NominalTrajFrom.ROLLOUT_WITH_ORIG_ACTIONS:
+        for ii in range(max(0, eval_i - 10), eval_i):
             ctrl.command(X[ii].cpu().numpy())
 
     steps_to_take = 15 if do_rollout_best_action else 1
@@ -1261,11 +1240,7 @@ def evaluate_ctrl_sampler(seed=1, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS
         o, a = [torch.tensor(v).to(device=ctrl.d).view(1, -1) for v in (x, u_best)]
         mode = ctrl.mode_select.sample_mode(o, a)
         env.draw_user_text("mode {}".format(mode.item()), 1)
-        # TODO potentially remove this (at least generalize our reset of nominal policy to always be the recovery policy)
-        # try always using the recovery policy while in this mode
-        if mode == 1 and nom_traj_from is NominalTrajFrom.RECOVERY_ACTIONS:
-            ctrl_rollout_steps = min(len(X_train) - train_i, ctrl.mpc.T)
-            ctrl.mpc.U[1:1 + ctrl_rollout_steps] = U_train[train_i:train_i + ctrl_rollout_steps]
+        nom_traj_manager.update_nominal_trajectory(o, a)
 
         # visualize best actions in simulator
         path_cost = ctrl.mpc.cost_total.cpu()

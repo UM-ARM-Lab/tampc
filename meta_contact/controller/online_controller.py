@@ -1,5 +1,7 @@
 import abc
 import logging
+from enum import Enum
+
 import numpy as np
 import torch
 
@@ -126,3 +128,58 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             c = linalg.batch_quadratic_product(variance, self.Q_variance)
             return -c
         return 0
+
+
+class NominalTrajFrom(Enum):
+    RANDOM = 0
+    ROLLOUT_FROM_RECOVERY_STATES = 1
+    RECOVERY_ACTIONS = 2
+    ROLLOUT_WITH_ORIG_ACTIONS = 3
+
+
+class MPPINominalTrajManager:
+    def __init__(self, ctrl: OnlineMPPI, dss, fixed_recovery_nominal_traj=True,
+                 nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS):
+        """
+        :param ctrl:
+        :param dss:
+        :param fixed_recovery_nominal_traj: if false, only set nominal traj when entering mode, otherwise set every step
+        """
+        self.ctrl = ctrl
+        self.fixed_recovery_nominal_traj = fixed_recovery_nominal_traj
+        self.last_mode = 0
+        self.nom_traj_from = nom_traj_from
+
+        # TODO generalize this for more local models
+        ds, ds_wall = dss
+        # TODO have option to select this automatically from data
+        self.train_i = 14
+        max_rollout_steps = 10
+        XU, Y, info = ds_wall.training_set(original=True)
+        X_train, U_train = torch.split(XU, ds.original_config().nx, dim=1)
+        assert self.train_i < len(X_train)
+
+        if nom_traj_from is NominalTrajFrom.RECOVERY_ACTIONS:
+            ctrl_rollout_steps = min(len(X_train) - self.train_i, ctrl.mpc.T)
+            ctrl.mpc.U[1:1 + ctrl_rollout_steps] = U_train[self.train_i:self.train_i + ctrl_rollout_steps]
+        elif nom_traj_from is NominalTrajFrom.ROLLOUT_FROM_RECOVERY_STATES:
+            for ii in range(max(0, self.train_i - max_rollout_steps), self.train_i):
+                ctrl.command(X_train[ii].cpu().numpy())
+
+        self.U_recovery = ctrl.mpc.U.clone()
+
+    def update_nominal_trajectory(self, state, action):
+        if self.nom_traj_from is NominalTrajFrom.ROLLOUT_WITH_ORIG_ACTIONS:
+            return
+        mode = self.ctrl.mode_select.sample_mode(state, action)
+        # TODO generalize this to multiple modes
+        # try always using the recovery policy while in this mode
+        # TODO consider if we need clone
+        if mode == 1:
+            if self.nom_traj_from is NominalTrajFrom.RANDOM:
+                self.ctrl.mpc.U = self.ctrl.mpc.noise_dist.sample((self.ctrl.mpc.T,))
+            # if we're not using the fixed recovery nom, then we set it if we're entering from another mode
+            if self.fixed_recovery_nominal_traj or self.last_mode != mode:
+                self.ctrl.mpc.U = self.U_recovery.clone()
+
+        self.last_mode = mode
