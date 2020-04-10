@@ -756,7 +756,8 @@ def test_local_model_sufficiency_for_escaping_wall(plot_model_eval=True, plot_on
                                         allow_update=plot_online_update, **kwargs)
     dynamics_gp, ds, ds_wall, train_slice = get_mixed_model(env, use_tsf=use_tsf, allow_update=plot_online_update,
                                                             **kwargs)
-    selector = get_selector([ds, ds_wall])
+    dss = [ds, ds_wall]
+    selector = get_selector(dss)
 
     pm = dynamics_gp.prior
     if plot_model_eval:
@@ -907,13 +908,15 @@ def test_local_model_sufficiency_for_escaping_wall(plot_model_eval=True, plot_on
     common_wrapper_opts['adjust_model_pred_with_prev_error'] = False
     ctrl = online_controller.OnlineMPPI(dynamics_gp if use_gp else dynamics, ds.original_config(), mode_select=selector,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
+    nom_traj_manager = MPPINominalTrajManager(ctrl, dss)
 
     _, tsf_name = get_transform(env, ds, use_tsf)
     name = get_full_controller_name(pm, ctrl, tsf_name)
 
     env.draw_user_text(name, 14, left_offset=-1.5)
     env.draw_user_text(selector.name, 13, left_offset=-1.5)
-    sim = block_push.InteractivePush(env, ctrl, num_frames=100, plot=False, save=True, stop_when_done=False)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=100, plot=False, save=True, stop_when_done=False,
+                                     nom_traj_manager=nom_traj_manager)
     seed = rand.seed()
     sim.run(seed, 'test_sufficiency_{}_{}'.format(selector.name, seed))
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
@@ -1438,8 +1441,8 @@ if __name__ == "__main__":
 
     # verify_coordinate_transform(UseTransform.COORDINATE_TRANSFORM)
     # evaluate_model_selector()
-    evaluate_ctrl_sampler()
-    # test_local_model_sufficiency_for_escaping_wall(plot_model_eval=False, use_tsf=UseTransform.COORDINATE_TRANSFORM)
+    # evaluate_ctrl_sampler()
+    test_local_model_sufficiency_for_escaping_wall(plot_model_eval=False, use_tsf=UseTransform.COORDINATE_TRANSFORM)
 
     # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM,
     #                            online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD, override=True)

@@ -1240,7 +1240,7 @@ def interpolate_pos(start, end, t):
 class InteractivePush(simulation.Simulation):
     def __init__(self, env: PushAgainstWallEnv, controller, num_frames=1000, save_dir='pushing',
                  terminal_cost_multiplier=1, stop_when_done=True, visualize_rollouts=True,
-                 visualize_action_sample=False,
+                 visualize_action_sample=False, nom_traj_manager=None,
                  **kwargs):
 
         super(InteractivePush, self).__init__(save_dir=save_dir, num_frames=num_frames, config=cfg, **kwargs)
@@ -1252,6 +1252,7 @@ class InteractivePush(simulation.Simulation):
 
         self.env = env
         self.ctrl = controller
+        self.nom_traj_manager = nom_traj_manager
 
         # keep track of last run's rewards
         self.terminal_cost_multiplier = terminal_cost_multiplier
@@ -1321,6 +1322,8 @@ class InteractivePush(simulation.Simulation):
                 this_mode = self.ctrl.mode_select.sample_mode(o, a).item()
                 self.pred_mode[simTime] = this_mode
                 self.env.draw_user_text("mode {}".format(this_mode), 2)
+                if self.nom_traj_manager is not None:
+                    self.nom_traj_manager.update_nominal_trajectory(o, a)
                 for i in range(4):
                     modes = self.ctrl.dynamics_mode[i]
                     nom_count = (modes == 0).sum()
