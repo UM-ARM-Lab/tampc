@@ -2,7 +2,9 @@ import logging
 import math
 import typing
 import os
+import time
 import pickle
+from enum import Enum
 
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -81,7 +83,7 @@ def get_controller_options(env):
     Q = torch.tensor(env.state_cost(), dtype=torch.double)
     R = 0.01
     if env.nu is 3:
-        sigma = [0.3, 0.4, 0.8]
+        sigma = [0.2, 0.4, 0.7]
         noise_mu = [0, 0.1, 0]
         u_init = [0, 0.5, 0]
     elif env.nu is 2:
@@ -277,8 +279,8 @@ def get_selector(dss, use_selector=UseSelector.MLP, *args, **kwargs):
 
     component_scale = [1, 0.2]
     # TODO this is specific to coordinate transform to slice just the body frame reaction force
-    # input_slice = slice(3, None)
-    input_slice = None
+    input_slice = slice(3, None)
+    # input_slice = None
 
     if use_selector is UseSelector.MLP:
         selector = mode_selector.MLPSelector(dss, *args, **kwargs, input_slice=input_slice)
@@ -1188,21 +1190,23 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     plt.show()
 
 
-class NominalTrajFrom:
+class NominalTrajFrom(Enum):
     RANDOM = 0
     ROLLOUT_FROM_RECOVERY_STATES = 1
     RECOVERY_ACTIONS = 2
-    # ORIG_ACTIONS = 3
-    ROLLOUT_WITH_ORIG_ACTIONS = 4
+    ROLLOUT_WITH_ORIG_ACTIONS = 3
 
 
 def evaluate_ctrl_sampler(seed=1, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS, num_best_actions_to_show=6):
     eval_i = 43
     # TODO be able to select this automatically from data
-    train_i = 12
+    train_i = 14
     max_rollout_steps = 10
+    do_rollout_best_action = True
 
-    env = get_env(p.GUI, level=1)
+    env = get_env(p.GUI, level=1, log_video=do_rollout_best_action)
+    env.draw_user_text("nominal traj from {}".format(nom_traj_from.name), 14, left_offset=-1.5)
+    env.draw_user_text("eval index {} recovery index {}".format(eval_i, train_i), 13, left_offset=-1.5)
     logger.info("initial random seed %d", rand.seed(seed))
 
     dynamics, ds, ds_wall, _ = get_mixed_model(env)
@@ -1223,18 +1227,14 @@ def evaluate_ctrl_sampler(seed=1, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS
     env.set_state(x, u)
 
     from sklearn.svm import SVC
-
-    dss = [ds, ds_wall]
-    # selector = mode_selector.ReactionForceHeuristicSelector(16, slice(env.nx - 2, None))
-    # selector = mode_selector.KDESelector(dss, [1, 0.2])
-    selector = mode_selector.SklearnClassifierSelector(dss, SVC(probability=True, gamma='auto'))
+    selector = get_selector([ds, ds_wall])
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     N = 500
     M = 20
     mpc_opts['num_samples'] = N
     mpc_opts['rollout_samples'] = M
-    mpc_opts['lambda_'] = 1
+    # mpc_opts['lambda_'] = 1
     ctrl = online_controller.OnlineMPPI(dynamics, ds.original_config(), **common_wrapper_opts, mpc_opts=mpc_opts,
                                         mode_select=selector)
     ctrl.set_goal(env.goal)
@@ -1246,24 +1246,36 @@ def evaluate_ctrl_sampler(seed=1, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS
     elif nom_traj_from is NominalTrajFrom.ROLLOUT_FROM_RECOVERY_STATES:
         for ii in range(max(0, train_i - max_rollout_steps), train_i):
             ctrl.command(X_train[ii].cpu().numpy())
-    # elif nom_traj_from is NominalTrajFrom.ORIG_ACTIONS:
-    #     ctrl_rollout_steps = min(len(X) - eval_i, ctrl.mpc.T)
-    #     ctrl.mpc.U[:ctrl_rollout_steps] = U[eval_i:eval_i + ctrl_rollout_steps]
     elif nom_traj_from is NominalTrajFrom.ROLLOUT_WITH_ORIG_ACTIONS:
         for ii in range(max(0, eval_i - max_rollout_steps), eval_i):
             ctrl.command(X[ii].cpu().numpy())
 
-    # use controller to sample next action
-    u_best = ctrl.command(x)
-    u_sample = ctrl.mpc.actions[0, :, 0, :].cpu().numpy()  # only consider the first step
-    # next_x = dynamics.predict(None, None, np.tile(x, (N, 1)), u_sample)
-    # var = dynamics.last_prediction.variance.detach().cpu().numpy()
+    steps_to_take = 15 if do_rollout_best_action else 1
+    for _ in range(steps_to_take):
+        # use controller to sample next action
+        u_best = ctrl.command(x)
+        u_sample = ctrl.mpc.actions[0, :, 0, :].cpu().numpy()  # only consider the first step
+        # next_x = dynamics.predict(None, None, np.tile(x, (N, 1)), u_sample)
+        # var = dynamics.last_prediction.variance.detach().cpu().numpy()
 
-    # visualize best actions in simulator
-    path_cost = ctrl.mpc.cost_total.cpu()
-    v, ind = path_cost.sort()
-    for top_k in range(num_best_actions_to_show):
-        env._draw_action(u_sample[ind[top_k]], debug=top_k + 1)
+        o, a = [torch.tensor(v).to(device=ctrl.d).view(1, -1) for v in (x, u_best)]
+        mode = ctrl.mode_select.sample_mode(o, a)
+        env.draw_user_text("mode {}".format(mode.item()), 1)
+        # TODO potentially remove this (at least generalize our reset of nominal policy to always be the recovery policy)
+        # try always using the recovery policy while in this mode
+        if mode == 1 and nom_traj_from is NominalTrajFrom.RECOVERY_ACTIONS:
+            ctrl_rollout_steps = min(len(X_train) - train_i, ctrl.mpc.T)
+            ctrl.mpc.U[1:1 + ctrl_rollout_steps] = U_train[train_i:train_i + ctrl_rollout_steps]
+
+        # visualize best actions in simulator
+        path_cost = ctrl.mpc.cost_total.cpu()
+        v, ind = path_cost.sort()
+        for top_k in range(num_best_actions_to_show):
+            env._draw_action(u_sample[ind[top_k]], debug=top_k + 1)
+
+        time.sleep(0.2)
+        # take the best action
+        x, rew, done, info = env.step(u_best)
 
     f, axes = plt.subplots(2, 1, sharex=True)
     path_sampled_cost = ctrl.mpc.cost_samples[:, ind]
@@ -1277,18 +1289,6 @@ def evaluate_ctrl_sampler(seed=1, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS
     axes[1].scatter(np.tile(t, (M, 1)), modes[:, ind].cpu(), alpha=0.2)
     axes[1].set_ylabel('# nominal mode in traj')
     axes[-1].set_xlabel('u sample')
-
-    # names = env.state_names()
-    # f, axes = plt.subplots(len(disp_dim), 1)
-    # if len(disp_dim) is 1:
-    #     axes = [axes]
-    # for j, dim in enumerate(disp_dim):
-    #     axes[j].scatter(var[:, dim], path_cost, alpha=0.3, label='d{}'.format(names[dim]))
-    #     axes[j].set_ylabel('cost')
-    #     axes[j].legend()
-    # axes[-1].set_xlabel('variance')
-    # f.suptitle('trajectory cost vs variance in sampled actions')
-    # f.tight_layout()
 
     plt.show()
 
