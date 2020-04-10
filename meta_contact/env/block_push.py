@@ -1308,11 +1308,22 @@ class InteractivePush(simulation.Simulation):
         self.last_run_cost = []
         obs = self._reset_sim()
         info = None
+
+        U_nom_unadjusted = None
+
         for simTime in range(self.num_frames - 1):
             self.traj[simTime, :] = obs
             self.env.draw_user_text("{}".format(simTime), 1)
 
             start = time.perf_counter()
+
+            if U_nom_unadjusted is not None:
+                # display what our action would've been if we did not adjust our control
+                U_nom_adjusted = self.ctrl.mpc.U
+                self.ctrl.mpc.U = U_nom_unadjusted
+                action_unadjusted = self.ctrl.command(obs, info)
+                self.env._draw_action(action_unadjusted, debug=4)
+                self.ctrl.mpc.U = U_nom_adjusted
 
             action = self.ctrl.command(obs, info)
 
@@ -1323,14 +1334,15 @@ class InteractivePush(simulation.Simulation):
                 self.pred_mode[simTime] = this_mode
                 self.env.draw_user_text("mode {}".format(this_mode), 2)
                 if self.nom_traj_manager is not None:
-                    self.nom_traj_manager.update_nominal_trajectory(o, a)
+                    U_nom_unadjusted = self.ctrl.mpc.U
+                    if self.nom_traj_manager.update_nominal_trajectory(o, a):
+                        logger.debug("Ajdusted nominal trajectory")
+                    else:
+                        U_nom_unadjusted = None
                 for i in range(4):
                     modes = self.ctrl.dynamics_mode[i]
                     nom_count = (modes == 0).sum()
                     text = "nom: {:.2f}".format(nom_count.float() / len(modes))
-                    # mode, counts = modes.unique(return_counts=True)
-                    # text = " ".join(
-                    #     ["{}:{:.2f}".format(m.item(), (c.float() / counts.sum()).item()) for m, c in zip(mode, counts)])
                     self.env.draw_user_text("t={} {}".format(i, text), 3 + i)
             if self.visualize_action_sample and isinstance(self.ctrl, controller.MPPI_MPC):
                 self._plot_action_sample(self.ctrl.mpc.perturbed_action)

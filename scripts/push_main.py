@@ -114,6 +114,7 @@ def get_controller_options(env):
         'u_init': torch.tensor(u_init, dtype=torch.double, device=d),
         'sample_null_action': False,
         'step_dependent_dynamics': True,
+        'rollout_samples': 10,
         'rollout_var_cost': 0,
     }
     return common_wrapper_opts, mpc_opts
@@ -908,7 +909,7 @@ def test_local_model_sufficiency_for_escaping_wall(plot_model_eval=True, plot_on
     common_wrapper_opts['adjust_model_pred_with_prev_error'] = False
     ctrl = online_controller.OnlineMPPI(dynamics_gp if use_gp else dynamics, ds.original_config(), mode_select=selector,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
-    nom_traj_manager = MPPINominalTrajManager(ctrl, dss)
+    nom_traj_manager = MPPINominalTrajManager(ctrl, dss, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS)
 
     _, tsf_name = get_transform(env, ds, use_tsf)
     name = get_full_controller_name(pm, ctrl, tsf_name)
