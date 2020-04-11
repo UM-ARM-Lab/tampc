@@ -1,5 +1,6 @@
 import torch.nn
 import torch
+import copy
 from arm_pytorch_utilities import math_utils, load_data, linalg, tensor_utils
 from arm_pytorch_utilities.model import make
 from meta_contact.dynamics import model
@@ -30,11 +31,12 @@ class PusherTransform(invariant.InvariantTransform):
         losses = super(PusherTransform, self).evaluate_validation(writer)
         if writer is not None:
             for dd in translation_generator():
-                ls = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation, TransformToUse.LATENT_SPACE,
-                                                         move_params=dd)
+                ls = self._evaluate_metrics_on_whole_set(True, TransformToUse.LATENT_SPACE, move_params=dd)
                 self._record_metrics(writer, ls, suffix="/validation_{}_{}".format(dd[0], dd[1]))
         return losses
 
+
+class PusherNeighboursTransform(PusherTransform, invariant.InvariantNeighboursTransform):
     def _is_in_neighbourhood(self, cur, candidate):
         return abs(cur[3] - candidate[3]) < self.too_far_for_neighbour
 
@@ -48,7 +50,6 @@ class CoordTransform:
     def factory(env, *args, **kwargs):
         tsfs = {block_push.PushAgainstWallStickyEnv: CoordTransform.StickyEnv,
                 block_push.PushWithForceDirectlyEnv: CoordTransform.Direct,
-                block_push.PushWithForceDirectlyReactionInStateEnv: CoordTransform.ReactionInState,
                 block_push.PushPhysicallyAnyAlongEnv: CoordTransform.Physical, }
         tsf_type = tsfs.get(type(env), None)
         if tsf_type is None:
@@ -56,7 +57,7 @@ class CoordTransform:
         return tsf_type(*args, **kwargs)
 
     class Base(PusherTransform):
-        def __init__(self, ds, nz, nv=4, reaction_force_start_index=4, **kwargs):
+        def __init__(self, ds, nz, nv=4, **kwargs):
             # assume 4 states; anything after we should just passthrough
             # v is dx, dy, dyaw in body frame and d_along
             super().__init__(ds, nz, nv, name='coord', **kwargs)
@@ -123,21 +124,6 @@ class CoordTransform:
             # need along, d_along, push magnitude, and push direction; don't need block position or yaw
             super().__init__(ds, 4, **kwargs)
 
-    class ReactionInState(Base):
-        def __init__(self, ds, **kwargs):
-            super().__init__(ds, 5, **kwargs)
-
-        @tensor_utils.ensure_2d_input
-        def xu_to_z(self, state, action):
-            # TODO fix this env transform to pass r_body
-            raise RuntimeError('Not implemented')
-            # NOTE we could just as well make the model work for free-space if we rotate reaction force to be in body frame
-            # but then it wouldn't work for pushing against a wall since it's no longer rotationally invariant
-            # additionally need theta in z to estimate reaction force direction
-            # (theta, along, d_along, push magnitude, push direction)
-            z = torch.cat((state[:, 2:4], action), dim=1)
-            return z
-
     class Physical(Base):
         def __init__(self, ds, **kwargs):
             # v is dpose and dr in body frame
@@ -192,7 +178,7 @@ def compression_reward(v, xu, dist_regularization=1e-8, top_percent=None):
 
 
 class LearnedTransform:
-    class ParameterizedYawSelect(invariant.LearnLinearDynamicsTransform, PusherTransform):
+    class ParameterizeYawSelect(invariant.LearnLinearDynamicsTransform, PusherTransform):
         """Parameterize the coordinate transform such that it has to learn something"""
 
         def __init__(self, ds, device, model_opts=None, nz=5, nv=5, **kwargs):
@@ -236,9 +222,6 @@ class LearnedTransform:
             z = torch.cat((state[:, -1].view(-1, 1), action), dim=1)
             return z
 
-        def dx_to_v(self, x, dx):
-            raise RuntimeError("Shouldn't have to convert from dx to v")
-
         @tensor_utils.ensure_2d_input
         def get_dx(self, x, v):
             # choose which component of x to take as rotation (should select just theta)
@@ -278,7 +261,7 @@ class LearnedTransform:
                     writer.add_scalar('param_norm', yaw_param.norm().item(), self.step)
             return losses
 
-    class LinearComboLatentInput(ParameterizedYawSelect):
+    class LinearComboLatentInput(ParameterizeYawSelect):
         """Relax parameterization structure to allow (each dimension of) z to be some linear combination of x,u"""
 
         def __init__(self, ds, device, nz=4, **kwargs):
@@ -365,13 +348,7 @@ class LearnedTransform:
             dx = linalg.batch_batch_product(v, linear_tsf)
             return dx
 
-    class ParameterizeDecoderBatch(ParameterizeDecoder, invariant.LearnFromBatchTransform):
-        """Train using randomized neighbourhoods instead of fixed given ones"""
-
-        def learn_model(self, max_epoch, batch_N=500):
-            return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
-
-    class LinearRelaxEncoder(ParameterizeDecoderBatch):
+    class LinearRelaxEncoder(ParameterizeDecoder):
         """Still enforce that dynamics and decoder are linear, but relax parameterization of encoder"""
 
         def __init__(self, ds, device, nz=4, **kwargs):
@@ -405,7 +382,7 @@ class LearnedTransform:
             super()._load_model_state_dict(saved_state_dict)
             self.encoder.model.load_state_dict(saved_state_dict['encoder'])
 
-    class DistRegularization(ParameterizeDecoderBatch):
+    class DistRegularization(ParameterizeDecoder):
         """Try requiring pairwise distances are proportional"""
 
         def __init__(self, *args, dist_loss_weight=1., **kwargs):
@@ -438,7 +415,7 @@ class LearnedTransform:
         def _reduce_losses(self, losses):
             return torch.mean(losses[0]) + self.dist_loss_weight * torch.mean(losses[1])
 
-    class CompressionReward(ParameterizeDecoderBatch):
+    class CompressionReward(ParameterizeDecoder):
         """Reward mapping large differences in x,u space to small differences in v space"""
 
         def __init__(self, *args, compression_loss_weight=1e-3, dist_regularization=1e-8, **kwargs):
@@ -579,6 +556,7 @@ class LearnedTransform:
 
         def __init__(self, *args, **kwargs):
             super().__init__(*args, nz=5, nv=5, **kwargs)
+            self.preprocessor = copy.deepcopy(self.ds.preprocessor)
 
         def _name_prefix(self):
             return 'ground_truth'
@@ -596,6 +574,8 @@ class LearnedTransform:
             dr_world = math_utils.batch_rotate_wrt_origin(v[:, -2:], x[:, 2])
             dyaw = v[:, 2]
             dx = torch.cat((dpos_world, dyaw.view(-1, 1), dr_world), dim=1)
+            if self.preprocessor is not None:
+                dx = self.preprocessor.transform_y(dx)
             return dx
 
         def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
@@ -622,7 +602,7 @@ class LearnedTransform:
 
 
 class AblationOnTransform:
-    class RelaxDecoderLinearity(LearnedTransform.LinearComboLatentInput, invariant.LearnFromBatchTransform):
+    class RelaxDecoderLinearity(LearnedTransform.LinearComboLatentInput):
         """Don't require that g_rho output a linear transformation of v"""
 
         def __init__(self, ds, device, nv=4, **kwargs):
@@ -656,10 +636,7 @@ class AblationOnTransform:
             dx = self.decoder.sample(decoder_input)
             return dx
 
-        def learn_model(self, max_epoch, batch_N=500):
-            return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
-
-    class RelaxLinearLocalDynamics(LearnedTransform.ParameterizeDecoder, invariant.LearnFromBatchTransform):
+    class RelaxLinearLocalDynamics(LearnedTransform.ParameterizeDecoder):
         """Don't require that f_psi output a linear transformation of z; instead allow it to output v directly"""
 
         def __init__(self, ds, device, nz=4, nv=4, **kwargs):
@@ -711,11 +688,7 @@ class AblationOnTransform:
         def linear_dynamics(self, z):
             raise RuntimeError("Shouldn't be calling this; instead should transform z to v directly")
 
-        def learn_model(self, max_epoch, batch_N=500):
-            return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
-
-    class RelaxLinearDynamicsAndLinearDecoder(LearnedTransform.LinearComboLatentInput,
-                                              invariant.LearnFromBatchTransform):
+    class RelaxLinearDynamicsAndLinearDecoder(LearnedTransform.LinearComboLatentInput):
         """Combine the previous 2 ablations"""
 
         def __init__(self, ds, device, nz=4, nv=4, **kwargs):
@@ -781,9 +754,6 @@ class AblationOnTransform:
 
         def linear_dynamics(self, z):
             raise RuntimeError("Shouldn't be calling this; instead should transform z to v directly")
-
-        def learn_model(self, max_epoch, batch_N=500):
-            return invariant.LearnFromBatchTransform.learn_model(self, max_epoch, batch_N)
 
     class RelaxEncoder(RelaxLinearDynamicsAndLinearDecoder):
         """Relax the parameterization of z encoding"""

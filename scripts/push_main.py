@@ -142,70 +142,81 @@ def get_free_space_env_init(seed=1, **kwargs):
     return d, env, config, ds
 
 
-def get_preprocessor_for_invariant_tsf(invariant_tsf, evaluate_transform=True):
-    if evaluate_transform:
-        losses = invariant_tsf.evaluate_validation(None)
-        logger.info("tsf on validation %s",
-                    "  ".join(
-                        ["{} {:.5f}".format(name, loss.mean().cpu().item()) if loss is not None else "" for name, loss
-                         in zip(invariant_tsf.loss_names(), losses)]))
+def update_ds_with_transform(env, ds, use_tsf, evaluate_transform=True):
+    invariant_tsf, tsf_name = get_transform(env, ds, use_tsf)
 
-    # wrap the transform as a data preprocessor
-    preprocessor = preprocess.Compose(
-        [invariant.InvariantTransformer(invariant_tsf),
-         preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
+    if invariant_tsf:
+        # load transform (only 1 function for learning transform reduces potential for different learning params)
+        if use_tsf is not UseTsf.COORD and not invariant_tsf.load(
+                invariant_tsf.get_last_checkpoint()):
+            raise RuntimeError("Transform {} should be learned before using".format(invariant_tsf.name))
 
-    return preprocessor
+        if evaluate_transform:
+            losses = invariant_tsf.evaluate_validation(None)
+            logger.info("tsf on validation %s",
+                        "  ".join(
+                            ["{} {:.5f}".format(name, loss.mean().cpu().item()) if loss is not None else "" for
+                             name, loss
+                             in zip(invariant_tsf.loss_names(), losses)]))
+
+        # wrap the transform as a data preprocessor
+        preprocessor = preprocess.Compose(
+            [preprocess.PytorchTransformer(preprocess.NullSingleTransformer(), preprocess.MinMaxScaler()),
+             invariant.InvariantTransformer(invariant_tsf),
+             preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
+    else:
+        # use minmax scaling if we're not using an invariant transform (baseline)
+        preprocessor = preprocess.PytorchTransformer(preprocess.MinMaxScaler())
+        # preprocessor = preprocess.Compose([preprocess.PytorchTransformer(preprocess.AngleToCosSinRepresentation(2),
+        #                                                                  preprocess.NullSingleTransformer()),
+        #                                    preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
+    # update the datasource to use transformed data
+    untransformed_config = ds.update_preprocessor(preprocessor)
+    # TODO remove this after testing (only for current implementation of ground truth with compression)
+    if use_tsf is UseTsf.COORD_LEARN_DYNAMICS:
+        invariant_tsf.preprocessor = preprocessor.transforms[0]
+    return untransformed_config, tsf_name, preprocessor
 
 
-class UseTransform:
+class UseTsf:
     NO_TRANSFORM = 0
-    COORDINATE_TRANSFORM = 1
-    PARAMETERIZED_1 = 2
-    PARAMETERIZED_2 = 3
-    PARAMETERIZED_3 = 4
-    PARAMETERIZED_4 = 5
-    PARAMETERIZED_3_BATCH = 6
-    PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER = 7
-    PARAMETERIZED_ABLATE_NO_V = 8
-    COORDINATE_LEARN_DYNAMICS_TRANSFORM = 9
-    WITH_COMPRESSION_AND_PARTITION = 10
+    COORD = 1
+    YAW_SELECT = 2
+    LINEAR_ENCODER = 3
+    DECODER = 4
+    DECODER_SINCOS = 5
+    ABLATE_RELAX_ENCODER = 7
+    ABLATE_NO_V = 8
+    COORD_LEARN_DYNAMICS = 9
+    COMPRESS_AND_PART = 10
 
 
 def get_transform(env, ds, use_tsf):
     # add in invariant transform here
     d = get_device()
     transforms = {
-        UseTransform.NO_TRANSFORM: None,
-        UseTransform.COORDINATE_TRANSFORM: CoordTransform.factory(env, ds),
-        UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM: LearnedTransform.GroundTruthWithCompression(ds, d,
-                                                                                                      name="_s0"),
-        UseTransform.PARAMETERIZED_1: LearnedTransform.ParameterizedYawSelect(ds, d, too_far_for_neighbour=0.3,
-                                                                              name="_s2"),
-        UseTransform.PARAMETERIZED_2: LearnedTransform.LinearComboLatentInput(ds, d, too_far_for_neighbour=0.3,
-                                                                              name="rand_start_s9"),
-        UseTransform.PARAMETERIZED_3: LearnedTransform.ParameterizeDecoder(ds, d, too_far_for_neighbour=0.3,
-                                                                           name="_s9"),
-        UseTransform.PARAMETERIZED_4: LearnedTransform.ParameterizeDecoder(ds, d, too_far_for_neighbour=0.3,
-                                                                           name="sincos_s2", use_sincos_angle=True),
-        UseTransform.PARAMETERIZED_3_BATCH: LearnedTransform.ParameterizeDecoderBatch(ds, d, name="_s1"),
-        UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER: AblationOnTransform.RelaxEncoder(ds, d,
-                                                                                                         name="_s0"),
-        UseTransform.PARAMETERIZED_ABLATE_NO_V: AblationOnTransform.UseDecoderForDynamics(ds, d, name="_s3"),
-        UseTransform.WITH_COMPRESSION_AND_PARTITION: LearnedTransform.LearnedPartialPassthrough(ds, d, name="_s0"),
+        UseTsf.NO_TRANSFORM: None,
+        UseTsf.COORD: CoordTransform.factory(env, ds),
+        UseTsf.COORD_LEARN_DYNAMICS: LearnedTransform.GroundTruthWithCompression(ds, d, name="_s0"),
+        UseTsf.YAW_SELECT: LearnedTransform.ParameterizeYawSelect(ds, d, name="_s2"),
+        UseTsf.LINEAR_ENCODER: LearnedTransform.LinearComboLatentInput(ds, d, name="rand_start_s9"),
+        UseTsf.DECODER: LearnedTransform.ParameterizeDecoder(ds, d, name="_s9"),
+        UseTsf.DECODER_SINCOS: LearnedTransform.ParameterizeDecoder(ds, d, name="sincos_s2", use_sincos_angle=True),
+        UseTsf.ABLATE_RELAX_ENCODER: AblationOnTransform.RelaxEncoder(ds, d, name="_s0"),
+        UseTsf.ABLATE_NO_V: AblationOnTransform.UseDecoderForDynamics(ds, d, name="_s3"),
+        UseTsf.COMPRESS_AND_PART: LearnedTransform.LearnedPartialPassthrough(ds, d, name="_s0"),
     }
     transform_names = {
-        UseTransform.NO_TRANSFORM: 'none',
-        UseTransform.COORDINATE_TRANSFORM: 'coord',
-        UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM: 'coord_learn',
-        UseTransform.PARAMETERIZED_1: 'param1',
-        UseTransform.PARAMETERIZED_2: 'param2',
-        UseTransform.PARAMETERIZED_3: 'param3',
-        UseTransform.PARAMETERIZED_4: 'param4',
-        UseTransform.PARAMETERIZED_3_BATCH: 'param3_batch',
-        UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER: 'ablate_linear_relax_encoder',
-        UseTransform.PARAMETERIZED_ABLATE_NO_V: 'ablate_no_v',
-        UseTransform.WITH_COMPRESSION_AND_PARTITION: 'compression + partition',
+        UseTsf.NO_TRANSFORM: 'none',
+        UseTsf.COORD: 'coord',
+        UseTsf.COORD_LEARN_DYNAMICS: 'coord_learn',
+        UseTsf.YAW_SELECT: 'param1',
+        UseTsf.LINEAR_ENCODER: 'param2',
+        UseTsf.DECODER: 'param3',
+        UseTsf.DECODER_SINCOS: 'param4',
+        UseTsf.ABLATE_RELAX_ENCODER: 'ablate_linear_relax_encoder',
+        UseTsf.ABLATE_NO_V: 'ablate_no_v',
+        UseTsf.COMPRESS_AND_PART: 'compression + partition',
     }
     return transforms[use_tsf], transform_names[use_tsf]
 
@@ -216,7 +227,7 @@ class OnlineAdapt:
     GP_KERNEL = 2
 
 
-def get_mixed_model(env, use_tsf=UseTransform.COORDINATE_TRANSFORM,
+def get_mixed_model(env, use_tsf=UseTsf.COORD,
                     prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior, allow_update=False,
                     d=get_device(), online_adapt=OnlineAdapt.GP_KERNEL):
     ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
@@ -461,7 +472,7 @@ class OfflineDataCollection:
 
         logger.info("initial random seed %d", rand.seed(seed))
 
-        untransformed_config, tsf_name, _ = update_ds_with_transform(env, ds, UseTransform.COORDINATE_TRANSFORM,
+        untransformed_config, tsf_name, _ = update_ds_with_transform(env, ds, UseTsf.COORD,
                                                                      evaluate_transform=False)
         pm = get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics)
 
@@ -480,7 +491,7 @@ class OfflineDataCollection:
         sim.run(seed, 'model_selector_evaluation')
 
 
-def verify_coordinate_transform(seed=6, use_tsf=UseTransform.COORDINATE_TRANSFORM):
+def verify_coordinate_transform(seed=6, use_tsf=UseTsf.COORD):
     # comparison tolerance
     tol = 2e-4
     name = 'same_action_repeated'
@@ -634,28 +645,7 @@ def test_online_model():
     plt.show()
 
 
-def update_ds_with_transform(env, ds, use_tsf, **kwargs):
-    invariant_tsf, tsf_name = get_transform(env, ds, use_tsf)
-
-    if invariant_tsf:
-        # load transform (only 1 function for learning transform reduces potential for different learning params)
-        if use_tsf is not UseTransform.COORDINATE_TRANSFORM and not invariant_tsf.load(
-                invariant_tsf.get_last_checkpoint()):
-            raise RuntimeError("Transform {} should be learned before using".format(invariant_tsf.name))
-
-        preprocessor = get_preprocessor_for_invariant_tsf(invariant_tsf, **kwargs)
-    else:
-        # use minmax scaling if we're not using an invariant transform (baseline)
-        preprocessor = preprocess.PytorchTransformer(preprocess.MinMaxScaler())
-        # preprocessor = preprocess.Compose([preprocess.PytorchTransformer(preprocess.AngleToCosSinRepresentation(2),
-        #                                                                  preprocess.NullSingleTransformer()),
-        #                                    preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
-    # update the datasource to use transformed data
-    untransformed_config = ds.update_preprocessor(preprocessor)
-    return untransformed_config, tsf_name, preprocessor
-
-
-def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTransform.COORDINATE_TRANSFORM, relearn_dynamics=False,
+def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTsf.COORD, relearn_dynamics=False,
                                override=False, plot_model_error=False, enforce_model_rollout=False,
                                full_evaluation=True,
                                prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior, **kwargs):
@@ -749,7 +739,7 @@ def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTransform.COORDINATE_
 
 
 def test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=True, plot_online_update=False, use_gp=True,
-                                                   use_tsf=UseTransform.COORDINATE_TRANSFORM, **kwargs):
+                                                   use_tsf=UseTsf.COORD, **kwargs):
     seed = 1
 
     if plot_model_eval:
@@ -1062,7 +1052,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     return total_costs
 
 
-def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
+def evaluate_model_selector(use_tsf=UseTsf.COORD):
     plot_definite_negatives = False
     num_pos_samples = 100  # start with balanced data
     rand.seed(10)
@@ -1202,7 +1192,7 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     plt.show()
 
 
-def evaluate_ctrl_sampler(seed=1, use_tsf=UseTransform.COORDINATE_TRANSFORM,
+def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
                           nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS, num_best_actions_to_show=6,
                           do_rollout_best_action=True):
     eval_i = 43
@@ -1291,11 +1281,13 @@ class Learn:
     @staticmethod
     def invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
         d, env, config, ds = get_free_space_env_init(seed)
+        preprocessor = preprocess.PytorchTransformer(preprocess.NullSingleTransformer(), preprocess.MinMaxScaler())
+        ds.update_preprocessor(preprocessor)
 
         common_opts = {'too_far_for_neighbour': 0.3, 'name': "{}_s{}".format(name, seed)}
         # add in invariant transform here
         # invariant_tsf = LearnedTransform.LearnedPartialPassthrough(ds, d, **common_opts, **kwargs)
-        invariant_tsf = LearnedTransform.GroundTruthWithCompression(ds, d, **common_opts, **kwargs)
+        invariant_tsf = LearnedTransform.GroundTruthWithCompression(preprocessor, ds, d, **common_opts, **kwargs)
         invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
     @staticmethod
@@ -1350,7 +1342,7 @@ class Visualize:
     def dist_diff_nominal_and_bug_trap():
         _, env, _, ds = get_free_space_env_init()
         untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds,
-                                                                                UseTransform.COORDINATE_TRANSFORM,
+                                                                                UseTsf.COORD,
                                                                                 evaluate_transform=False)
         coord_z_names = ['p', '\\theta', 'f', '\\beta', '$r_x$', '$r_y$']
         coord_v_names = ['d{}'.format(n) for n in coord_z_names]
@@ -1396,7 +1388,7 @@ class Visualize:
         plt.legend()
 
     @staticmethod
-    def dynamics_stochasticity(use_tsf=UseTransform.COORDINATE_TRANSFORM):
+    def dynamics_stochasticity(use_tsf=UseTsf.COORD):
         _, env, _, ds = get_free_space_env_init()
         untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf,
                                                                                 evaluate_transform=False)
@@ -1443,7 +1435,7 @@ class Visualize:
 
 if __name__ == "__main__":
     level = 0
-    ut = UseTransform.COORDINATE_TRANSFORM
+    ut = UseTsf.COORD_LEARN_DYNAMICS
     # OfflineDataCollection.freespace(trials=200, trial_length=50, level=0)
     # OfflineDataCollection.push_against_wall_recovery()
     # OfflineDataCollection.model_selector_evaluation()
@@ -1451,21 +1443,19 @@ if __name__ == "__main__":
     # Visualize.model_actions_at_given_state()
     # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
 
-    # verify_coordinate_transform(UseTransform.COORDINATE_TRANSFORM)
+    # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_model_selector(use_tsf=ut)
     # evaluate_ctrl_sampler()
     # test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=False,
-    #                                                use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM)
+    #                                                use_tsf=UseTransform.COORD_LEARN_DYNAMICS)
 
-    # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM,
-    #                            online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD, override=True)
     evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.NONE,
-                               override=True, full_evaluation=False, plot_model_error=True)
-    # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM,
+                               override=True, full_evaluation=False, plot_model_error=True, relearn_dynamics=True)
+    # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORD,
     #                            online_adapt=OnlineAdapt.GP_KERNEL, override=True)
 
     # test_online_model()
     # for seed in range(1):
     #     Learn.invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
     # for seed in range(1):
-    #     Learn.model(UseTransform.COORDINATE_TRANSFORM, seed=seed, name="physical r in body")
+    #     Learn.model(UseTransform.COORD, seed=seed, name="physical r in body")

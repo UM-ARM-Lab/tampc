@@ -29,16 +29,11 @@ class TransformToUse:
 
 
 class InvariantTransform(LearnableParameterizedModel):
-    def __init__(self, ds: datasource.DataSource, nz, nv, too_far_for_neighbour=0.3,
-                 train_on_continuous_data=False, **kwargs):
+    def __init__(self, ds: datasource.DataSource, nz, nv, **kwargs):
         super().__init__(cfg.ROOT_DIR, **kwargs)
         self.ds = ds
         # copy of config in case it gets modified later (such as by preprocessors)
         self.config = copy.deepcopy(ds.config)
-        self.neighbourhood = None
-        self.neighbourhood_validation = None
-        self.too_far_for_neighbour = too_far_for_neighbour
-        self.train_on_continuous_data = train_on_continuous_data
         # do not assume at this abstraction level the input and output latent space is the same
         self.nz = nz
         self.nv = nv
@@ -96,14 +91,109 @@ class InvariantTransform(LearnableParameterizedModel):
 
     @abc.abstractmethod
     def _move_data_out_of_distribution(self, data, move_params):
-        """Move the data out of the training distribution with given parameters to allow evaluation"""
+        """Move the data out of the training distribution with given parameters to allow evaluation
 
-    def _setup_evaluate_metrics_on_whole_set(self, neighbourhood, move_params):
+        Internally with data in the original space
+        """
+
+    def _setup_evaluate_metrics_on_whole_set(self, validation, move_params, output_in_orig_space=False):
         with torch.no_grad():
-            data_set = self.ds.validation_set() if neighbourhood is self.neighbourhood_validation else \
-                self.ds.training_set()
+            data_set = self.ds.validation_set(original=True) if validation else self.ds.training_set(original=True)
             X, U, Y = self._move_data_out_of_distribution(self._get_separate_data_columns(data_set), move_params)
+            if self.ds.preprocessor is not None and not output_in_orig_space:
+                XU = self.ds.preprocessor.transform_x(torch.cat((X, U), dim=1))
+                Y = self.ds.preprocessor.transform_y(Y)
+                X, U = self._split_xu(XU)
             return X, U, Y
+
+    def _evaluate_metrics_on_whole_set(self, validation, tsf, move_params=None):
+        with torch.no_grad():
+            X, U, Y = self._setup_evaluate_metrics_on_whole_set(validation, move_params)
+            # TODO evaluate validation MSE in original space to allow for comparison across transforms
+            batch_losses = self._evaluate_batch(X, U, Y, tsf=tsf)
+            batch_losses = [math_utils.replace_nan_and_inf(losses) if losses is not None else None for losses in
+                            batch_losses]
+            return batch_losses
+
+    def evaluate_validation(self, writer: Union[SummaryWriter, None]):
+        """
+        Evaluate losses on the validation set and recording them down if given a writer
+        :param writer:
+        :return: losses on the validation set
+        """
+        losses = self._evaluate_metrics_on_whole_set(True, TransformToUse.LATENT_SPACE)
+        if writer is not None:
+            self._record_metrics(writer, losses, suffix="/validation", log=True)
+        return losses
+
+    def _get_separate_data_columns(self, data_set):
+        XU, Y, _ = data_set
+        X, U = self._split_xu(XU)
+        return X, U, Y
+
+    def _split_xu(self, XU):
+        return torch.split(XU, self.config.nx, dim=1)
+
+    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+        assert tsf is TransformToUse.LATENT_SPACE
+        z = self.xu_to_z(X, U)
+        v = self.get_v(X, Y, z)
+        yhat = self.get_dx(X, v)
+
+        mse_loss = torch.norm(yhat - Y, dim=1)
+        return mse_loss,
+
+    @staticmethod
+    def loss_names():
+        return "mse_loss",
+
+    def _reduce_losses(self, losses):
+        return torch.sum(losses[0])
+
+    def _init_batch_losses(self):
+        return [[] for _ in self.loss_names()]
+
+    def learn_model(self, max_epoch, batch_N=500):
+        writer = SummaryWriter(flush_secs=20, comment="{}_batch{}".format(self.name, batch_N))
+
+        ds_train = load_data.SimpleDataset(*self.ds.training_set())
+        train_loader = torch.utils.data.DataLoader(ds_train, batch_size=batch_N, shuffle=True)
+
+        save_checkpoint_every_n_epochs = max(max_epoch // 20, 5)
+
+        self.optimizer = torch.optim.Adam(self.parameters())
+        self.optimizer.zero_grad()
+        for epoch in range(max_epoch):
+            logger.debug("Start epoch %d", epoch)
+            # evaluate on validation at the start of epochs
+            self.evaluate_validation(writer)
+            if save_checkpoint_every_n_epochs and epoch % save_checkpoint_every_n_epochs == 0:
+                self.save()
+
+            for i_batch, data in enumerate(train_loader):
+                X, U, Y = self._get_separate_data_columns(data)
+                losses = self._evaluate_batch(X, U, Y)
+                if losses is None:
+                    continue
+
+                reduced_loss = self._reduce_losses(losses)
+                reduced_loss.backward()
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+
+                self._record_metrics(writer, losses)
+                self.step += 1
+
+        self.save(last=True)
+
+
+class InvariantNeighboursTransform(InvariantTransform):
+    def __init__(self, *args, too_far_for_neighbour=0.3, train_on_continuous_data=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.neighbourhood = None
+        self.neighbourhood_validation = None
+        self.too_far_for_neighbour = too_far_for_neighbour
+        self.train_on_continuous_data = train_on_continuous_data
 
     def _evaluate_metrics_on_whole_set(self, neighbourhood, tsf, move_params=None):
         with torch.no_grad():
@@ -124,32 +214,11 @@ class InvariantTransform(LearnableParameterizedModel):
             batch_losses = [math_utils.replace_nan_and_inf(torch.tensor(losses)) for losses in batch_losses]
             return batch_losses
 
-    def evaluate_validation(self, writer: Union[SummaryWriter, None]):
-        """
-        Evaluate losses on the validation set and recording them down if given a writer
-        :param writer:
-        :return: losses on the validation set
-        """
-        if self.neighbourhood is None:
-            self.calculate_neighbours()
-        losses = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation, TransformToUse.LATENT_SPACE)
-        if writer is not None:
-            self._record_metrics(writer, losses, suffix="/validation", log=True)
-        return losses
-
     def _evaluate_no_transform(self, writer):
         losses = self._evaluate_metrics_on_whole_set(self.neighbourhood, TransformToUse.NO_TRANSFORM)
         self._record_metrics(writer, losses, suffix="_original", log=True)
         losses = self._evaluate_metrics_on_whole_set(self.neighbourhood_validation, TransformToUse.NO_TRANSFORM)
         self._record_metrics(writer, losses, suffix="_original/validation", log=True)
-
-    def _get_separate_data_columns(self, data_set):
-        XU, Y, _ = data_set
-        X, U = self._split_xu(XU)
-        return X, U, Y
-
-    def _split_xu(self, XU):
-        return torch.split(XU, self.config.nx, dim=1)
 
     # methods for calculating manual neighbourhoods that inheriting classes should override
     def _is_in_neighbourhood(self, cur, candidate):
@@ -269,11 +338,7 @@ class InvariantTransform(LearnableParameterizedModel):
         return "mse_loss", "cov_loss"
 
     def _reduce_losses(self, losses):
-        # use mse loss only
         return torch.sum(losses[0])
-
-    def _init_batch_losses(self):
-        return [[] for _ in self.loss_names()]
 
     def learn_model(self, max_epoch, batch_N=500):
         if self.neighbourhood is None:
@@ -360,9 +425,6 @@ class LearnLinearDynamicsTransform(InvariantTransform):
         assert tsf is TransformToUse.LATENT_SPACE
         z = self.xu_to_z(X, U)
 
-        if z.shape[0] < self.ds.config.ny + z.shape[1]:
-            return None
-
         # fit linear model to latent state
         A = self.linear_dynamics(z)
         v = linalg.batch_batch_product(z, A.transpose(-1, -2))
@@ -386,66 +448,8 @@ class LearnLinearDynamicsTransform(InvariantTransform):
     def _reduce_losses(self, losses):
         return torch.sum(losses[0]) + self.spread_loss_weight * torch.sum(losses[1])
 
-    def _evaluate_no_transform(self, writer):
-        pass
 
-
-class LearnFromBatchTransform(LearnLinearDynamicsTransform, ABC):
-    """
-    Instead of taking in predefined neighbourhoods, just learn over all batches
-    """
-
-    def _evaluate_metrics_on_whole_set(self, neighbourhood, tsf, move_params=None):
-        with torch.no_grad():
-            X, U, Y = self._setup_evaluate_metrics_on_whole_set(neighbourhood, move_params)
-            batch_losses = self._evaluate_batch(X, U, Y, tsf=tsf)
-            batch_losses = [math_utils.replace_nan_and_inf(losses) if losses is not None else None for losses in
-                            batch_losses]
-            return batch_losses
-
-    def calculate_neighbours(self):
-        # don't actually calculate any neighbourhoods
-        self.neighbourhood = []
-        self.neighbourhood_validation = []
-
-    def _evaluate_neighbour(self, X, U, Y, neighbourhood, i, tsf=TransformToUse.LATENT_SPACE):
-        raise RuntimeError("This class should only evaluate batches")
-
-    def learn_model(self, max_epoch, batch_N=500):
-        writer = SummaryWriter(flush_secs=20, comment="{}_batch{}".format(self.name, batch_N))
-
-        ds_train = load_data.SimpleDataset(*self.ds.training_set())
-        train_loader = torch.utils.data.DataLoader(ds_train, batch_size=batch_N, shuffle=True)
-
-        save_checkpoint_every_n_epochs = max(max_epoch // 20, 5)
-
-        self.optimizer = torch.optim.Adam(self.parameters())
-        self.optimizer.zero_grad()
-        for epoch in range(max_epoch):
-            logger.debug("Start epoch %d", epoch)
-            # evaluate on validation at the start of epochs
-            self.evaluate_validation(writer)
-            if save_checkpoint_every_n_epochs and epoch % save_checkpoint_every_n_epochs == 0:
-                self.save()
-
-            for i_batch, data in enumerate(train_loader):
-                X, U, Y = self._get_separate_data_columns(data)
-                losses = self._evaluate_batch(X, U, Y)
-                if losses is None:
-                    continue
-
-                reduced_loss = self._reduce_losses(losses)
-                reduced_loss.backward()
-                self.optimizer.step()
-                self.optimizer.zero_grad()
-
-                self._record_metrics(writer, losses)
-                self.step += 1
-
-        self.save(last=True)
-
-
-class LearnNeighbourhoodCovRegTransform(LearnFromBatchTransform, ABC):
+class LearnNeighbourhoodCovRegTransform(LearnLinearDynamicsTransform, ABC):
     """
     Instead of taking in predefined neighbourhoods, simultaneously produce dynamics for batches
     and learn to structure z such that euclidean distance results in close dynamics
@@ -458,7 +462,7 @@ class LearnNeighbourhoodCovRegTransform(LearnFromBatchTransform, ABC):
         self.nbrs = softknn.SoftKNN(min_k=expected_neighbourhood_size, normalization=1)
         # this calculation is just too slow so we're only going to randomly do it
         self.cov_loss_usage = 0.05
-        LearnFromBatchTransform.__init__(self, *args, **kwargs)
+        LearnLinearDynamicsTransform.__init__(self, *args, **kwargs)
 
     def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
         z, A, v, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
