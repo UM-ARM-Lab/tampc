@@ -144,12 +144,11 @@ def get_free_space_env_init(seed=1, **kwargs):
 
 
 def update_ds_with_transform(env, ds, use_tsf, evaluate_transform=True):
-    invariant_tsf, tsf_name = get_transform(env, ds, use_tsf)
+    invariant_tsf = get_transform(env, ds, use_tsf)
 
     if invariant_tsf:
         # load transform (only 1 function for learning transform reduces potential for different learning params)
-        if use_tsf is not UseTsf.COORD and not invariant_tsf.load(
-                invariant_tsf.get_last_checkpoint()):
+        if use_tsf is not UseTsf.COORD and not invariant_tsf.load(invariant_tsf.get_last_checkpoint()):
             raise RuntimeError("Transform {} should be learned before using".format(invariant_tsf.name))
 
         if evaluate_transform:
@@ -176,7 +175,7 @@ def update_ds_with_transform(env, ds, use_tsf, evaluate_transform=True):
     # TODO remove this after testing (only for current implementation of ground truth with compression)
     if use_tsf is UseTsf.COORD_LEARN_DYNAMICS:
         invariant_tsf.preprocessor = preprocessor.transforms[0]
-    return untransformed_config, tsf_name, preprocessor
+    return untransformed_config, use_tsf.name, preprocessor
 
 
 class UseTsf(enum.Enum):
@@ -195,31 +194,28 @@ class UseTsf(enum.Enum):
 def get_transform(env, ds, use_tsf):
     # add in invariant transform here
     d = get_device()
-    transforms = {
-        UseTsf.NO_TRANSFORM: None,
-        UseTsf.COORD: CoordTransform.factory(env, ds),
-        UseTsf.COORD_LEARN_DYNAMICS: LearnedTransform.GroundTruthWithCompression(ds, d, name="_s0"),
-        UseTsf.YAW_SELECT: LearnedTransform.ParameterizeYawSelect(ds, d, name="_s2"),
-        UseTsf.LINEAR_ENCODER: LearnedTransform.LinearComboLatentInput(ds, d, name="rand_start_s9"),
-        UseTsf.DECODER: LearnedTransform.ParameterizeDecoder(ds, d, name="_s9"),
-        UseTsf.DECODER_SINCOS: LearnedTransform.ParameterizeDecoder(ds, d, name="sincos_s2", use_sincos_angle=True),
-        UseTsf.ABLATE_RELAX_ENCODER: AblationOnTransform.RelaxEncoder(ds, d, name="_s0"),
-        UseTsf.ABLATE_NO_V: AblationOnTransform.UseDecoderForDynamics(ds, d, name="_s3"),
-        UseTsf.COMPRESS_AND_PART: LearnedTransform.LearnedPartialPassthrough(ds, d, name="_s0"),
-    }
-    transform_names = {
-        UseTsf.NO_TRANSFORM: 'none',
-        UseTsf.COORD: 'coord',
-        UseTsf.COORD_LEARN_DYNAMICS: 'coord_learn',
-        UseTsf.YAW_SELECT: 'param1',
-        UseTsf.LINEAR_ENCODER: 'param2',
-        UseTsf.DECODER: 'param3',
-        UseTsf.DECODER_SINCOS: 'param4',
-        UseTsf.ABLATE_RELAX_ENCODER: 'ablate_linear_relax_encoder',
-        UseTsf.ABLATE_NO_V: 'ablate_no_v',
-        UseTsf.COMPRESS_AND_PART: 'compression + partition',
-    }
-    return transforms[use_tsf], transform_names[use_tsf]
+    if use_tsf is UseTsf.NO_TRANSFORM:
+        return None
+    elif use_tsf is UseTsf.COORD:
+        return CoordTransform.factory(env, ds)
+    elif use_tsf is UseTsf.COORD_LEARN_DYNAMICS:
+        return LearnedTransform.GroundTruthWithCompression(ds, d, name="_s0")
+    elif use_tsf is UseTsf.YAW_SELECT:
+        return LearnedTransform.ParameterizeYawSelect(ds, d, name="_s2")
+    elif use_tsf is UseTsf.LINEAR_ENCODER:
+        return LearnedTransform.LinearComboLatentInput(ds, d, name="rand_start_s9")
+    elif use_tsf is UseTsf.DECODER:
+        return LearnedTransform.ParameterizeDecoder(ds, d, name="_s9")
+    elif use_tsf is UseTsf.DECODER_SINCOS:
+        return LearnedTransform.ParameterizeDecoder(ds, d, name="sincos_s2", use_sincos_angle=True)
+    elif use_tsf is UseTsf.ABLATE_RELAX_ENCODER:
+        return AblationOnTransform.RelaxEncoder(ds, d, name="_s0")
+    elif use_tsf is UseTsf.ABLATE_NO_V:
+        return AblationOnTransform.UseDecoderForDynamics(ds, d, name="_s3"),
+    elif use_tsf is UseTsf.COMPRESS_AND_PART:
+        return LearnedTransform.LearnedPartialPassthrough(ds, d, name="_s0")
+    else:
+        raise RuntimeError("Unrecgonized transform {}".format(use_tsf))
 
 
 class OnlineAdapt:
@@ -499,7 +495,7 @@ def verify_coordinate_transform(seed=6, use_tsf=UseTsf.COORD):
     env = get_env(p.DIRECT, level=0)
     ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
 
-    tsf, _ = get_transform(env, ds, use_tsf=use_tsf)
+    tsf = get_transform(env, ds, use_tsf=use_tsf)
     # tsf = invariant.InvariantTransformer(tsf)
     tsf = preprocess.Compose(
         [invariant.InvariantTransformer(tsf),
@@ -754,9 +750,8 @@ def test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=True
                                         allow_update=plot_online_update, **kwargs)
     dynamics_gp, ds, ds_wall, train_slice = get_mixed_model(env, use_tsf=use_tsf, allow_update=plot_online_update,
                                                             **kwargs)
-    _, tsf_name = get_transform(env, ds, use_tsf)
     dss = [ds, ds_wall]
-    selector = get_selector(dss, tsf_name)
+    selector = get_selector(dss, use_tsf.name)
 
     pm = dynamics_gp.prior
     if plot_model_eval:
@@ -910,7 +905,7 @@ def test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=True
     ctrl.set_goal(env.goal)
     nom_traj_manager = MPPINominalTrajManager(ctrl, dss, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS)
 
-    name = get_full_controller_name(pm, ctrl, tsf_name)
+    name = get_full_controller_name(pm, ctrl, use_tsf.name)
 
     env.draw_user_text(name, 14, left_offset=-1.5)
     env.draw_user_text(selector.name, 13, left_offset=-1.5)
@@ -1217,8 +1212,7 @@ def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
     env.set_state(x, u)
 
     dss = [ds, ds_wall]
-    _, tsf_name = get_transform(env, ds, use_tsf)
-    selector = get_selector(dss, tsf_name)
+    selector = get_selector(dss, use_tsf.name)
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     N = 500
