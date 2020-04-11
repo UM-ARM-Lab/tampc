@@ -261,7 +261,7 @@ class MLPSelector(LearnableParameterizedModel, ModeSelector):
         y = torch.cat(y, dim=0)
         return xu, y
 
-    def learn_model(self, dss, max_epoch=200, batch_N=500):
+    def learn_model(self, dss, max_epoch=30, batch_N=500):
         xu, y = self._cat_data(dss, training=True)
         xuv, yv = self._cat_data(dss, training=False)
 

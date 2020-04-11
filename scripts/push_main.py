@@ -178,6 +178,8 @@ def get_transform(env, ds, use_tsf):
     transforms = {
         UseTransform.NO_TRANSFORM: None,
         UseTransform.COORDINATE_TRANSFORM: CoordTransform.factory(env, ds),
+        UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM: LearnedTransform.GroundTruthWithCompression(ds, d,
+                                                                                                      name="_s0"),
         UseTransform.PARAMETERIZED_1: LearnedTransform.ParameterizedYawSelect(ds, d, too_far_for_neighbour=0.3,
                                                                               name="_s2"),
         UseTransform.PARAMETERIZED_2: LearnedTransform.LinearComboLatentInput(ds, d, too_far_for_neighbour=0.3,
@@ -190,13 +192,12 @@ def get_transform(env, ds, use_tsf):
         UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER: AblationOnTransform.RelaxEncoder(ds, d,
                                                                                                          name="_s0"),
         UseTransform.PARAMETERIZED_ABLATE_NO_V: AblationOnTransform.UseDecoderForDynamics(ds, d, name="_s3"),
-        UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM: LearnedTransform.GroundTruthWithCompression(ds, d,
-                                                                                                      name="_s0"),
         UseTransform.WITH_COMPRESSION_AND_PARTITION: LearnedTransform.LearnedPartialPassthrough(ds, d, name="_s0"),
     }
     transform_names = {
         UseTransform.NO_TRANSFORM: 'none',
         UseTransform.COORDINATE_TRANSFORM: 'coord',
+        UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM: 'coord_learn',
         UseTransform.PARAMETERIZED_1: 'param1',
         UseTransform.PARAMETERIZED_2: 'param2',
         UseTransform.PARAMETERIZED_3: 'param3',
@@ -204,7 +205,6 @@ def get_transform(env, ds, use_tsf):
         UseTransform.PARAMETERIZED_3_BATCH: 'param3_batch',
         UseTransform.PARAMETERIZED_ABLATE_ALL_LINEAR_AND_RELAX_ENCODER: 'ablate_linear_relax_encoder',
         UseTransform.PARAMETERIZED_ABLATE_NO_V: 'ablate_no_v',
-        UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM: 'coord_learn',
         UseTransform.WITH_COMPRESSION_AND_PARTITION: 'compression + partition',
     }
     return transforms[use_tsf], transform_names[use_tsf]
@@ -278,7 +278,7 @@ class UseSelector:
     FORCE = 4
 
 
-def get_selector(dss, use_selector=UseSelector.MLP, *args, **kwargs):
+def get_selector(dss, tsf_name, use_selector=UseSelector.MLP, *args, **kwargs):
     from sklearn.tree import DecisionTreeClassifier
 
     component_scale = [1, 0.2]
@@ -287,7 +287,7 @@ def get_selector(dss, use_selector=UseSelector.MLP, *args, **kwargs):
     input_slice = None
 
     if use_selector is UseSelector.MLP:
-        selector = mode_selector.MLPSelector(dss, *args, **kwargs, input_slice=input_slice)
+        selector = mode_selector.MLPSelector(dss, *args, **kwargs, name=tsf_name, input_slice=input_slice)
     elif use_selector is UseSelector.KDE:
         selector = mode_selector.KDESelector(dss, component_scale=component_scale, input_slice=input_slice)
     elif use_selector is UseSelector.GMM:
@@ -706,21 +706,25 @@ def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTransform.COORDINATE_
 
     # plot model prediction
     if plot_model_error:
-        XU, Y, _ = ds.validation_set()
+        XU, _, _ = ds.validation_set()
+        Yhatn = pm.dyn_net.user.sample(XU).detach()
+        # convert back to untransformed space to allow fair comparison
+        XU, Y, _ = ds.validation_set(original=True)
+        X = XU[:, :env.nx]
         Y = Y.cpu().numpy()
-        Yhatn = pm.dyn_net.user.sample(XU).cpu().detach().numpy()
+        Yhatn = ds.preprocessor.invert_transform(Yhatn, X).cpu().numpy()
         E = Yhatn - Y
         # relative error (compared to the mean magnitude)
         Er = E / np.mean(np.abs(Y), axis=0)
         ylabels = ['d' + label for label in env.state_names()]
+        f, ax = plt.subplots(config.ny, 3, constrained_layout=True)
         for i in range(config.ny):
-            plt.subplot(config.ny, 2, 2 * i + 1)
-            plt.plot(Y[:, i])
-            plt.ylabel(ylabels[i])
-            plt.subplot(config.ny, 2, 2 * i + 2)
-            # plt.plot(Er[:, i])
-            plt.plot(E[:, i])
-            plt.ylabel("$e_{}$".format(i))
+            ax[i, 0].plot(Y[:, i])
+            ax[i, 0].set_ylabel(ylabels[i])
+            ax[i, 1].plot(E[:, i])
+            ax[i, 1].set_ylabel("$e_{}$".format(i))
+            ax[i, 2].plot(Er[:, i])
+            ax[i, 2].set_ylabel("$er_{}$".format(i))
         plt.show()
         return
 
@@ -759,8 +763,9 @@ def test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=True
                                         allow_update=plot_online_update, **kwargs)
     dynamics_gp, ds, ds_wall, train_slice = get_mixed_model(env, use_tsf=use_tsf, allow_update=plot_online_update,
                                                             **kwargs)
+    _, tsf_name = get_transform(env, ds, use_tsf)
     dss = [ds, ds_wall]
-    selector = get_selector(dss)
+    selector = get_selector(dss, tsf_name)
 
     pm = dynamics_gp.prior
     if plot_model_eval:
@@ -914,7 +919,6 @@ def test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=True
     ctrl.set_goal(env.goal)
     nom_traj_manager = MPPINominalTrajManager(ctrl, dss, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS)
 
-    _, tsf_name = get_transform(env, ds, use_tsf)
     name = get_full_controller_name(pm, ctrl, tsf_name)
 
     env.draw_user_text(name, 14, left_offset=-1.5)
@@ -1070,7 +1074,7 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     ds_recovery, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
     ds_recovery.update_preprocessor(preprocessor)
 
-    selector = get_selector([ds, ds_recovery])
+    selector = get_selector([ds, ds_recovery], tsf_name)
 
     # get evaluation data by getting definite positive samples from the freespace dataset
     pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)
@@ -1198,7 +1202,8 @@ def evaluate_model_selector(use_tsf=UseTransform.COORDINATE_TRANSFORM):
     plt.show()
 
 
-def evaluate_ctrl_sampler(seed=1, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS, num_best_actions_to_show=6,
+def evaluate_ctrl_sampler(seed=1, use_tsf=UseTransform.COORDINATE_TRANSFORM,
+                          nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS, num_best_actions_to_show=6,
                           do_rollout_best_action=True):
     eval_i = 43
 
@@ -1207,7 +1212,7 @@ def evaluate_ctrl_sampler(seed=1, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS
     env.draw_user_text("eval index {}".format(eval_i), 13, left_offset=-1.5)
     logger.info("initial random seed %d", rand.seed(seed))
 
-    dynamics, ds, ds_wall, _ = get_mixed_model(env)
+    dynamics, ds, ds_wall, _ = get_mixed_model(env, use_tsf=use_tsf)
     ds_eval, _ = get_ds(env, 'pushing/test_sufficiency_selector__i5_o2_s1_pd1_pa1_a0_e0_y0_140891.mat',
                         validation_ratio=0.)
     ds_eval.update_preprocessor(ds.preprocessor)
@@ -1221,7 +1226,8 @@ def evaluate_ctrl_sampler(seed=1, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS
     env.set_state(x, u)
 
     dss = [ds, ds_wall]
-    selector = get_selector(dss)
+    _, tsf_name = get_transform(env, ds, use_tsf)
+    selector = get_selector(dss, tsf_name)
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     N = 500
@@ -1288,7 +1294,8 @@ class Learn:
 
         common_opts = {'too_far_for_neighbour': 0.3, 'name': "{}_s{}".format(name, seed)}
         # add in invariant transform here
-        invariant_tsf = LearnedTransform.LearnedPartialPassthrough(ds, d, **common_opts, **kwargs)
+        # invariant_tsf = LearnedTransform.LearnedPartialPassthrough(ds, d, **common_opts, **kwargs)
+        invariant_tsf = LearnedTransform.GroundTruthWithCompression(ds, d, **common_opts, **kwargs)
         invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
     @staticmethod
@@ -1436,6 +1443,7 @@ class Visualize:
 
 if __name__ == "__main__":
     level = 0
+    ut = UseTransform.COORDINATE_TRANSFORM
     # OfflineDataCollection.freespace(trials=200, trial_length=50, level=0)
     # OfflineDataCollection.push_against_wall_recovery()
     # OfflineDataCollection.model_selector_evaluation()
@@ -1444,15 +1452,15 @@ if __name__ == "__main__":
     # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
 
     # verify_coordinate_transform(UseTransform.COORDINATE_TRANSFORM)
-    # evaluate_model_selector()
+    # evaluate_model_selector(use_tsf=ut)
     # evaluate_ctrl_sampler()
-    test_local_model_sufficiency_for_escaping_wall(level=3, plot_model_eval=False,
-                                                   use_tsf=UseTransform.COORDINATE_TRANSFORM)
+    # test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=False,
+    #                                                use_tsf=UseTransform.COORDINATE_LEARN_DYNAMICS_TRANSFORM)
 
     # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM,
     #                            online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD, override=True)
-    # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM, online_adapt=OnlineAdapt.RANDOM,
-    #                            override=True, full_evaluation=False)
+    evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.NONE,
+                               override=True, full_evaluation=False, plot_model_error=True)
     # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORDINATE_TRANSFORM,
     #                            online_adapt=OnlineAdapt.GP_KERNEL, override=True)
 
