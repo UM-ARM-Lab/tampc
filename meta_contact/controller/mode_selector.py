@@ -224,7 +224,10 @@ class MLPSelector(LearnableParameterizedModel, ModeSelector):
 
         if retrain or not self.load(self.get_last_checkpoint()):
             self.learn_model(dss)
-        self.freeze()
+        self.eval()
+
+    def modules(self):
+        return {'selector': self.model}
 
     def sample_mode(self, state, action, *args):
         xu = torch.cat((state, action), dim=1)
@@ -238,15 +241,6 @@ class MLPSelector(LearnableParameterizedModel, ModeSelector):
 
         sample = sample_discrete_probs(self.relative_weights, use_numpy=False)
         return sample
-
-    def parameters(self):
-        return self.model.parameters()
-
-    def _model_state_dict(self):
-        return self.model.state_dict()
-
-    def _load_model_state_dict(self, saved_state_dict):
-        self.model.load_state_dict(saved_state_dict)
 
     def _cat_data(self, dss, training=True):
         xu = []

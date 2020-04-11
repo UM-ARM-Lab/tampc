@@ -93,15 +93,6 @@ class CoordTransform:
             dx = torch.cat((dpos_world, dyaw.view(-1, 1), dalong.view(-1, 1)), dim=1)
             return dx
 
-        def parameters(self):
-            return [torch.zeros(1)]
-
-        def _model_state_dict(self):
-            return None
-
-        def _load_model_state_dict(self, saved_state_dict):
-            pass
-
         def learn_model(self, max_epoch, batch_N=500):
             pass
 
@@ -209,6 +200,9 @@ class LearnedTransform:
                                                             name='{}_{}'.format(self._name_prefix(), name),
                                                             **kwargs)
 
+        def modules(self):
+            return {'yaw': self.yaw_selector, 'linear dynamics': self.linear_model_producer.model}
+
         def _name_prefix(self):
             return 'param_coord'
 
@@ -236,17 +230,6 @@ class LearnedTransform:
             # last element is d_along, which gets passed along directly
             dx[:, 3] = v[:, 3]
             return dx
-
-        def parameters(self):
-            return list(self.yaw_selector.parameters()) + list(self.linear_model_producer.model.parameters())
-
-        def _model_state_dict(self):
-            d = {'yaw': self.yaw_selector.state_dict(), 'linear': self.linear_model_producer.model.state_dict()}
-            return d
-
-        def _load_model_state_dict(self, saved_state_dict):
-            self.yaw_selector.load_state_dict(saved_state_dict['yaw'])
-            self.linear_model_producer.model.load_state_dict(saved_state_dict['linear'])
 
         def evaluate_validation(self, writer):
             losses = super().evaluate_validation(writer)
@@ -278,6 +261,11 @@ class LearnedTransform:
             # self.z_selector.weight.requires_grad = True
             super().__init__(ds, device, nz=nz, **kwargs)
 
+        def modules(self):
+            m = super().modules()
+            m['z selector'] = self.z_selector
+            return m
+
         def _name_prefix(self):
             return "z_select"
 
@@ -287,18 +275,6 @@ class LearnedTransform:
             xu = torch.cat((state, action), dim=1)
             z = self.z_selector(xu)
             return z
-
-        def parameters(self):
-            return super().parameters() + list(self.z_selector.parameters())
-
-        def _model_state_dict(self):
-            d = super()._model_state_dict()
-            d['z'] = self.z_selector.state_dict()
-            return d
-
-        def _load_model_state_dict(self, saved_state_dict):
-            super()._load_model_state_dict(saved_state_dict)
-            self.z_selector.load_state_dict(saved_state_dict['z'])
 
     class ParameterizeDecoder(LinearComboLatentInput):
         """Relax parameterization structure to allow decoder to be some state dependent transformation of v"""
@@ -315,21 +291,12 @@ class LearnedTransform:
                 make.make_sequential_network(config, h_units=(16, 32)).to(device=device))
             super().__init__(ds, device, nv=nv, **kwargs)
 
+        def modules(self):
+            return {'linear decoder': self.linear_decoder_producer.model, 'z selector': self.z_selector,
+                    'linear dynamics': self.linear_model_producer.model}
+
         def _name_prefix(self):
             return 'state_dep_linear_tsf_{}'.format(int(self.use_sincos_angle))
-
-        def parameters(self):
-            return list(self.linear_decoder_producer.model.parameters()) + list(self.z_selector.parameters()) + list(
-                self.linear_model_producer.model.parameters())
-
-        def _model_state_dict(self):
-            d = super()._model_state_dict()
-            d['decoder'] = self.linear_decoder_producer.model.state_dict()
-            return d
-
-        def _load_model_state_dict(self, saved_state_dict):
-            super()._load_model_state_dict(saved_state_dict)
-            self.linear_decoder_producer.model.load_state_dict(saved_state_dict['decoder'])
 
         def linear_dynamics(self, z):
             B = z.shape[0]
@@ -360,6 +327,10 @@ class LearnedTransform:
 
             super().__init__(ds, device, nz=nz, **kwargs)
 
+        def modules(self):
+            return {'linear decoder': self.linear_decoder_producer.model, 'encoder': self.encoder.model,
+                    'linear dynamics': self.linear_model_producer.model}
+
         def _name_prefix(self):
             return 'linear_relax_encoder'
 
@@ -368,19 +339,6 @@ class LearnedTransform:
             xu = torch.cat((state, action), dim=1)
             z = self.encoder.sample(xu)
             return z
-
-        def parameters(self):
-            return list(self.linear_decoder_producer.model.parameters()) + list(self.encoder.model.parameters()) + list(
-                self.linear_model_producer.model.parameters())
-
-        def _model_state_dict(self):
-            d = super()._model_state_dict()
-            d['encoder'] = self.encoder.model.state_dict()
-            return d
-
-        def _load_model_state_dict(self, saved_state_dict):
-            super()._load_model_state_dict(saved_state_dict)
-            self.encoder.model.load_state_dict(saved_state_dict['encoder'])
 
     class DistRegularization(ParameterizeDecoder):
         """Try requiring pairwise distances are proportional"""
@@ -464,21 +422,12 @@ class LearnedTransform:
                 make.make_sequential_network(config, h_units=(16, 32)).to(device=device))
             super().__init__(ds, device, *args, nv=nv, **kwargs)
 
+        def modules(self):
+            return {'partial decoder': self.partial_decoder.model, 'z selector': self.z_selector,
+                    'linear dynamics': self.linear_model_producer.model}
+
         def _name_prefix(self):
             return 'partial_passthrough'
-
-        def parameters(self):
-            return list(self.partial_decoder.model.parameters()) + list(self.z_selector.parameters()) + list(
-                self.linear_model_producer.model.parameters())
-
-        def _model_state_dict(self):
-            d = super()._model_state_dict()
-            d['pd'] = self.partial_decoder.model.state_dict()
-            return d
-
-        def _load_model_state_dict(self, saved_state_dict):
-            super()._load_model_state_dict(saved_state_dict)
-            self.partial_decoder.model.load_state_dict(saved_state_dict['pd'])
 
         @tensor_utils.ensure_2d_input
         def get_dx(self, x, v):
@@ -525,23 +474,12 @@ class LearnedTransform:
 
             super().__init__(ds, device, *args, nz=nz, nv=nv, **kwargs)
 
+        def modules(self):
+            return {'partial decoder': self.partial_decoder.model, 'z selector': self.z_selector,
+                    'linear dynamics': self.linear_model_producer.model, 'x extractor': self.x_extractor}
+
         def _name_prefix(self):
             return 'extract_passthrough_{}'.format(self.reduced_decoder_input_dim)
-
-        def parameters(self):
-            return list(self.partial_decoder.model.parameters()) + list(self.z_selector.parameters()) + list(
-                self.linear_model_producer.model.parameters()) + list(self.x_extractor.parameters())
-
-        def _model_state_dict(self):
-            d = super()._model_state_dict()
-            d['pd'] = self.partial_decoder.model.state_dict()
-            d['extract'] = self.x_extractor.state_dict()
-            return d
-
-        def _load_model_state_dict(self, saved_state_dict):
-            super()._load_model_state_dict(saved_state_dict)
-            self.partial_decoder.model.load_state_dict(saved_state_dict['pd'])
-            self.x_extractor.load_state_dict(saved_state_dict['extract'])
 
         @tensor_utils.ensure_2d_input
         def get_dx(self, x, v):
@@ -557,6 +495,9 @@ class LearnedTransform:
         def __init__(self, *args, **kwargs):
             super().__init__(*args, nz=5, nv=5, **kwargs)
             self.preprocessor = copy.deepcopy(self.ds.preprocessor)
+
+        def modules(self):
+            return {'linear dynamics': self.linear_model_producer.model}
 
         def _name_prefix(self):
             return 'ground_truth'
@@ -590,16 +531,6 @@ class LearnedTransform:
             mse_loss = torch.norm(yhat - Y, dim=1)
             return mse_loss, -compression_r
 
-        def parameters(self):
-            return list(self.linear_model_producer.model.parameters())
-
-        def _model_state_dict(self):
-            d = {'linear': self.linear_model_producer.model.state_dict()}
-            return d
-
-        def _load_model_state_dict(self, saved_state_dict):
-            self.linear_model_producer.model.load_state_dict(saved_state_dict['linear'])
-
 
 class AblationOnTransform:
     class RelaxDecoderLinearity(LearnedTransform.LinearComboLatentInput):
@@ -614,21 +545,12 @@ class AblationOnTransform:
                 make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
             super().__init__(ds, device, nv=nv, **kwargs)
 
+        def modules(self):
+            return {'decoder': self.decoder.model, 'z selector': self.z_selector,
+                    'linear dynamics': self.linear_model_producer.model}
+
         def _name_prefix(self):
             return 'ablation_remove_decoder_linear'
-
-        def parameters(self):
-            return list(self.decoder.model.parameters()) + list(self.z_selector.parameters()) + list(
-                self.linear_model_producer.model.parameters())
-
-        def _model_state_dict(self):
-            d = super()._model_state_dict()
-            d['decoder'] = self.decoder.model.state_dict()
-            return d
-
-        def _load_model_state_dict(self, saved_state_dict):
-            super()._load_model_state_dict(saved_state_dict)
-            self.decoder.model.load_state_dict(saved_state_dict['decoder'])
 
         @tensor_utils.ensure_2d_input
         def get_dx(self, x, v):
@@ -647,6 +569,10 @@ class AblationOnTransform:
             self.dynamics = model.DeterministicUser(
                 make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
             super().__init__(ds, device, nz=nz, nv=nv, **kwargs)
+
+        def modules(self):
+            return {'linear decoder': self.linear_decoder_producer.model, 'z selector': self.z_selector,
+                    'dynamics': self.dynamics.model}
 
         def _name_prefix(self):
             return 'ablation_remove_dynamics_linear'
@@ -672,19 +598,6 @@ class AblationOnTransform:
         def _reduce_losses(self, losses):
             return torch.mean(losses[0])
 
-        def parameters(self):
-            return list(self.linear_decoder_producer.model.parameters()) + list(self.z_selector.parameters()) + list(
-                self.dynamics.model.parameters())
-
-        def _model_state_dict(self):
-            d = super()._model_state_dict()
-            d['dynamics'] = self.dynamics.model.state_dict()
-            return d
-
-        def _load_model_state_dict(self, saved_state_dict):
-            super()._load_model_state_dict(saved_state_dict)
-            self.dynamics.model.load_state_dict(saved_state_dict['dynamics'])
-
         def linear_dynamics(self, z):
             raise RuntimeError("Shouldn't be calling this; instead should transform z to v directly")
 
@@ -707,23 +620,12 @@ class AblationOnTransform:
                 make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
             super().__init__(ds, device, nz=nz, nv=nv, **kwargs)
 
+        def modules(self):
+            return {'decoder': self.decoder.model, 'z selector': self.z_selector,
+                    'dynamics': self.dynamics.model}
+
         def _name_prefix(self):
             return 'ablation_remove_all_linear'
-
-        def parameters(self):
-            return list(self.decoder.model.parameters()) + list(self.z_selector.parameters()) + list(
-                self.dynamics.model.parameters())
-
-        def _model_state_dict(self):
-            d = super()._model_state_dict()
-            d['decoder'] = self.decoder.model.state_dict()
-            d['dynamics'] = self.dynamics.model.state_dict()
-            return d
-
-        def _load_model_state_dict(self, saved_state_dict):
-            super()._load_model_state_dict(saved_state_dict)
-            self.decoder.model.load_state_dict(saved_state_dict['decoder'])
-            self.dynamics.model.load_state_dict(saved_state_dict['dynamics'])
 
         @tensor_utils.ensure_2d_input
         def get_dx(self, x, v):
@@ -768,6 +670,10 @@ class AblationOnTransform:
 
             super().__init__(ds, device, nz=nz, **kwargs)
 
+        def modules(self):
+            return {'decoder': self.decoder.model, 'encoder': self.encoder.model,
+                    'dynamics': self.dynamics.model}
+
         def _name_prefix(self):
             return 'ablation_relax_encoder'
 
@@ -777,24 +683,14 @@ class AblationOnTransform:
             z = self.encoder.sample(xu)
             return z
 
-        def parameters(self):
-            return list(self.decoder.model.parameters()) + list(self.encoder.model.parameters()) + list(
-                self.dynamics.model.parameters())
-
-        def _model_state_dict(self):
-            d = super()._model_state_dict()
-            d['encoder'] = self.encoder.model.state_dict()
-            return d
-
-        def _load_model_state_dict(self, saved_state_dict):
-            super()._load_model_state_dict(saved_state_dict)
-            self.encoder.model.load_state_dict(saved_state_dict['encoder'])
-
     class UseDecoderForDynamics(RelaxEncoder):
         """Remove v and pass z directly to the decoder"""
 
         def __init__(self, ds, device, nz=4, **kwargs):
             super().__init__(ds, device, nz=nz, nv=ds.config.ny, **kwargs)
+
+        def modules(self):
+            return {'decoder': self.decoder.model, 'encoder': self.encoder.model}
 
         def _name_prefix(self):
             return 'ablation_direct_no_v'
@@ -812,9 +708,6 @@ class AblationOnTransform:
             mse_loss = torch.norm(yhat - Y, dim=1)
             return mse_loss,
 
-        def parameters(self):
-            return list(self.decoder.model.parameters()) + list(self.encoder.model.parameters())
-
     class NoPassthrough(UseDecoderForDynamics):
         """Remove x from decoder input (only pass x to decoder)"""
 
@@ -827,25 +720,16 @@ class AblationOnTransform:
                 make.make_sequential_network(config, h_units=(32, 32)).to(device=device))
             super().__init__(ds, device, nz=nz, **kwargs)
 
+        def modules(self):
+            return {'direct decoder': self.direct_decoder.model, 'encoder': self.encoder.model}
+
         def _name_prefix(self):
             return 'ablation_no passthrough'
-
-        def _model_state_dict(self):
-            d = super()._model_state_dict()
-            d['d2'] = self.direct_decoder.model.state_dict()
-            return d
-
-        def _load_model_state_dict(self, saved_state_dict):
-            super()._load_model_state_dict(saved_state_dict)
-            self.direct_decoder.model.load_state_dict(saved_state_dict['d2'])
 
         @tensor_utils.ensure_2d_input
         def get_dx(self, x, v):
             dx = self.direct_decoder.sample(v)
             return dx
-
-        def parameters(self):
-            return list(self.decoder.model.parameters()) + list(self.encoder.model.parameters())
 
     class ReguarlizePairwiseDistances(RelaxLinearDynamicsAndLinearDecoder):
         """Try requiring pairwise distances are proportional"""

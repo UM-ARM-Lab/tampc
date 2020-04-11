@@ -211,6 +211,9 @@ class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
 
         self.writer = None
 
+    def modules(self):
+        return {'dynamics': self.model}
+
     def evaluate_validation(self):
         """Any additional evaluation on the validation set goes here"""
 
@@ -286,15 +289,6 @@ class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
         Yhatn = self.user.sample(XU).cpu().detach().numpy()
         En = np.linalg.norm((Yhatn - Y), axis=1)
         logger.info("Least squares error %f network error %f", E.mean(), En.mean())
-
-    def _model_state_dict(self):
-        return self.model.state_dict()
-
-    def _load_model_state_dict(self, saved_state_dict):
-        self.model.load_state_dict(saved_state_dict)
-
-    def parameters(self):
-        return self.model.parameters()
 
     def _apply_model(self, xu):
         return self.user.sample(xu)

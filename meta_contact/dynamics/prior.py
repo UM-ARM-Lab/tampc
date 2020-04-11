@@ -106,7 +106,7 @@ class NNPrior(OnlineDynamicsPrior):
 
     def __init__(self, mw: model.NetworkModelWrapper, mix_strength=1.0):
         self.dyn_net = mw
-        self.dyn_net.freeze()
+        self.dyn_net.eval()
         self.mix_prior_strength = mix_strength
         self.full_context = mw.ds.config.expanded_input
 

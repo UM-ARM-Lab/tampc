@@ -264,9 +264,9 @@ if __name__ == "__main__":
         # # update model based on database change (for global linear controllers)
         # ctrl.update_model(ds)
         # retrain network (for nn dynamics based controllers)
-        mw.unfreeze()
+        mw.train()
         mw.learn_model(TRAIN_EPOCH, batch_N=500)
-        mw.freeze()
+        mw.eval()
 
         # evaluate network against true dynamics
         yt = true_dynamics(statev, actionv)

@@ -474,6 +474,9 @@ class NetworkNoDecoder(NoDecoderTransform):
         self.user = model.DeterministicUser(make.make_sequential_network(config, **model_opts))
         super().__init__(ds, nz, **kwargs)
 
+    def modules(self):
+        return {'dynamics': self.user.model}
+
     def xu_to_z(self, state, action):
         xu = torch.cat((state, action), dim=1)
         z = self.user.sample(xu)
@@ -483,12 +486,3 @@ class NetworkNoDecoder(NoDecoderTransform):
         # TODO see if we need to formulate it as action * z for toy problem (less generalized, but easier, and nz=1)
         # z = action * z
         return z
-
-    def parameters(self):
-        return self.user.model.parameters()
-
-    def _model_state_dict(self):
-        return self.user.model.state_dict()
-
-    def _load_model_state_dict(self, saved_state_dict):
-        self.user.model.load_state_dict(saved_state_dict)

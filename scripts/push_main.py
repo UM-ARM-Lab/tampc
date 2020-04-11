@@ -4,6 +4,7 @@ import typing
 import os
 import time
 import pickle
+import enum
 
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -178,7 +179,7 @@ def update_ds_with_transform(env, ds, use_tsf, evaluate_transform=True):
     return untransformed_config, tsf_name, preprocessor
 
 
-class UseTsf:
+class UseTsf(enum.Enum):
     NO_TRANSFORM = 0
     COORD = 1
     YAW_SELECT = 2

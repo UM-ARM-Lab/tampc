@@ -504,7 +504,7 @@ class InvariantTransformer(preprocess.Transformer):
 
     def __init__(self, tsf: InvariantTransform):
         self.tsf = tsf
-        self.tsf.freeze()
+        self.tsf.eval()
         self.model_input_dim = None
         self.model_output_dim = None
         super(InvariantTransformer, self).__init__()
