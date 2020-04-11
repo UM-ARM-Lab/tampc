@@ -195,7 +195,7 @@ class LearnedTransform:
     class ParameterizedYawSelect(invariant.LearnLinearDynamicsTransform, PusherTransform):
         """Parameterize the coordinate transform such that it has to learn something"""
 
-        def __init__(self, ds, device, model_opts=None, nz=4, nv=4, **kwargs):
+        def __init__(self, ds, device, model_opts=None, nz=5, nv=5, **kwargs):
             if model_opts is None:
                 model_opts = {}
             # default values for the input model_opts to replace
@@ -273,8 +273,6 @@ class LearnedTransform:
                     cs = torch.nn.functional.cosine_similarity(yaw_param, self.true_yaw_param).item()
                     dist = torch.norm(yaw_param - self.true_yaw_param).item()
 
-                    logger.debug("step %d yaw cos sim %f dist %f", self.step, cs, dist)
-
                     writer.add_scalar('cosine_similarity', cs, self.step)
                     writer.add_scalar('param_diff', dist, self.step)
                     writer.add_scalar('param_norm', yaw_param.norm().item(), self.step)
@@ -322,7 +320,7 @@ class LearnedTransform:
     class ParameterizeDecoder(LinearComboLatentInput):
         """Relax parameterization structure to allow decoder to be some state dependent transformation of v"""
 
-        def __init__(self, ds, device, use_sincos_angle=False, nv=4, **kwargs):
+        def __init__(self, ds, device, use_sincos_angle=False, nv=5, **kwargs):
             # replace angle with their sin and cos
             self.use_sincos_angle = use_sincos_angle
             # input to producer is x, output is matrix to multiply v to get dx by
@@ -579,23 +577,25 @@ class LearnedTransform:
     class GroundTruthWithCompression(CompressionReward):
         """Ground truth coordinate transform with only f learned"""
 
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, nz=5, nv=5, **kwargs)
+
         def _name_prefix(self):
             return 'ground_truth'
 
         @tensor_utils.ensure_2d_input
         def xu_to_z(self, state, action):
-            # (along, d_along, push magnitude)
-            z = torch.cat((state[:, 3].view(-1, 1), action), dim=1)
+            r_body = math_utils.batch_rotate_wrt_origin(state[:, -2:], -state[:, 2])
+            z = torch.cat((action, r_body), dim=1)
             return z
 
         @tensor_utils.ensure_2d_input
         def get_dx(self, x, v):
-            yaw = x[:, 2]
-            N = v.shape[0]
-            dx = torch.zeros((N, 4), dtype=v.dtype, device=v.device)
             # convert (dx, dy) from body frame back to world frame
-            dx[:, :2] = math_utils.batch_rotate_wrt_origin(v[:, :2], yaw)
-            dx[:, 2:] = v[:, 2:]
+            dpos_world = math_utils.batch_rotate_wrt_origin(v[:, :2], x[:, 2])
+            dr_world = math_utils.batch_rotate_wrt_origin(v[:, -2:], x[:, 2])
+            dyaw = v[:, 2]
+            dx = torch.cat((dpos_world, dyaw.view(-1, 1), dr_world), dim=1)
             return dx
 
         def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
