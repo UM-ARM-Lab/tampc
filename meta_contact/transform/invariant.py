@@ -81,6 +81,7 @@ class InvariantTransform(LearnableParameterizedModel):
 
     def _record_metrics(self, writer, losses, suffix='', log=False):
         with torch.no_grad():
+            log_msg = ["metric"]
             for i, loss_name in enumerate(self.loss_names()):
                 name = '{}{}'.format(loss_name, suffix)
                 # allow some loss to be None (e.g. when not always used for every batch)
@@ -89,7 +90,9 @@ class InvariantTransform(LearnableParameterizedModel):
                 value = losses[i].mean().cpu().item()
                 writer.add_scalar(name, value, self.step)
                 if log:
-                    logger.debug("metric %s %f", name, value)
+                    log_msg.append(" {} {}".format(name, value))
+            if log:
+                logger.debug("".join(log_msg))
 
     @abc.abstractmethod
     def _move_data_out_of_distribution(self, data, move_params):
