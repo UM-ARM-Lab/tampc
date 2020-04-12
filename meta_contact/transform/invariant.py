@@ -39,6 +39,7 @@ class InvariantTransform(LearnableParameterizedModel):
         self.nv = nv
         # update name with parameteres
         self.name = '{}_z{}_v{}_{}'.format(self.name, self.nz, self.nv, self.config)
+        self.writer = None
 
     @abc.abstractmethod
     def xu_to_z(self, state, action):
@@ -109,8 +110,27 @@ class InvariantTransform(LearnableParameterizedModel):
     def _evaluate_metrics_on_whole_set(self, validation, tsf, move_params=None):
         with torch.no_grad():
             X, U, Y = self._setup_evaluate_metrics_on_whole_set(validation, move_params)
-            # TODO evaluate validation MSE in original space to allow for comparison across transforms
-            batch_losses = self._evaluate_batch(X, U, Y, tsf=tsf)
+            batch_losses = list(self._evaluate_batch(X, U, Y, tsf=tsf))
+            # evaluate validation MSE in original space to allow for comparison across transforms
+            for i, name in enumerate(self.loss_names()):
+                if name is "mse_loss":
+                    X_orig, U_orig, Y_orig = self._setup_evaluate_metrics_on_whole_set(validation, move_params,
+                                                                                       output_in_orig_space=True)
+                    z = self.xu_to_z(X, U)
+                    v = self.get_v(X, Y, z)
+                    yhat = self.get_dx(X, v)
+                    if self.ds.preprocessor is not None:
+                        yhat = self.ds.preprocessor.invert_transform(yhat, X_orig)
+
+                    E = yhat - Y_orig
+                    mse_loss = torch.norm(E, dim=1)
+                    batch_losses[i] = mse_loss
+
+                    per_dim_mse = E.abs().mean(dim=0)
+                    for d in range(per_dim_mse.shape[0]):
+                        self.writer.add_scalar('per_dim_mean_abs_diff_tsf/validation{}'.format(d),
+                                               per_dim_mse[d].item(), self.step)
+
             batch_losses = [math_utils.replace_nan_and_inf(losses) if losses is not None else None for losses in
                             batch_losses]
             return batch_losses
@@ -154,7 +174,7 @@ class InvariantTransform(LearnableParameterizedModel):
         return [[] for _ in self.loss_names()]
 
     def learn_model(self, max_epoch, batch_N=500):
-        writer = SummaryWriter(flush_secs=20, comment="{}_batch{}".format(self.name, batch_N))
+        self.writer = SummaryWriter(flush_secs=20, comment="{}_batch{}".format(self.name, batch_N))
 
         ds_train = load_data.SimpleDataset(*self.ds.training_set())
         train_loader = torch.utils.data.DataLoader(ds_train, batch_size=batch_N, shuffle=True)
@@ -166,7 +186,7 @@ class InvariantTransform(LearnableParameterizedModel):
         for epoch in range(max_epoch):
             logger.debug("Start epoch %d", epoch)
             # evaluate on validation at the start of epochs
-            self.evaluate_validation(writer)
+            self.evaluate_validation(self.writer)
             if save_checkpoint_every_n_epochs and epoch % save_checkpoint_every_n_epochs == 0:
                 self.save()
 
@@ -181,7 +201,7 @@ class InvariantTransform(LearnableParameterizedModel):
                 self.optimizer.step()
                 self.optimizer.zero_grad()
 
-                self._record_metrics(writer, losses)
+                self._record_metrics(self.writer, losses)
                 self.step += 1
 
         self.save(last=True)
