@@ -205,7 +205,6 @@ class MLPSelector(LearnableParameterizedModel, ModeSelector):
         self.relative_weights = None
         self.input_slice = kwargs.pop('input_slice', None)
 
-        self.writer = None
         opts = {'end_block_factory': make.make_linear_end_block(activation=torch.nn.Softmax(dim=1))}
         if model_opts is not None:
             opts.update(model_opts)
@@ -268,8 +267,6 @@ class MLPSelector(LearnableParameterizedModel, ModeSelector):
         criterion = torch.nn.CrossEntropyLoss(reduction='none', weight=weight)
 
         for epoch in range(0, max_epoch):  # loop over the dataset multiple times
-            if self.writer is None:
-                self.writer = SummaryWriter(flush_secs=20, comment=os.path.basename(self.name))
             if save_checkpoint_every_n_epochs and epoch % save_checkpoint_every_n_epochs == 0:
                 self.save()
 
@@ -283,9 +280,7 @@ class MLPSelector(LearnableParameterizedModel, ModeSelector):
                 loss = criterion(Yhat, Y)
                 # validation and other analysis
                 with torch.no_grad():
-                    self.writer.add_scalar('loss/training', loss.mean(), self.step)
                     vloss = criterion(self.model(xuv), yv)
-                    self.writer.add_scalar('loss/validation', vloss.mean(), self.step)
                     logger.debug("Epoch %d loss %f vloss %f", epoch, loss.mean().item(), vloss.mean().item())
 
                 loss.mean().backward()

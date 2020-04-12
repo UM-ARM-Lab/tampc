@@ -148,7 +148,7 @@ def get_pre_invariant_tsf_preprocessor(use_tsf):
         return preprocess.PytorchTransformer(preprocess.NullSingleTransformer())
     elif use_tsf is UseTsf.COORD_LEARN_DYNAMICS:
         return preprocess.PytorchTransformer(preprocess.NullSingleTransformer(),
-                                             preprocess.RobustMinMaxScaler(feature_range=[[0, 0, 0], [3, 3, 1.5]]))
+                                             preprocess.RobustMinMaxScaler(feature_range=[[0, 0, 0], [5, 5, 2.5]]))
     else:
         # TODO consider what transform to prepend for the other transforms
         return preprocess.PytorchTransformer(preprocess.NullSingleTransformer(),
@@ -175,10 +175,10 @@ def update_ds_with_transform(env, ds, use_tsf, evaluate_transform=True):
         preprocessor = preprocess.Compose(
             [get_pre_invariant_tsf_preprocessor(use_tsf),
              invariant.InvariantTransformer(invariant_tsf),
-             preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
+             preprocess.PytorchTransformer(preprocess.RobustMinMaxScaler())])
     else:
         # use minmax scaling if we're not using an invariant transform (baseline)
-        preprocessor = preprocess.PytorchTransformer(preprocess.MinMaxScaler())
+        preprocessor = preprocess.PytorchTransformer(preprocess.RobustMinMaxScaler())
         # preprocessor = preprocess.Compose([preprocess.PytorchTransformer(preprocess.AngleToCosSinRepresentation(2),
         #                                                                  preprocess.NullSingleTransformer()),
         #                                    preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
@@ -282,7 +282,7 @@ def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics):
                            name="dynamics_{}".format(tsf_name))
 
         pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(),
-                                     train_epochs=600)
+                                     train_epochs=200)
     elif prior_class is prior.NoPrior:
         pm = prior.NoPrior()
     else:
@@ -911,7 +911,6 @@ def test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=True
         return
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
-    common_wrapper_opts['adjust_model_pred_with_prev_error'] = False
     ctrl = online_controller.OnlineMPPI(dynamics_gp if use_gp else dynamics, ds.original_config(), mode_select=selector,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
     ctrl.set_goal(env.goal)
@@ -1063,16 +1062,17 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
 def evaluate_model_selector(use_tsf=UseTsf.COORD):
     plot_definite_negatives = False
     num_pos_samples = 100  # start with balanced data
-    rand.seed(10)
+    seed = rand.seed(9)
 
-    _, env, _, ds = get_free_space_env_init()
+    _, env, _, ds = get_free_space_env_init(seed)
     _, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
     ds_neg, _ = get_ds(env, "pushing/model_selector_evaluation.mat", validation_ratio=0.)
     ds_neg.update_preprocessor(preprocessor)
     ds_recovery, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
     ds_recovery.update_preprocessor(preprocessor)
 
-    selector = get_selector([ds, ds_recovery], tsf_name)
+    rand.seed(seed)
+    selector = get_selector([ds, ds_recovery], tsf_name, retrain=False)
 
     # get evaluation data by getting definite positive samples from the freespace dataset
     pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)
@@ -1451,8 +1451,7 @@ if __name__ == "__main__":
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_model_selector(use_tsf=ut)
     # evaluate_ctrl_sampler()
-    # test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=False,
-    #                                                use_tsf=UseTransform.COORD_LEARN_DYNAMICS)
+    test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=False, use_tsf=ut)
 
     # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.NONE,
     #                            override=True, full_evaluation=False, plot_model_error=True, relearn_dynamics=True)
@@ -1460,7 +1459,7 @@ if __name__ == "__main__":
     #                            online_adapt=OnlineAdapt.GP_KERNEL, override=True)
 
     # test_online_model()
-    for seed in range(1):
-        Learn.invariant(ut, seed=seed, name="", MAX_EPOCH=100, BATCH_SIZE=500)
     # for seed in range(1):
-    #     Learn.model(UseTransform.COORD, seed=seed, name="physical r in body")
+    #     Learn.invariant(ut, seed=seed, name="scale_5", MAX_EPOCH=1000, BATCH_SIZE=500)
+    # for seed in range(1):
+    #     Learn.model(ut, seed=seed, name="")
