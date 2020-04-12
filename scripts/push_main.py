@@ -143,6 +143,18 @@ def get_free_space_env_init(seed=1, **kwargs):
     return d, env, config, ds
 
 
+def get_pre_invariant_tsf_preprocessor(use_tsf):
+    if use_tsf is UseTsf.COORD:
+        return preprocess.PytorchTransformer(preprocess.NullSingleTransformer())
+    elif use_tsf is UseTsf.COORD_LEARN_DYNAMICS:
+        return preprocess.PytorchTransformer(preprocess.NullSingleTransformer(),
+                                             preprocess.RobustMinMaxScaler(feature_range=[[0, 0, 0], [3, 3, 1.5]]))
+    else:
+        # TODO consider what transform to prepend for the other transforms
+        return preprocess.PytorchTransformer(preprocess.NullSingleTransformer(),
+                                             preprocess.RobustMinMaxScaler(feature_range=[[0, 0, 0], [3, 3, 1.5]]))
+
+
 def update_ds_with_transform(env, ds, use_tsf, evaluate_transform=True):
     invariant_tsf = get_transform(env, ds, use_tsf)
 
@@ -161,7 +173,7 @@ def update_ds_with_transform(env, ds, use_tsf, evaluate_transform=True):
 
         # wrap the transform as a data preprocessor
         preprocessor = preprocess.Compose(
-            [preprocess.PytorchTransformer(preprocess.NullSingleTransformer(), preprocess.MinMaxScaler()),
+            [get_pre_invariant_tsf_preprocessor(use_tsf),
              invariant.InvariantTransformer(invariant_tsf),
              preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
     else:
@@ -1274,15 +1286,13 @@ def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
 
 class Learn:
     @staticmethod
-    def invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
+    def invariant(use_tsf=UseTsf.COORD_LEARN_DYNAMICS, seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
         d, env, config, ds = get_free_space_env_init(seed)
-        preprocessor = preprocess.PytorchTransformer(preprocess.NullSingleTransformer(), preprocess.MinMaxScaler())
-        ds.update_preprocessor(preprocessor)
+        ds.update_preprocessor(get_pre_invariant_tsf_preprocessor(use_tsf))
+        invariant_cls = get_transform(env, ds, use_tsf).__class__
 
-        common_opts = {'too_far_for_neighbour': 0.3, 'name': "{}_s{}".format(name, seed)}
-        # add in invariant transform here
-        # invariant_tsf = LearnedTransform.LearnedPartialPassthrough(ds, d, **common_opts, **kwargs)
-        invariant_tsf = LearnedTransform.GroundTruthWithCompression(preprocessor, ds, d, **common_opts, **kwargs)
+        common_opts = {'name': "{}_s{}".format(name, seed)}
+        invariant_tsf = invariant_cls(ds, d, **common_opts, **kwargs)
         invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
     @staticmethod
@@ -1444,13 +1454,13 @@ if __name__ == "__main__":
     # test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=False,
     #                                                use_tsf=UseTransform.COORD_LEARN_DYNAMICS)
 
-    evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.NONE,
-                               override=True, full_evaluation=False, plot_model_error=True, relearn_dynamics=True)
+    # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.NONE,
+    #                            override=True, full_evaluation=False, plot_model_error=True, relearn_dynamics=True)
     # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORD,
     #                            online_adapt=OnlineAdapt.GP_KERNEL, override=True)
 
     # test_online_model()
-    # for seed in range(1):
-    #     Learn.invariant(seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
+    for seed in range(1):
+        Learn.invariant(ut, seed=seed, name="", MAX_EPOCH=100, BATCH_SIZE=500)
     # for seed in range(1):
     #     Learn.model(UseTransform.COORD, seed=seed, name="physical r in body")
