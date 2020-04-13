@@ -79,7 +79,15 @@ class OnlineMPC(OnlineController):
 
     @tensor_utils.ensure_2d_input
     def _apply_dynamics(self, state, u, t=0):
-        mode = self.mode_select.sample_mode(state, u)
+        # TODO this is a hack for handling when dynamics blows up
+        bad_states = state.norm(dim=1) > 1e5
+        x = state
+        x[bad_states] = 0
+        u[bad_states] = 0
+
+        mode = self.mode_select.sample_mode(x, u)
+        mode[bad_states] = -1
+
         self.dynamics_mode[t] = mode
         next_state = torch.zeros_like(state)
         # TODO we should generalize to more than 2 modes
@@ -93,6 +101,7 @@ class OnlineMPC(OnlineController):
 
         next_state = self._adjust_next_state(next_state, u, t)
         next_state = self.constrain_state(next_state)
+        next_state[bad_states] = state[bad_states]
 
         return next_state
 

@@ -72,17 +72,21 @@ class OnlineDynamicsModel(abc.ABC):
 
         cx, cu, px, pu = self._make_2d_tensor(cx, cu, px, pu)
         ocx = cx  # original state
+        bad_states = ocx.norm(dim=1) > 1e5
         # transform if necessary (ensure dynamics is evaluated only in transformed space)
         if self.ds.preprocessor and not already_transformed:
             cx, cu = self._apply_transform(cx, cu)
             px, pu = self._apply_transform(px, pu)
 
+        cx[bad_states] = 0
+        cu[bad_states] = 0
         y = self._dynamics_in_transformed_space(px, pu, cx, cu)
 
         if self.ds.preprocessor:
             y = self.ds.preprocessor.invert_transform(y, ocx)
 
         next_state = self.advance(ocx, y)
+        next_state[bad_states] = ocx[bad_states]
 
         return next_state
 
@@ -389,6 +393,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
             self.last_prediction = self.likelihood(self.gp(xu))
 
     def _dynamics_in_transformed_space(self, px, pu, cx, cu):
+        # filter out bad states since that will return nans for the other cases
         self._make_prediction(cx, cu)
         y = self.sample() if self.sample_dynamics else self.mean()
         return y
