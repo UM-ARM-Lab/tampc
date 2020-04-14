@@ -170,8 +170,10 @@ def compression_reward(v, xu, dist_regularization=1e-8, top_percent=None):
 
 class LearnedTransform:
     class DxToV(PusherTransform):
-        def __init__(self, ds, device, nz=5, nv=5, reconstruction_weight=1, match_weight=1, encoder_opts=None,
+        def __init__(self, ds, device, nz=5, nv=5, mse_weight=0, reconstruction_weight=1, match_weight=1,
+                     encoder_opts=None,
                      decoder_opts=None, dynamics_opts=None, **kwargs):
+            self.mse_weight = mse_weight
             self.reconstruction_weight = reconstruction_weight
             self.match_weight = match_weight
             # TODO try penalizing mutual information between xu and z, and v and dx?
@@ -196,7 +198,7 @@ class LearnedTransform:
             # outputs a linear transformation from v to dx (linear in v), that is dependent on state
             # v C(x) = dx --> v = C(x)^{-1} dx allows both ways
             self.linear_decoder_producer = model.DeterministicUser(
-                make.make_sequential_network(config, h_units=(16, 32)).to(device=device))
+                make.make_sequential_network(config, **opts).to(device=device))
 
             # create dynamics (shouldn't have high capacity since we should have simple dynamics in trasnformed space)
             # z -> v
@@ -208,14 +210,15 @@ class LearnedTransform:
             config.ny = nv
             self.dynamics = model.DeterministicUser(
                 make.make_sequential_network(config, **opts).to(device=device))
-            super().__init__(ds, nz=nz, nv=nv, **kwargs)
+            name = kwargs.pop('name', '')
+            super().__init__(ds, nz=nz, nv=nv, name='{}_{}'.format(self._name_prefix(), name), **kwargs)
 
         def modules(self):
             return {'encoder': self.encoder.model, 'linear decoder': self.linear_decoder_producer.model,
                     'dynamics': self.dynamics.model}
 
         def _name_prefix(self):
-            return 'two_routes_{}_{}'.format(self.reconstruction_weight, self.match_weight)
+            return 'two_routes_{}_{}_{}'.format(self.mse_weight, self.reconstruction_weight, self.match_weight)
 
         @tensor_utils.ensure_2d_input
         def xu_to_z(self, state, action):
@@ -268,8 +271,40 @@ class LearnedTransform:
             return "mse_loss", "reconstruction", "match_decoder"
 
         def _reduce_losses(self, losses):
-            return torch.sum(losses[0]) + self.reconstruction_weight * torch.sum(
+            return self.mse_weight * torch.sum(losses[0]) + self.reconstruction_weight * torch.sum(
                 losses[1]) + self.match_weight * torch.sum(losses[2])
+
+    class SeparateDecoder(DxToV):
+        """Use a separate network for x,dx -> v instead of taking the inverse"""
+
+        def __init__(self, ds, device, nv=5, inverse_decoder_opts=None, **kwargs):
+            # create v,x -> dx
+            opts = {'h_units': (16, 32)}
+            if inverse_decoder_opts:
+                opts.update(inverse_decoder_opts)
+            config = load_data.DataConfig()
+            config.nx = ds.config.nx
+            config.ny = nv * ds.config.nx
+            # outputs a linear transformation from v to dx (linear in v), that is dependent on state
+            # v C(x) = dx --> v = C(x)^{-1} dx allows both ways
+            self.inverse_linear_decoder_producer = model.DeterministicUser(
+                make.make_sequential_network(config, **opts).to(device=device))
+            super().__init__(ds, device, nv=nv, **kwargs)
+
+        def modules(self):
+            return {'encoder': self.encoder.model, 'linear decoder': self.linear_decoder_producer.model,
+                    'inverse linear decoder': self.inverse_linear_decoder_producer.model,
+                    'dynamics': self.dynamics.model}
+
+        def _name_prefix(self):
+            return 'sep_dec_{}_{}_{}'.format(self.mse_weight, self.reconstruction_weight, self.match_weight)
+
+        @tensor_utils.ensure_2d_input
+        def get_v(self, x, dx, z):
+            B, nx = x.shape
+            dx_to_v = self.inverse_linear_decoder_producer.sample(x).view(B, self.nv, nx)
+            v = linalg.batch_batch_product(dx, dx_to_v)
+            return v
 
     class ParameterizeYawSelect(invariant.LearnLinearDynamicsTransform, PusherTransform):
         """Parameterize the coordinate transform such that it has to learn something"""

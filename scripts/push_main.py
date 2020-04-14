@@ -202,6 +202,7 @@ class UseTsf(enum.Enum):
     COORD_LEARN_DYNAMICS = 9
     COMPRESS_AND_PART = 10
     DX_TO_V = 11
+    SEP_DEC = 12
 
 
 def get_transform(env, ds, use_tsf):
@@ -229,6 +230,8 @@ def get_transform(env, ds, use_tsf):
         return LearnedTransform.LearnedPartialPassthrough(ds, d, name="_s0")
     elif use_tsf is UseTsf.DX_TO_V:
         return LearnedTransform.DxToV(ds, d, name="_s0")
+    elif use_tsf is UseTsf.SEP_DEC:
+        return LearnedTransform.SeparateDecoder(ds, d, name="_s0")
     else:
         raise RuntimeError("Unrecgonized transform {}".format(use_tsf))
 
@@ -1467,7 +1470,7 @@ class Visualize:
 
 if __name__ == "__main__":
     level = 0
-    ut = UseTsf.DX_TO_V
+    ut = UseTsf.SEP_DEC
     # OfflineDataCollection.freespace(trials=200, trial_length=50, level=0)
     # OfflineDataCollection.push_against_wall_recovery()
     # OfflineDataCollection.model_selector_evaluation()
