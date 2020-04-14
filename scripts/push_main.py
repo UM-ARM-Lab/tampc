@@ -281,8 +281,9 @@ def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics):
         mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(ds.config).to(device=d)), ds,
                            name="dynamics_{}".format(tsf_name))
 
+        train_epochs = 200 if tsf_name is UseTsf.COORD_LEARN_DYNAMICS.name else 500
         pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(),
-                                     train_epochs=200)
+                                     train_epochs=train_epochs)
     elif prior_class is prior.NoPrior:
         pm = prior.NoPrior()
     else:
@@ -298,7 +299,7 @@ class UseSelector:
     FORCE = 4
 
 
-def get_selector(dss, tsf_name, use_selector=UseSelector.MLP, *args, **kwargs):
+def get_selector(dss, tsf_name, use_selector=UseSelector.TREE, *args, **kwargs):
     from sklearn.tree import DecisionTreeClassifier
 
     component_scale = [1, 0.2]
@@ -767,7 +768,6 @@ def test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=True
 
     pm = dynamics_gp.prior
     if plot_model_eval:
-        # TODO use selector and plot the model selector's choices
         ds_test, config = get_ds(env, ("pushing/predetermined_bug_trap.mat", "pushing/physical0.mat"),
                                  validation_ratio=0.)
         ds_test.update_preprocessor(ds.preprocessor)
@@ -836,8 +836,8 @@ def test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=True
         XU, Y, Yhat_freespace, Yhat_linear, Yhat_linear_online, reaction_forces = (v.cpu().numpy() for v in (
             xu, y, yhat_freespace, yhat_linear, yhat_linear_online, reaction_forces))
 
-        axis_name = ['d{}'.format(name) for name in env.state_names()]
         to_plot_y_dims = [0, 2, 3, 4]
+        axis_name = ['d$v_{}$'.format(dim) for dim in range(env.nx)]
         num_plots = len(to_plot_y_dims) + 2  # additional reaction force magnitude and mode selector
         if not use_gp:
             num_plots += 1  # weights for local model (marginalized likelihood of data)
@@ -856,7 +856,6 @@ def test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=True
                     axes[i].fill_between(t, lower_online[:, dim].cpu().numpy(), upper_online[:, dim].cpu().numpy(),
                                          alpha=0.3)
             else:
-                # axes[i].plot(t, Yhat_linear[:, dim], label='linear fit', alpha=0.5)
                 m = yhat_linear_mix[:, dim].cpu().numpy()
                 axes[i].plot(t, m, label='mix', color='g')
 
@@ -865,7 +864,8 @@ def test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=True
                 # axes[i].set_ybound(-10, 10)
                 pass
             else:
-                axes[i].set_ybound(-0.2, 1.2)
+                # axes[i].set_ybound(-0.2, 1.2)
+                pass
             axes[i].set_ylabel(axis_name[dim])
 
         if not use_gp:
@@ -881,6 +881,30 @@ def test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=True
         axes[-1].text((train_slice.start + train_slice.stop) * 0.5, 20, 'local train interval')
         axes[-2].plot(t, modes.cpu())
         axes[-2].set_ylabel('selector mode')
+
+        # plot dynamics in original space
+        axis_name = ['d{}'.format(name) for name in env.state_names()]
+        num_plots = len(to_plot_y_dims) + 1
+        f, axes = plt.subplots(num_plots, 1, sharex=True)
+        xu_orig, y_orig, _ = (v[test_slice] for v in ds_test.training_set(original=True))
+        x_orig, u_orig = torch.split(xu_orig, env.nx, dim=1)
+        y_orig_tsf, yhat_freespace_orig, yhat_gp_mean_orig, lower_orig, upper_orig, yhat_linear_mix_orig = (
+            ds.preprocessor.invert_transform(v, x_orig) for v in
+            (y, yhat_freespace, yhat_gp_mean, lower, upper, yhat_linear_mix))
+        for i, dim in enumerate(to_plot_y_dims):
+            axes[i].scatter(t, y_orig[:, dim].cpu(), label='truth', alpha=0.4)
+            axes[i].scatter(t, y_orig_tsf[:, dim].cpu(), label='truth transformed', alpha=0.4, color='k', marker='*')
+            axes[i].plot(t, yhat_freespace_orig[:, dim].cpu(), label='nominal', alpha=0.4, linewidth=3)
+
+            if use_gp:
+                axes[i].plot(t, yhat_gp_mean_orig[:, dim].cpu().numpy(), label='gp')
+                axes[i].fill_between(t, lower_orig[:, dim].cpu().numpy(), upper_orig[:, dim].cpu().numpy(), alpha=0.3)
+            else:
+                axes[i].plot(t, yhat_linear_mix_orig[:, dim].cpu(), label='mix', color='g')
+            axes[i].set_ylabel(axis_name[dim])
+        axes[0].legend()
+        axes[-1].plot(t, modes.cpu())
+        axes[-1].set_ylabel('selector mode')
 
         if plot_online_update:
             f, axes = plt.subplots(2, 1, sharex=True)
@@ -1072,7 +1096,7 @@ def evaluate_model_selector(use_tsf=UseTsf.COORD):
     ds_recovery.update_preprocessor(preprocessor)
 
     rand.seed(seed)
-    selector = get_selector([ds, ds_recovery], tsf_name, retrain=False)
+    selector = get_selector([ds, ds_recovery], tsf_name)
 
     # get evaluation data by getting definite positive samples from the freespace dataset
     pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)
@@ -1440,7 +1464,7 @@ class Visualize:
 
 if __name__ == "__main__":
     level = 0
-    ut = UseTsf.COORD_LEARN_DYNAMICS
+    ut = UseTsf.COMPRESS_AND_PART
     # OfflineDataCollection.freespace(trials=200, trial_length=50, level=0)
     # OfflineDataCollection.push_against_wall_recovery()
     # OfflineDataCollection.model_selector_evaluation()
@@ -1451,7 +1475,7 @@ if __name__ == "__main__":
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_model_selector(use_tsf=ut)
     # evaluate_ctrl_sampler()
-    test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=False, use_tsf=ut)
+    test_local_model_sufficiency_for_escaping_wall(level=3, plot_model_eval=False, use_tsf=ut)
 
     # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.NONE,
     #                            override=True, full_evaluation=False, plot_model_error=True, relearn_dynamics=True)
@@ -1460,6 +1484,6 @@ if __name__ == "__main__":
 
     # test_online_model()
     # for seed in range(1):
-    #     Learn.invariant(ut, seed=seed, name="scale_5", MAX_EPOCH=1000, BATCH_SIZE=500)
+    #     Learn.invariant(ut, seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")

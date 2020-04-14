@@ -461,7 +461,7 @@ class LearnedTransform:
     class LearnedPartialPassthrough(CompressionReward):
         """Don't pass through all of x to g; learn which parts to pass to g and which to h"""
 
-        def __init__(self, ds, device, *args, nz=4, nv=4, reduced_decoder_input_dim=2, **kwargs):
+        def __init__(self, ds, device, *args, nz=5, nv=5, reduced_decoder_input_dim=2, **kwargs):
             self.reduced_decoder_input_dim = reduced_decoder_input_dim
             self.x_extractor = torch.nn.Linear(ds.config.nx, self.reduced_decoder_input_dim).to(device=device,
                                                                                                 dtype=torch.double)
