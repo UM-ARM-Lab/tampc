@@ -894,17 +894,18 @@ def test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=True
         f, axes = plt.subplots(num_plots, 1, sharex=True)
         xu_orig, y_orig, _ = (v[test_slice] for v in ds_test.training_set(original=True))
         x_orig, u_orig = torch.split(xu_orig, env.nx, dim=1)
-        y_orig_tsf, yhat_freespace_orig, yhat_gp_mean_orig, lower_orig, upper_orig, yhat_linear_mix_orig = (
+        y_orig_tsf, yhat_freespace_orig, yhat_gp_mean_orig, yhat_linear_mix_orig = (
             ds.preprocessor.invert_transform(v, x_orig) for v in
-            (y, yhat_freespace, yhat_gp_mean, lower, upper, yhat_linear_mix))
+            (y, yhat_freespace, yhat_gp_mean, yhat_linear_mix))
+        gp_samples_orig = ds.preprocessor.invert_transform(gp_samples, x_orig.repeat(samples, 1, 1))
         for i, dim in enumerate(to_plot_y_dims):
             axes[i].scatter(t, y_orig[:, dim].cpu(), label='truth', alpha=0.4)
             axes[i].scatter(t, y_orig_tsf[:, dim].cpu(), label='truth transformed', alpha=0.4, color='k', marker='*')
             axes[i].plot(t, yhat_freespace_orig[:, dim].cpu(), label='nominal', alpha=0.4, linewidth=3)
-
             if use_gp:
                 axes[i].plot(t, yhat_gp_mean_orig[:, dim].cpu().numpy(), label='gp')
-                axes[i].fill_between(t, lower_orig[:, dim].cpu().numpy(), upper_orig[:, dim].cpu().numpy(), alpha=0.3)
+                axes[i].scatter(np.tile(t, samples), gp_samples_orig[:, :, dim].view(-1).cpu().numpy(),
+                                label='gp sample', marker='.', color='r', alpha=0.10)
             else:
                 axes[i].plot(t, yhat_linear_mix_orig[:, dim].cpu(), label='mix', color='g')
             axes[i].set_ylabel(axis_name[dim])
@@ -1345,7 +1346,6 @@ class Visualize:
         plt.ioff()
 
         XU, Y, _ = ds.training_set()
-        X, U = torch.split(XU, env.nx, dim=1)
 
         def plot_series(series, dim_names, title, f=None, ax=None):
             if f is None:
@@ -1360,6 +1360,7 @@ class Visualize:
         ofs = [None] * 3
         oaxes = [None] * 3
         if ds.preprocessor is None:
+            X, U = torch.split(XU, env.nx, dim=1)
             ofs[0], oaxes[0] = plot_series(X, env.state_names(), 'states X', fs[0], axes[0])
             ofs[1], oaxes[1] = plot_series(U, ["u{}".format(i) for i in range(env.nu)], 'control U', fs[1], axes[1])
             ofs[2], oaxes[2] = plot_series(Y, ["d{}".format(n) for n in env.state_names()], 'prediction Y', fs[2],
@@ -1374,18 +1375,17 @@ class Visualize:
         return ofs, oaxes
 
     @staticmethod
-    def dist_diff_nominal_and_bug_trap():
+    def dist_diff_nominal_and_bug_trap(use_tsf):
         _, env, _, ds = get_free_space_env_init()
-        untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds,
-                                                                                UseTsf.COORD,
+        untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf,
                                                                                 evaluate_transform=False)
-        coord_z_names = ['p', '\\theta', 'f', '\\beta', '$r_x$', '$r_y$']
-        coord_v_names = ['d{}'.format(n) for n in coord_z_names]
+        coord_z_names = ['p', '\\theta', 'f', '\\beta', '$r_x$', '$r_y$'] if use_tsf in (
+        UseTsf.COORD, UseTsf.COORD_LEARN_DYNAMICS) else None
+        coord_v_names = ['d{}'.format(n) for n in coord_z_names] if use_tsf in (
+        UseTsf.COORD, UseTsf.COORD_LEARN_DYNAMICS) else None
 
         ds_wall, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
         ds_wall.update_preprocessor(preprocessor)
-        train_slice = slice(90, 135)
-        ds_wall.restrict_training_set_to_slice(train_slice)
 
         fs, axes = Visualize._dataset_training_dist(env, ds, coord_z_names, coord_v_names)
         Visualize._dataset_training_dist(env, ds_wall, coord_z_names, coord_v_names, fs=fs, axes=axes)
@@ -1474,22 +1474,22 @@ if __name__ == "__main__":
     # OfflineDataCollection.freespace(trials=200, trial_length=50, level=0)
     # OfflineDataCollection.push_against_wall_recovery()
     # OfflineDataCollection.model_selector_evaluation()
-    # Visualize.dist_diff_nominal_and_bug_trap()
+    Visualize.dist_diff_nominal_and_bug_trap(ut)
     # Visualize.model_actions_at_given_state()
     # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_model_selector(use_tsf=ut)
     # evaluate_ctrl_sampler()
-    # test_local_model_sufficiency_for_escaping_wall(level=3, plot_model_eval=False, use_tsf=ut)
+    # test_local_model_sufficiency_for_escaping_wall(level=3, plot_model_eval=True, use_tsf=ut)
 
     # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.NONE,
-    #                            override=True, full_evaluation=False, plot_model_error=True, relearn_dynamics=True)
+    #                            override=True, full_evaluation=False, plot_model_error=True, relearn_dynamics=False)
     # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORD,
     #                            online_adapt=OnlineAdapt.GP_KERNEL, override=True)
 
     # test_online_model()
-    for seed in range(1):
-        Learn.invariant(ut, seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
+    # for seed in range(1):
+    #     Learn.invariant(ut, seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")

@@ -9,6 +9,7 @@ from typing import Union
 import numpy as np
 import torch
 from arm_pytorch_utilities import array_utils
+from arm_pytorch_utilities import tensor_utils
 from arm_pytorch_utilities import linalg
 from arm_pytorch_utilities import load_data
 from arm_pytorch_utilities import math_utils
@@ -569,6 +570,7 @@ class InvariantTransformer(preprocess.Transformer):
     def transform_y(self, Y):
         raise RuntimeError("Should not attempt to transform Y directly; instead must be done with both X and Y")
 
+    @tensor_utils.handle_batch_input
     def invert_transform(self, Y, X=None):
         """Invert transformation on Y"""
         return self.tsf.get_dx(X, Y)
