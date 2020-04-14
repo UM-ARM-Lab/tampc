@@ -75,6 +75,19 @@ class InvariantTransform(LearnableParameterizedModel):
         :return:
         """
 
+    def get_yhat(self, X, U, Y):
+        """
+        Get forward estimation of output for us to evaluate MSE loss on
+        :param X:
+        :param U:
+        :param Y:
+        :return:
+        """
+        z = self.xu_to_z(X, U)
+        v = self.get_v(X, Y, z)
+        yhat = self.get_dx(X, v)
+        return yhat
+
     def _record_metrics(self, writer, losses, suffix='', log=False):
         with torch.no_grad():
             log_msg = ["metric"]
@@ -116,9 +129,7 @@ class InvariantTransform(LearnableParameterizedModel):
                 if name is "mse_loss":
                     X_orig, U_orig, Y_orig = self._setup_evaluate_metrics_on_whole_set(validation, move_params,
                                                                                        output_in_orig_space=True)
-                    z = self.xu_to_z(X, U)
-                    v = self.get_v(X, Y, z)
-                    yhat = self.get_dx(X, v)
+                    yhat = self.get_yhat(X, U, Y)
                     if self.ds.preprocessor is not None:
                         yhat = self.ds.preprocessor.invert_transform(yhat, X_orig)
 

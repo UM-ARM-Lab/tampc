@@ -201,6 +201,7 @@ class UseTsf(enum.Enum):
     ABLATE_NO_V = 8
     COORD_LEARN_DYNAMICS = 9
     COMPRESS_AND_PART = 10
+    DX_TO_V = 11
 
 
 def get_transform(env, ds, use_tsf):
@@ -226,6 +227,8 @@ def get_transform(env, ds, use_tsf):
         return AblationOnTransform.UseDecoderForDynamics(ds, d, name="_s3"),
     elif use_tsf is UseTsf.COMPRESS_AND_PART:
         return LearnedTransform.LearnedPartialPassthrough(ds, d, name="_s0")
+    elif use_tsf is UseTsf.DX_TO_V:
+        return LearnedTransform.DxToV(ds, d, name="_s0")
     else:
         raise RuntimeError("Unrecgonized transform {}".format(use_tsf))
 
@@ -1464,7 +1467,7 @@ class Visualize:
 
 if __name__ == "__main__":
     level = 0
-    ut = UseTsf.COMPRESS_AND_PART
+    ut = UseTsf.DX_TO_V
     # OfflineDataCollection.freespace(trials=200, trial_length=50, level=0)
     # OfflineDataCollection.push_against_wall_recovery()
     # OfflineDataCollection.model_selector_evaluation()
@@ -1475,7 +1478,7 @@ if __name__ == "__main__":
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_model_selector(use_tsf=ut)
     # evaluate_ctrl_sampler()
-    test_local_model_sufficiency_for_escaping_wall(level=3, plot_model_eval=False, use_tsf=ut)
+    # test_local_model_sufficiency_for_escaping_wall(level=3, plot_model_eval=False, use_tsf=ut)
 
     # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.NONE,
     #                            override=True, full_evaluation=False, plot_model_error=True, relearn_dynamics=True)
@@ -1483,7 +1486,7 @@ if __name__ == "__main__":
     #                            online_adapt=OnlineAdapt.GP_KERNEL, override=True)
 
     # test_online_model()
-    # for seed in range(1):
-    #     Learn.invariant(ut, seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
+    for seed in range(1):
+        Learn.invariant(ut, seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")

@@ -169,6 +169,108 @@ def compression_reward(v, xu, dist_regularization=1e-8, top_percent=None):
 
 
 class LearnedTransform:
+    class DxToV(PusherTransform):
+        def __init__(self, ds, device, nz=5, nv=5, reconstruction_weight=1, match_weight=1, encoder_opts=None,
+                     decoder_opts=None, dynamics_opts=None, **kwargs):
+            self.reconstruction_weight = reconstruction_weight
+            self.match_weight = match_weight
+            # TODO try penalizing mutual information between xu and z, and v and dx?
+            # create encoder xu -> z
+            opts = {'h_units': (32, 32)}
+            if encoder_opts:
+                opts.update(encoder_opts)
+            config = load_data.DataConfig()
+            config.nx = ds.config.nx + ds.config.nu
+            config.ny = nz
+            self.encoder = model.DeterministicUser(
+                make.make_sequential_network(config, **opts).to(device=device))
+
+            # TODO try extracting from x
+            # create v,x -> dx
+            opts = {'h_units': (16, 32)}
+            if decoder_opts:
+                opts.update(decoder_opts)
+            config = load_data.DataConfig()
+            config.nx = ds.config.nx
+            config.ny = nv * ds.config.nx  # matrix output (original nx, ignore sincos)
+            # outputs a linear transformation from v to dx (linear in v), that is dependent on state
+            # v C(x) = dx --> v = C(x)^{-1} dx allows both ways
+            self.linear_decoder_producer = model.DeterministicUser(
+                make.make_sequential_network(config, h_units=(16, 32)).to(device=device))
+
+            # create dynamics (shouldn't have high capacity since we should have simple dynamics in trasnformed space)
+            # z -> v
+            opts = {'h_units': (16, 32)}
+            if dynamics_opts:
+                opts.update(dynamics_opts)
+            config = load_data.DataConfig()
+            config.nx = nz
+            config.ny = nv
+            self.dynamics = model.DeterministicUser(
+                make.make_sequential_network(config, **opts).to(device=device))
+            super().__init__(ds, nz=nz, nv=nv, **kwargs)
+
+        def modules(self):
+            return {'encoder': self.encoder.model, 'linear decoder': self.linear_decoder_producer.model,
+                    'dynamics': self.dynamics.model}
+
+        def _name_prefix(self):
+            return 'two_routes_{}_{}'.format(self.reconstruction_weight, self.match_weight)
+
+        @tensor_utils.ensure_2d_input
+        def xu_to_z(self, state, action):
+            z = self.encoder.sample(torch.cat((state, action), dim=1))
+            return z
+
+        @tensor_utils.ensure_2d_input
+        def get_dx(self, x, v):
+            # make state-dependent linear transforms (matrices) that multiply v to get dx
+            B, nx = x.shape
+            linear_tsf = self.linear_decoder_producer.sample(x).view(B, nx, self.nv)
+            dx = linalg.batch_batch_product(v, linear_tsf)
+            return dx
+
+        @tensor_utils.ensure_2d_input
+        def get_v(self, x, dx, z):
+            B, nx = x.shape
+            v_to_dx = self.linear_decoder_producer.sample(x).view(B, nx, self.nv)
+            dx_to_v = torch.pinverse(v_to_dx)
+            v = linalg.batch_batch_product(dx, dx_to_v)
+            return v
+
+        def get_yhat(self, X, U, Y):
+            z = self.xu_to_z(X, U)
+            # forward dynamics route
+            vhat = self.dynamics.sample(z)
+            yhat = self.get_dx(X, vhat)
+            return yhat
+
+        def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+            z = self.xu_to_z(X, U)
+            # forward dynamics route
+            vhat = self.dynamics.sample(z)
+            yhat = self.get_dx(X, vhat)
+
+            # backward decoder route
+            v = self.get_v(X, Y, z)
+            y_reconstruct = self.get_dx(X, v)
+
+            # matching of the dynamics v and the decoder v
+            match_decoder = torch.norm(vhat - v, dim=1)
+            # reconstruction of decoder
+            reconstruction = torch.norm(y_reconstruct - Y, dim=1)
+            # mse loss
+            mse_loss = torch.norm(yhat - Y, dim=1)
+            return mse_loss, reconstruction, match_decoder
+
+        @staticmethod
+        def loss_names():
+            return "mse_loss", "reconstruction", "match_decoder"
+
+        def _reduce_losses(self, losses):
+            return torch.sum(losses[0]) + self.reconstruction_weight * torch.sum(
+                losses[1]) + self.match_weight * torch.sum(losses[2])
+
     class ParameterizeYawSelect(invariant.LearnLinearDynamicsTransform, PusherTransform):
         """Parameterize the coordinate transform such that it has to learn something"""
 
