@@ -1510,3 +1510,11 @@ class PushDataSource(datasource.FileDataSource):
             raise RuntimeError("Unrecognized data source for env {}".format(env))
         loader = loader_class()
         super().__init__(loader, data_dir, **kwargs)
+
+    def get_info_cols(self, info, name):
+        """Get the info columns corresponding to this name"""
+        return info[:, self.loader.info_desc[name]]
+
+    def get_info_desc(self):
+        """Get description of returned info columns in name: col slice format"""
+        return self.loader.info_desc
