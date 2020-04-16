@@ -202,8 +202,6 @@ class InvariantTransform(LearnableParameterizedModel):
 
         save_checkpoint_every_n_epochs = max(max_epoch // 20, 5)
 
-        self.optimizer = torch.optim.Adam(self.parameters())
-        self.optimizer.zero_grad()
         for epoch in range(max_epoch):
             logger.debug("Start epoch %d", epoch)
             # evaluate on validation at the start of epochs
@@ -392,8 +390,6 @@ class InvariantNeighboursTransform(InvariantTransform):
 
         save_checkpoint_every_n_epochs = max(max_epoch // 20, 5)
 
-        self.optimizer = torch.optim.Adam(self.parameters())
-        self.optimizer.zero_grad()
         batch_losses = None
         self._evaluate_no_transform(writer)
         for epoch in range(max_epoch):

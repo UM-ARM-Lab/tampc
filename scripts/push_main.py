@@ -1317,13 +1317,15 @@ def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
 
 class Learn:
     @staticmethod
-    def invariant(use_tsf=UseTsf.COORD_LEARN_DYNAMICS, seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, **kwargs):
+    def invariant(use_tsf=UseTsf.COORD_LEARN_DYNAMICS, seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, resume=False, **kwargs):
         d, env, config, ds = get_free_space_env_init(seed)
         ds.update_preprocessor(get_pre_invariant_tsf_preprocessor(use_tsf))
         invariant_cls = get_transform(env, ds, use_tsf).__class__
         ds_test, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
         common_opts = {'name': "{}_s{}".format(name, seed), 'ds_test': ds_test}
         invariant_tsf = invariant_cls(ds, d, **common_opts, **kwargs)
+        if resume:
+            invariant_tsf.load(invariant_tsf.get_last_checkpoint())
         invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
     @staticmethod
@@ -1490,6 +1492,6 @@ if __name__ == "__main__":
 
     # test_online_model()
     for seed in range(1):
-        Learn.invariant(ut, seed=seed, name="", MAX_EPOCH=1500, BATCH_SIZE=500)
+        Learn.invariant(ut, seed=seed, name="", MAX_EPOCH=1500, BATCH_SIZE=500, resume=True)
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")
