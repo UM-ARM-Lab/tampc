@@ -278,9 +278,8 @@ class LearnedTransform:
         def loss_names():
             return "mse_loss", "reconstruction", "match_decoder"
 
-        def _reduce_losses(self, losses):
-            return self.mse_weight * torch.sum(losses[0]) + self.reconstruction_weight * torch.sum(
-                losses[1]) + self.match_weight * torch.sum(losses[2])
+        def loss_weights(self):
+            return [self.mse_weight, self.reconstruction_weight, self.match_weight]
 
     class SeparateDecoder(DxToV):
         """Use a separate network for x,dx -> v instead of taking the inverse"""
@@ -365,6 +364,13 @@ class LearnedTransform:
             linear_tsf = self.extracted_linear_decoder.sample(self.x_extractor(x)).view(B, nx, self.nv)
             dx = linalg.batch_batch_product(v, linear_tsf)
             return dx
+
+    class RexExtract(ExtractState, invariant.RexTraining):
+        def _name_prefix(self):
+            return 'rex_extract_{}'.format(self.reduced_decoder_input_dim)
+
+        def learn_model(self, *args, **kwargs):
+            return invariant.RexTraining.learn_model(self, *args, **kwargs)
 
     class ParameterizeYawSelect(invariant.LearnLinearDynamicsTransform, PusherTransform):
         """Parameterize the coordinate transform such that it has to learn something"""
@@ -567,8 +573,8 @@ class LearnedTransform:
         def loss_names():
             return "mse_loss", "dist_loss"
 
-        def _reduce_losses(self, losses):
-            return torch.mean(losses[0]) + self.dist_loss_weight * torch.mean(losses[1])
+        def loss_weights(self):
+            return [1, self.dist_loss_weight]
 
     class CompressionReward(ParameterizeDecoder):
         """Reward mapping large differences in x,u space to small differences in v space"""
@@ -605,8 +611,8 @@ class LearnedTransform:
         def loss_names():
             return "mse_loss", "compression_loss"
 
-        def _reduce_losses(self, losses):
-            return torch.mean(losses[0]) + self.compression_loss_weight * torch.mean(losses[1])
+        def loss_weights(self):
+            return [1, self.compression_loss_weight]
 
     class PartialPassthrough(CompressionReward):
         """Don't pass through all of x to g, since it could just learn to map v to u"""
@@ -792,9 +798,6 @@ class AblationOnTransform:
         def loss_names():
             return "mse_loss",
 
-        def _reduce_losses(self, losses):
-            return torch.mean(losses[0])
-
         def linear_dynamics(self, z):
             raise RuntimeError("Shouldn't be calling this; instead should transform z to v directly")
 
@@ -847,9 +850,6 @@ class AblationOnTransform:
         @staticmethod
         def loss_names():
             return "mse_loss",
-
-        def _reduce_losses(self, losses):
-            return torch.mean(losses[0])
 
         def linear_dynamics(self, z):
             raise RuntimeError("Shouldn't be calling this; instead should transform z to v directly")
@@ -954,5 +954,5 @@ class AblationOnTransform:
         def loss_names():
             return "mse_loss", "compression_loss"
 
-        def _reduce_losses(self, losses):
-            return torch.mean(losses[0]) + self.compression_loss_weight * torch.mean(losses[1])
+        def loss_weights(self):
+            return [1, self.compression_loss_weight]

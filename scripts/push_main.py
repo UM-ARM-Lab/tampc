@@ -204,6 +204,7 @@ class UseTsf(enum.Enum):
     DX_TO_V = 11
     SEP_DEC = 12
     EXTRACT = 13
+    REX_EXTRACT = 14
 
 
 def get_transform(env, ds, use_tsf):
@@ -235,6 +236,8 @@ def get_transform(env, ds, use_tsf):
         return LearnedTransform.SeparateDecoder(ds, d, name="_s0")
     elif use_tsf is UseTsf.EXTRACT:
         return LearnedTransform.ExtractState(ds, d, name="_s0")
+    elif use_tsf is UseTsf.REX_EXTRACT:
+        return LearnedTransform.RexExtract(ds, d, name="_s0")
     else:
         raise RuntimeError("Unrecgonized transform {}".format(use_tsf))
 
@@ -309,7 +312,7 @@ class UseSelector:
     MLP_SKLEARN = 5
 
 
-def get_selector(dss, tsf_name, use_selector=UseSelector.TREE, *args, **kwargs):
+def get_selector(dss, tsf_name, use_selector=UseSelector.MLP_SKLEARN, *args, **kwargs):
     from sklearn.tree import DecisionTreeClassifier
     from sklearn.neural_network import MLPClassifier
 
@@ -1482,7 +1485,7 @@ class Visualize:
 
 if __name__ == "__main__":
     level = 0
-    ut = UseTsf.EXTRACT
+    ut = UseTsf.REX_EXTRACT
     neg_test_file = "pushing/test_sufficiency_3_failed_test_140891.mat"
     # OfflineDataCollection.freespace(trials=200, trial_length=50, level=0)
     # OfflineDataCollection.push_against_wall_recovery()
@@ -1494,7 +1497,7 @@ if __name__ == "__main__":
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_model_selector(use_tsf=ut, test_file=neg_test_file)
     # evaluate_ctrl_sampler()
-    # test_local_model_sufficiency_for_escaping_wall(level=3, plot_model_eval=True, use_tsf=ut, test_traj=neg_test_file)
+    # test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=False, use_tsf=ut, test_traj=neg_test_file)
 
     # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.NONE,
     #                            override=True, full_evaluation=False, plot_model_error=True, relearn_dynamics=True)
@@ -1503,6 +1506,6 @@ if __name__ == "__main__":
 
     # test_online_model()
     for seed in range(1):
-        Learn.invariant(ut, seed=seed, name="", MAX_EPOCH=3000, BATCH_SIZE=500)
+        Learn.invariant(ut, seed=seed, name="", MAX_EPOCH=3000, BATCH_SIZE=2048)
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")

@@ -30,8 +30,9 @@ class TransformToUse:
 
 
 class InvariantTransform(LearnableParameterizedModel):
-    def __init__(self, ds: datasource.DataSource, nz, nv, ds_test=None, **kwargs):
+    def __init__(self, ds: datasource.DataSource, nz, nv, ds_test=None, normalize_loss_weights=False, **kwargs):
         super().__init__(cfg.ROOT_DIR, **kwargs)
+        self.normalize_loss_weights = normalize_loss_weights
         self.ds = ds
         self.ds_test = ds_test
         if ds_test is not None and type(ds_test) not in (list, tuple):
@@ -191,8 +192,15 @@ class InvariantTransform(LearnableParameterizedModel):
     def loss_names():
         return "mse_loss",
 
-    def _reduce_losses(self, losses):
-        return torch.sum(losses[0])
+    def loss_weights(self):
+        return [1 for _ in range(len(self.loss_names()))]
+
+    def _weigh_losses(self, losses):
+        weights = self.loss_weights()
+        if self.normalize_loss_weights:
+            total_weight = sum(weights)
+            weights = [float(w) / total_weight for w in weights]
+        return tuple(l * w for l, w in zip(losses, weights))
 
     def _init_batch_losses(self):
         return [[] for _ in self.loss_names()]
@@ -218,12 +226,86 @@ class InvariantTransform(LearnableParameterizedModel):
                 if losses is None:
                     continue
 
-                reduced_loss = self._reduce_losses(losses)
+                weighed_losses = self._weigh_losses(losses)
+                # take their expectation and add each loss together
+                reduced_loss = sum(l.mean() for l in weighed_losses)
                 reduced_loss.backward()
                 self.optimizer.step()
                 self.optimizer.zero_grad()
 
                 self._record_metrics(self.writer, losses)
+                self.step += 1
+
+        self.save(last=True)
+
+
+class RexTraining(InvariantTransform):
+    """Training method for out-of-distribution generalization https://arxiv.org/pdf/2003.00688.pdf"""
+
+    def __init__(self, *args, rex_anneal_step=5000, rex_penalty_weight=1000, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.rex_anneal_step = rex_anneal_step
+        self.rex_penalty_weight = rex_penalty_weight
+        self.rex_default_weight = 1.
+
+    def _rex_variance_across_envs(self, weighed_losses, info):
+        # add V-REx penalty for each loss by computing the variance on the expected loss
+        envs = self.ds.get_info_cols(info, 'envs').view(-1).long()
+        e, ind = envs.sort()
+        mean_risks = [[] for _ in weighed_losses]
+        for env, start, end in array_utils.discrete_array_to_value_ranges(e):
+            i_env = ind[start:end]  # indices for losses corresponding to this env
+            for i_loss, loss in enumerate(weighed_losses):
+                # get the mean loss inside each env for each loss
+                mean_risks[i_loss].append(loss[i_env].mean())
+        var_across_env = [torch.stack(mr).var() for mr in mean_risks]
+        return var_across_env
+
+    def learn_model(self, max_epoch, batch_N=5000):
+        self.writer = SummaryWriter(flush_secs=20, comment="{}_batch{}".format(self.name, batch_N))
+
+        ds_train = load_data.SimpleDataset(*self.ds.training_set())
+        train_loader = torch.utils.data.DataLoader(ds_train, batch_size=batch_N, shuffle=True)
+
+        save_checkpoint_every_n_epochs = max(max_epoch // 20, 5)
+
+        # TODO generalize the get_info_cols to other data sources to remove this check
+        from meta_contact.env.block_push import PushDataSource
+        assert isinstance(self.ds, PushDataSource)
+
+        for epoch in range(max_epoch):
+            logger.debug("Start epoch %d", epoch)
+            # evaluate on validation at the start of epochs
+            self.evaluate_validation(self.writer)
+            if save_checkpoint_every_n_epochs and epoch % save_checkpoint_every_n_epochs == 0:
+                self.save()
+
+            for i_batch, data in enumerate(train_loader):
+                # get environment data
+                _, _, info = data
+                X, U, Y = self._get_separate_data_columns(data)
+
+                losses = self._evaluate_batch(X, U, Y)
+                if losses is None:
+                    continue
+
+                weighed_losses = self._weigh_losses(losses)
+                var_across_env = self._rex_variance_across_envs(weighed_losses, info)
+
+                if self.step > self.rex_anneal_step:
+                    reduced_loss = sum(l.mean() / self.rex_penalty_weight for l in weighed_losses)
+                else:
+                    reduced_loss = sum(l.mean() for l in weighed_losses)
+
+                reduced_loss += sum(v for v in var_across_env)
+                reduced_loss.backward()
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+
+                with torch.no_grad():
+                    for name, v in zip(self.loss_names(), var_across_env):
+                        self.writer.add_scalar("rex/{}".format(name), v.item(), self.step)
+                    self._record_metrics(self.writer, losses)
                 self.step += 1
 
         self.save(last=True)
@@ -379,8 +461,8 @@ class InvariantNeighboursTransform(InvariantTransform):
     def loss_names():
         return "mse_loss", "cov_loss"
 
-    def _reduce_losses(self, losses):
-        return torch.sum(losses[0])
+    def loss_weights(self):
+        return [1, 0]
 
     def learn_model(self, max_epoch, batch_N=500):
         if self.neighbourhood is None:
@@ -412,7 +494,8 @@ class InvariantNeighboursTransform(InvariantTransform):
                         for j in range(len(batch_losses)):
                             batch_losses[j] = torch.stack(batch_losses[j])
                         # hold stats
-                        reduced_loss = self._reduce_losses(batch_losses)
+                        weighed_losses = self._weigh_losses(batch_losses)
+                        reduced_loss = sum(l.mean() for l in weighed_losses)
                         reduced_loss.backward()
                         self.optimizer.step()
                         self.optimizer.zero_grad()
@@ -485,55 +568,8 @@ class LearnLinearDynamicsTransform(InvariantTransform):
     def loss_names():
         return "mse_loss", "spread_loss"
 
-    def _reduce_losses(self, losses):
-        return torch.sum(losses[0]) + self.spread_loss_weight * torch.sum(losses[1])
-
-
-class LearnNeighbourhoodCovRegTransform(LearnLinearDynamicsTransform, ABC):
-    """
-    Instead of taking in predefined neighbourhoods, simultaneously produce dynamics for batches
-    and learn to structure z such that euclidean distance results in close dynamics
-    using covariance loss regularization on local neighbourhoods.
-
-    Doesn't do much it seems
-    """
-
-    def __init__(self, *args, expected_neighbourhood_size=12, **kwargs):
-        self.nbrs = softknn.SoftKNN(min_k=expected_neighbourhood_size, normalization=1)
-        # this calculation is just too slow so we're only going to randomly do it
-        self.cov_loss_usage = 0.05
-        LearnLinearDynamicsTransform.__init__(self, *args, **kwargs)
-
-    def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
-        z, A, v, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
-
-        cov_loss = None
-        if np.random.rand() > (1 - self.cov_loss_usage):
-            cov_loss = []
-            # regularize by making sure nearest neighbours in z leads to good linear fits
-            weights = self.nbrs(z)
-            for i, w in enumerate(weights):
-                neighbours, nw, N = array_utils.extract_positive_weights(w)
-
-                nz = z[neighbours]
-                nv = v[neighbours]
-                _, sigma = linalg.ls_cov(nz, nv, nw)
-                cov_loss.append(sigma.trace())
-            cov_loss = torch.stack(cov_loss)
-
-        # mse loss
-        mse_loss = torch.norm(yhat - Y, dim=1)
-        return mse_loss, cov_loss
-
-    def _reduce_losses(self, losses):
-        loss = torch.sum(losses[0])
-        if losses[1] is not None:
-            loss += torch.sum(losses[1])
-        return loss
-
-    @staticmethod
-    def loss_names():
-        return "mse_loss", "cov_loss"
+    def loss_weights(self):
+        return [1, self.spread_loss_weight]
 
 
 class InvariantTransformer(preprocess.Transformer):
