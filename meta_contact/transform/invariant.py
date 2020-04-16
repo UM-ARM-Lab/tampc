@@ -34,6 +34,8 @@ class InvariantTransform(LearnableParameterizedModel):
         super().__init__(cfg.ROOT_DIR, **kwargs)
         self.ds = ds
         self.ds_test = ds_test
+        if ds_test is not None and type(ds_test) not in (list, tuple):
+            self.ds_test = [ds_test]
         # copy of config in case it gets modified later (such as by preprocessors)
         self.config = copy.deepcopy(ds.config)
         # do not assume at this abstraction level the input and output latent space is the same
@@ -161,9 +163,10 @@ class InvariantTransform(LearnableParameterizedModel):
         if writer is not None:
             self._record_metrics(writer, losses, suffix="/validation", log=True)
         if self.ds_test is not None:
-            losses = self._evaluate_metrics_on_whole_set(False, TransformToUse.LATENT_SPACE, ds_test=self.ds_test)
-            if writer is not None:
-                self._record_metrics(writer, losses, suffix="/test", log=True)
+            for i, ds_test in enumerate(self.ds_test):
+                losses = self._evaluate_metrics_on_whole_set(False, TransformToUse.LATENT_SPACE, ds_test=ds_test)
+                if writer is not None:
+                    self._record_metrics(writer, losses, suffix="/test{}".format(i), log=True)
 
         return losses
 

@@ -759,7 +759,7 @@ def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTsf.COORD, relearn_dy
 
 
 def test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=True, plot_online_update=False, use_gp=True,
-                                                   use_tsf=UseTsf.COORD, **kwargs):
+                                                   use_tsf=UseTsf.COORD, test_traj=None, **kwargs):
     seed = 1
 
     if plot_model_eval:
@@ -778,8 +778,9 @@ def test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=True
 
     pm = dynamics_gp.prior
     if plot_model_eval:
-        ds_test, config = get_ds(env, ("pushing/predetermined_bug_trap.mat", "pushing/physical0.mat"),
-                                 validation_ratio=0.)
+        if not test_traj:
+            test_traj = ("pushing/predetermined_bug_trap.mat", "pushing/physical0.mat")
+        ds_test, config = get_ds(env, test_traj, validation_ratio=0.)
         ds_test.update_preprocessor(ds.preprocessor)
         test_slice = slice(0, 150)
 
@@ -1094,14 +1095,14 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     return total_costs
 
 
-def evaluate_model_selector(use_tsf=UseTsf.COORD):
+def evaluate_model_selector(use_tsf=UseTsf.COORD, test_file="pushing/model_selector_evaluation.mat"):
     plot_definite_negatives = False
     num_pos_samples = 100  # start with balanced data
     seed = rand.seed(9)
 
     _, env, _, ds = get_free_space_env_init(seed)
     _, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
-    ds_neg, _ = get_ds(env, "pushing/model_selector_evaluation.mat", validation_ratio=0.)
+    ds_neg, _ = get_ds(env, test_file, validation_ratio=0.)
     ds_neg.update_preprocessor(preprocessor)
     ds_recovery, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
     ds_recovery.update_preprocessor(preprocessor)
@@ -1327,7 +1328,8 @@ class Learn:
         ds.update_preprocessor(get_pre_invariant_tsf_preprocessor(use_tsf))
         invariant_cls = get_transform(env, ds, use_tsf).__class__
         ds_test, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
-        common_opts = {'name': "{}_s{}".format(name, seed), 'ds_test': ds_test}
+        ds_test_2, _ = get_ds(env, "pushing/test_sufficiency_3_failed_test_140891.mat", validation_ratio=0.)
+        common_opts = {'name': "{}_s{}".format(name, seed), 'ds_test': [ds_test, ds_test_2]}
         invariant_tsf = invariant_cls(ds, d, **common_opts, **kwargs)
         if resume:
             invariant_tsf.load(invariant_tsf.get_last_checkpoint())
@@ -1382,7 +1384,7 @@ class Visualize:
         return ofs, oaxes
 
     @staticmethod
-    def dist_diff_nominal_and_bug_trap(use_tsf):
+    def dist_diff_nominal_and_bug_trap(use_tsf, test_file="pushing/predetermined_bug_trap.mat"):
         _, env, _, ds = get_free_space_env_init()
         untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf,
                                                                                 evaluate_transform=False)
@@ -1391,11 +1393,11 @@ class Visualize:
         coord_v_names = ['d{}'.format(n) for n in coord_z_names] if use_tsf in (
             UseTsf.COORD, UseTsf.COORD_LEARN_DYNAMICS) else None
 
-        ds_wall, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
-        ds_wall.update_preprocessor(preprocessor)
+        ds_test, _ = get_ds(env, test_file, validation_ratio=0.)
+        ds_test.update_preprocessor(preprocessor)
 
         fs, axes = Visualize._dataset_training_dist(env, ds, coord_z_names, coord_v_names)
-        Visualize._dataset_training_dist(env, ds_wall, coord_z_names, coord_v_names, fs=fs, axes=axes)
+        Visualize._dataset_training_dist(env, ds_test, coord_z_names, coord_v_names, fs=fs, axes=axes)
         plt.show()
 
     @staticmethod
@@ -1478,17 +1480,18 @@ class Visualize:
 if __name__ == "__main__":
     level = 0
     ut = UseTsf.SEP_DEC
+    neg_test_file = "pushing/test_sufficiency_3_failed_test_140891.mat"
     # OfflineDataCollection.freespace(trials=200, trial_length=50, level=0)
     # OfflineDataCollection.push_against_wall_recovery()
     # OfflineDataCollection.model_selector_evaluation()
-    # Visualize.dist_diff_nominal_and_bug_trap(ut)
+    # Visualize.dist_diff_nominal_and_bug_trap(ut, neg_test_file)
     # Visualize.model_actions_at_given_state()
     # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
 
     # verify_coordinate_transform(UseTransform.COORD)
-    # evaluate_model_selector(use_tsf=ut)
+    # evaluate_model_selector(use_tsf=ut, test_file=neg_test_file)
     # evaluate_ctrl_sampler()
-    test_local_model_sufficiency_for_escaping_wall(level=3, plot_model_eval=False, use_tsf=ut)
+    test_local_model_sufficiency_for_escaping_wall(level=3, plot_model_eval=True, use_tsf=ut, test_traj=neg_test_file)
 
     # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.NONE,
     #                            override=True, full_evaluation=False, plot_model_error=True, relearn_dynamics=True)

@@ -35,9 +35,11 @@ class PusherTransform(invariant.InvariantTransform):
                 self._record_metrics(writer, ls, suffix="/validation_{}_{}".format(dd[0], dd[1]))
 
                 if self.ds_test is not None:
-                    ls = self._evaluate_metrics_on_whole_set(False, TransformToUse.LATENT_SPACE, move_params=dd,
-                                                             ds_test=self.ds_test)
-                    self._record_metrics(writer, ls, suffix="/test_{}_{}".format(dd[0], dd[1]))
+                    for i, ds_test in enumerate(self.ds_test):
+                        ls = self._evaluate_metrics_on_whole_set(False, TransformToUse.LATENT_SPACE, move_params=dd,
+                                                                 ds_test=ds_test)
+                        if writer is not None:
+                            self._record_metrics(writer, ls, suffix="/test{}_{}_{}".format(i, dd[0], dd[1]), log=True)
 
         return losses
 
