@@ -11,6 +11,7 @@ import torch
 from arm_pytorch_utilities import load_data as load_utils, math_utils
 from arm_pytorch_utilities.make_data import datasource
 from arm_pytorch_utilities import simulation
+from arm_pytorch_utilities import array_utils
 from matplotlib import pyplot as plt
 from meta_contact import cfg
 from meta_contact.env.pybullet_env import PybulletEnv
@@ -225,11 +226,24 @@ class PushLoader(load_utils.DataLoader):
                 self.info_desc[name] = slice(info_index_offset, info_index_offset + dim)
                 info_index_offset += dim
 
+        mask = d['mask']
+        # add information about env/groups of data (different simulation runs are contiguous blocks)
+        groups = array_utils.discrete_array_to_value_ranges(mask)
+        envs = np.zeros(mask.shape[0])
+        current_env = 0
+        for v, start, end in groups:
+            if v == 0:
+                continue
+            envs[start:end + 1] = current_env
+            current_env += 1
+        # throw away first element as always
+        envs = envs[1:]
+        info.append(envs)
+        self.info_desc['envs'] = slice(info_index_offset, info_index_offset + 1)
         info = np.column_stack(info)
 
         u = d['U'][:-1]
         # potentially many trajectories, get rid of buffer state in between
-        mask = d['mask']
 
         x = x[:-1]
         xu = np.column_stack((x, u))
@@ -541,11 +555,11 @@ class PushAgainstWallEnv(PybulletEnv):
                                          globalScaling=0.8))
         elif self.level == 2:
             self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.5, 0.25, wall_z],
-                                         p.getQuaternionFromEuler([0, 0, math.pi/4]), useFixedBase=True,
+                                         p.getQuaternionFromEuler([0, 0, math.pi / 4]), useFixedBase=True,
                                          globalScaling=0.8))
         elif self.level == 3:
             self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.3, 0.25, wall_z],
-                                         p.getQuaternionFromEuler([0, 0, -math.pi/4]), useFixedBase=True,
+                                         p.getQuaternionFromEuler([0, 0, -math.pi / 4]), useFixedBase=True,
                                          globalScaling=0.8))
         elif self.level == 4:
             self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-1, 0.5, wall_z],
