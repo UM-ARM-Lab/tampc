@@ -1321,8 +1321,8 @@ class Learn:
         d, env, config, ds = get_free_space_env_init(seed)
         ds.update_preprocessor(get_pre_invariant_tsf_preprocessor(use_tsf))
         invariant_cls = get_transform(env, ds, use_tsf).__class__
-
-        common_opts = {'name': "{}_s{}".format(name, seed)}
+        ds_test, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
+        common_opts = {'name': "{}_s{}".format(name, seed), 'ds_test': ds_test}
         invariant_tsf = invariant_cls(ds, d, **common_opts, **kwargs)
         invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
@@ -1380,9 +1380,9 @@ class Visualize:
         untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf,
                                                                                 evaluate_transform=False)
         coord_z_names = ['p', '\\theta', 'f', '\\beta', '$r_x$', '$r_y$'] if use_tsf in (
-        UseTsf.COORD, UseTsf.COORD_LEARN_DYNAMICS) else None
+            UseTsf.COORD, UseTsf.COORD_LEARN_DYNAMICS) else None
         coord_v_names = ['d{}'.format(n) for n in coord_z_names] if use_tsf in (
-        UseTsf.COORD, UseTsf.COORD_LEARN_DYNAMICS) else None
+            UseTsf.COORD, UseTsf.COORD_LEARN_DYNAMICS) else None
 
         ds_wall, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
         ds_wall.update_preprocessor(preprocessor)
@@ -1474,7 +1474,7 @@ if __name__ == "__main__":
     # OfflineDataCollection.freespace(trials=200, trial_length=50, level=0)
     # OfflineDataCollection.push_against_wall_recovery()
     # OfflineDataCollection.model_selector_evaluation()
-    Visualize.dist_diff_nominal_and_bug_trap(ut)
+    # Visualize.dist_diff_nominal_and_bug_trap(ut)
     # Visualize.model_actions_at_given_state()
     # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
 
@@ -1489,7 +1489,7 @@ if __name__ == "__main__":
     #                            online_adapt=OnlineAdapt.GP_KERNEL, override=True)
 
     # test_online_model()
-    # for seed in range(1):
-    #     Learn.invariant(ut, seed=seed, name="", MAX_EPOCH=1000, BATCH_SIZE=500)
+    for seed in range(1):
+        Learn.invariant(ut, seed=seed, name="", MAX_EPOCH=1500, BATCH_SIZE=500)
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")

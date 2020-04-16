@@ -30,9 +30,10 @@ class TransformToUse:
 
 
 class InvariantTransform(LearnableParameterizedModel):
-    def __init__(self, ds: datasource.DataSource, nz, nv, **kwargs):
+    def __init__(self, ds: datasource.DataSource, nz, nv, ds_test=None, **kwargs):
         super().__init__(cfg.ROOT_DIR, **kwargs)
         self.ds = ds
+        self.ds_test = ds_test
         # copy of config in case it gets modified later (such as by preprocessors)
         self.config = copy.deepcopy(ds.config)
         # do not assume at this abstraction level the input and output latent space is the same
@@ -111,9 +112,10 @@ class InvariantTransform(LearnableParameterizedModel):
         Internally with data in the original space
         """
 
-    def _setup_evaluate_metrics_on_whole_set(self, validation, move_params, output_in_orig_space=False):
+    def _setup_evaluate_metrics_on_whole_set(self, validation, move_params, output_in_orig_space=False, ds_test=None):
+        ds = ds_test if ds_test is not None else self.ds
         with torch.no_grad():
-            data_set = self.ds.validation_set(original=True) if validation else self.ds.training_set(original=True)
+            data_set = ds.validation_set(original=True) if validation else ds.training_set(original=True)
             X, U, Y = self._move_data_out_of_distribution(self._get_separate_data_columns(data_set), move_params)
             if self.ds.preprocessor is not None and not output_in_orig_space:
                 XU = self.ds.preprocessor.transform_x(torch.cat((X, U), dim=1))
@@ -121,15 +123,16 @@ class InvariantTransform(LearnableParameterizedModel):
                 X, U = self._split_xu(XU)
             return X, U, Y
 
-    def _evaluate_metrics_on_whole_set(self, validation, tsf, move_params=None):
+    def _evaluate_metrics_on_whole_set(self, validation, tsf, move_params=None, ds_test=None):
         with torch.no_grad():
-            X, U, Y = self._setup_evaluate_metrics_on_whole_set(validation, move_params)
+            X, U, Y = self._setup_evaluate_metrics_on_whole_set(validation, move_params, ds_test=ds_test)
             batch_losses = list(self._evaluate_batch(X, U, Y, tsf=tsf))
             # evaluate validation MSE in original space to allow for comparison across transforms
             for i, name in enumerate(self.loss_names()):
                 if name is "mse_loss":
                     X_orig, U_orig, Y_orig = self._setup_evaluate_metrics_on_whole_set(validation, move_params,
-                                                                                       output_in_orig_space=True)
+                                                                                       output_in_orig_space=True,
+                                                                                       ds_test=ds_test)
                     yhat = self.get_yhat(X, U, Y)
                     if self.ds.preprocessor is not None:
                         yhat = self.ds.preprocessor.invert_transform(yhat, X_orig)
@@ -140,8 +143,9 @@ class InvariantTransform(LearnableParameterizedModel):
 
                     per_dim_mse = E.abs().mean(dim=0)
                     for d in range(per_dim_mse.shape[0]):
-                        self.writer.add_scalar('per_dim_mean_abs_diff_tsf/validation{}'.format(d),
-                                               per_dim_mse[d].item(), self.step)
+                        self.writer.add_scalar(
+                            'per_dim_mean_abs_diff_tsf/{}{}'.format('validation' if ds_test is None else 'test', d),
+                            per_dim_mse[d].item(), self.step)
 
             batch_losses = [math_utils.replace_nan_and_inf(losses) if losses is not None else None for losses in
                             batch_losses]
@@ -156,6 +160,11 @@ class InvariantTransform(LearnableParameterizedModel):
         losses = self._evaluate_metrics_on_whole_set(True, TransformToUse.LATENT_SPACE)
         if writer is not None:
             self._record_metrics(writer, losses, suffix="/validation", log=True)
+        if self.ds_test is not None:
+            losses = self._evaluate_metrics_on_whole_set(False, TransformToUse.LATENT_SPACE, ds_test=self.ds_test)
+            if writer is not None:
+                self._record_metrics(writer, losses, suffix="/test", log=True)
+
         return losses
 
     def _get_separate_data_columns(self, data_set):

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 def translation_generator():
-    for d in [4, 10, 50]:
+    for d in [10, 50]:
         for trans in [[1, 1], [-1, 1], [-1, -1]]:
             dd = (trans[0] * d, trans[1] * d)
             yield dd
@@ -33,6 +33,12 @@ class PusherTransform(invariant.InvariantTransform):
             for dd in translation_generator():
                 ls = self._evaluate_metrics_on_whole_set(True, TransformToUse.LATENT_SPACE, move_params=dd)
                 self._record_metrics(writer, ls, suffix="/validation_{}_{}".format(dd[0], dd[1]))
+
+                if self.ds_test is not None:
+                    ls = self._evaluate_metrics_on_whole_set(False, TransformToUse.LATENT_SPACE, move_params=dd,
+                                                             ds_test=self.ds_test)
+                    self._record_metrics(writer, ls, suffix="/test_{}_{}".format(dd[0], dd[1]))
+
         return losses
 
 
@@ -178,7 +184,7 @@ class LearnedTransform:
             self.match_weight = match_weight
             # TODO try penalizing mutual information between xu and z, and v and dx?
             # create encoder xu -> z
-            opts = {'h_units': (32, 32)}
+            opts = {'h_units': (16, 32)}
             if encoder_opts:
                 opts.update(encoder_opts)
             config = load_data.DataConfig()
@@ -202,7 +208,7 @@ class LearnedTransform:
 
             # create dynamics (shouldn't have high capacity since we should have simple dynamics in trasnformed space)
             # z -> v
-            opts = {'h_units': (16, 32)}
+            opts = {'h_units': (16, 16)}
             if dynamics_opts:
                 opts.update(dynamics_opts)
             config = load_data.DataConfig()
