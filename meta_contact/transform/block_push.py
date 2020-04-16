@@ -314,6 +314,58 @@ class LearnedTransform:
             v = linalg.batch_batch_product(dx, dx_to_v)
             return v
 
+    class ExtractState(SeparateDecoder):
+        """Don't pass through all of x to g"""
+
+        def __init__(self, ds, device, *args, nz=5, nv=5, reduced_decoder_input_dim=2, decoder_opts=None,
+                     inverse_decoder_opts=None, **kwargs):
+            self.reduced_decoder_input_dim = reduced_decoder_input_dim
+            self.x_extractor = torch.nn.Linear(ds.config.nx, self.reduced_decoder_input_dim).to(device=device,
+                                                                                                dtype=torch.double)
+            opts = {'h_units': (16, 32)}
+            if decoder_opts:
+                opts.update(decoder_opts)
+            config = load_data.DataConfig()
+            config.nx = self.reduced_decoder_input_dim
+            config.ny = nv * ds.config.nx
+            self.extracted_linear_decoder = model.DeterministicUser(
+                make.make_sequential_network(config, **opts).to(device=device))
+
+            opts = {'h_units': (16, 32)}
+            if inverse_decoder_opts:
+                opts.update(inverse_decoder_opts)
+            config = load_data.DataConfig()
+            config.nx = self.reduced_decoder_input_dim
+            config.ny = nv * ds.config.nx
+            # outputs a linear transformation from v to dx (linear in v), that is dependent on state
+            # v C(x) = dx --> v = C(x)^{-1} dx allows both ways
+            self.extracted_inverse_linear_decoder_producer = model.DeterministicUser(
+                make.make_sequential_network(config, **opts).to(device=device))
+
+            super().__init__(ds, device, *args, nz=nz, nv=nv, **kwargs)
+
+        def modules(self):
+            return {'encoder': self.encoder.model, 'extracted linear decoder': self.extracted_linear_decoder.model,
+                    'extracted inverse linear decoder': self.extracted_inverse_linear_decoder_producer.model,
+                    'extractor': self.x_extractor, 'dynamics': self.dynamics.model}
+
+        def _name_prefix(self):
+            return 'extract_{}'.format(self.reduced_decoder_input_dim)
+
+        @tensor_utils.ensure_2d_input
+        def get_v(self, x, dx, z):
+            B, nx = x.shape
+            dx_to_v = self.extracted_inverse_linear_decoder_producer.sample(self.x_extractor(x)).view(B, self.nv, nx)
+            v = linalg.batch_batch_product(dx, dx_to_v)
+            return v
+
+        @tensor_utils.ensure_2d_input
+        def get_dx(self, x, v):
+            B, nx = x.shape
+            linear_tsf = self.extracted_linear_decoder.sample(self.x_extractor(x)).view(B, nx, self.nv)
+            dx = linalg.batch_batch_product(v, linear_tsf)
+            return dx
+
     class ParameterizeYawSelect(invariant.LearnLinearDynamicsTransform, PusherTransform):
         """Parameterize the coordinate transform such that it has to learn something"""
 

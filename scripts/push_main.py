@@ -203,6 +203,7 @@ class UseTsf(enum.Enum):
     COMPRESS_AND_PART = 10
     DX_TO_V = 11
     SEP_DEC = 12
+    EXTRACT = 13
 
 
 def get_transform(env, ds, use_tsf):
@@ -232,6 +233,8 @@ def get_transform(env, ds, use_tsf):
         return LearnedTransform.DxToV(ds, d, name="_s0")
     elif use_tsf is UseTsf.SEP_DEC:
         return LearnedTransform.SeparateDecoder(ds, d, name="_s0")
+    elif use_tsf is UseTsf.EXTRACT:
+        return LearnedTransform.ExtractState(ds, d, name="_s0")
     else:
         raise RuntimeError("Unrecgonized transform {}".format(use_tsf))
 
@@ -1479,7 +1482,7 @@ class Visualize:
 
 if __name__ == "__main__":
     level = 0
-    ut = UseTsf.SEP_DEC
+    ut = UseTsf.EXTRACT
     neg_test_file = "pushing/test_sufficiency_3_failed_test_140891.mat"
     # OfflineDataCollection.freespace(trials=200, trial_length=50, level=0)
     # OfflineDataCollection.push_against_wall_recovery()
@@ -1491,7 +1494,7 @@ if __name__ == "__main__":
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_model_selector(use_tsf=ut, test_file=neg_test_file)
     # evaluate_ctrl_sampler()
-    test_local_model_sufficiency_for_escaping_wall(level=3, plot_model_eval=True, use_tsf=ut, test_traj=neg_test_file)
+    # test_local_model_sufficiency_for_escaping_wall(level=3, plot_model_eval=True, use_tsf=ut, test_traj=neg_test_file)
 
     # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.NONE,
     #                            override=True, full_evaluation=False, plot_model_error=True, relearn_dynamics=True)
@@ -1499,7 +1502,7 @@ if __name__ == "__main__":
     #                            online_adapt=OnlineAdapt.GP_KERNEL, override=True)
 
     # test_online_model()
-    # for seed in range(1):
-    #     Learn.invariant(ut, seed=seed, name="", MAX_EPOCH=3000, BATCH_SIZE=500)
+    for seed in range(1):
+        Learn.invariant(ut, seed=seed, name="", MAX_EPOCH=3000, BATCH_SIZE=500)
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")
