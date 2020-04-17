@@ -70,6 +70,7 @@ class OnlineMPC(OnlineController):
         self.constrain_state = constrain_state
         self.mpc = None
         self.mode_select = mode_select
+        self.mode = 0
         self.dynamics_mode = {}
         super().__init__(*args, **kwargs)
 
@@ -111,32 +112,25 @@ class OnlineMPC(OnlineController):
 
 
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
+    def __init__(self, *args, **kwargs):
+        super(OnlineMPPI, self).__init__(*args, **kwargs)
+        self.nom_traj_manager = None
+
+    def create_nom_traj_manager(self, *args, **kwargs):
+        self.nom_traj_manager = MPPINominalTrajManager(self, *args, **kwargs)
+
     def _mpc_command(self, obs):
         return OnlineMPC._mpc_command(self, obs)
 
-    def _mpc_opts(self):
-        # TODO move variance usage in biasing control sampling rather than as a loss function
-        opts = super()._mpc_opts()
-        # use variance cost if possible (when not sampling)
-        # if isinstance(self.dynamics, online_model.OnlineGPMixing) and self.dynamics.sample_dynamics is False:
-        #     q = 10000
-        #     self.Q_variance = torch.diag(torch.tensor([q, q, q, q, 0, 0], device=self.d, dtype=self.dtype))
-        #     opts['dynamics_variance'] = self._dynamics_variance
-        #     opts['running_cost_variance'] = self._running_cost_variance
-        return opts
-
-    def _dynamics_variance(self, next_state):
-        import gpytorch
-        if self.dynamics.last_prediction is not None:
-            with torch.no_grad(), gpytorch.settings.fast_pred_var():
-                return self.dynamics.last_prediction.variance
-        return None
-
-    def _running_cost_variance(self, variance):
-        if variance is not None:
-            c = linalg.batch_quadratic_product(variance, self.Q_variance)
-            return -c
-        return 0
+    def _compute_action(self, x):
+        assert self.nom_traj_manager is not None
+        # use only state for mode selection; this way we can get mode before calculating action
+        a = torch.zeros((1, self.nu), device=self.d, dtype=x.dtype)
+        self.mode = self.mode_select.sample_mode(x.view(1, -1), a).item()
+        self.nom_traj_manager.update_nominal_trajectory(self.mode)
+        # TODO change mpc cost if we're outside the nominal mode
+        u = self.mpc.command(x)
+        return u
 
 
 class NominalTrajFrom(Enum):
@@ -177,11 +171,10 @@ class MPPINominalTrajManager:
 
         self.U_recovery = ctrl.mpc.U.clone()
 
-    def update_nominal_trajectory(self, state, action):
+    def update_nominal_trajectory(self, mode):
         if self.nom_traj_from is NominalTrajFrom.ROLLOUT_WITH_ORIG_ACTIONS:
             return False
         adjusted_trajectory = False
-        mode = self.ctrl.mode_select.sample_mode(state, action)
         # TODO generalize this to multiple modes
         # try always using the recovery policy while in this mode
         # TODO consider if we need clone

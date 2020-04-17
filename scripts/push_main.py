@@ -956,14 +956,13 @@ def test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=True
     ctrl = online_controller.OnlineMPPI(dynamics_gp if use_gp else dynamics, ds.original_config(), mode_select=selector,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
     ctrl.set_goal(env.goal)
-    nom_traj_manager = MPPINominalTrajManager(ctrl, dss, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS)
+    ctrl.create_nom_traj_manager(dss, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS)
 
     name = get_full_controller_name(pm, ctrl, use_tsf.name)
 
     env.draw_user_text(name, 14, left_offset=-1.5)
     env.draw_user_text(selector.name, 13, left_offset=-1.5)
-    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=True, stop_when_done=False,
-                                     nom_traj_manager=nom_traj_manager)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=True, stop_when_done=False)
     seed = rand.seed()
     sim.run(seed, 'test_sufficiency_{}_{}_{}'.format(level, selector.name, seed))
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
@@ -1277,7 +1276,7 @@ def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
     ctrl = online_controller.OnlineMPPI(dynamics, ds.original_config(), **common_wrapper_opts, mpc_opts=mpc_opts,
                                         mode_select=selector)
     ctrl.set_goal(env.goal)
-    nom_traj_manager = MPPINominalTrajManager(ctrl, dss, nom_traj_from=nom_traj_from)
+    ctrl.create_nom_traj_manager(dss, nom_traj_from=nom_traj_from)
 
     env.draw_user_text(
         "rollout var cost {} discount {}".format(ctrl.mpc.rollout_var_cost, ctrl.mpc.rollout_var_discount), 12,
@@ -1295,10 +1294,8 @@ def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
         # next_x = dynamics.predict(None, None, np.tile(x, (N, 1)), u_sample)
         # var = dynamics.last_prediction.variance.detach().cpu().numpy()
 
-        o, a = [torch.tensor(v).to(device=ctrl.d).view(1, -1) for v in (x, u_best)]
-        mode = ctrl.mode_select.sample_mode(o, a)
-        env.draw_user_text("mode {}".format(mode.item()), 1)
-        nom_traj_manager.update_nominal_trajectory(o, a)
+        env.draw_user_text("mode {}".format(ctrl.mode.item()), 1)
+        ctrl.nom_traj_manager.update_nominal_trajectory(ctrl.mode)
 
         # visualize best actions in simulator
         path_cost = ctrl.mpc.cost_total.cpu()

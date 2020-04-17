@@ -1262,7 +1262,7 @@ def interpolate_pos(start, end, t):
 class InteractivePush(simulation.Simulation):
     def __init__(self, env: PushAgainstWallEnv, controller, num_frames=1000, save_dir='pushing',
                  terminal_cost_multiplier=1, stop_when_done=True, visualize_rollouts=True,
-                 visualize_action_sample=False, nom_traj_manager=None,
+                 visualize_action_sample=False,
                  **kwargs):
 
         super(InteractivePush, self).__init__(save_dir=save_dir, num_frames=num_frames, config=cfg, **kwargs)
@@ -1274,7 +1274,6 @@ class InteractivePush(simulation.Simulation):
 
         self.env = env
         self.ctrl = controller
-        self.nom_traj_manager = nom_traj_manager
 
         # keep track of last run's rewards
         self.terminal_cost_multiplier = terminal_cost_multiplier
@@ -1351,16 +1350,8 @@ class InteractivePush(simulation.Simulation):
 
             # visualizations before taking action
             if self._predicts_mode():
-                o, a = [torch.tensor(v).to(device=self.ctrl.d).view(1, -1) for v in (obs, action)]
-                this_mode = self.ctrl.mode_select.sample_mode(o, a).item()
-                self.pred_mode[simTime] = this_mode
-                self.env.draw_user_text("mode {}".format(this_mode), 2)
-                if self.nom_traj_manager is not None:
-                    U_nom_unadjusted = self.ctrl.mpc.U
-                    if self.nom_traj_manager.update_nominal_trajectory(o, a):
-                        logger.debug("Ajdusted nominal trajectory")
-                    else:
-                        U_nom_unadjusted = None
+                self.pred_mode[simTime] = self.ctrl.mode
+                self.env.draw_user_text("mode {}".format(self.ctrl.mode), 2)
                 for i in range(4):
                     modes = self.ctrl.dynamics_mode[i]
                     nom_count = (modes == 0).sum()
