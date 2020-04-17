@@ -88,15 +88,28 @@ def sample_discrete_probs(probs, use_numpy=True):
 
 
 class DataProbSelector(ModeSelector):
-    def __init__(self, dss, **kwargs):
+    def __init__(self, dss, use_action=False, **kwargs):
         super(DataProbSelector, self).__init__(**kwargs)
+        self.use_action = use_action
         self.num_components = len(dss)
         self.nominal_ds = dss[0]
         # will end up being (num_components x num_samples)
         self.weights = None
         self.relative_weights = None
 
+    def _get_training_input(self, ds):
+        XU, _, _ = ds.training_set()
+        if not self.use_action:
+            XU, _, _ = ds.training_set(original=True)
+            XU[:, ds.original_config().nx:] = 0
+            if self.nominal_ds.preprocessor:
+                XU = self.nominal_ds.preprocessor.transform_x(XU)
+        XU = self._slice_input(XU)
+        return XU
+
     def sample_mode(self, state, action, *args):
+        if not self.use_action:
+            action = torch.zeros_like(action)
         xu = torch.cat((state, action), dim=1)
         if self.nominal_ds.preprocessor:
             xu = self.nominal_ds.preprocessor.transform_x(xu)
@@ -143,8 +156,7 @@ class DistributionLikelihoodSelector(DataProbSelector):
 
 class KDESelector(DistributionLikelihoodSelector):
     def _estimate_density(self, ds):
-        XU, _, _ = ds.training_set()
-        XU = self._slice_input(XU)
+        XU = self._get_training_input(ds)
         kernel = stats.gaussian_kde(XU.transpose(0, 1).cpu().numpy())
         return kernel
 
@@ -163,8 +175,7 @@ class GMMSelector(DistributionLikelihoodSelector):
             self.name += ' variational'
 
     def _estimate_density(self, ds):
-        XU, _, _ = ds.training_set()
-        XU = self._slice_input(XU)
+        XU = self._get_training_input(ds)
         if self.variational:
             gmm = mixture.BayesianGaussianMixture(**self.opts)
         else:
@@ -184,8 +195,7 @@ class SklearnClassifierSelector(DataProbSelector):
         xu = []
         component = []
         for i, ds in enumerate(dss):
-            XU, _, _ = ds.training_set()
-            XU = self._slice_input(XU)
+            XU = self._get_training_input(ds)
             xu.append(XU.cpu().numpy())
             component.append(np.ones(XU.shape[0], dtype=int) * i)
         xu = np.row_stack(xu)
@@ -198,6 +208,7 @@ class SklearnClassifierSelector(DataProbSelector):
         self.relative_weights = self.weights
 
 
+# TODO need to fix implementation
 class MLPSelector(LearnableParameterizedModel, ModeSelector):
     def __init__(self, dss, retrain=False, model_opts=None, **kwargs):
         self.num_components = len(dss)
