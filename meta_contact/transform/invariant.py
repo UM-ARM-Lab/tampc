@@ -303,6 +303,14 @@ class RexTraining(InvariantTransform):
                 self.optimizer.zero_grad()
 
                 with torch.no_grad():
+                    Z = self.xu_to_z(X, U)
+                    V = self.get_v(X, Y, Z)
+                    Z_mag = Z.norm(dim=1)
+                    V_mag = V.norm(dim=1)
+                    self.writer.add_scalar("latent/z_norm_mean", Z_mag.mean(), self.step)
+                    self.writer.add_scalar("latent/z_norm_std", Z_mag.std(), self.step)
+                    self.writer.add_scalar("latent/v_norm_mean", V_mag.mean(), self.step)
+                    self.writer.add_scalar("latent/v_norm_std", V_mag.std(), self.step)
                     for name, v in zip(self.loss_names(), var_across_env):
                         self.writer.add_scalar("rex/{}".format(name), v.item(), self.step)
                     self._record_metrics(self.writer, losses)
