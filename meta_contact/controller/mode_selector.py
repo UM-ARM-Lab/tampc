@@ -20,14 +20,27 @@ class ModeSelector(abc.ABC):
     """In mixture of experts we have that the posterior is a sum over weighted components.
     This class allows sampling over weights (as opposed to giving the value of the weights)"""
 
-    def __init__(self, input_slice=None):
+    def __init__(self, use_action=False, input_slice=None):
         self.name = self.__class__.__name__
         self.input_slice = input_slice
+        self.use_action = use_action
+        self.nominal_ds = None
 
     def _slice_input(self, xu):
         if self.input_slice:
             xu = xu[:, self.input_slice]
         return xu
+
+    def _get_training_input(self, ds, training=True):
+        XU, _, _ = ds.training_set() if training else ds.validation_set()
+        if not self.use_action:
+            XU, _, _ = ds.training_set(original=True) if training else ds.validation_set(original=True)
+            XU = XU.clone()
+            XU[:, ds.original_config().nx:] = 0
+            if self.nominal_ds is not None and self.nominal_ds.preprocessor:
+                XU = self.nominal_ds.preprocessor.transform_x(XU)
+        XU = self._slice_input(XU)
+        return XU
 
     @abc.abstractmethod
     def sample_mode(self, state, action, *args):
@@ -88,25 +101,13 @@ def sample_discrete_probs(probs, use_numpy=True):
 
 
 class DataProbSelector(ModeSelector):
-    def __init__(self, dss, use_action=False, **kwargs):
+    def __init__(self, dss, **kwargs):
         super(DataProbSelector, self).__init__(**kwargs)
-        self.use_action = use_action
         self.num_components = len(dss)
         self.nominal_ds = dss[0]
         # will end up being (num_components x num_samples)
         self.weights = None
         self.relative_weights = None
-
-    def _get_training_input(self, ds):
-        XU, _, _ = ds.training_set()
-        if not self.use_action:
-            XU, _, _ = ds.training_set(original=True)
-            XU = XU.clone()
-            XU[:, ds.original_config().nx:] = 0
-            if self.nominal_ds.preprocessor:
-                XU = self.nominal_ds.preprocessor.transform_x(XU)
-        XU = self._slice_input(XU)
-        return XU
 
     def sample_mode(self, state, action, *args):
         if not self.use_action:
@@ -209,15 +210,23 @@ class SklearnClassifierSelector(DataProbSelector):
         self.relative_weights = self.weights
 
 
-# TODO need to fix implementation
+# TODO reject samples from the other ds that have low model error
 class MLPSelector(LearnableParameterizedModel, ModeSelector):
     def __init__(self, dss, retrain=False, model_opts=None, **kwargs):
+        ModeSelector.__init__(self, use_action=kwargs.pop('use_action', False),
+                              input_slice=kwargs.pop('input_slice', None))
         self.num_components = len(dss)
         self.nominal_ds = dss[0]
+        self.weights = None
         self.relative_weights = None
-        self.input_slice = kwargs.pop('input_slice', None)
+        self.component_scale = None
 
-        opts = {'end_block_factory': make.make_linear_end_block(activation=torch.nn.Softmax(dim=1))}
+        # TODO tune acceptance probability to maximize f1
+        self.component_scale = torch.ones(self.num_components, dtype=torch.double, device=self.nominal_ds.d).view(-1, 1)
+        self.component_scale[1] = 70
+
+        # we do the softmax ourselves
+        opts = {'h_units': (100,), 'activation_factory': torch.nn.LeakyReLU}
         if model_opts is not None:
             opts.update(model_opts)
 
@@ -241,14 +250,22 @@ class MLPSelector(LearnableParameterizedModel, ModeSelector):
         return {'selector': self.model}
 
     def sample_mode(self, state, action, *args):
+        if not self.use_action:
+            action = torch.zeros_like(action)
         xu = torch.cat((state, action), dim=1)
         if self.nominal_ds.preprocessor:
             xu = self.nominal_ds.preprocessor.transform_x(xu)
 
         xu = self._slice_input(xu)
 
+        self.weights = self.model(xu).transpose(0, 1)
+        # TODO reject cases where weights for all classes are all low (give mode -1)
         # compute relative weights (just the softmax output of the model)
-        self.relative_weights = self.model(xu).transpose(0, 1)
+        self.relative_weights = torch.nn.functional.softmax(2*self.weights, dim=0)
+        if self.component_scale is not None:
+            self.relative_weights *= self.component_scale
+            normalization = torch.sum(self.relative_weights, dim=0)
+            self.relative_weights = self.relative_weights / normalization
 
         sample = sample_discrete_probs(self.relative_weights, use_numpy=False)
         return sample
@@ -257,11 +274,14 @@ class MLPSelector(LearnableParameterizedModel, ModeSelector):
         xu = []
         y = []
         for i, ds in enumerate(dss):
-            data = ds.training_set() if training else ds.validation_set()
-            XU, _, _ = data
+            XU = self._get_training_input(ds, training)
             if len(XU):
-                xu.append(self._slice_input(XU))
-                y.append(torch.ones(XU.shape[0], dtype=torch.long, device=XU.device) * i)
+                # try resampling to get balanced training
+                # resamples = round(self.nominal_ds.N / len(XU)) if training else 1
+                resamples = 1
+                for _ in range(resamples):
+                    xu.append(self._slice_input(XU))
+                    y.append(torch.ones(XU.shape[0], dtype=torch.long, device=XU.device) * i)
         xu = torch.cat(xu, dim=0)
         y = torch.cat(y, dim=0)
         return xu, y
@@ -275,7 +295,7 @@ class MLPSelector(LearnableParameterizedModel, ModeSelector):
         save_checkpoint_every_n_epochs = max(max_epoch // 20, 5)
 
         weight = None
-        # weight = torch.sqrt(y.shape[0] / y.unique(sorted=True, return_counts=True)[1].double())
+        weight = torch.sqrt(y.shape[0] / y.unique(sorted=True, return_counts=True)[1].double())
         criterion = torch.nn.CrossEntropyLoss(reduction='none', weight=weight)
 
         for epoch in range(0, max_epoch):  # loop over the dataset multiple times

@@ -16,7 +16,7 @@ from arm_pytorch_utilities import math_utils
 from arm_pytorch_utilities import preprocess
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.model import make
-from meta_contact.controller.online_controller import NominalTrajFrom, MPPINominalTrajManager
+from meta_contact.controller.online_controller import NominalTrajFrom
 from meta_contact.transform.block_push import CoordTransform, LearnedTransform, AblationOnTransform, \
     translation_generator
 from tensorboardX import SummaryWriter
@@ -310,11 +310,13 @@ class UseSelector:
     TREE = 3
     FORCE = 4
     MLP_SKLEARN = 5
+    KNN = 6
 
 
-def get_selector(dss, tsf_name, use_selector=UseSelector.TREE, *args, **kwargs):
+def get_selector(dss, tsf_name, use_selector=UseSelector.MLP, *args, **kwargs):
     from sklearn.tree import DecisionTreeClassifier
     from sklearn.neural_network import MLPClassifier
+    from sklearn.neighbors.classification import KNeighborsClassifier
 
     component_scale = [1, 0.2]
     # TODO this is specific to coordinate transform to slice just the body frame reaction force
@@ -338,6 +340,8 @@ def get_selector(dss, tsf_name, use_selector=UseSelector.TREE, *args, **kwargs):
         selector = mode_selector.ReactionForceHeuristicSelector(12, slice(3, None))
     elif use_selector is UseSelector.MLP_SKLEARN:
         selector = mode_selector.SklearnClassifierSelector(dss, MLPClassifier(**kwargs), input_slice=input_slice)
+    elif use_selector is UseSelector.KNN:
+        selector = mode_selector.SklearnClassifierSelector(dss, KNeighborsClassifier(n_neighbors=1,**kwargs), input_slice=input_slice)
     else:
         raise RuntimeError("Unrecognized selector option")
     return selector
@@ -962,7 +966,7 @@ def test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=True
 
     env.draw_user_text(name, 14, left_offset=-1.5)
     env.draw_user_text(selector.name, 13, left_offset=-1.5)
-    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=True, stop_when_done=False)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=250, plot=False, save=True, stop_when_done=False)
     seed = rand.seed()
     sim.run(seed, 'test_sufficiency_{}_{}_{}'.format(level, selector.name, seed))
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
@@ -1492,9 +1496,9 @@ if __name__ == "__main__":
     # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
 
     # verify_coordinate_transform(UseTransform.COORD)
-    # evaluate_model_selector(use_tsf=ut, test_file=neg_test_file)
+    evaluate_model_selector(use_tsf=ut, test_file=neg_test_file)
     # evaluate_ctrl_sampler()
-    test_local_model_sufficiency_for_escaping_wall(level=3, plot_model_eval=False, use_tsf=ut, test_traj=neg_test_file)
+    # test_local_model_sufficiency_for_escaping_wall(level=3, plot_model_eval=False, use_tsf=ut, test_traj=neg_test_file)
 
     # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.NONE,
     #                            override=True, full_evaluation=False, plot_model_error=True, relearn_dynamics=True)
