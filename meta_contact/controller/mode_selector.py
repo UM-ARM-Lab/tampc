@@ -101,6 +101,7 @@ class DataProbSelector(ModeSelector):
         XU, _, _ = ds.training_set()
         if not self.use_action:
             XU, _, _ = ds.training_set(original=True)
+            XU = XU.clone()
             XU[:, ds.original_config().nx:] = 0
             if self.nominal_ds.preprocessor:
                 XU = self.nominal_ds.preprocessor.transform_x(XU)
