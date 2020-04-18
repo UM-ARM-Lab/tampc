@@ -127,7 +127,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         # use only state for mode selection; this way we can get mode before calculating action
         a = torch.zeros((1, self.nu), device=self.d, dtype=x.dtype)
         self.mode = self.mode_select.sample_mode(x.view(1, -1), a).item()
-        self.nom_traj_manager.update_nominal_trajectory(self.mode)
+        self.nom_traj_manager.update_nominal_trajectory(self.mode, x)
         # TODO change mpc cost if we're outside the nominal mode
         u = self.mpc.command(x)
         return u
@@ -141,7 +141,7 @@ class NominalTrajFrom(Enum):
 
 
 class MPPINominalTrajManager:
-    def __init__(self, ctrl: OnlineMPPI, dss, fixed_recovery_nominal_traj=True,
+    def __init__(self, ctrl: OnlineMPPI, dss, fixed_recovery_nominal_traj=True, lookup_traj_start=True,
                  nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS):
         """
         :param ctrl:
@@ -152,40 +152,49 @@ class MPPINominalTrajManager:
         self.fixed_recovery_nominal_traj = fixed_recovery_nominal_traj
         self.last_mode = 0
         self.nom_traj_from = nom_traj_from
+        self.lookup_traj_start = lookup_traj_start
+        self.nominal_ds = dss[0]
 
         # TODO generalize this for more local models
         ds, ds_wall = dss
-        # TODO have option to select this automatically from data
         self.train_i = 14
         max_rollout_steps = 10
         XU, Y, info = ds_wall.training_set(original=True)
-        X_train, U_train = torch.split(XU, ds.original_config().nx, dim=1)
+        X_train, self.U_train = torch.split(XU, ds.original_config().nx, dim=1)
         assert self.train_i < len(X_train)
 
-        if nom_traj_from is NominalTrajFrom.RECOVERY_ACTIONS:
-            ctrl_rollout_steps = min(len(X_train) - self.train_i, ctrl.mpc.T)
-            ctrl.mpc.U[1:1 + ctrl_rollout_steps] = U_train[self.train_i:self.train_i + ctrl_rollout_steps]
-        elif nom_traj_from is NominalTrajFrom.ROLLOUT_FROM_RECOVERY_STATES:
+        if nom_traj_from is NominalTrajFrom.ROLLOUT_FROM_RECOVERY_STATES:
             for ii in range(max(0, self.train_i - max_rollout_steps), self.train_i):
                 ctrl.command(X_train[ii].cpu().numpy())
+            self.U_train = ctrl.mpc.U.clone()
+        U_zero = torch.zeros_like(self.U_train)
+        self.Z_train = self.nominal_ds.preprocessor.transform_x(torch.cat((X_train, U_zero), dim=1))
 
-        self.U_recovery = ctrl.mpc.U.clone()
-
-    def update_nominal_trajectory(self, mode):
-        if self.nom_traj_from is NominalTrajFrom.ROLLOUT_WITH_ORIG_ACTIONS:
+    def update_nominal_trajectory(self, mode, state):
+        if mode is 0 or self.nom_traj_from is NominalTrajFrom.ROLLOUT_WITH_ORIG_ACTIONS:
             return False
         adjusted_trajectory = False
         # TODO generalize this to multiple modes
-        # try always using the recovery policy while in this mode
-        # TODO consider if we need clone
-        if mode == 1:
-            if self.nom_traj_from is NominalTrajFrom.RANDOM:
-                self.ctrl.mpc.U = self.ctrl.mpc.noise_dist.sample((self.ctrl.mpc.T,))
-                adjusted_trajectory = True
+        # start with random noise
+        U = self.ctrl.mpc.noise_dist.sample((self.ctrl.mpc.T,))
+        if self.nom_traj_from is NominalTrajFrom.RANDOM:
+            adjusted_trajectory = True
+        else:
             # if we're not using the fixed recovery nom, then we set it if we're entering from another mode
             if self.fixed_recovery_nominal_traj or self.last_mode != mode:
-                self.ctrl.mpc.U = self.U_recovery.clone()
                 adjusted_trajectory = True
 
+                train_i = self.train_i
+                # option to select where to start in training automatically from data
+                if self.lookup_traj_start:
+                    xu = torch.cat((state.view(1,-1), torch.zeros((1, self.ctrl.nu), device=state.device, dtype=state.dtype)), dim=1)
+                    z = self.nominal_ds.preprocessor.transform_x(xu)
+                    train_i = (self.Z_train - z).norm(dim=1).argmin()
+
+                ctrl_rollout_steps = min(len(self.U_train) - train_i, self.ctrl.mpc.T)
+                U[1:1 + ctrl_rollout_steps] = self.U_train[train_i:train_i + ctrl_rollout_steps]
+
+        if adjusted_trajectory:
+            self.ctrl.mpc.U = U
         self.last_mode = mode
         return adjusted_trajectory
