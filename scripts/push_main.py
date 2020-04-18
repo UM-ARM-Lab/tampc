@@ -313,7 +313,7 @@ class UseSelector:
     KNN = 6
 
 
-def get_selector(dss, tsf_name, use_selector=UseSelector.MLP, *args, **kwargs):
+def get_selector(dss, tsf_name, use_selector=UseSelector.TREE, *args, **kwargs):
     from sklearn.tree import DecisionTreeClassifier
     from sklearn.neural_network import MLPClassifier
     from sklearn.neighbors.classification import KNeighborsClassifier
@@ -453,6 +453,10 @@ class OfflineDataCollection:
     def push_against_wall_recovery():
         # get data in and around the bug trap we want to avoid in the future
         env = get_env(p.GUI, 1, log_video=True)
+        init_block_pos = [-0.6, 0.15]
+        init_block_yaw = -1.2 * math.pi / 4
+        env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw)
+
         u = []
         if isinstance(env, block_push.PushWithForceDirectlyEnv):
             seed = rand.seed(124512)
@@ -473,12 +477,10 @@ class OfflineDataCollection:
             # different friction between wall and block leads to very different behaviour
             high_friction = True
             if high_friction:
-                for _ in range(12):
-                    u.append([0.8 + rn(0.2), 0.8 + rn(0.2), 0.7 + rn(0.4)])
-                for _ in range(10):
-                    u.append([-0.9 + rn(0.1), 0.8 + rn(0.1), -0.9 + rn(0.2)])
-                for _ in range(6):
-                    u.append([0.0 + rn(0.2), 0.7 + rn(0.1), 0.1 + rn(0.1)])
+                for _ in range(15):
+                    u.append([-1.0 + rn(0.1), 0.8 + rn(0.1), -1.0 + rn(0.2)])
+                for _ in range(13):
+                    u.append([-0.9 + rn(0.1), 0.8 + rn(0.1), -0.7 + rn(0.2)])
             else:
                 for _ in range(20):
                     u.append([0.8 + rn(0.2), 0.7 + rn(0.3), 0.7 + rn(0.4)])
@@ -768,10 +770,8 @@ def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTsf.COORD, relearn_dy
     env.close()
 
 
-def test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=True, plot_online_update=False, use_gp=True,
+def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_eval=True, plot_online_update=False, use_gp=True,
                                                    use_tsf=UseTsf.COORD, test_traj=None, **kwargs):
-    seed = 1
-
     if plot_model_eval:
         env = get_env(p.DIRECT)
     else:
@@ -967,8 +967,8 @@ def test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=True
     env.draw_user_text(name, 14, left_offset=-1.5)
     env.draw_user_text(selector.name, 13, left_offset=-1.5)
     sim = block_push.InteractivePush(env, ctrl, num_frames=250, plot=False, save=True, stop_when_done=False)
-    seed = rand.seed()
-    sim.run(seed, 'test_sufficiency_{}_{}_{}'.format(level, selector.name, seed))
+    seed = rand.seed(seed)
+    sim.run(seed, 'test_sufficiency_{}_{}_{}_{}'.format(level, use_tsf.name, selector.name, seed))
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
     plt.ioff()
     plt.show()
@@ -1496,9 +1496,9 @@ if __name__ == "__main__":
     # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
 
     # verify_coordinate_transform(UseTransform.COORD)
-    evaluate_model_selector(use_tsf=ut, test_file=neg_test_file)
+    # evaluate_model_selector(use_tsf=ut, test_file=neg_test_file)
     # evaluate_ctrl_sampler()
-    # test_local_model_sufficiency_for_escaping_wall(level=3, plot_model_eval=False, use_tsf=ut, test_traj=neg_test_file)
+    test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=False, use_tsf=ut, test_traj=neg_test_file)
 
     # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.NONE,
     #                            override=True, full_evaluation=False, plot_model_error=True, relearn_dynamics=True)
