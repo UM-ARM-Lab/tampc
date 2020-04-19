@@ -341,7 +341,8 @@ def get_selector(dss, tsf_name, use_selector=UseSelector.TREE, *args, **kwargs):
     elif use_selector is UseSelector.MLP_SKLEARN:
         selector = mode_selector.SklearnClassifierSelector(dss, MLPClassifier(**kwargs), input_slice=input_slice)
     elif use_selector is UseSelector.KNN:
-        selector = mode_selector.SklearnClassifierSelector(dss, KNeighborsClassifier(n_neighbors=1,**kwargs), input_slice=input_slice)
+        selector = mode_selector.SklearnClassifierSelector(dss, KNeighborsClassifier(n_neighbors=1, **kwargs),
+                                                           input_slice=input_slice)
     else:
         raise RuntimeError("Unrecognized selector option")
     return selector
@@ -770,7 +771,8 @@ def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTsf.COORD, relearn_dy
     env.close()
 
 
-def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_eval=True, plot_online_update=False, use_gp=True,
+def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_eval=True, plot_online_update=False,
+                                                   use_gp=True,
                                                    use_tsf=UseTsf.COORD, test_traj=None, **kwargs):
     if plot_model_eval:
         env = get_env(p.DIRECT)
@@ -1498,7 +1500,9 @@ if __name__ == "__main__":
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_model_selector(use_tsf=ut, test_file=neg_test_file)
     # evaluate_ctrl_sampler()
-    test_local_model_sufficiency_for_escaping_wall(level=1, plot_model_eval=False, use_tsf=ut, test_traj=neg_test_file)
+    # for seed in range(5):
+    #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
+    #                                                    test_traj=neg_test_file)
 
     # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.NONE,
     #                            override=True, full_evaluation=False, plot_model_error=True, relearn_dynamics=True)
@@ -1506,7 +1510,7 @@ if __name__ == "__main__":
     #                            online_adapt=OnlineAdapt.GP_KERNEL, override=True)
 
     # test_online_model()
-    # for seed in range(2,3):
-    #     Learn.invariant(ut, seed=seed, name="", MAX_EPOCH=3000, BATCH_SIZE=2048)
+    for seed in range(1):
+        Learn.invariant(ut, seed=seed, name="percentage_loss", MAX_EPOCH=3000, BATCH_SIZE=500)
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")

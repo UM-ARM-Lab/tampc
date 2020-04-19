@@ -281,7 +281,7 @@ class LearnedTransform:
             return "mse_loss", "reconstruction", "match_decoder", "percent_reconstruction", "percent_match"
 
         def loss_weights(self):
-            return [self.mse_weight, self.reconstruction_weight, self.match_weight, 0, 0]
+            return [self.mse_weight, 0, 0, self.reconstruction_weight, self.match_weight]
 
     class SeparateDecoder(DxToV):
         """Use a separate network for x,dx -> v instead of taking the inverse"""
