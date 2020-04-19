@@ -553,15 +553,15 @@ class PushAgainstWallEnv(PybulletEnv):
             self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.55, -0.25, wall_z],
                                          p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
                                          globalScaling=0.8))
-        elif self.level == 2:
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.5, 0.25, wall_z],
-                                         p.getQuaternionFromEuler([0, 0, math.pi / 4]), useFixedBase=True,
-                                         globalScaling=0.8))
         elif self.level == 3:
             self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.3, 0.25, wall_z],
                                          p.getQuaternionFromEuler([0, 0, -math.pi / 4]), useFixedBase=True,
                                          globalScaling=0.8))
-        elif self.level == 4:
+        elif self.level == 5:
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.5, 0.25, wall_z],
+                                         p.getQuaternionFromEuler([0, 0, math.pi / 4]), useFixedBase=True,
+                                         globalScaling=0.8))
+        elif self.level == 6:
             self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-1, 0.5, wall_z],
                                          p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
             self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0, -0.32, wall_z],
