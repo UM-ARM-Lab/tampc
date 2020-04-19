@@ -108,6 +108,17 @@ class InvariantTransform(LearnableParameterizedModel):
             if log:
                 logger.debug("".join(log_msg))
 
+    def _record_latent_dist(self, X, U, Y):
+        with torch.no_grad():
+            Z = self.xu_to_z(X, U)
+            V = self.get_v(X, Y, Z)
+            Z_mag = Z.norm(dim=1)
+            V_mag = V.norm(dim=1)
+            self.writer.add_scalar("latent/z_norm_mean", Z_mag.mean(), self.step)
+            self.writer.add_scalar("latent/z_norm_std", Z_mag.std(), self.step)
+            self.writer.add_scalar("latent/v_norm_mean", V_mag.mean(), self.step)
+            self.writer.add_scalar("latent/v_norm_std", V_mag.std(), self.step)
+
     @abc.abstractmethod
     def _move_data_out_of_distribution(self, data, move_params):
         """Move the data out of the training distribution with given parameters to allow evaluation
@@ -202,9 +213,6 @@ class InvariantTransform(LearnableParameterizedModel):
             weights = [float(w) / total_weight for w in weights]
         return tuple(l * w for l, w in zip(losses, weights))
 
-    def _init_batch_losses(self):
-        return [[] for _ in self.loss_names()]
-
     def learn_model(self, max_epoch, batch_N=500):
         self.writer = SummaryWriter(flush_secs=20, comment="{}_batch{}".format(self.name, batch_N))
 
@@ -233,6 +241,7 @@ class InvariantTransform(LearnableParameterizedModel):
                 self.optimizer.step()
                 self.optimizer.zero_grad()
 
+                self._record_latent_dist(X, U, Y)
                 self._record_metrics(self.writer, losses)
                 self.step += 1
 
@@ -303,16 +312,9 @@ class RexTraining(InvariantTransform):
                 self.optimizer.zero_grad()
 
                 with torch.no_grad():
-                    Z = self.xu_to_z(X, U)
-                    V = self.get_v(X, Y, Z)
-                    Z_mag = Z.norm(dim=1)
-                    V_mag = V.norm(dim=1)
-                    self.writer.add_scalar("latent/z_norm_mean", Z_mag.mean(), self.step)
-                    self.writer.add_scalar("latent/z_norm_std", Z_mag.std(), self.step)
-                    self.writer.add_scalar("latent/v_norm_mean", V_mag.mean(), self.step)
-                    self.writer.add_scalar("latent/v_norm_std", V_mag.std(), self.step)
                     for name, v in zip(self.loss_names(), var_across_env):
                         self.writer.add_scalar("rex/{}".format(name), v.item(), self.step)
+                    self._record_latent_dist(X, U, Y)
                     self._record_metrics(self.writer, losses)
                 self.step += 1
 
@@ -382,6 +384,9 @@ class InvariantNeighboursTransform(InvariantTransform):
 
         self._evaluate_neighbourhood(self.neighbourhood, consider_only_continuous=self.train_on_continuous_data)
         self._evaluate_neighbourhood(self.neighbourhood_validation)
+
+    def _init_batch_losses(self):
+        return [[] for _ in self.loss_names()]
 
     def _evaluate_neighbourhood(self, neighbourhood, consider_only_continuous=False):
         if consider_only_continuous:
