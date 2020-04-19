@@ -53,6 +53,9 @@ def get_env(mode=p.GUI, level=0, log_video=False):
     init_pusher = 0
     goal_pos = [0.85, -0.35]
     # goal_pos = [-0.5, 0.12]
+    if level is 1:
+        init_block_pos = [-0.8, 0.23]
+        init_block_yaw = -math.pi / 5
     if level is 2:
         init_block_pos = [0.3, 0.6]
         init_block_yaw = -3 * math.pi / 4
@@ -235,9 +238,9 @@ def get_transform(env, ds, use_tsf):
     elif use_tsf is UseTsf.SEP_DEC:
         return LearnedTransform.SeparateDecoder(ds, d, name="_s0")
     elif use_tsf is UseTsf.EXTRACT:
-        return LearnedTransform.ExtractState(ds, d, name="_s0")
+        return LearnedTransform.ExtractState(ds, d, name="percentage_loss_s0")
     elif use_tsf is UseTsf.REX_EXTRACT:
-        return LearnedTransform.RexExtract(ds, d, name="_s0")
+        return LearnedTransform.RexExtract(ds, d, name="percentage_loss_s0")
     else:
         raise RuntimeError("Unrecgonized transform {}".format(use_tsf))
 
@@ -426,8 +429,8 @@ class OfflineDataCollection:
         return init_block_pos, init_block_yaw, init_pusher
 
     @staticmethod
-    def freespace(trials=20, trial_length=40, level=0):
-        env = get_env(p.DIRECT, level)
+    def freespace(trials=20, trial_length=40):
+        env = get_env(p.DIRECT, 0)
         u_min, u_max = env.get_control_bounds()
         ctrl = controller.FullRandomController(env.nu, u_min, u_max)
         # use mode p.GUI to see what the trials look like
@@ -1514,24 +1517,24 @@ class Visualize:
 
 if __name__ == "__main__":
     level = 0
-    ut = UseTsf.REX_EXTRACT
+    ut = UseTsf.NO_TRANSFORM
     neg_test_file = "pushing/test_sufficiency_3_failed_test_140891.mat"
-    # OfflineDataCollection.freespace(trials=200, trial_length=50, level=0)
+    # OfflineDataCollection.freespace(trials=200, trial_length=50)
     # OfflineDataCollection.push_against_wall_recovery()
     # OfflineDataCollection.model_selector_evaluation()
     # Visualize.dist_diff_nominal_and_bug_trap(ut, neg_test_file)
     # Visualize.model_actions_at_given_state()
     # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
     # Visualize.state_sequence(1, "pushing/predetermined_bug_trap.mat", step=3)
-    Visualize.state_sequence(3, "pushing/test_sufficiency_3_REX_EXTRACT_DecisionTreeClassifier_0.mat",
-                             restrict_slice=slice(20, 90), step=5)
+    # Visualize.state_sequence(3, "pushing/test_sufficiency_3_REX_EXTRACT_DecisionTreeClassifier_0.mat",
+    #                          restrict_slice=slice(20, 90), step=5)
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_model_selector(use_tsf=ut, test_file=neg_test_file)
     # evaluate_ctrl_sampler()
-    # for seed in range(5):
-    #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
-    #                                                    test_traj=neg_test_file)
+    for seed in range(5):
+        test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
+                                                       test_traj=neg_test_file)
 
     # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.NONE,
     #                            override=True, full_evaluation=False, plot_model_error=True, relearn_dynamics=True)
@@ -1539,7 +1542,7 @@ if __name__ == "__main__":
     #                            online_adapt=OnlineAdapt.GP_KERNEL, override=True)
 
     # test_online_model()
-    # for seed in range(1):
+    # for seed in range(5):
     #     Learn.invariant(ut, seed=seed, name="percentage_loss", MAX_EPOCH=3000, BATCH_SIZE=2048)
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")
