@@ -636,22 +636,25 @@ class PushAgainstWallEnv(PybulletEnv):
         self._dd.draw_text('user{}'.format(location_index), text, location_index, left_offset)
 
     # --- set current state
-    def set_state(self, state, action=None):
+    def set_state(self, state, action=None, block_id=None):
         assert state.shape[0] == self.nx
+        if block_id is None:
+            block_id = self.blockId
         prev_block_pose = p.getBasePositionAndOrientation(self.blockId)
         zb = prev_block_pose[0][2]
 
         block_pose = self.get_block_pose(state)
         # keep previous height rather than reset since we don't know what's the height at ground level
-        p.resetBasePositionAndOrientation(self.blockId, (block_pose[0], block_pose[1], zb),
+        p.resetBasePositionAndOrientation(block_id, (block_pose[0], block_pose[1], zb),
                                           p.getQuaternionFromEuler([0, 0, block_pose[2]]))
 
-        pusher_pos = self.get_pusher_pos(state, action)
-        p.resetBasePositionAndOrientation(self.pusherId, (pusher_pos[0], pusher_pos[1], _PUSHER_MID),
-                                          p.getQuaternionFromEuler([0, 0, 0]))
         self.state = state
         self._draw_state()
-        self._draw_action(action)
+        if action is not None:
+            pusher_pos = self.get_pusher_pos(state, action)
+            p.resetBasePositionAndOrientation(self.pusherId, (pusher_pos[0], pusher_pos[1], _PUSHER_MID),
+                                              p.getQuaternionFromEuler([0, 0, 0]))
+            self._draw_action(action)
 
     # --- observing state from simulation
     def _obs(self):

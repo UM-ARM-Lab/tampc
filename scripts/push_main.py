@@ -1357,6 +1357,32 @@ class Learn:
 
 
 class Visualize:
+    @staticmethod
+    def _state_sequence(env, X, u_0, step):
+        X = X.cpu().numpy()
+        N = len(X)
+        env.set_state(X[-1], u_0)
+        final_rgba = np.array(p.getVisualShapeData(env.blockId)[0][7])
+        start_rgba = np.array([0.0, 0.1, 0.0, 0.1])
+
+        for i in range(0, N - 1, step):
+            block_id = p.loadURDF(os.path.join(cfg.ROOT_DIR, "block_big.urdf"), env.initBlockPos,
+                                  p.getQuaternionFromEuler([0, 0, env.initBlockYaw]))
+            env.set_state(X[i], block_id=block_id)
+            t = float(i) / (N - 1)
+            rgba = start_rgba + t * (final_rgba - start_rgba)
+            p.changeVisualShape(block_id, -1, rgbaColor=rgba)
+        input('wait for input')
+
+    @staticmethod
+    def state_sequence(level, file, restrict_slice=None, step=3):
+        env = get_env(mode=p.GUI, level=level)
+        ds, _ = get_ds(env, file, validation_ratio=0.)
+        XU, _, _ = ds.training_set(original=True)
+        X, U = torch.split(XU, ds.original_config().nx, dim=1)
+        if restrict_slice:
+            X = X[restrict_slice]
+        Visualize._state_sequence(env, X, U[0], step)
 
     @staticmethod
     def _dataset_training_dist(env, ds, z_names=None, v_names=None, fs=(None, None, None), axes=(None, None, None)):
@@ -1488,7 +1514,7 @@ class Visualize:
 
 if __name__ == "__main__":
     level = 0
-    ut = UseTsf.EXTRACT
+    ut = UseTsf.REX_EXTRACT
     neg_test_file = "pushing/test_sufficiency_3_failed_test_140891.mat"
     # OfflineDataCollection.freespace(trials=200, trial_length=50, level=0)
     # OfflineDataCollection.push_against_wall_recovery()
@@ -1496,6 +1522,9 @@ if __name__ == "__main__":
     # Visualize.dist_diff_nominal_and_bug_trap(ut, neg_test_file)
     # Visualize.model_actions_at_given_state()
     # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
+    # Visualize.state_sequence(1, "pushing/predetermined_bug_trap.mat", step=3)
+    Visualize.state_sequence(3, "pushing/test_sufficiency_3_REX_EXTRACT_DecisionTreeClassifier_0.mat",
+                             restrict_slice=slice(20, 90), step=5)
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_model_selector(use_tsf=ut, test_file=neg_test_file)
@@ -1510,7 +1539,7 @@ if __name__ == "__main__":
     #                            online_adapt=OnlineAdapt.GP_KERNEL, override=True)
 
     # test_online_model()
-    for seed in range(1):
-        Learn.invariant(ut, seed=seed, name="percentage_loss", MAX_EPOCH=3000, BATCH_SIZE=500)
+    # for seed in range(1):
+    #     Learn.invariant(ut, seed=seed, name="percentage_loss", MAX_EPOCH=3000, BATCH_SIZE=2048)
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")
