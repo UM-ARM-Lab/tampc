@@ -272,14 +272,16 @@ class LearnedTransform:
             reconstruction = torch.norm(y_reconstruct - Y, dim=1)
             # mse loss
             mse_loss = torch.norm(yhat - Y, dim=1)
-            return mse_loss, reconstruction, match_decoder
+
+            return mse_loss, reconstruction, match_decoder, reconstruction / Y.norm(
+                dim=1).mean(), match_decoder / v.norm(dim=1).mean()
 
         @staticmethod
         def loss_names():
-            return "mse_loss", "reconstruction", "match_decoder"
+            return "mse_loss", "reconstruction", "match_decoder", "percent_reconstruction", "percent_match"
 
         def loss_weights(self):
-            return [self.mse_weight, self.reconstruction_weight, self.match_weight]
+            return [self.mse_weight, self.reconstruction_weight, self.match_weight, 0, 0]
 
     class SeparateDecoder(DxToV):
         """Use a separate network for x,dx -> v instead of taking the inverse"""
