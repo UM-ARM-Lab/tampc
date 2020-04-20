@@ -775,7 +775,8 @@ def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTsf.COORD, relearn_dy
 
 
 def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_eval=True, plot_online_update=False,
-                                                   use_gp=True,
+                                                   use_gp=True, allow_update=False, recover_adjust=True,
+                                                   always_use_local_model=False,
                                                    use_tsf=UseTsf.COORD, test_traj=None, **kwargs):
     if plot_model_eval:
         env = get_env(p.DIRECT)
@@ -785,11 +786,12 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
     logger.info("initial random seed %d", rand.seed(seed))
 
     dynamics, _, _, _ = get_mixed_model(env, use_tsf=use_tsf, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD,
-                                        allow_update=plot_online_update, **kwargs)
-    dynamics_gp, ds, ds_wall, train_slice = get_mixed_model(env, use_tsf=use_tsf, allow_update=plot_online_update,
+                                        allow_update=allow_update or plot_online_update, **kwargs)
+    dynamics_gp, ds, ds_wall, train_slice = get_mixed_model(env, use_tsf=use_tsf,
+                                                            allow_update=allow_update or plot_online_update,
                                                             **kwargs)
     dss = [ds, ds_wall]
-    selector = get_selector(dss, use_tsf.name)
+    selector = get_selector(dss, use_tsf.name) if not always_use_local_model else mode_selector.AlwaysSelectLocal()
 
     pm = dynamics_gp.prior
     if plot_model_eval:
@@ -965,7 +967,8 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
     ctrl = online_controller.OnlineMPPI(dynamics_gp if use_gp else dynamics, ds.original_config(), mode_select=selector,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
     ctrl.set_goal(env.goal)
-    ctrl.create_nom_traj_manager(dss, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS)
+    ctrl.create_nom_traj_manager(dss,
+                                 nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS if recover_adjust else NominalTrajFrom.NO_ADJUSTMENT)
 
     name = get_full_controller_name(pm, ctrl, use_tsf.name)
 
@@ -973,7 +976,10 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
     env.draw_user_text(selector.name, 13, left_offset=-1.5)
     sim = block_push.InteractivePush(env, ctrl, num_frames=250, plot=False, save=True, stop_when_done=False)
     seed = rand.seed(seed)
-    sim.run(seed, 'test_sufficiency_{}_{}_{}_{}'.format(level, use_tsf.name, selector.name, seed))
+    run_name = 'test_sufficiency_{}_{}_{}_{}'.format(level, use_tsf.name, selector.name, seed)
+    if allow_update:
+        run_name += "_online_adapt"
+    sim.run(seed, run_name)
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
     plt.ioff()
     plt.show()
@@ -1515,6 +1521,196 @@ class Visualize:
         input('do visualization')
 
 
+class EvaluateTask:
+    class Graph:
+        def __init__(self):
+            from collections import defaultdict
+            self.nodes = set()
+            self.edges = defaultdict(list)
+            self.distances = {}
+
+        def add_node(self, value):
+            self.nodes.add(value)
+
+        def add_edge(self, from_node, to_node, distance):
+            self.edges[from_node].append(to_node)
+            self.distances[(from_node, to_node)] = distance
+
+    @staticmethod
+    def dijsktra(graph, initial):
+        visited = {initial: 0}
+        path = {}
+
+        nodes = set(graph.nodes)
+
+        while nodes:
+            min_node = None
+            for node in nodes:
+                if node in visited:
+                    if min_node is None:
+                        min_node = node
+                    elif visited[node] < visited[min_node]:
+                        min_node = node
+
+            if min_node is None:
+                break
+
+            nodes.remove(min_node)
+            current_weight = visited[min_node]
+
+            for edge in graph.edges[min_node]:
+                weight = current_weight + graph.distances[(min_node, edge)]
+                if edge not in visited or weight < visited[edge]:
+                    visited[edge] = weight
+                    path[edge] = min_node
+
+        return visited, path
+
+    @staticmethod
+    def _closest_distance_to_goal(file, level, visualize=True, nodes_per_side=100):
+        from sklearn.preprocessing import MinMaxScaler
+        env = get_env(p.GUI if visualize else p.DIRECT, level=level)
+        ds, _ = get_ds(env, file, validation_ratio=0.)
+        XU, _, _ = ds.training_set(original=True)
+        X, U = torch.split(XU, ds.original_config().nx, dim=1)
+
+        if level is 1:
+            min_pos = [-0.1, -1.0]
+            max_pos = [1.3, 0.5]
+        elif level is 3:
+            min_pos = [-0.5, -1.0]
+            max_pos = [1.3, 1.0]
+        else:
+            raise RuntimeError("Unspecified range for level {}".format(level))
+
+        scaler = MinMaxScaler(feature_range=(0, nodes_per_side - 1))
+        scaler.fit(np.array([min_pos, max_pos]))
+
+        reached_states = X[:, :2].cpu().numpy()
+        goal_pos = env.goal[:2]
+
+        lower_bound_dist = np.linalg.norm((reached_states - goal_pos), axis=1).min()
+        # we expect there not to be walls between us if the minimum distance is this small
+        if lower_bound_dist < 0.2:
+            return lower_bound_dist
+
+        def node_to_pos(node):
+            return scaler.inverse_transform([node])[0]
+            # return float(node[0]) / nodes_per_side + min_pos[0], float(node[1]) / nodes_per_side + min_pos[1]
+
+        def pos_to_node(pos):
+            pair = scaler.transform([pos])[0]
+            node = tuple(int(round(v)) for v in pair)
+            return node
+            # return int(round((pos[0] - min_pos[0]) * nodes_per_side)), int(
+            #     round((pos[1] - min_pos[1]) * nodes_per_side))
+
+        z = env.initPusherPos[2]
+        # draw search boundaries
+        rgb = [0, 0, 0]
+        p.addUserDebugLine([min_pos[0], min_pos[1], z], [max_pos[0], min_pos[1], z], rgb)
+        p.addUserDebugLine([max_pos[0], min_pos[1], z], [max_pos[0], max_pos[1], z], rgb)
+        p.addUserDebugLine([max_pos[0], max_pos[1], z], [min_pos[0], max_pos[1], z], rgb)
+        p.addUserDebugLine([min_pos[0], max_pos[1], z], [min_pos[0], min_pos[1], z], rgb)
+
+        # draw previous trajectory
+        rgb = [0, 0, 1]
+        start = reached_states[0, 0], reached_states[0, 1], z
+        for i in range(1, len(reached_states)):
+            next = reached_states[i, 0], reached_states[i, 1], z
+            p.addUserDebugLine(start, next, rgb)
+            start = next
+
+        # try to load it if possible
+        fullname = os.path.join(cfg.DATA_DIR, 'ok{}_{}.pkl'.format(level, nodes_per_side))
+        if os.path.exists(fullname):
+            with open(fullname, 'rb') as f:
+                ok_nodes = pickle.load(f)
+                logger.info("loaded ok nodes from %s", fullname)
+        else:
+            ok_nodes = [[None for _ in range(nodes_per_side)] for _ in range(nodes_per_side)]
+            orientation = p.getQuaternionFromEuler([0, 0, 0])
+            pointer = p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), (0, 0, z))
+            # discretize positions and show goal states
+            xs = np.linspace(min_pos[0], max_pos[0], nodes_per_side)
+            ys = np.linspace(min_pos[1], max_pos[1], nodes_per_side)
+            for i, x in enumerate(xs):
+                for j, y in enumerate(ys):
+                    p.resetBasePositionAndOrientation(pointer, (x, y, z), orientation)
+                    c = p.getClosestPoints(pointer, env.walls[0], 0)
+                    if not c:
+                        n = pos_to_node((x, y))
+                        ok_nodes[i][j] = n
+
+        with open(fullname, 'wb') as f:
+            pickle.dump(ok_nodes, f)
+            logger.info("saved ok nodes to %s", fullname)
+
+        # distance 1 step along x
+        dxx = (max_pos[0] - min_pos[0]) / nodes_per_side
+        dyy = (max_pos[1] - min_pos[1]) / nodes_per_side
+        neighbours = [[-1, 0], [0, 1], [1, 0], [0, -1]]
+        distances = [dxx, dyy, dxx, dyy]
+        # create graph and do search on it based on environment obstacles
+        g = EvaluateTask.Graph()
+        for i in range(nodes_per_side):
+            for j in range(nodes_per_side):
+                u = ok_nodes[i][j]
+                if u is None:
+                    continue
+                g.add_node(u)
+                for dxy, dist in zip(neighbours, distances):
+                    ii = i + dxy[0]
+                    jj = j + dxy[1]
+                    if ii < 0 or ii >= nodes_per_side:
+                        continue
+                    if jj < 0 or jj >= nodes_per_side:
+                        continue
+                    v = ok_nodes[ii][jj]
+                    if v is not None:
+                        g.add_edge(u, v, dist)
+
+        goal_node = pos_to_node(goal_pos)
+        visited, path = EvaluateTask.dijsktra(g, goal_node)
+        # find min across visited states
+        min_dist = 100
+        min_node = None
+        for xy in reached_states:
+            n = pos_to_node(xy)
+            if n in visited and visited[n] < min_dist:
+                min_dist = visited[n]
+                min_node = n
+
+        # display minimum path to goal
+        rgb = [1, 0, 0]
+        min_xy = node_to_pos(min_node)
+        start = min_xy[0], min_xy[1], z
+        while min_node != goal_node:
+            next_node = path[min_node]
+            next_xy = node_to_pos(next_node)
+            next = next_xy[0], next_xy[1], z
+            p.addUserDebugLine(start, next, rgb)
+            start = next
+            min_node = next_node
+
+        print('min dist: {} lower bound: {}'.format(min_dist, lower_bound_dist))
+        return min_dist
+
+    @staticmethod
+    def closest_distance_to_goal_whole_set(prefix, **kwargs):
+        i = len("test_sufficiency_")
+        level = int(prefix[i])
+        trials = [filename for filename in os.listdir(os.path.join(cfg.DATA_DIR, "pushing")) if
+                  filename.startswith(prefix)]
+        dists = []
+        for i, trial in enumerate(trials):
+            dists.append(
+                EvaluateTask._closest_distance_to_goal("pushing/{}".format(trial), visualize=i == 0, level=level,
+                                                       **kwargs))
+        logger.info(dists)
+        logger.info("mean {:.2f} std {:.2f} cm".format(np.mean(dists) * 10, np.std(dists) * 10))
+
+
 if __name__ == "__main__":
     level = 0
     ut = UseTsf.NO_TRANSFORM
@@ -1526,20 +1722,26 @@ if __name__ == "__main__":
     # Visualize.model_actions_at_given_state()
     # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
     # Visualize.state_sequence(1, "pushing/predetermined_bug_trap.mat", step=3)
-    # Visualize.state_sequence(3, "pushing/test_sufficiency_3_REX_EXTRACT_DecisionTreeClassifier_0.mat",
-    #                          restrict_slice=slice(20, 90), step=5)
+    Visualize.state_sequence(1, "pushing/test_sufficiency_1_NO_TRANSFORM_AlwaysSelectLocal_0_online_adapt.mat",
+                             restrict_slice=slice(0, 50), step=5)
+
+    # EvaluateTask.closest_distance_to_goal_whole_set('test_sufficiency_3_NO_TRANSFORM_AlwaysSelectLocal')
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_model_selector(use_tsf=ut, test_file=neg_test_file)
     # evaluate_ctrl_sampler()
-    for seed in range(5):
-        test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
-                                                       test_traj=neg_test_file)
+    # for seed in range(5):
+    #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=3, plot_model_eval=False, use_tsf=ut,
+    #                                                    test_traj=neg_test_file)
+
+    # baseline online model adaption method
+    # for seed in range(5):
+    #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
+    #                                                    always_use_local_model=True, allow_update=True,
+    #                                                    recover_adjust=False)
 
     # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.NONE,
     #                            override=True, full_evaluation=False, plot_model_error=True, relearn_dynamics=True)
-    # evaluate_freespace_control(level=level, use_tsf=UseTransform.COORD,
-    #                            online_adapt=OnlineAdapt.GP_KERNEL, override=True)
 
     # test_online_model()
     # for seed in range(5):
