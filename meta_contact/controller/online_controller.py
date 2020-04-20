@@ -137,7 +137,7 @@ class NominalTrajFrom(Enum):
     RANDOM = 0
     ROLLOUT_FROM_RECOVERY_STATES = 1
     RECOVERY_ACTIONS = 2
-    ROLLOUT_WITH_ORIG_ACTIONS = 3
+    NO_ADJUSTMENT = 3
 
 
 class MPPINominalTrajManager:
@@ -171,7 +171,7 @@ class MPPINominalTrajManager:
         self.Z_train = self.nominal_ds.preprocessor.transform_x(torch.cat((X_train, U_zero), dim=1))
 
     def update_nominal_trajectory(self, mode, state):
-        if mode is 0 or self.nom_traj_from is NominalTrajFrom.ROLLOUT_WITH_ORIG_ACTIONS:
+        if mode is 0 or self.nom_traj_from is NominalTrajFrom.NO_ADJUSTMENT:
             return False
         adjusted_trajectory = False
         # TODO generalize this to multiple modes
