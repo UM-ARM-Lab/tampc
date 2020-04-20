@@ -64,6 +64,10 @@ def get_env(mode=p.GUI, level=0, log_video=False):
         init_block_pos = [0., 0.6]
         init_block_yaw = -math.pi / 4
         goal_pos = [-0.2, -0.45]
+    if level is 4:
+        init_block_pos = [0.6, -0.25]
+        init_block_yaw = -3.3 * math.pi / 4
+        goal_pos = [-0.5, 0.05]
 
     env_opts = {
         'mode': mode,
@@ -776,7 +780,7 @@ def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTsf.COORD, relearn_dy
 
 def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_eval=True, plot_online_update=False,
                                                    use_gp=True, allow_update=False, recover_adjust=True,
-                                                   always_use_local_model=False,
+                                                   selector=None,
                                                    use_tsf=UseTsf.COORD, test_traj=None, **kwargs):
     if plot_model_eval:
         env = get_env(p.DIRECT)
@@ -791,7 +795,7 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
                                                             allow_update=allow_update or plot_online_update,
                                                             **kwargs)
     dss = [ds, ds_wall]
-    selector = get_selector(dss, use_tsf.name) if not always_use_local_model else mode_selector.AlwaysSelectLocal()
+    selector = get_selector(dss, use_tsf.name) if selector is None else selector
 
     pm = dynamics_gp.prior
     if plot_model_eval:
@@ -1681,6 +1685,9 @@ class EvaluateTask:
                 min_dist = visited[n]
                 min_node = n
 
+        if min_node is None:
+            print('min node outside search region, return lower bound')
+            return lower_bound_dist * 1.2
         # display minimum path to goal
         rgb = [1, 0, 0]
         min_xy = node_to_pos(min_node)
@@ -1713,7 +1720,7 @@ class EvaluateTask:
 
 if __name__ == "__main__":
     level = 0
-    ut = UseTsf.NO_TRANSFORM
+    ut = UseTsf.COORD
     neg_test_file = "pushing/test_sufficiency_3_failed_test_140891.mat"
     # OfflineDataCollection.freespace(trials=200, trial_length=50)
     # OfflineDataCollection.push_against_wall_recovery()
@@ -1722,10 +1729,10 @@ if __name__ == "__main__":
     # Visualize.model_actions_at_given_state()
     # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
     # Visualize.state_sequence(1, "pushing/predetermined_bug_trap.mat", step=3)
-    Visualize.state_sequence(1, "pushing/test_sufficiency_1_NO_TRANSFORM_AlwaysSelectLocal_0_online_adapt.mat",
-                             restrict_slice=slice(0, 50), step=5)
+    # Visualize.state_sequence(1, "pushing/test_sufficiency_1_NO_TRANSFORM_AlwaysSelectLocal_0_online_adapt.mat",
+    #                          restrict_slice=slice(0, 50), step=5)
 
-    # EvaluateTask.closest_distance_to_goal_whole_set('test_sufficiency_3_NO_TRANSFORM_AlwaysSelectLocal')
+    # EvaluateTask.closest_distance_to_goal_whole_set('test_sufficiency_1_NO_TRANSFORM_AlwaysSelectLocal')
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_model_selector(use_tsf=ut, test_file=neg_test_file)
@@ -1735,9 +1742,14 @@ if __name__ == "__main__":
     #                                                    test_traj=neg_test_file)
 
     # baseline online model adaption method
+    for seed in range(5):
+        test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
+                                                       selector=mode_selector.AlwaysSelectLocal(), allow_update=True,
+                                                       recover_adjust=False)
+    # baseline no model adaption
     # for seed in range(5):
     #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
-    #                                                    always_use_local_model=True, allow_update=True,
+    #                                                    selector=mode_selector.AlwaysSelectLocal(),
     #                                                    recover_adjust=False)
 
     # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.NONE,
