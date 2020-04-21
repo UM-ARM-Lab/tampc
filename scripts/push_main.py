@@ -207,7 +207,7 @@ class UseTsf(enum.Enum):
     ABLATE_RELAX_ENCODER = 7
     ABLATE_NO_V = 8
     COORD_LEARN_DYNAMICS = 9
-    COMPRESS_AND_PART = 10
+    FEEDFORWARD_PART = 10
     DX_TO_V = 11
     SEP_DEC = 12
     EXTRACT = 13
@@ -235,12 +235,12 @@ def get_transform(env, ds, use_tsf):
         return AblationOnTransform.RelaxEncoder(ds, d, name="_s0")
     elif use_tsf is UseTsf.ABLATE_NO_V:
         return AblationOnTransform.UseDecoderForDynamics(ds, d, name="_s3"),
-    elif use_tsf is UseTsf.COMPRESS_AND_PART:
+    elif use_tsf is UseTsf.FEEDFORWARD_PART:
         return LearnedTransform.LearnedPartialPassthrough(ds, d, name="_s0")
     elif use_tsf is UseTsf.DX_TO_V:
         return LearnedTransform.DxToV(ds, d, name="_s0")
     elif use_tsf is UseTsf.SEP_DEC:
-        return LearnedTransform.SeparateDecoder(ds, d, name="_s0")
+        return LearnedTransform.SeparateDecoder(ds, d, name="ablation_s2")
     elif use_tsf is UseTsf.EXTRACT:
         return LearnedTransform.ExtractState(ds, d, name="percentage_loss_s0")
     elif use_tsf is UseTsf.REX_EXTRACT:
@@ -1720,7 +1720,7 @@ class EvaluateTask:
 
 if __name__ == "__main__":
     level = 0
-    ut = UseTsf.COORD
+    ut = UseTsf.EXTRACT
     neg_test_file = "pushing/test_sufficiency_3_failed_test_140891.mat"
     # OfflineDataCollection.freespace(trials=200, trial_length=50)
     # OfflineDataCollection.push_against_wall_recovery()
@@ -1729,27 +1729,27 @@ if __name__ == "__main__":
     # Visualize.model_actions_at_given_state()
     # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
     # Visualize.state_sequence(1, "pushing/predetermined_bug_trap.mat", step=3)
-    # Visualize.state_sequence(1, "pushing/test_sufficiency_1_NO_TRANSFORM_AlwaysSelectLocal_0_online_adapt.mat",
-    #                          restrict_slice=slice(0, 50), step=5)
+    # Visualize.state_sequence(4, "pushing/test_sufficiency_4_NO_TRANSFORM_AlwaysSelectNominal_0.mat",
+    #                          restrict_slice=slice(0, 40), step=5)
 
     # EvaluateTask.closest_distance_to_goal_whole_set('test_sufficiency_1_NO_TRANSFORM_AlwaysSelectLocal')
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_model_selector(use_tsf=ut, test_file=neg_test_file)
     # evaluate_ctrl_sampler()
-    # for seed in range(5):
-    #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=3, plot_model_eval=False, use_tsf=ut,
-    #                                                    test_traj=neg_test_file)
+    for seed in range(5):
+        test_local_model_sufficiency_for_escaping_wall(seed=seed, level=4, plot_model_eval=False, use_tsf=ut,
+                                                       test_traj=neg_test_file)
 
     # baseline online model adaption method
-    for seed in range(5):
-        test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
-                                                       selector=mode_selector.AlwaysSelectLocal(), allow_update=True,
-                                                       recover_adjust=False)
-    # baseline no model adaption
     # for seed in range(5):
     #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
-    #                                                    selector=mode_selector.AlwaysSelectLocal(),
+    #                                                    selector=mode_selector.AlwaysSelectLocal(), allow_update=True,
+    #                                                    recover_adjust=False)
+    # baseline no model adaption
+    # for seed in range(5):
+    #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=4, plot_model_eval=False, use_tsf=ut,
+    #                                                    selector=mode_selector.AlwaysSelectNominal(),
     #                                                    recover_adjust=False)
 
     # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.NONE,
@@ -1757,6 +1757,6 @@ if __name__ == "__main__":
 
     # test_online_model()
     # for seed in range(5):
-    #     Learn.invariant(ut, seed=seed, name="percentage_loss", MAX_EPOCH=3000, BATCH_SIZE=2048)
+    #     Learn.invariant(ut, seed=seed, name="ablation", MAX_EPOCH=3000, BATCH_SIZE=500)
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")

@@ -663,7 +663,7 @@ class LearnedTransform:
                 y = y[:, self.split_at:]
             return y
 
-    class LearnedPartialPassthrough(CompressionReward):
+    class LearnedPartialPassthrough(ParameterizeDecoder):
         """Don't pass through all of x to g; learn which parts to pass to g and which to h"""
 
         def __init__(self, ds, device, *args, nz=5, nv=5, reduced_decoder_input_dim=2, **kwargs):
@@ -684,7 +684,31 @@ class LearnedTransform:
                     'linear dynamics': self.linear_model_producer.model, 'x extractor': self.x_extractor}
 
         def _name_prefix(self):
-            return 'extract_passthrough_{}'.format(self.reduced_decoder_input_dim)
+            return 'feedforward_passthrough_{}'.format(self.reduced_decoder_input_dim)
+
+        def _evaluate_batch_apply_tsf(self, X, U, tsf):
+            assert tsf is TransformToUse.LATENT_SPACE
+            z = self.xu_to_z(X, U)
+            A = self.linear_dynamics(z)
+            v = linalg.batch_batch_product(z, A.transpose(-1, -2))
+            yhat = self.get_dx(X, v)
+            return z, A, v, yhat
+
+        def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+            z, A, v, yhat = self._evaluate_batch_apply_tsf(X, U, tsf)
+            # reconstruction of decoder
+            reconstruction = torch.norm(yhat - Y, dim=1)
+            # mse loss
+            mse_loss = torch.norm(yhat - Y, dim=1)
+
+            return mse_loss, reconstruction,  reconstruction / Y.norm(dim=1).mean(),
+
+        @staticmethod
+        def loss_names():
+            return "mse_loss", "reconstruction", "percent_reconstruction"
+
+        def loss_weights(self):
+            return [0, 0, 1]
 
         @tensor_utils.ensure_2d_input
         def get_dx(self, x, v):
