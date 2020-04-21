@@ -10,9 +10,9 @@ import pandas as pd
 total_epoch = 3000
 
 basedir = '/home/zhsh/Documents/results/quals/learning results/'
-series = ['rex', 'extract']
+series = ['rex', 'extract', 'no extractor', 'feedforward']
 
-series_names = {'rex': 'full', 'extract': 'w/o REx'}
+series_names = {series[0]: 'full', series[1]: 'w/o REx', series[2]: 'w/o $h_\omega$', series[3]: 'feedforward'}
 loss_positions = {'match': 0, 'reconstruction': 1}
 dataset_positions = {'validation': 0, 'validation (50,50)': 1, 'test0': 2}
 to_plot = []
@@ -59,6 +59,6 @@ for dataset, pos in dataset_positions.items():
 axes[0, 0].set_ylabel('match loss')
 axes[1, 0].set_ylabel('reconstruction loss')
 axes[1, 1].set_xlabel('epochs')
-axes[0, 0].legend()
+axes[1, 0].legend()
 
 plt.show()
