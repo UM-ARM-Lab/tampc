@@ -17,7 +17,7 @@ from arm_pytorch_utilities import preprocess
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.model import make
 from meta_contact.controller.online_controller import NominalTrajFrom
-from meta_contact.transform.block_push import CoordTransform, LearnedTransform, AblationOnTransform, \
+from meta_contact.transform.block_push import CoordTransform, LearnedTransform, \
     translation_generator
 from tensorboardX import SummaryWriter
 
@@ -56,18 +56,18 @@ def get_env(mode=p.GUI, level=0, log_video=False):
     if level is 1:
         init_block_pos = [-0.8, 0.23]
         init_block_yaw = -math.pi / 5
-    if level is 2:
-        init_block_pos = [0.3, 0.6]
-        init_block_yaw = -3 * math.pi / 4
-        goal_pos = [0.7, -0.35]
     elif level is 3:
         init_block_pos = [0., 0.6]
         init_block_yaw = -math.pi / 4
         goal_pos = [-0.2, -0.45]
-    if level is 4:
+    elif level is 4:
         init_block_pos = [0.6, -0.25]
         init_block_yaw = -3.3 * math.pi / 4
         goal_pos = [-0.5, 0.05]
+    elif level is 5:
+        init_block_pos = [0.3, 0.6]
+        init_block_yaw = -3 * math.pi / 4
+        goal_pos = [0.7, -0.35]
 
     env_opts = {
         'mode': mode,
@@ -153,9 +153,6 @@ def get_free_space_env_init(seed=1, **kwargs):
 def get_pre_invariant_tsf_preprocessor(use_tsf):
     if use_tsf is UseTsf.COORD:
         return preprocess.PytorchTransformer(preprocess.NullSingleTransformer())
-    elif use_tsf is UseTsf.COORD_LEARN_DYNAMICS:
-        return preprocess.PytorchTransformer(preprocess.NullSingleTransformer(),
-                                             preprocess.RobustMinMaxScaler(feature_range=[[0, 0, 0], [5, 5, 2.5]]))
     else:
         # TODO consider what transform to prepend for the other transforms
         return preprocess.PytorchTransformer(preprocess.NullSingleTransformer(),
@@ -191,9 +188,6 @@ def update_ds_with_transform(env, ds, use_tsf, evaluate_transform=True):
         #                                    preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
     # update the datasource to use transformed data
     untransformed_config = ds.update_preprocessor(preprocessor)
-    # TODO remove this after testing (only for current implementation of ground truth with compression)
-    if use_tsf is UseTsf.COORD_LEARN_DYNAMICS:
-        invariant_tsf.preprocessor = preprocessor.transforms[0]
     return untransformed_config, use_tsf.name, preprocessor
 
 
@@ -204,9 +198,7 @@ class UseTsf(enum.Enum):
     LINEAR_ENCODER = 3
     DECODER = 4
     DECODER_SINCOS = 5
-    ABLATE_RELAX_ENCODER = 7
-    ABLATE_NO_V = 8
-    COORD_LEARN_DYNAMICS = 9
+    # ones that actually work below
     FEEDFORWARD_PART = 10
     DX_TO_V = 11
     SEP_DEC = 12
@@ -221,8 +213,6 @@ def get_transform(env, ds, use_tsf):
         return None
     elif use_tsf is UseTsf.COORD:
         return CoordTransform.factory(env, ds)
-    elif use_tsf is UseTsf.COORD_LEARN_DYNAMICS:
-        return LearnedTransform.GroundTruthWithCompression(ds, d, name="_s0")
     elif use_tsf is UseTsf.YAW_SELECT:
         return LearnedTransform.ParameterizeYawSelect(ds, d, name="_s2")
     elif use_tsf is UseTsf.LINEAR_ENCODER:
@@ -231,18 +221,14 @@ def get_transform(env, ds, use_tsf):
         return LearnedTransform.ParameterizeDecoder(ds, d, name="_s9")
     elif use_tsf is UseTsf.DECODER_SINCOS:
         return LearnedTransform.ParameterizeDecoder(ds, d, name="sincos_s2", use_sincos_angle=True)
-    elif use_tsf is UseTsf.ABLATE_RELAX_ENCODER:
-        return AblationOnTransform.RelaxEncoder(ds, d, name="_s0")
-    elif use_tsf is UseTsf.ABLATE_NO_V:
-        return AblationOnTransform.UseDecoderForDynamics(ds, d, name="_s3"),
     elif use_tsf is UseTsf.FEEDFORWARD_PART:
         return LearnedTransform.LearnedPartialPassthrough(ds, d, name="_s0")
     elif use_tsf is UseTsf.DX_TO_V:
         return LearnedTransform.DxToV(ds, d, name="_s0")
     elif use_tsf is UseTsf.SEP_DEC:
-        return LearnedTransform.SeparateDecoder(ds, d, name="ablation_s2")
+        return LearnedTransform.SeparateDecoder(ds, d, name="ablation_s1")
     elif use_tsf is UseTsf.EXTRACT:
-        return LearnedTransform.ExtractState(ds, d, name="percentage_loss_s0")
+        return LearnedTransform.ExtractState(ds, d, name="more_percent_s1")
     elif use_tsf is UseTsf.REX_EXTRACT:
         return LearnedTransform.RexExtract(ds, d, name="percentage_loss_s0")
     else:
@@ -300,7 +286,7 @@ def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics):
         mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(ds.config).to(device=d)), ds,
                            name="dynamics_{}".format(tsf_name))
 
-        train_epochs = 200 if tsf_name is UseTsf.COORD_LEARN_DYNAMICS.name else 500
+        train_epochs = 500
         pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(),
                                      train_epochs=train_epochs)
     elif prior_class is prior.NoPrior:
@@ -1344,7 +1330,7 @@ def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
 
 class Learn:
     @staticmethod
-    def invariant(use_tsf=UseTsf.COORD_LEARN_DYNAMICS, seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, resume=False,
+    def invariant(use_tsf=UseTsf.DX_TO_V, seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, resume=False,
                   **kwargs):
         d, env, config, ds = get_free_space_env_init(seed)
         ds.update_preprocessor(get_pre_invariant_tsf_preprocessor(use_tsf))
@@ -1720,7 +1706,7 @@ class EvaluateTask:
 
 if __name__ == "__main__":
     level = 0
-    ut = UseTsf.EXTRACT
+    ut = UseTsf.SEP_DEC
     neg_test_file = "pushing/test_sufficiency_3_failed_test_140891.mat"
     # OfflineDataCollection.freespace(trials=200, trial_length=50)
     # OfflineDataCollection.push_against_wall_recovery()
@@ -1737,9 +1723,9 @@ if __name__ == "__main__":
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_model_selector(use_tsf=ut, test_file=neg_test_file)
     # evaluate_ctrl_sampler()
-    for seed in range(5):
-        test_local_model_sufficiency_for_escaping_wall(seed=seed, level=4, plot_model_eval=False, use_tsf=ut,
-                                                       test_traj=neg_test_file)
+    # for seed in range(5):
+    #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=5, plot_model_eval=False, use_tsf=ut,
+    #                                                    test_traj=neg_test_file)
 
     # baseline online model adaption method
     # for seed in range(5):
@@ -1756,7 +1742,7 @@ if __name__ == "__main__":
     #                            override=True, full_evaluation=False, plot_model_error=True, relearn_dynamics=True)
 
     # test_online_model()
-    # for seed in range(5):
-    #     Learn.invariant(ut, seed=seed, name="ablation", MAX_EPOCH=3000, BATCH_SIZE=500)
+    for seed in range(0, 5):
+        Learn.invariant(ut, seed=seed, name="refine", MAX_EPOCH=6000, BATCH_SIZE=500)
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")
