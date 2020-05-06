@@ -10,7 +10,7 @@ import pandas as pd
 total_epoch = 3000
 
 basedir = '/home/zhsh/Documents/results/quals/learning results/'
-series = ['rex', 'extract', 'no extractor', 'feedforward']
+series = ['rex', 'extract new 1', 'no extractor', 'feedforward']
 
 series_names = {series[0]: 'full', series[1]: 'w/o REx', series[2]: 'w/o $h_\omega$', series[3]: 'feedforward'}
 loss_positions = {'match': 0, 'reconstruction': 1}
@@ -21,7 +21,7 @@ for s in series:
     series_dir = os.path.join(basedir, s)
     files = os.listdir(series_dir)
     for f in files:
-        tag = f[f.index('percent_'):]
+        tag = f[f.index('-percent_'):]
         tag = tag.split('.')[0]
         tokens = tag.split('_')
 
