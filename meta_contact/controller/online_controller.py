@@ -114,20 +114,20 @@ class OnlineMPC(OnlineController):
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def __init__(self, *args, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
-        self.nom_traj_manager = None
+        self.recovery_traj_seeder = None
 
-    def create_nom_traj_manager(self, *args, **kwargs):
-        self.nom_traj_manager = MPPINominalTrajManager(self, *args, **kwargs)
+    def create_recovery_traj_seeder(self, *args, **kwargs):
+        self.recovery_traj_seeder = RecoveryTrajectorySeeder(self, *args, **kwargs)
 
     def _mpc_command(self, obs):
         return OnlineMPC._mpc_command(self, obs)
 
     def _compute_action(self, x):
-        assert self.nom_traj_manager is not None
+        assert self.recovery_traj_seeder is not None
         # use only state for dynamics_class selection; this way we can get dynamics_class before calculating action
         a = torch.zeros((1, self.nu), device=self.d, dtype=x.dtype)
         self.dynamics_class = self.gating.sample_class(x.view(1, -1), a).item()
-        self.nom_traj_manager.update_nominal_trajectory(self.dynamics_class, x)
+        self.recovery_traj_seeder.update_nominal_trajectory(self.dynamics_class, x)
         # TODO change mpc cost if we're outside the nominal dynamics_class
         u = self.mpc.command(x)
         return u
@@ -140,7 +140,7 @@ class NominalTrajFrom(Enum):
     NO_ADJUSTMENT = 3
 
 
-class MPPINominalTrajManager:
+class RecoveryTrajectorySeeder:
     def __init__(self, ctrl: OnlineMPPI, dss, fixed_recovery_nominal_traj=True, lookup_traj_start=True,
                  nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS):
         """

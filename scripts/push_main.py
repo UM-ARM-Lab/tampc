@@ -957,8 +957,8 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
     ctrl = online_controller.OnlineMPPI(dynamics_gp if use_gp else dynamics, ds.original_config(), gating=gating,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
     ctrl.set_goal(env.goal)
-    ctrl.create_nom_traj_manager(dss,
-                                 nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS if recover_adjust else NominalTrajFrom.NO_ADJUSTMENT)
+    ctrl.create_recovery_traj_seeder(dss,
+                                     nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS if recover_adjust else NominalTrajFrom.NO_ADJUSTMENT)
 
     name = get_full_controller_name(pm, ctrl, use_tsf.name)
 
@@ -1281,7 +1281,7 @@ def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
     ctrl = online_controller.OnlineMPPI(dynamics, ds.original_config(), **common_wrapper_opts, mpc_opts=mpc_opts,
                                         gating=gating)
     ctrl.set_goal(env.goal)
-    ctrl.create_nom_traj_manager(dss, nom_traj_from=nom_traj_from)
+    ctrl.create_recovery_traj_seeder(dss, nom_traj_from=nom_traj_from)
 
     env.draw_user_text(
         "rollout var cost {} discount {}".format(ctrl.mpc.rollout_var_cost, ctrl.mpc.rollout_var_discount), 12,
@@ -1300,7 +1300,7 @@ def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
         # var = dynamics.last_prediction.variance.detach().cpu().numpy()
 
         env.draw_user_text("dyn cls {}".format(ctrl.dynamics_class.item()), 1)
-        ctrl.nom_traj_manager.update_nominal_trajectory(ctrl.dynamics_class)
+        ctrl.recovery_traj_seeder.update_nominal_trajectory(ctrl.dynamics_class)
 
         # visualize best actions in simulator
         path_cost = ctrl.mpc.cost_total.cpu()
