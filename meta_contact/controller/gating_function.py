@@ -11,12 +11,17 @@ from arm_pytorch_utilities.model.common import LearnableParameterizedModel
 from arm_pytorch_utilities import load_data
 from arm_pytorch_utilities.model import make
 from meta_contact import cfg
-from tensorboardX import SummaryWriter
+import enum
 
 logger = logging.getLogger(__name__)
 
 
-class ModeSelector(abc.ABC):
+class DynamicsClass(enum.IntEnum):
+    NOMINAL = 0
+    UNRECOGNIZED = -1
+
+
+class GatingFunction(abc.ABC):
     """In mixture of experts we have that the posterior is a sum over weighted components.
     This class allows sampling over weights (as opposed to giving the value of the weights)"""
 
@@ -43,40 +48,40 @@ class ModeSelector(abc.ABC):
         return XU
 
     @abc.abstractmethod
-    def sample_mode(self, state, action, *args):
-        """Sample from pi(x) mode distribution and return mode index 0 to K-1
+    def sample_class(self, state, action, *args):
+        """Sample from pi(x) class distribution and return dynamics_class index 0 to K-1
 
         :param state: (N x nx) states
         :param action: (N x nu) actions
         :param args: additional arguments needed
-        :return: (N,) sampled mode, each from 0 to K-1 where K is the total number of modes
+        :return: (N,) sampled class, each from 0 to K-1 where K is the total number of classes
         """
         return torch.zeros((state.shape[0],), device=state.device, dtype=torch.long)
 
 
-class AlwaysSelectNominal(ModeSelector):
-    def sample_mode(self, state, action, *args):
+class AlwaysSelectNominal(GatingFunction):
+    def sample_class(self, state, action, *args):
         return torch.zeros((state.shape[0],), device=state.device, dtype=torch.long)
 
 
-class AlwaysSelectLocal(ModeSelector):
-    def sample_mode(self, state, action, *args):
+class AlwaysSelectLocal(GatingFunction):
+    def sample_class(self, state, action, *args):
         return torch.ones((state.shape[0],), device=state.device, dtype=torch.long)
 
 
-class ReactionForceHeuristicSelector(ModeSelector):
+class ReactionForceHeuristicSelector(GatingFunction):
     def __init__(self, force_threshold, reaction_force_slice):
         super(ReactionForceHeuristicSelector, self).__init__()
         self.force_threshold = force_threshold
         self.reaction_force_slice = reaction_force_slice
 
-    def sample_mode(self, state, action, *args):
+    def sample_class(self, state, action, *args):
         # use local model if reaction force is beyond a certain threshold
         # doesn't work when we're using a small force to push into the wall
         r = torch.norm(state[:, self.reaction_force_slice], dim=1)
-        mode = r > self.force_threshold
-        self.relative_weights = torch.nn.functional.one_hot(mode.long()).double().transpose(0, 1).cpu().numpy()
-        return mode.to(dtype=torch.long)
+        cls = r > self.force_threshold
+        self.relative_weights = torch.nn.functional.one_hot(cls.long()).double().transpose(0, 1).cpu().numpy()
+        return cls.to(dtype=torch.long)
 
 
 def sample_discrete_probs(probs, use_numpy=True):
@@ -100,7 +105,7 @@ def sample_discrete_probs(probs, use_numpy=True):
     return sample
 
 
-class DataProbSelector(ModeSelector):
+class DataProbSelector(GatingFunction):
     def __init__(self, dss, **kwargs):
         super(DataProbSelector, self).__init__(**kwargs)
         self.num_components = len(dss)
@@ -109,7 +114,7 @@ class DataProbSelector(ModeSelector):
         self.weights = None
         self.relative_weights = None
 
-    def sample_mode(self, state, action, *args):
+    def sample_class(self, state, action, *args):
         if not self.use_action:
             action = torch.zeros_like(action)
         xu = torch.cat((state, action), dim=1)
@@ -211,10 +216,10 @@ class SklearnClassifierSelector(DataProbSelector):
 
 
 # TODO reject samples from the other ds that have low model error
-class MLPSelector(LearnableParameterizedModel, ModeSelector):
+class MLPSelector(LearnableParameterizedModel, GatingFunction):
     def __init__(self, dss, retrain=False, model_opts=None, **kwargs):
-        ModeSelector.__init__(self, use_action=kwargs.pop('use_action', False),
-                              input_slice=kwargs.pop('input_slice', None))
+        GatingFunction.__init__(self, use_action=kwargs.pop('use_action', False),
+                                input_slice=kwargs.pop('input_slice', None))
         self.num_components = len(dss)
         self.nominal_ds = dss[0]
         self.weights = None
@@ -249,7 +254,7 @@ class MLPSelector(LearnableParameterizedModel, ModeSelector):
     def modules(self):
         return {'selector': self.model}
 
-    def sample_mode(self, state, action, *args):
+    def sample_class(self, state, action, *args):
         if not self.use_action:
             action = torch.zeros_like(action)
         xu = torch.cat((state, action), dim=1)
@@ -259,9 +264,9 @@ class MLPSelector(LearnableParameterizedModel, ModeSelector):
         xu = self._slice_input(xu)
 
         self.weights = self.model(xu).transpose(0, 1)
-        # TODO reject cases where weights for all classes are all low (give mode -1)
+        # TODO reject cases where weights for all classes are all low (give dynamics_class -1)
         # compute relative weights (just the softmax output of the model)
-        self.relative_weights = torch.nn.functional.softmax(2*self.weights, dim=0)
+        self.relative_weights = torch.nn.functional.softmax(2 * self.weights, dim=0)
         if self.component_scale is not None:
             self.relative_weights *= self.component_scale
             normalization = torch.sum(self.relative_weights, dim=0)

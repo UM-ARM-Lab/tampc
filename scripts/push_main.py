@@ -26,7 +26,7 @@ from meta_contact.transform import invariant
 from meta_contact.dynamics import online_model, model, prior
 from meta_contact.controller import controller
 from meta_contact.controller import online_controller
-from meta_contact.controller import mode_selector
+from meta_contact.controller import gating_function
 from meta_contact.env import block_push
 
 logger = logging.getLogger(__name__)
@@ -296,7 +296,7 @@ def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics):
     return pm
 
 
-class UseSelector:
+class UseGating:
     MLP = 0
     KDE = 1
     GMM = 2
@@ -306,7 +306,7 @@ class UseSelector:
     KNN = 6
 
 
-def get_selector(dss, tsf_name, use_selector=UseSelector.TREE, *args, **kwargs):
+def get_gating(dss, tsf_name, use_gating=UseGating.TREE, *args, **kwargs):
     from sklearn.tree import DecisionTreeClassifier
     from sklearn.neural_network import MLPClassifier
     from sklearn.neighbors.classification import KNeighborsClassifier
@@ -316,29 +316,29 @@ def get_selector(dss, tsf_name, use_selector=UseSelector.TREE, *args, **kwargs):
     # input_slice = slice(3, None)
     input_slice = None
 
-    if use_selector is UseSelector.MLP:
-        selector = mode_selector.MLPSelector(dss, *args, **kwargs, name=tsf_name, input_slice=input_slice)
-    elif use_selector is UseSelector.KDE:
-        selector = mode_selector.KDESelector(dss, component_scale=component_scale, input_slice=input_slice)
-    elif use_selector is UseSelector.GMM:
+    if use_gating is UseGating.MLP:
+        gating = gating_function.MLPSelector(dss, *args, **kwargs, name=tsf_name, input_slice=input_slice)
+    elif use_gating is UseGating.KDE:
+        gating = gating_function.KDESelector(dss, component_scale=component_scale, input_slice=input_slice)
+    elif use_gating is UseGating.GMM:
         opts = {'n_components': 10, }
         if kwargs is not None:
             opts.update(kwargs)
-        selector = mode_selector.GMMSelector(dss, gmm_opts=opts, variational=True, component_scale=component_scale,
+        gating = gating_function.GMMSelector(dss, gmm_opts=opts, variational=True, component_scale=component_scale,
                                              input_slice=input_slice)
-    elif use_selector is UseSelector.TREE:
-        selector = mode_selector.SklearnClassifierSelector(dss, DecisionTreeClassifier(**kwargs),
+    elif use_gating is UseGating.TREE:
+        gating = gating_function.SklearnClassifierSelector(dss, DecisionTreeClassifier(**kwargs),
                                                            input_slice=input_slice)
-    elif use_selector is UseSelector.FORCE:
-        selector = mode_selector.ReactionForceHeuristicSelector(12, slice(3, None))
-    elif use_selector is UseSelector.MLP_SKLEARN:
-        selector = mode_selector.SklearnClassifierSelector(dss, MLPClassifier(**kwargs), input_slice=input_slice)
-    elif use_selector is UseSelector.KNN:
-        selector = mode_selector.SklearnClassifierSelector(dss, KNeighborsClassifier(n_neighbors=1, **kwargs),
+    elif use_gating is UseGating.FORCE:
+        gating = gating_function.ReactionForceHeuristicSelector(12, slice(3, None))
+    elif use_gating is UseGating.MLP_SKLEARN:
+        gating = gating_function.SklearnClassifierSelector(dss, MLPClassifier(**kwargs), input_slice=input_slice)
+    elif use_gating is UseGating.KNN:
+        gating = gating_function.SklearnClassifierSelector(dss, KNeighborsClassifier(n_neighbors=1, **kwargs),
                                                            input_slice=input_slice)
     else:
         raise RuntimeError("Unrecognized selector option")
-    return selector
+    return gating
 
 
 def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.GP_KERNEL):
@@ -766,7 +766,7 @@ def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTsf.COORD, relearn_dy
 
 def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_eval=True, plot_online_update=False,
                                                    use_gp=True, allow_update=False, recover_adjust=True,
-                                                   selector=None,
+                                                   gating=None,
                                                    use_tsf=UseTsf.COORD, test_traj=None, **kwargs):
     if plot_model_eval:
         env = get_env(p.DIRECT)
@@ -781,7 +781,7 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
                                                             allow_update=allow_update or plot_online_update,
                                                             **kwargs)
     dss = [ds, ds_wall]
-    selector = get_selector(dss, use_tsf.name) if selector is None else selector
+    gating = get_gating(dss, use_tsf.name) if gating is None else gating
 
     pm = dynamics_gp.prior
     if plot_model_eval:
@@ -799,7 +799,7 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
 
         xuo, _, _ = (v[test_slice] for v in ds_test.training_set(original=True))
         x, u = torch.split(xuo, env.nx, dim=1)
-        modes = selector.sample_mode(x, u)
+        classes = gating.sample_class(x, u)
 
         yhat_freespace = pm.dyn_net.user.sample(xu)
         cx, cu = xu[:, :config.nx], xu[:, config.nx:]
@@ -856,7 +856,7 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
 
         to_plot_y_dims = [0, 2, 3, 4]
         axis_name = ['d$v_{}$'.format(dim) for dim in range(env.nx)]
-        num_plots = len(to_plot_y_dims) + 2  # additional reaction force magnitude and mode selector
+        num_plots = len(to_plot_y_dims) + 2  # additional reaction force magnitude and dynamics_class selector
         if not use_gp:
             num_plots += 1  # weights for local model (marginalized likelihood of data)
         f, axes = plt.subplots(num_plots, 1, sharex=True)
@@ -897,8 +897,8 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
         axes[-1].set_ybound(0., 50)
         axes[-1].axvspan(train_slice.start, train_slice.stop, alpha=0.3)
         axes[-1].text((train_slice.start + train_slice.stop) * 0.5, 20, 'local train interval')
-        axes[-2].plot(t, modes.cpu())
-        axes[-2].set_ylabel('selector mode')
+        axes[-2].plot(t, classes.cpu())
+        axes[-2].set_ylabel('dynamics class')
 
         # plot dynamics in original space
         axis_name = ['d{}'.format(name) for name in env.state_names()]
@@ -922,8 +922,8 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
                 axes[i].plot(t, yhat_linear_mix_orig[:, dim].cpu(), label='mix', color='g')
             axes[i].set_ylabel(axis_name[dim])
         axes[0].legend()
-        axes[-1].plot(t, modes.cpu())
-        axes[-1].set_ylabel('selector mode')
+        axes[-1].plot(t, classes.cpu())
+        axes[-1].set_ylabel('dynamics class')
 
         if plot_online_update:
             f, axes = plt.subplots(2, 1, sharex=True)
@@ -954,7 +954,7 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
         return
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
-    ctrl = online_controller.OnlineMPPI(dynamics_gp if use_gp else dynamics, ds.original_config(), mode_select=selector,
+    ctrl = online_controller.OnlineMPPI(dynamics_gp if use_gp else dynamics, ds.original_config(), gating=gating,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
     ctrl.set_goal(env.goal)
     ctrl.create_nom_traj_manager(dss,
@@ -963,10 +963,10 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
     name = get_full_controller_name(pm, ctrl, use_tsf.name)
 
     env.draw_user_text(name, 14, left_offset=-1.5)
-    env.draw_user_text(selector.name, 13, left_offset=-1.5)
+    env.draw_user_text(gating.name, 13, left_offset=-1.5)
     sim = block_push.InteractivePush(env, ctrl, num_frames=250, plot=False, save=True, stop_when_done=False)
     seed = rand.seed(seed)
-    run_name = 'test_sufficiency_{}_{}_{}_{}'.format(level, use_tsf.name, selector.name, seed)
+    run_name = 'test_sufficiency_{}_{}_{}_{}'.format(level, use_tsf.name, gating.name, seed)
     if allow_update:
         run_name += "_online_adapt"
     sim.run(seed, run_name)
@@ -985,7 +985,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     """Fixed set of benchmark tasks to do control over, with the total reward for each task collected and reported"""
     # for evaluations in freespace we always use local model
     if isinstance(ctrl, online_controller.OnlineMPC):
-        ctrl.mode_select = mode_selector.AlwaysSelectLocal()
+        ctrl.gating = gating_function.AlwaysSelectLocal()
     num_frames = 150
     env.set_camera_position(translation)
     env.draw_user_text('center {}'.format(translation), 2)
@@ -1118,7 +1118,7 @@ def evaluate_model_selector(use_tsf=UseTsf.COORD, test_file="pushing/model_selec
     ds_recovery.update_preprocessor(preprocessor)
 
     rand.seed(seed)
-    selector = get_selector([ds, ds_recovery], tsf_name)
+    gating = get_gating([ds, ds_recovery], tsf_name)
 
     # get evaluation data by getting definite positive samples from the freespace dataset
     pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)
@@ -1148,21 +1148,21 @@ def evaluate_model_selector(use_tsf=UseTsf.COORD, test_file="pushing/model_selec
 
     # combine to form data to test on
     xu = torch.cat((XUf[def_pos][pos_ind], XU[def_neg]), dim=0)
-    # label corresponds to the component the mode selector should pick
+    # label corresponds to the component the dynamics_class selector should pick
     target = torch.zeros(xu.shape[0], dtype=torch.long)
     target[num_pos_samples:] = 1
 
     x, u = torch.split(xu, env.nx, dim=1)
-    output = selector.sample_mode(x, u)
+    output = gating.sample_class(x, u)
 
     # metrics for binary classification (since it's binary, we can reduce it to prob of not nominal model)
-    if torch.is_tensor(selector.relative_weights):
-        selector.relative_weights = selector.relative_weights.cpu().numpy()
-    scores = torch.from_numpy(selector.relative_weights).transpose(0, 1)
+    if torch.is_tensor(gating.relative_weights):
+        gating.relative_weights = gating.relative_weights.cpu().numpy()
+    scores = torch.from_numpy(gating.relative_weights).transpose(0, 1)
     loss = torch.nn.CrossEntropyLoss()
     m = {'cross entropy': loss(scores, target).item()}
 
-    y_score = selector.relative_weights[1]
+    y_score = gating.relative_weights[1]
 
     from sklearn import metrics
     precision, recall, pr_thresholds = metrics.precision_recall_curve(target, y_score)
@@ -1172,7 +1172,7 @@ def evaluate_model_selector(use_tsf=UseTsf.COORD, test_file="pushing/model_selec
     m['ROC AUC'] = metrics.auc(fpr, tpr)
     m['f1 (sample)'] = metrics.f1_score(target, output.cpu())
 
-    print('{} {}'.format(selector.name, num_pos_samples))
+    print('{} {}'.format(gating.name, num_pos_samples))
     for key, value in m.items():
         print('{}: {:.3f}'.format(key, value))
 
@@ -1182,10 +1182,10 @@ def evaluate_model_selector(use_tsf=UseTsf.COORD, test_file="pushing/model_selec
     t = list(range(N))
     ax1.scatter(t, output.cpu(), label='target', marker='*', color='k', alpha=0.5)
     ax2 = ax1.twinx()
-    ax2.stackplot(t, selector.relative_weights,
-                  labels=['prob {}'.format(i) for i in range(selector.relative_weights.shape[0])], alpha=0.3)
+    ax2.stackplot(t, gating.relative_weights,
+                  labels=['prob {}'.format(i) for i in range(gating.relative_weights.shape[0])], alpha=0.3)
     plt.legend()
-    plt.title('Sample and relative weights {}'.format(selector.name))
+    plt.title('Sample and relative weights {}'.format(gating.name))
     plt.xlabel('data point ({} separates target)'.format(num_pos_samples))
     ax1.set_ylabel('component')
     ax2.set_ylabel('prob')
@@ -1220,7 +1220,7 @@ def evaluate_model_selector(use_tsf=UseTsf.COORD, test_file="pushing/model_selec
     plt.ylim([0.0, 1.05])
     plt.xlabel('Recall')
     plt.ylabel('Precision')
-    plt.title('PR {} (#neg={})'.format(selector.name, num_pos_samples))
+    plt.title('PR {} (#neg={})'.format(gating.name, num_pos_samples))
     plt.legend(loc="lower left")
     stride = max(len(pr_thresholds) // 15, 1)
     for x, y, txt in zip(recall[::stride], precision[::stride], pr_thresholds[::stride]):
@@ -1270,7 +1270,7 @@ def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
     env.set_state(x, u)
 
     dss = [ds, ds_wall]
-    selector = get_selector(dss, use_tsf.name)
+    gating = get_gating(dss, use_tsf.name)
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     N = 500
@@ -1279,7 +1279,7 @@ def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
     mpc_opts['rollout_samples'] = M
     mpc_opts['rollout_var_cost'] = 0
     ctrl = online_controller.OnlineMPPI(dynamics, ds.original_config(), **common_wrapper_opts, mpc_opts=mpc_opts,
-                                        mode_select=selector)
+                                        gating=gating)
     ctrl.set_goal(env.goal)
     ctrl.create_nom_traj_manager(dss, nom_traj_from=nom_traj_from)
 
@@ -1299,8 +1299,8 @@ def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
         # next_x = dynamics.predict(None, None, np.tile(x, (N, 1)), u_sample)
         # var = dynamics.last_prediction.variance.detach().cpu().numpy()
 
-        env.draw_user_text("mode {}".format(ctrl.mode.item()), 1)
-        ctrl.nom_traj_manager.update_nominal_trajectory(ctrl.mode)
+        env.draw_user_text("dyn cls {}".format(ctrl.dynamics_class.item()), 1)
+        ctrl.nom_traj_manager.update_nominal_trajectory(ctrl.dynamics_class)
 
         # visualize best actions in simulator
         path_cost = ctrl.mpc.cost_total.cpu()
@@ -1318,11 +1318,11 @@ def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
     axes[0].scatter(np.tile(t, (M, 1)), path_sampled_cost.cpu(), alpha=0.2)
     axes[0].set_ylabel('cost')
 
-    modes = [ctrl.dynamics_mode[i].view(20, -1) for i in range(ctrl.mpc.T)]
+    modes = [ctrl.dynamics_class_history[i].view(20, -1) for i in range(ctrl.mpc.T)]
     modes = torch.stack(modes, dim=0)
     modes = (modes == 0).sum(dim=0)
     axes[1].scatter(np.tile(t, (M, 1)), modes[:, ind].cpu(), alpha=0.2)
-    axes[1].set_ylabel('# nominal mode in traj')
+    axes[1].set_ylabel('# nominal dyn cls in traj')
     axes[-1].set_xlabel('u sample')
 
     plt.show()
@@ -1706,7 +1706,7 @@ class EvaluateTask:
 
 if __name__ == "__main__":
     level = 0
-    ut = UseTsf.SEP_DEC
+    ut = UseTsf.COORD
     neg_test_file = "pushing/test_sufficiency_3_failed_test_140891.mat"
     # OfflineDataCollection.freespace(trials=200, trial_length=50)
     # OfflineDataCollection.push_against_wall_recovery()
@@ -1723,9 +1723,9 @@ if __name__ == "__main__":
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_model_selector(use_tsf=ut, test_file=neg_test_file)
     # evaluate_ctrl_sampler()
-    # for seed in range(5):
-    #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=5, plot_model_eval=False, use_tsf=ut,
-    #                                                    test_traj=neg_test_file)
+    for seed in range(5):
+        test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
+                                                       test_traj=neg_test_file)
 
     # baseline online model adaption method
     # for seed in range(5):
@@ -1742,7 +1742,7 @@ if __name__ == "__main__":
     #                            override=True, full_evaluation=False, plot_model_error=True, relearn_dynamics=True)
 
     # test_online_model()
-    for seed in range(0, 5):
-        Learn.invariant(ut, seed=seed, name="refine", MAX_EPOCH=6000, BATCH_SIZE=500)
+    # for seed in range(0, 5):
+    #     Learn.invariant(ut, seed=seed, name="refine", MAX_EPOCH=6000, BATCH_SIZE=500)
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")

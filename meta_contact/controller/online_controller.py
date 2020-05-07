@@ -7,7 +7,7 @@ import torch
 
 from arm_pytorch_utilities import math_utils, linalg, tensor_utils
 from meta_contact.dynamics import online_model
-from meta_contact.controller import controller, mode_selector
+from meta_contact.controller import controller, gating_function
 
 logger = logging.getLogger(__name__)
 
@@ -65,18 +65,18 @@ class OnlineMPC(OnlineController):
     """
 
     def __init__(self, *args, constrain_state=noop_constrain,
-                 mode_select: mode_selector.ModeSelector = mode_selector.AlwaysSelectNominal(),
+                 gating: gating_function.GatingFunction = gating_function.AlwaysSelectNominal(),
                  **kwargs):
         self.constrain_state = constrain_state
         self.mpc = None
-        self.mode_select = mode_select
-        self.mode = 0
-        self.dynamics_mode = {}
+        self.gating = gating
+        self.dynamics_class = 0
+        self.dynamics_class_history = {}
         super().__init__(*args, **kwargs)
 
     def reset(self):
         super(OnlineMPC, self).reset()
-        self.dynamics_mode = {}
+        self.dynamics_class_history = {}
 
     @tensor_utils.ensure_2d_input
     def _apply_dynamics(self, state, u, t=0):
@@ -86,19 +86,19 @@ class OnlineMPC(OnlineController):
         x[bad_states] = 0
         u[bad_states] = 0
 
-        mode = self.mode_select.sample_mode(x, u)
-        mode[bad_states] = -1
+        cls = self.gating.sample_class(x, u)
+        cls[bad_states] = -1
 
-        self.dynamics_mode[t] = mode
+        self.dynamics_class_history[t] = cls
         next_state = torch.zeros_like(state)
         # TODO we should generalize to more than 2 modes
-        nominal_mode = mode == 0
-        local_mode = mode == 1
-        if torch.any(nominal_mode):
-            next_state[nominal_mode] = self.dynamics.prior.dyn_net.predict(
-                torch.cat((state[nominal_mode], u[nominal_mode]), dim=1))
-        if torch.any(local_mode):
-            next_state[local_mode] = self.dynamics.predict(None, None, state[local_mode], u[local_mode])
+        nominal_cls = cls == 0
+        local_cls = cls == 1
+        if torch.any(nominal_cls):
+            next_state[nominal_cls] = self.dynamics.prior.dyn_net.predict(
+                torch.cat((state[nominal_cls], u[nominal_cls]), dim=1))
+        if torch.any(local_cls):
+            next_state[local_cls] = self.dynamics.predict(None, None, state[local_cls], u[local_cls])
 
         next_state = self._adjust_next_state(next_state, u, t)
         next_state = self.constrain_state(next_state)
@@ -124,11 +124,11 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
     def _compute_action(self, x):
         assert self.nom_traj_manager is not None
-        # use only state for mode selection; this way we can get mode before calculating action
+        # use only state for dynamics_class selection; this way we can get dynamics_class before calculating action
         a = torch.zeros((1, self.nu), device=self.d, dtype=x.dtype)
-        self.mode = self.mode_select.sample_mode(x.view(1, -1), a).item()
-        self.nom_traj_manager.update_nominal_trajectory(self.mode, x)
-        # TODO change mpc cost if we're outside the nominal mode
+        self.dynamics_class = self.gating.sample_class(x.view(1, -1), a).item()
+        self.nom_traj_manager.update_nominal_trajectory(self.dynamics_class, x)
+        # TODO change mpc cost if we're outside the nominal dynamics_class
         u = self.mpc.command(x)
         return u
 
@@ -146,11 +146,11 @@ class MPPINominalTrajManager:
         """
         :param ctrl:
         :param dss:
-        :param fixed_recovery_nominal_traj: if false, only set nominal traj when entering mode, otherwise set every step
+        :param fixed_recovery_nominal_traj: if false, only set nominal traj when entering dynamics_class, otherwise set every step
         """
         self.ctrl = ctrl
         self.fixed_recovery_nominal_traj = fixed_recovery_nominal_traj
-        self.last_mode = 0
+        self.last_class = 0
         self.nom_traj_from = nom_traj_from
         self.lookup_traj_start = lookup_traj_start
         self.nominal_ds = dss[0]
@@ -170,8 +170,8 @@ class MPPINominalTrajManager:
         U_zero = torch.zeros_like(self.U_train)
         self.Z_train = self.nominal_ds.preprocessor.transform_x(torch.cat((X_train, U_zero), dim=1))
 
-    def update_nominal_trajectory(self, mode, state):
-        if mode is 0 or self.nom_traj_from is NominalTrajFrom.NO_ADJUSTMENT:
+    def update_nominal_trajectory(self, dyn_cls, state):
+        if dyn_cls == gating_function.DynamicsClass.NOMINAL or self.nom_traj_from is NominalTrajFrom.NO_ADJUSTMENT:
             return False
         adjusted_trajectory = False
         # TODO generalize this to multiple modes
@@ -180,8 +180,8 @@ class MPPINominalTrajManager:
         if self.nom_traj_from is NominalTrajFrom.RANDOM:
             adjusted_trajectory = True
         else:
-            # if we're not using the fixed recovery nom, then we set it if we're entering from another mode
-            if self.fixed_recovery_nominal_traj or self.last_mode != mode:
+            # if we're not using the fixed recovery nom, then we set it if we're entering from another dynamics_class
+            if self.fixed_recovery_nominal_traj or self.last_class != dyn_cls:
                 adjusted_trajectory = True
 
                 train_i = self.train_i
@@ -196,5 +196,5 @@ class MPPINominalTrajManager:
 
         if adjusted_trajectory:
             self.ctrl.mpc.U = U
-        self.last_mode = mode
+        self.last_class = dyn_cls
         return adjusted_trajectory
