@@ -4,6 +4,7 @@ import os
 from meta_contact import cfg
 import numpy as np
 import matplotlib.pyplot as plt
+import pickle
 
 
 def batch_size(run):
@@ -22,6 +23,7 @@ largest_epoch_encountered = 0
 series = {'sep_dec': {'name': 'w/o $h_\omega$'}, 'extract': {'name': 'w/o REx', },
           'rex_extract': {'name': 'full'}, }
 losses = {'percent_match': {'name': 'match', 'pos': 0}, 'percent_reconstruction': {'name': 'reconstruction', 'pos': 1}}
+# TODO for translation, look at all translated datasets rather than just 50,50?
 datasets = {'validation': {'name': 'validation', 'pos': 0},
             'validation_50_50': {'name': 'validation (50,50)', 'pos': 1}, 'test0': {'name': 'test0', 'pos': 2}}
 
@@ -37,7 +39,6 @@ for r in runs:
     run_dir = os.path.join(runs_basedir, r)
     run = os.path.join(run_dir, os.listdir(run_dir)[0])
     name = r[r.index(name_prefix) + len(name_prefix):]
-    print(name)
 
     run_series = None
     for s in series.keys():
@@ -48,35 +49,50 @@ for r in runs:
         print("Ignoring {} since it's not a recognized series".format(name))
         continue
 
-    ea = event_accumulator.EventAccumulator(run, size_guidance={
-        event_accumulator.COMPRESSED_HISTOGRAMS: 1,
-        event_accumulator.IMAGES: 1,
-        event_accumulator.AUDIO: 1,
-        event_accumulator.SCALARS: MAX_POINTS,
-        event_accumulator.HISTOGRAMS: 1,
-    })
-    ea.Reload()
-    tags = sorted(ea.Tags()['scalars'])
+    print(name)
+    cache = os.path.join(cfg.DATA_DIR, 'run_cache', name + '.pkl')
+    # load from cache if possible since it could take a while
+    if os.path.isfile(cache):
+        with open(cache, 'rb') as f:
+            to_add = pickle.load(f)
+            print('loaded cache for {}'.format(name))
+    else:
+        ea = event_accumulator.EventAccumulator(run, size_guidance={
+            event_accumulator.COMPRESSED_HISTOGRAMS: 1,
+            event_accumulator.IMAGES: 1,
+            event_accumulator.AUDIO: 1,
+            event_accumulator.SCALARS: MAX_POINTS,
+            event_accumulator.HISTOGRAMS: 1,
+        })
+        ea.Reload()
+        tags = sorted(ea.Tags()['scalars'])
 
-    for loss in losses:
-        for dataset in datasets:
-            t = (loss, dataset)
-            if t not in series[run_series]:
-                series[run_series][t] = []
+        to_add = []
+        for loss in losses:
+            for dataset in datasets:
+                t = (loss, dataset)
+                data = ea.Scalars('{}/{}'.format(*t))
 
-            data = ea.Scalars('{}/{}'.format(*t))
+                steps = np.array([d.step for d in data])
+                max_epoch = steps[-1] * batch_size(run) // POINTS_PER_EPOCH
 
-            steps = np.array([d.step for d in data])
-            max_epoch = steps[-1] * batch_size(run) // POINTS_PER_EPOCH
-            if largest_epoch_encountered < max_epoch:
-                largest_epoch_encountered = max_epoch
+                values = np.array([d.value for d in data])
+                steps_per_epoch = steps[-1] / max_epoch
+                epochs = steps / steps_per_epoch
+                # TODO filter out points beyond max epoch
+                to_add.append((t, epochs, values))
 
-            values = np.array([d.value for d in data])
-            steps_per_epoch = steps[-1] / max_epoch
-            epochs = steps / steps_per_epoch
-            # TODO filter out points beyond max epoch
+        # save to cache
+        with open(cache, 'wb') as f:
+            pickle.dump(to_add, f)
+            print('cached {}'.format(name))
 
-            series[run_series][t].append((epochs, values))
+    for t, epochs, values in to_add:
+        if largest_epoch_encountered < epochs[-1]:
+            largest_epoch_encountered = epochs[-1]
+        if t not in series[run_series]:
+            series[run_series][t] = []
+        series[run_series][t].append((epochs, values))
 
 f, axes = plt.subplots(len(losses), len(datasets), figsize=(10, 4), constrained_layout=True)
 plt.pause(0.1)
