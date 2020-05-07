@@ -153,46 +153,57 @@ class MPPINominalTrajManager:
         self.last_class = 0
         self.nom_traj_from = nom_traj_from
         self.lookup_traj_start = lookup_traj_start
-        self.nominal_ds = dss[0]
+        self.ds_nominal = dss[0]
 
-        # TODO generalize this for more local models
-        ds, ds_wall = dss
-        self.train_i = 14
-        max_rollout_steps = 10
-        XU, Y, info = ds_wall.training_set(original=True)
-        X_train, self.U_train = torch.split(XU, ds.original_config().nx, dim=1)
-        assert self.train_i < len(X_train)
+        # local trajectories
+        self.train_i = {}
+        self.Z_train = {}
+        self.U_train = {}
+        for dyn_cls, ds_local in enumerate(dss):
+            if dyn_cls == gating_function.DynamicsClass.NOMINAL:
+                continue
 
-        if nom_traj_from is NominalTrajFrom.ROLLOUT_FROM_RECOVERY_STATES:
-            for ii in range(max(0, self.train_i - max_rollout_steps), self.train_i):
-                ctrl.command(X_train[ii].cpu().numpy())
-            self.U_train = ctrl.mpc.U.clone()
-        U_zero = torch.zeros_like(self.U_train)
-        self.Z_train = self.nominal_ds.preprocessor.transform_x(torch.cat((X_train, U_zero), dim=1))
+            self.train_i[dyn_cls] = 14
+            max_rollout_steps = 10
+            XU, Y, info = ds_local.training_set(original=True)
+            X_train, self.U_train[dyn_cls] = torch.split(XU, self.ds_nominal.original_config().nx, dim=1)
+            assert self.train_i[dyn_cls] < len(X_train)
+
+            if nom_traj_from is NominalTrajFrom.ROLLOUT_FROM_RECOVERY_STATES:
+                for ii in range(max(0, self.train_i[dyn_cls] - max_rollout_steps), self.train_i[dyn_cls]):
+                    ctrl.command(X_train[ii].cpu().numpy())
+                self.U_train[dyn_cls] = ctrl.mpc.U.clone()
+            U_zero = torch.zeros_like(self.U_train[dyn_cls])
+            self.Z_train[dyn_cls] = self.ds_nominal.preprocessor.transform_x(torch.cat((X_train, U_zero), dim=1))
 
     def update_nominal_trajectory(self, dyn_cls, state):
         if dyn_cls == gating_function.DynamicsClass.NOMINAL or self.nom_traj_from is NominalTrajFrom.NO_ADJUSTMENT:
             return False
         adjusted_trajectory = False
-        # TODO generalize this to multiple modes
         # start with random noise
         U = self.ctrl.mpc.noise_dist.sample((self.ctrl.mpc.T,))
         if self.nom_traj_from is NominalTrajFrom.RANDOM:
             adjusted_trajectory = True
         else:
+            if dyn_cls not in self.U_train:
+                raise RuntimeError(
+                    "Unrecgonized dynamics class {} (known {})".format(dyn_cls, list(self.U_train.keys())))
+
             # if we're not using the fixed recovery nom, then we set it if we're entering from another dynamics_class
             if self.fixed_recovery_nominal_traj or self.last_class != dyn_cls:
                 adjusted_trajectory = True
 
-                train_i = self.train_i
+                train_i = self.train_i[dyn_cls]
                 # option to select where to start in training automatically from data
                 if self.lookup_traj_start:
-                    xu = torch.cat((state.view(1,-1), torch.zeros((1, self.ctrl.nu), device=state.device, dtype=state.dtype)), dim=1)
-                    z = self.nominal_ds.preprocessor.transform_x(xu)
-                    train_i = (self.Z_train - z).norm(dim=1).argmin()
+                    xu = torch.cat(
+                        (state.view(1, -1), torch.zeros((1, self.ctrl.nu), device=state.device, dtype=state.dtype)),
+                        dim=1)
+                    z = self.ds_nominal.preprocessor.transform_x(xu)
+                    train_i = (self.Z_train[dyn_cls] - z).norm(dim=1).argmin()
 
-                ctrl_rollout_steps = min(len(self.U_train) - train_i, self.ctrl.mpc.T)
-                U[1:1 + ctrl_rollout_steps] = self.U_train[train_i:train_i + ctrl_rollout_steps]
+                ctrl_rollout_steps = min(len(self.U_train[dyn_cls]) - train_i, self.ctrl.mpc.T)
+                U[1:1 + ctrl_rollout_steps] = self.U_train[dyn_cls][train_i:train_i + ctrl_rollout_steps]
 
         if adjusted_trajectory:
             self.ctrl.mpc.U = U
