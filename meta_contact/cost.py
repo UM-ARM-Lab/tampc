@@ -50,7 +50,7 @@ class CostQROnlineTorch:
 class CostQRGoalSet:
     """If goal is not just a single target but a set of possible goals"""
 
-    def __init__(self, goal_set, Q, R, compare_to_goal, ds, goal_weights=None, compare_in_latent_space=False):
+    def __init__(self, goal_set, Q, R, compare_to_goal, ds, goal_weights=None, compare_in_latent_space=True):
         self.ds = ds
         self.Q = Q
         self.R = R
@@ -59,11 +59,30 @@ class CostQRGoalSet:
         self.compare_to_goal = compare_to_goal
         self.compare_in_latent_space = compare_in_latent_space
 
+        if compare_in_latent_space:
+            self.Q = torch.eye(ds.config.nx, device=Q.device, dtype=Q.dtype)
+
+            # convert goal set to be in z space
+            goal_set = torch.stack(goal_set)
+            xu = torch.cat(
+                (goal_set,
+                 torch.zeros((goal_set.shape[0], self.ds.original_config().nu), device=Q.device, dtype=Q.dtype)),
+                dim=1)
+
+            self.goal_set = self.ds.preprocessor.transform_x(xu)
+
     @tensor_utils.handle_batch_input
     def __call__(self, X, U=None, terminal=False):
         costs = []
+        # convert to latent space
+        if self.compare_in_latent_space:
+            xu = torch.cat(
+                (X,
+                 torch.zeros((X.shape[0], self.ds.original_config().nu), device=X.device, dtype=X.dtype)),
+                dim=1)
+            X = self.ds.preprocessor.transform_x(xu)
+
         for i, goal in enumerate(self.goal_set):
-            # TODO handle comparison in latent space (need to change Q)
             c = qr_cost(self.compare_to_goal, X, goal, self.Q, self.R, U, terminal)
             if self.goal_weights is not None:
                 c *= self.goal_weights[i]

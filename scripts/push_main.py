@@ -1775,7 +1775,7 @@ if __name__ == "__main__":
 
     # autonomous recovery
     for seed in range(5):
-        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut)
+        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL)
 
     # for seed in range(5):
     #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
