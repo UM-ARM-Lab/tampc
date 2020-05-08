@@ -196,11 +196,12 @@ class MPC(ControllerWithModelPrediction):
         self.cost = cost.CostQROnlineTorch(self.goal, self.Q, self.R, self.compare_to_goal)
         self.terminal_cost_multiplier = terminal_cost_multiplier
 
-        # analysis
+        # analysis attributes
         self.pred_error_log = []
+        self.diff_predicted = None
+        self.diff_relative = None
         self.prev_x = None
         self.prev_u = None
-        self.diff_predicted = None
         self.context = None
 
     def set_goal(self, goal):
@@ -252,11 +253,15 @@ class MPC(ControllerWithModelPrediction):
 
     def reset(self):
         super(MPC, self).reset()
-        error = torch.cat(self.pred_error_log)
-        median, _ = error.median(0)
-        logger.debug("median relative error %s", median)
+        if len(self.pred_error_log):
+            error = torch.cat(self.pred_error_log)
+            median, _ = error.median(0)
+            logger.debug("median relative error %s", median)
         self.pred_error_log = []
         self.diff_predicted = None
+        self.diff_relative = None
+        self.prev_x = None
+        self.prev_u = None
         self.context = None
 
     def command(self, obs, info=None):
@@ -265,8 +270,8 @@ class MPC(ControllerWithModelPrediction):
         if self.predicted_next_state is not None:
             self.diff_predicted = torch.tensor(self.prediction_error(original_obs), device=self.d)
             diff_actual = self.compare_to_goal(obs.view(1, -1), self.prev_x)
-            relative_residual = self.diff_predicted / diff_actual
-            self.pred_error_log.append(relative_residual.abs())
+            self.diff_relative = self.diff_predicted / diff_actual
+            self.pred_error_log.append(self.diff_relative.abs())
 
         self.context = [info, self.diff_predicted]
 
