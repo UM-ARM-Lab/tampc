@@ -241,32 +241,27 @@ class OnlineAdapt:
     GP_KERNEL = 2
 
 
-def get_mixed_model(env, use_tsf=UseTsf.COORD,
-                    prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior, allow_update=False,
-                    d=get_device(), online_adapt=OnlineAdapt.GP_KERNEL):
+def get_nominal_model(env, use_tsf=UseTsf.COORD, prior_class=prior.NNPrior):
     ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
     untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
     pm = get_loaded_prior(prior_class, ds, tsf_name, False)
+    return ds, pm
 
-    # data from predetermined policy for getting into and out of bug trap
-    ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
-    train_slice = slice(0, 26)
 
-    # use same preprocessor
-    ds_wall.update_preprocessor(preprocessor)
-
-    dynamics = pm.dyn_net
+def get_local_model(env, pm, ds_local, allow_update=False, d=get_device(), online_adapt=OnlineAdapt.GP_KERNEL,
+                    train_slice=slice(0, 26)):
+    local_dynamics = pm.dyn_net
     if online_adapt is OnlineAdapt.LINEARIZE_LIKELIHOOD:
-        dynamics = online_model.OnlineLinearizeMixing(0.0, pm, ds_wall, env.state_difference,
-                                                      local_mix_weight_scale=50, xu_characteristic_length=10,
-                                                      const_local_mix_weight=False, sigreg=1e-10,
-                                                      slice_to_use=train_slice, device=d)
+        local_dynamics = online_model.OnlineLinearizeMixing(0.0, pm, ds_local, env.state_difference,
+                                                            local_mix_weight_scale=50, xu_characteristic_length=10,
+                                                            const_local_mix_weight=False, sigreg=1e-10,
+                                                            slice_to_use=train_slice, device=d)
     elif online_adapt is OnlineAdapt.GP_KERNEL:
-        dynamics = online_model.OnlineGPMixing(pm, ds_wall, env.state_difference, slice_to_use=train_slice,
-                                               allow_update=allow_update, sample=True,
-                                               refit_strategy=online_model.RefitGPStrategy.RESET_DATA,
-                                               device=d, training_iter=150, use_independent_outputs=False)
-    return dynamics, ds, ds_wall, train_slice
+        local_dynamics = online_model.OnlineGPMixing(pm, ds_local, env.state_difference, slice_to_use=train_slice,
+                                                     allow_update=allow_update, sample=True,
+                                                     refit_strategy=online_model.RefitGPStrategy.RESET_DATA,
+                                                     device=d, training_iter=150, use_independent_outputs=False)
+    return local_dynamics
 
 
 def get_full_controller_name(pm, ctrl, tsf_name):
@@ -345,7 +340,7 @@ def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.G
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     d = common_wrapper_opts['device']
     if online_adapt is not OnlineAdapt.NONE:
-        # TODO use get_mixed_model for getting mixed dynamics
+        # TODO use get_local_model for getting mixed dynamics
         if online_adapt is OnlineAdapt.LINEARIZE_LIKELIHOOD:
             dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds, env.state_difference,
                                                           local_mix_weight_scale=50.0, xu_characteristic_length=10,
@@ -777,12 +772,17 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
 
     logger.info("initial random seed %d", rand.seed(seed))
 
-    # TODO should invert responsibility and these methods make a local dynamics model given a dataset, rather than give back a dataset and the model
-    dynamics, _, _, _ = get_mixed_model(env, use_tsf=use_tsf, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD,
-                                        allow_update=allow_update or plot_online_update, **kwargs)
-    dynamics_gp, ds, ds_wall, train_slice = get_mixed_model(env, use_tsf=use_tsf,
-                                                            allow_update=allow_update or plot_online_update,
-                                                            **kwargs)
+    ds, pm = get_nominal_model(env, use_tsf)
+
+    # data from predetermined policy for getting into and out of bug trap
+    ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
+    ds_wall.update_preprocessor(ds.preprocessor)
+
+    # demonstration local datasets
+    dynamics = get_local_model(env, pm, ds_wall, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD,
+                               allow_update=allow_update or plot_online_update, **kwargs)
+    dynamics_gp = get_local_model(env, pm, ds_wall, allow_update=allow_update or plot_online_update, **kwargs)
+
     dss = [ds, ds_wall]
     gating = get_gating(dss, use_tsf.name) if gating is None else gating
 
@@ -900,8 +900,8 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
         axes[-1].plot(t, np.linalg.norm(reaction_forces, axis=1))
         axes[-1].set_ylabel('|r|')
         axes[-1].set_ybound(0., 50)
-        axes[-1].axvspan(train_slice.start, train_slice.stop, alpha=0.3)
-        axes[-1].text((train_slice.start + train_slice.stop) * 0.5, 20, 'local train interval')
+        # axes[-1].axvspan(train_slice.start, train_slice.stop, alpha=0.3)
+        # axes[-1].text((train_slice.start + train_slice.stop) * 0.5, 20, 'local train interval')
         axes[-2].plot(t, classes.cpu())
         axes[-2].set_ylabel('dynamics class')
 
@@ -1261,7 +1261,12 @@ def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
     env.draw_user_text("eval index {}".format(eval_i), 13, left_offset=-1.5)
     logger.info("initial random seed %d", rand.seed(seed))
 
-    dynamics, ds, ds_wall, _ = get_mixed_model(env, use_tsf=use_tsf)
+    ds, pm = get_nominal_model(env, use_tsf)
+
+    ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
+    ds_wall.update_preprocessor(ds.preprocessor)
+    dynamics = get_local_model(env, pm, ds_wall)
+
     ds_eval, _ = get_ds(env, 'pushing/test_sufficiency_selector__i5_o2_s1_pd1_pa1_a0_e0_y0_140891.mat',
                         validation_ratio=0.)
     ds_eval.update_preprocessor(ds.preprocessor)
@@ -1490,7 +1495,10 @@ class Visualize:
 
         logger.info("initial random seed %d", rand.seed(seed))
 
-        dynamics_gp, ds, ds_wall, _ = get_mixed_model(env)
+        ds, pm = get_nominal_model(env)
+        ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
+        ds_wall.update_preprocessor(ds.preprocessor)
+        dynamics_gp = get_local_model(env, pm, ds_wall)
 
         XU, Y, info = ds_wall.training_set(original=True)
         X, U = torch.split(XU, env.nx, dim=1)
