@@ -1360,11 +1360,12 @@ class InteractivePush(simulation.Simulation):
             if self._predicts_dynamics_cls():
                 self.pred_cls[simTime] = self.ctrl.dynamics_class
                 self.env.draw_user_text("dyn cls {}".format(self.ctrl.dynamics_class), 2)
+                self.env.draw_user_text("recovery" if self.ctrl.autonomous_recovery_mode else "", 3)
                 for i in range(4):
                     dynamics_class_pred = self.ctrl.dynamics_class_prediction[i]
                     nom_count = (dynamics_class_pred == DynamicsClass.NOMINAL).sum()
                     text = "nom: {:.2f}".format(nom_count.float() / len(dynamics_class_pred))
-                    self.env.draw_user_text("t={} {}".format(i, text), 3 + i)
+                    self.env.draw_user_text("t={} {}".format(i, text), 4 + i)
             if self.visualize_action_sample and isinstance(self.ctrl, controller.MPPI_MPC):
                 self._plot_action_sample(self.ctrl.mpc.perturbed_action)
             if self.visualize_rollouts:
