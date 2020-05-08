@@ -301,7 +301,7 @@ class UseGating:
     KNN = 6
 
 
-def get_gating(dss, tsf_name, use_gating=UseGating.TREE, *args, **kwargs):
+def get_gating(dss, tsf_name, use_gating=UseGating.MLP, *args, **kwargs):
     from sklearn.tree import DecisionTreeClassifier
     from sklearn.neural_network import MLPClassifier
     from sklearn.neighbors.classification import KNeighborsClassifier
@@ -982,6 +982,51 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
     env.close()
 
 
+def test_autonomous_recovery(seed=1, level=1, allow_update=False, recover_adjust=True, gating=None,
+                             use_tsf=UseTsf.COORD, **kwargs):
+    env = get_env(p.GUI, level=level, log_video=True)
+    logger.info("initial random seed %d", rand.seed(seed))
+
+    ds, pm = get_nominal_model(env, use_tsf)
+
+    dss = [ds]
+    local_dynamics = []
+    demo_trajs = ["pushing/predetermined_bug_trap.mat"]
+    for demo in demo_trajs:
+        ds_local, config = get_ds(env, demo, validation_ratio=0.)
+        ds_local.update_preprocessor(ds.preprocessor)
+        dss.append(ds_local)
+        lm = get_local_model(env, pm, ds_local, **kwargs)
+        local_dynamics.append(lm)
+
+    gating = get_gating(dss, use_tsf.name) if gating is None else gating
+
+    hybrid_dynamics = hybrid_model.HybridDynamicsModel(pm.dyn_net, local_dynamics)
+
+    common_wrapper_opts, mpc_opts = get_controller_options(env)
+    ctrl = online_controller.OnlineMPPI(hybrid_dynamics, ds.original_config(), gating=gating,
+                                        **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
+    ctrl.set_goal(env.goal)
+    ctrl.create_recovery_traj_seeder(dss,
+                                     nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS if recover_adjust else NominalTrajFrom.NO_ADJUSTMENT)
+
+    name = get_full_controller_name(pm, ctrl, use_tsf.name)
+
+    env.draw_user_text(name, 14, left_offset=-1.5)
+    env.draw_user_text(gating.name, 13, left_offset=-1.5)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=250, plot=False, save=True, stop_when_done=False)
+    seed = rand.seed(seed)
+    run_name = 'auto_recover_{}_{}_{}_{}'.format(level, use_tsf.name, gating.name, seed)
+    if allow_update:
+        run_name += "_online_adapt"
+    sim.run(seed, run_name)
+    logger.info("last run cost %f", np.sum(sim.last_run_cost))
+    plt.ioff()
+    plt.show()
+
+    env.close()
+
+
 def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controller.Controller, name,
                         tasks: typing.Union[list, int] = 10, tries=10,
                         start_seed=0,
@@ -1110,7 +1155,7 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
     return total_costs
 
 
-def evaluate_model_selector(use_tsf=UseTsf.COORD, test_file="pushing/model_selector_evaluation.mat"):
+def evaluate_gating_function(use_tsf=UseTsf.COORD, test_file="pushing/model_selector_evaluation.mat"):
     plot_definite_negatives = False
     num_pos_samples = 100  # start with balanced data
     seed = rand.seed(9)
@@ -1734,12 +1779,16 @@ if __name__ == "__main__":
     # EvaluateTask.closest_distance_to_goal_whole_set('test_sufficiency_1_NO_TRANSFORM_AlwaysSelectLocal')
 
     # verify_coordinate_transform(UseTransform.COORD)
-    # evaluate_model_selector(use_tsf=ut, test_file=neg_test_file)
+    # evaluate_gating_function(use_tsf=ut, test_file=neg_test_file)
     # evaluate_ctrl_sampler()
-    for seed in range(5):
-        test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
-                                                       test_traj=neg_test_file)
 
+    # autonomous recovery
+    for seed in range(5):
+        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut)
+
+    # for seed in range(5):
+    #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
+    #                                                    test_traj=neg_test_file)
     # baseline online model adaption method
     # for seed in range(5):
     #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
