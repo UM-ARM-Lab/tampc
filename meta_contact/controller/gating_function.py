@@ -38,7 +38,7 @@ class GatingFunction(abc.ABC):
 
     def _get_training_input(self, ds, training=True):
         XU, _, _ = ds.training_set() if training else ds.validation_set()
-        if not self.use_action:
+        if len(XU) and not self.use_action:
             XU, _, _ = ds.training_set(original=True) if training else ds.validation_set(original=True)
             XU = XU.clone()
             XU[:, ds.original_config().nx:] = 0
