@@ -200,8 +200,8 @@ class MPC(ControllerWithModelPrediction):
         self.pred_error_log = []
         self.diff_predicted = None
         self.diff_relative = None
-        self.prev_x = None
-        self.prev_u = None
+        self.x_history = []
+        self.u_history = []
         self.context = None
 
     def set_goal(self, goal):
@@ -253,6 +253,7 @@ class MPC(ControllerWithModelPrediction):
 
     def reset(self):
         super(MPC, self).reset()
+        self.dynamics.reset()
         if len(self.pred_error_log):
             error = torch.cat(self.pred_error_log)
             median, _ = error.median(0)
@@ -260,8 +261,8 @@ class MPC(ControllerWithModelPrediction):
         self.pred_error_log = []
         self.diff_predicted = None
         self.diff_relative = None
-        self.prev_x = None
-        self.prev_u = None
+        self.x_history = []
+        self.u_history = []
         self.context = None
 
     def command(self, obs, info=None):
@@ -269,7 +270,7 @@ class MPC(ControllerWithModelPrediction):
         obs = tensor_utils.ensure_tensor(self.d, self.dtype, obs)
         if self.predicted_next_state is not None:
             self.diff_predicted = torch.tensor(self.prediction_error(original_obs), device=self.d)
-            diff_actual = self.compare_to_goal(obs.view(1, -1), self.prev_x)
+            diff_actual = self.compare_to_goal(obs.view(1, -1), self.x_history[-1])
             self.diff_relative = self.diff_predicted / diff_actual
             self.pred_error_log.append(self.diff_relative.abs())
 
@@ -279,8 +280,8 @@ class MPC(ControllerWithModelPrediction):
         if self.u_max is not None:
             u = math_utils.clip(u, self.u_min, self.u_max)
 
-        self.prev_x = obs
-        self.prev_u = u
+        self.x_history.append(obs)
+        self.u_history.append(u)
         self.predicted_next_state = self.predict_next_state(obs, u)
         return u.cpu().numpy()
 

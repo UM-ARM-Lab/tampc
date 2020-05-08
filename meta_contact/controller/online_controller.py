@@ -8,6 +8,7 @@ import torch
 from arm_pytorch_utilities import math_utils, linalg, tensor_utils
 from meta_contact.dynamics import online_model, hybrid_model
 from meta_contact.controller import controller, gating_function
+from meta_contact import cost
 
 logger = logging.getLogger(__name__)
 
@@ -19,15 +20,6 @@ class OnlineController(controller.MPC):
     External API is in numpy ndarrays, but internally keeps tensors, and interacts with any models using tensors
     """
 
-    def __init__(self, hybrid_dynamics: hybrid_model.HybridDynamicsModel, config, **kwargs):
-        super().__init__(hybrid_dynamics, config, **kwargs)
-        self.u_history = []
-
-    def reset(self):
-        self.u_history = []
-        self.dynamics.reset()
-        super(OnlineController, self).reset()
-
     def update_prior(self, prior):
         self.dynamics.prior = prior
 
@@ -35,13 +27,9 @@ class OnlineController(controller.MPC):
         t = len(self.u_history)
         x = obs
         if t > 0:
-            self.dynamics.update(self.prev_x, self.prev_u, x)
+            self.dynamics.update(self.x_history[-1], self.u_history[-1], x)
 
         u = self._compute_action(x)
-        if self.u_max is not None:
-            u = math_utils.clip(u, self.u_min, self.u_max)
-
-        self.u_history.append(u)
 
         return u
 
@@ -61,20 +49,23 @@ class OnlineMPC(OnlineController):
     Online controller with a pytorch based MPC method (CEM, MPPI)
     """
 
-    def __init__(self, *args, constrain_state=noop_constrain,
+    def __init__(self, ds, *args, constrain_state=noop_constrain,
                  gating: gating_function.GatingFunction = gating_function.AlwaysSelectNominal(),
                  **kwargs):
+        self.ds = ds
         self.constrain_state = constrain_state
         self.mpc = None
         self.gating = gating
         self.dynamics_class = 0
-        self.dynamics_class_history = {}
+        self.dynamics_class_prediction = {}
+        self.dynamics_class_history = []
         super().__init__(*args, **kwargs)
         assert isinstance(self.dynamics, hybrid_model.HybridDynamicsModel)
 
     def reset(self):
         super(OnlineMPC, self).reset()
-        self.dynamics_class_history = {}
+        self.dynamics_class_prediction = {}
+        self.dynamics_class_history = []
 
     @tensor_utils.ensure_2d_input
     def _apply_dynamics(self, state, u, t=0):
@@ -87,7 +78,7 @@ class OnlineMPC(OnlineController):
         cls = self.gating.sample_class(x, u)
         cls[bad_states] = -1
 
-        self.dynamics_class_history[t] = cls
+        self.dynamics_class_prediction[t] = cls
 
         # hybrid dynamics
         next_state = self.dynamics(x, u, cls)
@@ -109,12 +100,27 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.recovery_traj_seeder = None
         self.abs_unrecognized_threshold = abs_unrecognized_threshold
         self.rel_unrecognized_threshold = rel_unrecognized_threshold
+        self.autonomous_recovery_mode = False
+        self.leave_recovery_num_turns = 3
+        self.recovery_cost = None
 
     def create_recovery_traj_seeder(self, *args, **kwargs):
         self.recovery_traj_seeder = RecoveryTrajectorySeeder(self, *args, **kwargs)
 
     def _mpc_command(self, obs):
         return OnlineMPC._mpc_command(self, obs)
+
+    def _recovery_running_cost(self, state, action):
+        return self.recovery_cost(state, action)
+
+    def _recovery_terminal_cost(self, state, action):
+        # extract the last state; assume if given 3 dimensions then it's (B x T x nx) or (M x B x T x nx)
+        if len(state.shape) is 3:
+            state = state[:, -1, :]
+        elif len(state.shape) is 4:
+            state = state[:, :, -1, :]
+        state_loss = self.terminal_cost_multiplier * self.recovery_cost(state, action, terminal=True)
+        return state_loss
 
     def _compute_action(self, x):
         assert self.recovery_traj_seeder is not None
@@ -130,9 +136,31 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         if self.diff_predicted is not None and self.dynamics_class == gating_function.DynamicsClass.NOMINAL and (
                 self.diff_predicted.norm() > self.abs_unrecognized_threshold and self.diff_relative.norm() > self.rel_unrecognized_threshold):
             self.dynamics_class = gating_function.DynamicsClass.UNRECOGNIZED
-            # TODO change mpc cost if we're outside the nominal dynamics_class
+
+            # TODO if we're sure that we've entered an unrecognized class (consistent dynamics not working)
+            if not self.autonomous_recovery_mode and self.dynamics_class_history[-1] != self.dynamics_class:
+                logger.debug("Entering autonomous recovery mode")
+                self.autonomous_recovery_mode = True
+                # change mpc cost
+                # TODO parameterize this
+                goal_set = self.x_history[-10:-3]
+                self.recovery_cost = cost.CostQRGoalSet(goal_set, self.Q, self.R, self.compare_to_goal, self.ds)
+                self.mpc.running_cost = self._recovery_running_cost
+                self.mpc.terminal_state_cost = self._recovery_terminal_cost
         else:
+            if self.autonomous_recovery_mode and torch.all(torch.tensor(self.dynamics_class_history[
+                                                                        -self.leave_recovery_num_turns:] != gating_function.DynamicsClass.UNRECOGNIZED)):
+                logger.debug("Leaving autonomous recovery mode")
+                self.autonomous_recovery_mode = False
+                # restore cost functions
+                self.mpc.running_cost = self._running_cost
+                self.mpc.terminal_state_cost = self._terminal_cost
+                # TODO if we're sure that we've left an unrecognized class, save as recovery
+                # TODO filter out moves
+
             self.recovery_traj_seeder.update_nominal_trajectory(self.dynamics_class, x)
+
+        self.dynamics_class_history.append(self.dynamics_class)
 
         u = self.mpc.command(x)
         return u

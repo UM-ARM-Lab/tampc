@@ -1361,9 +1361,9 @@ class InteractivePush(simulation.Simulation):
                 self.pred_cls[simTime] = self.ctrl.dynamics_class
                 self.env.draw_user_text("dyn cls {}".format(self.ctrl.dynamics_class), 2)
                 for i in range(4):
-                    dynamics_class_history = self.ctrl.dynamics_class_history[i]
-                    nom_count = (dynamics_class_history == DynamicsClass.NOMINAL).sum()
-                    text = "nom: {:.2f}".format(nom_count.float() / len(dynamics_class_history))
+                    dynamics_class_pred = self.ctrl.dynamics_class_prediction[i]
+                    nom_count = (dynamics_class_pred == DynamicsClass.NOMINAL).sum()
+                    text = "nom: {:.2f}".format(nom_count.float() / len(dynamics_class_pred))
                     self.env.draw_user_text("t={} {}".format(i, text), 3 + i)
             if self.visualize_action_sample and isinstance(self.ctrl, controller.MPPI_MPC):
                 self._plot_action_sample(self.ctrl.mpc.perturbed_action)

@@ -3,6 +3,14 @@ import torch
 from arm_pytorch_utilities import linalg, tensor_utils
 
 
+def qr_cost(diff_function, X, X_goal, Q, R, U=None, terminal=False):
+    X = diff_function(X, X_goal)
+    c = linalg.batch_quadratic_product(X, Q)
+    if not terminal:
+        c += linalg.batch_quadratic_product(U, R)
+    return c
+
+
 class CostQROnlineTorch:
     def __init__(self, target, Q, R, compare_to_goal):
         self.Q = Q
@@ -12,11 +20,7 @@ class CostQROnlineTorch:
 
     @tensor_utils.handle_batch_input
     def __call__(self, X, U=None, terminal=False):
-        X = self.compare_to_goal(X, self.eetgt)
-        loss = linalg.batch_quadratic_product(X, self.Q)
-        if not terminal:
-            loss += linalg.batch_quadratic_product(U, self.R)
-        return loss
+        return qr_cost(self.compare_to_goal, X, self.eetgt, self.Q, self.R, U, terminal)
 
     def eval(self, X, U, t, jac=None):
         """
@@ -41,3 +45,31 @@ class CostQROnlineTorch:
         lux = torch.zeros((T, nu, nx), dtype=X.dtype, device=X.device)
 
         return l, lx, lu, lxx, luu, lux
+
+
+class CostQRGoalSet:
+    """If goal is not just a single target but a set of possible goals"""
+
+    def __init__(self, goal_set, Q, R, compare_to_goal, ds, goal_weights=None, compare_in_latent_space=False):
+        self.ds = ds
+        self.Q = Q
+        self.R = R
+        self.goal_set = goal_set
+        self.goal_weights = goal_weights
+        self.compare_to_goal = compare_to_goal
+        self.compare_in_latent_space = compare_in_latent_space
+
+    @tensor_utils.handle_batch_input
+    def __call__(self, X, U=None, terminal=False):
+        costs = []
+        for i, goal in enumerate(self.goal_set):
+            # TODO handle comparison in latent space (need to change Q)
+            c = qr_cost(self.compare_to_goal, X, goal, self.Q, self.R, U, terminal)
+            if self.goal_weights is not None:
+                c *= self.goal_weights[i]
+            costs.append(c)
+
+        costs = torch.stack(costs, dim=0)
+        # take the minimum to any of the goals
+        costs = costs.min(dim=0).values
+        return costs

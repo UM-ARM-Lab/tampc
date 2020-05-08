@@ -728,7 +728,7 @@ def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTsf.COORD, relearn_dy
         _, _, dynamics = get_nominal_model(env, use_tsf=use_tsf, online_adapt=online_adapt, **kwargs)
         # no local models (or no explicit nominal model since it's the mixed local model)
         hybrid_dynamics = hybrid_model.HybridDynamicsModel(dynamics, [])
-        ctrl = online_controller.OnlineMPPI(hybrid_dynamics, untransformed_config, **common_wrapper_opts,
+        ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, untransformed_config, **common_wrapper_opts,
                                             mpc_opts=mpc_opts)
         ctrl.create_recovery_traj_seeder([ds])
     else:
@@ -950,7 +950,7 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
         return
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
-    ctrl = online_controller.OnlineMPPI(hybrid_dynamics, ds.original_config(), gating=gating,
+    ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
     ctrl.set_goal(env.goal)
     ctrl.create_recovery_traj_seeder(dss,
@@ -996,7 +996,7 @@ def test_autonomous_recovery(seed=1, level=1, allow_update=False, recover_adjust
     hybrid_dynamics = hybrid_model.HybridDynamicsModel(dynamics_nominal, dynamics_local)
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
-    ctrl = online_controller.OnlineMPPI(hybrid_dynamics, ds.original_config(), gating=gating,
+    ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
     ctrl.set_goal(env.goal)
     ctrl.create_recovery_traj_seeder(dss,
@@ -1324,7 +1324,7 @@ def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
     mpc_opts['num_samples'] = N
     mpc_opts['rollout_samples'] = M
     mpc_opts['rollout_var_cost'] = 0
-    ctrl = online_controller.OnlineMPPI(dynamics, ds.original_config(), **common_wrapper_opts, mpc_opts=mpc_opts,
+    ctrl = online_controller.OnlineMPPI(ds, dynamics, ds.original_config(), **common_wrapper_opts, mpc_opts=mpc_opts,
                                         gating=gating)
     ctrl.set_goal(env.goal)
     ctrl.create_recovery_traj_seeder(dss, nom_traj_from=nom_traj_from)
@@ -1364,7 +1364,7 @@ def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
     axes[0].scatter(np.tile(t, (M, 1)), path_sampled_cost.cpu(), alpha=0.2)
     axes[0].set_ylabel('cost')
 
-    modes = [ctrl.dynamics_class_history[i].view(20, -1) for i in range(ctrl.mpc.T)]
+    modes = [ctrl.dynamics_class_prediction[i].view(20, -1) for i in range(ctrl.mpc.T)]
     modes = torch.stack(modes, dim=0)
     modes = (modes == 0).sum(dim=0)
     axes[1].scatter(np.tile(t, (M, 1)), modes[:, ind].cpu(), alpha=0.2)
