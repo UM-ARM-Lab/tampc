@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from arm_pytorch_utilities import math_utils, linalg, tensor_utils
-from meta_contact.dynamics import online_model
+from meta_contact.dynamics import online_model, hybrid_model
 from meta_contact.controller import controller, gating_function
 
 logger = logging.getLogger(__name__)
@@ -19,8 +19,8 @@ class OnlineController(controller.MPC):
     External API is in numpy ndarrays, but internally keeps tensors, and interacts with any models using tensors
     """
 
-    def __init__(self, online_dynamics: online_model.OnlineDynamicsModel, config, **kwargs):
-        super().__init__(online_dynamics, config, **kwargs)
+    def __init__(self, hybrid_dynamics: hybrid_model.HybridDynamicsModel, config, **kwargs):
+        super().__init__(hybrid_dynamics, config, **kwargs)
         self.u_history = []
 
     def reset(self):
@@ -40,9 +40,6 @@ class OnlineController(controller.MPC):
         u = self._compute_action(x)
         if self.u_max is not None:
             u = math_utils.clip(u, self.u_min, self.u_max)
-
-        if isinstance(self.dynamics, online_model.OnlineLinearizeMixing):
-            self.dynamics.evaluate_error(self.prev_x, self.prev_u, x, u)
 
         self.u_history.append(u)
 
@@ -73,6 +70,7 @@ class OnlineMPC(OnlineController):
         self.dynamics_class = 0
         self.dynamics_class_history = {}
         super().__init__(*args, **kwargs)
+        assert isinstance(self.dynamics, hybrid_model.HybridDynamicsModel)
 
     def reset(self):
         super(OnlineMPC, self).reset()
@@ -90,15 +88,9 @@ class OnlineMPC(OnlineController):
         cls[bad_states] = -1
 
         self.dynamics_class_history[t] = cls
-        next_state = torch.zeros_like(state)
-        # TODO we should generalize to more than 2 modes
-        nominal_cls = cls == 0
-        local_cls = cls == 1
-        if torch.any(nominal_cls):
-            next_state[nominal_cls] = self.dynamics.prior.dyn_net.predict(
-                torch.cat((state[nominal_cls], u[nominal_cls]), dim=1))
-        if torch.any(local_cls):
-            next_state[local_cls] = self.dynamics.predict(None, None, state[local_cls], u[local_cls])
+
+        # hybrid dynamics
+        next_state = self.dynamics(x, u, cls)
 
         next_state = self._adjust_next_state(next_state, u, t)
         next_state = self.constrain_state(next_state)

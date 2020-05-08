@@ -23,7 +23,7 @@ from tensorboardX import SummaryWriter
 
 from meta_contact import cfg
 from meta_contact.transform import invariant
-from meta_contact.dynamics import online_model, model, prior
+from meta_contact.dynamics import online_model, model, prior, hybrid_model
 from meta_contact.controller import controller
 from meta_contact.controller import online_controller
 from meta_contact.controller import gating_function
@@ -356,7 +356,9 @@ def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.G
                                                    refit_strategy=online_model.RefitGPStrategy.RESET_DATA)
         else:
             raise RuntimeError("Unrecognized online adaption value {}".format(online_adapt))
-        ctrl = online_controller.OnlineMPPI(dynamics, untransformed_config, **common_wrapper_opts,
+        # no local models (or no explicit nominal model since it's the mixed local model)
+        hybrid_dynamics = hybrid_model.HybridDynamicsModel(dynamics, [])
+        ctrl = online_controller.OnlineMPPI(hybrid_dynamics, untransformed_config, **common_wrapper_opts,
                                             mpc_opts=mpc_opts)
     else:
         ctrl = controller.MPPI_MPC(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
@@ -775,6 +777,7 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
 
     logger.info("initial random seed %d", rand.seed(seed))
 
+    # TODO should invert responsibility and these methods make a local dynamics model given a dataset, rather than give back a dataset and the model
     dynamics, _, _, _ = get_mixed_model(env, use_tsf=use_tsf, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD,
                                         allow_update=allow_update or plot_online_update, **kwargs)
     dynamics_gp, ds, ds_wall, train_slice = get_mixed_model(env, use_tsf=use_tsf,
@@ -784,6 +787,8 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
     gating = get_gating(dss, use_tsf.name) if gating is None else gating
 
     pm = dynamics_gp.prior
+    hybrid_dynamics = hybrid_model.HybridDynamicsModel(pm.dyn_net, [dynamics_gp if use_gp else dynamics])
+
     if plot_model_eval:
         if not test_traj:
             test_traj = ("pushing/predetermined_bug_trap.mat", "pushing/physical0.mat")
@@ -954,7 +959,7 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
         return
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
-    ctrl = online_controller.OnlineMPPI(dynamics_gp if use_gp else dynamics, ds.original_config(), gating=gating,
+    ctrl = online_controller.OnlineMPPI(hybrid_dynamics, ds.original_config(), gating=gating,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
     ctrl.set_goal(env.goal)
     ctrl.create_recovery_traj_seeder(dss,
