@@ -20,6 +20,10 @@ class HybridDynamicsModel(abc.ABC):
     def num_local_models(self):
         return len(self.local_models)
 
+    def reset(self):
+        self.nominal_model.reset()
+        # don't need to reset local models since those aren't updated anyway
+
     def update(self, px, pu, cx):
         # we don't touch local models, but we can update our nominal mixed model if applicable
         if isinstance(self.nominal_model, online_model.OnlineDynamicsModel):

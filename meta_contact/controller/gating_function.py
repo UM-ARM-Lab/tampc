@@ -228,7 +228,8 @@ class MLPSelector(LearnableParameterizedModel, GatingFunction):
 
         # TODO tune acceptance probability to maximize f1
         self.component_scale = torch.ones(self.num_components, dtype=torch.double, device=self.nominal_ds.d).view(-1, 1)
-        self.component_scale[1] = 70
+        for s in range(1, self.num_components):
+            self.component_scale[s] = 70
 
         # we do the softmax ourselves
         opts = {'h_units': (100,), 'activation_factory': torch.nn.LeakyReLU}

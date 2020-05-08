@@ -241,18 +241,24 @@ class OnlineAdapt:
     GP_KERNEL = 2
 
 
-def get_nominal_model(env, use_tsf=UseTsf.COORD, prior_class=prior.NNPrior):
+def get_nominal_model(env, use_tsf=UseTsf.COORD, prior_class=prior.NNPrior, online_adapt=OnlineAdapt.NONE, **kwargs):
     ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
     untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
     pm = get_loaded_prior(prior_class, ds, tsf_name, False)
-    return ds, pm
+
+    # if we use an online adaptation method for the nominal model, we'll always allow updates
+    # this allows the nominal model to be fixed or online adapted, in addition to fixed local models from demonstrations
+    dynamics = get_local_model(env, pm, ds, allow_update=True, online_adapt=online_adapt, **kwargs)
+
+    return ds, pm, dynamics
 
 
 def get_local_model(env, pm, ds_local, allow_update=False, d=get_device(), online_adapt=OnlineAdapt.GP_KERNEL,
                     train_slice=slice(0, 26)):
     local_dynamics = pm.dyn_net
     if online_adapt is OnlineAdapt.LINEARIZE_LIKELIHOOD:
-        local_dynamics = online_model.OnlineLinearizeMixing(0.0, pm, ds_local, env.state_difference,
+        local_dynamics = online_model.OnlineLinearizeMixing(0.1 if allow_update else 0.0, pm, ds_local,
+                                                            env.state_difference,
                                                             local_mix_weight_scale=50, xu_characteristic_length=10,
                                                             const_local_mix_weight=False, sigreg=1e-10,
                                                             slice_to_use=train_slice, device=d)
@@ -261,6 +267,7 @@ def get_local_model(env, pm, ds_local, allow_update=False, d=get_device(), onlin
                                                      allow_update=allow_update, sample=True,
                                                      refit_strategy=online_model.RefitGPStrategy.RESET_DATA,
                                                      device=d, training_iter=150, use_independent_outputs=False)
+
     return local_dynamics
 
 
@@ -301,7 +308,7 @@ class UseGating:
     KNN = 6
 
 
-def get_gating(dss, tsf_name, use_gating=UseGating.MLP, *args, **kwargs):
+def get_gating(dss, tsf_name, use_gating=UseGating.TREE, *args, **kwargs):
     from sklearn.tree import DecisionTreeClassifier
     from sklearn.neural_network import MLPClassifier
     from sklearn.neighbors.classification import KNeighborsClassifier
@@ -334,31 +341,6 @@ def get_gating(dss, tsf_name, use_gating=UseGating.MLP, *args, **kwargs):
     else:
         raise RuntimeError("Unrecognized selector option")
     return gating
-
-
-def get_controller(env, pm, ds, untransformed_config, online_adapt=OnlineAdapt.GP_KERNEL):
-    common_wrapper_opts, mpc_opts = get_controller_options(env)
-    d = common_wrapper_opts['device']
-    if online_adapt is not OnlineAdapt.NONE:
-        # TODO use get_local_model for getting mixed dynamics
-        if online_adapt is OnlineAdapt.LINEARIZE_LIKELIHOOD:
-            dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds, env.state_difference,
-                                                          local_mix_weight_scale=50.0, xu_characteristic_length=10,
-                                                          const_local_mix_weight=False, sigreg=1e-10, device=d)
-        elif online_adapt is OnlineAdapt.GP_KERNEL:
-            dynamics = online_model.OnlineGPMixing(pm, ds, env.state_difference, device=d, max_data_points=50,
-                                                   use_independent_outputs=False, sample=False, training_iter=100,
-                                                   refit_strategy=online_model.RefitGPStrategy.RESET_DATA)
-        else:
-            raise RuntimeError("Unrecognized online adaption value {}".format(online_adapt))
-        # no local models (or no explicit nominal model since it's the mixed local model)
-        hybrid_dynamics = hybrid_model.HybridDynamicsModel(dynamics, [])
-        ctrl = online_controller.OnlineMPPI(hybrid_dynamics, untransformed_config, **common_wrapper_opts,
-                                            mpc_opts=mpc_opts)
-    else:
-        ctrl = controller.MPPI_MPC(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
-
-    return ctrl
 
 
 # --- pushing specific data structures
@@ -670,7 +652,7 @@ def test_online_model():
 
 def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTsf.COORD, relearn_dynamics=False,
                                override=False, plot_model_error=False, enforce_model_rollout=False,
-                               full_evaluation=True,
+                               full_evaluation=True, online_adapt=OnlineAdapt.NONE,
                                prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior, **kwargs):
     d = get_device()
     if plot_model_error:
@@ -741,7 +723,17 @@ def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTsf.COORD, relearn_dy
         plt.show()
         return
 
-    ctrl = get_controller(env, pm, ds, untransformed_config, **kwargs)
+    common_wrapper_opts, mpc_opts = get_controller_options(env)
+    if online_adapt is not OnlineAdapt.NONE:
+        _, _, dynamics = get_nominal_model(env, use_tsf=use_tsf, online_adapt=online_adapt, **kwargs)
+        # no local models (or no explicit nominal model since it's the mixed local model)
+        hybrid_dynamics = hybrid_model.HybridDynamicsModel(dynamics, [])
+        ctrl = online_controller.OnlineMPPI(hybrid_dynamics, untransformed_config, **common_wrapper_opts,
+                                            mpc_opts=mpc_opts)
+        ctrl.create_recovery_traj_seeder([ds])
+    else:
+        ctrl = controller.MPPI_MPC(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
+
     name = get_full_controller_name(pm, ctrl, tsf_name)
 
     if full_evaluation:
@@ -772,7 +764,7 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
 
     logger.info("initial random seed %d", rand.seed(seed))
 
-    ds, pm = get_nominal_model(env, use_tsf)
+    ds, pm, dynamics_nominal = get_nominal_model(env, use_tsf)
 
     # data from predetermined policy for getting into and out of bug trap
     ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
@@ -786,8 +778,7 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
     dss = [ds, ds_wall]
     gating = get_gating(dss, use_tsf.name) if gating is None else gating
 
-    pm = dynamics_gp.prior
-    hybrid_dynamics = hybrid_model.HybridDynamicsModel(pm.dyn_net, [dynamics_gp if use_gp else dynamics])
+    hybrid_dynamics = hybrid_model.HybridDynamicsModel(dynamics_nominal, [dynamics_gp if use_gp else dynamics])
 
     if plot_model_eval:
         if not test_traj:
@@ -983,25 +974,26 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
 
 
 def test_autonomous_recovery(seed=1, level=1, allow_update=False, recover_adjust=True, gating=None,
-                             use_tsf=UseTsf.COORD, **kwargs):
+                             use_tsf=UseTsf.COORD, nominal_adapt=OnlineAdapt.NONE, **kwargs):
     env = get_env(p.GUI, level=level, log_video=True)
     logger.info("initial random seed %d", rand.seed(seed))
 
-    ds, pm = get_nominal_model(env, use_tsf)
+    ds, pm, dynamics_nominal = get_nominal_model(env, use_tsf, online_adapt=nominal_adapt)
 
     dss = [ds]
-    local_dynamics = []
-    demo_trajs = ["pushing/predetermined_bug_trap.mat"]
+    dynamics_local = []
+    # demo_trajs = ["pushing/predetermined_bug_trap.mat"]
+    demo_trajs = []
     for demo in demo_trajs:
         ds_local, config = get_ds(env, demo, validation_ratio=0.)
         ds_local.update_preprocessor(ds.preprocessor)
         dss.append(ds_local)
         lm = get_local_model(env, pm, ds_local, **kwargs)
-        local_dynamics.append(lm)
+        dynamics_local.append(lm)
 
     gating = get_gating(dss, use_tsf.name) if gating is None else gating
 
-    hybrid_dynamics = hybrid_model.HybridDynamicsModel(pm.dyn_net, local_dynamics)
+    hybrid_dynamics = hybrid_model.HybridDynamicsModel(dynamics_nominal, dynamics_local)
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     ctrl = online_controller.OnlineMPPI(hybrid_dynamics, ds.original_config(), gating=gating,
@@ -1033,9 +1025,6 @@ def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controll
                         translation=(0, 0),
                         override=False):
     """Fixed set of benchmark tasks to do control over, with the total reward for each task collected and reported"""
-    # for evaluations in freespace we always use local model
-    if isinstance(ctrl, online_controller.OnlineMPC):
-        ctrl.gating = gating_function.AlwaysSelectLocal()
     num_frames = 150
     env.set_camera_position(translation)
     env.draw_user_text('center {}'.format(translation), 2)
@@ -1306,11 +1295,13 @@ def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
     env.draw_user_text("eval index {}".format(eval_i), 13, left_offset=-1.5)
     logger.info("initial random seed %d", rand.seed(seed))
 
-    ds, pm = get_nominal_model(env, use_tsf)
+    ds, pm, dynamics_nominal = get_nominal_model(env, use_tsf)
 
     ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
     ds_wall.update_preprocessor(ds.preprocessor)
-    dynamics = get_local_model(env, pm, ds_wall)
+    dynamics_local = get_local_model(env, pm, ds_wall)
+
+    dynamics = hybrid_model.HybridDynamicsModel(dynamics_nominal, [dynamics_local])
 
     ds_eval, _ = get_ds(env, 'pushing/test_sufficiency_selector__i5_o2_s1_pd1_pa1_a0_e0_y0_140891.mat',
                         validation_ratio=0.)
@@ -1540,7 +1531,7 @@ class Visualize:
 
         logger.info("initial random seed %d", rand.seed(seed))
 
-        ds, pm = get_nominal_model(env)
+        ds, pm, _ = get_nominal_model(env)
         ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
         ds_wall.update_preprocessor(ds.preprocessor)
         dynamics_gp = get_local_model(env, pm, ds_wall)
@@ -1783,8 +1774,8 @@ if __name__ == "__main__":
     # evaluate_ctrl_sampler()
 
     # autonomous recovery
-    for seed in range(5):
-        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut)
+    # for seed in range(5):
+    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut)
 
     # for seed in range(5):
     #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
@@ -1800,8 +1791,8 @@ if __name__ == "__main__":
     #                                                    selector=mode_selector.AlwaysSelectNominal(),
     #                                                    recover_adjust=False)
 
-    # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.NONE,
-    #                            override=True, full_evaluation=False, plot_model_error=True, relearn_dynamics=True)
+    evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.GP_KERNEL,
+                               override=True, full_evaluation=True, plot_model_error=False, relearn_dynamics=False)
 
     # test_online_model()
     # for seed in range(0, 5):
