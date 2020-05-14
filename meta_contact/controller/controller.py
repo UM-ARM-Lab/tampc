@@ -300,6 +300,15 @@ class ExperimentalMPPI(mppi.MPPI):
         self.rollout_var_cost = rollout_var_cost
         self.rollout_var_discount = rollout_var_discount
 
+    def change_horizon(self, horizon):
+        if horizon < self.T:
+            self.U = self.U[:horizon]
+        elif horizon > self.T:
+            U = self.noise_dist.sample((horizon,))
+            U[:self.T] = self.U
+            self.U = U
+        self.T = horizon
+
     @tensor_utils.handle_batch_input
     def _dynamics(self, state, u, t):
         return super(ExperimentalMPPI, self)._dynamics(state, u, t)

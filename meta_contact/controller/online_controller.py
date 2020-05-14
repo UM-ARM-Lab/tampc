@@ -95,7 +95,7 @@ class OnlineMPC(OnlineController):
 
 
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
-    def __init__(self, *args, abs_unrecognized_threshold=1, rel_unrecognized_threshold=5, compare_in_latent_space=False,
+    def __init__(self, *args, abs_unrecognized_threshold=2, rel_unrecognized_threshold=5, compare_in_latent_space=False,
                  allow_autonomous_recovery=True, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
         self.recovery_traj_seeder = None
@@ -106,6 +106,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.recovery_cost = None
         self.compare_in_latent_space = compare_in_latent_space
         self.allow_autonomous_recovery = allow_autonomous_recovery
+        self.original_horizon = self.mpc.T
 
     def create_recovery_traj_seeder(self, *args, **kwargs):
         self.recovery_traj_seeder = RecoveryTrajectorySeeder(self, *args, **kwargs)
@@ -116,24 +117,15 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def _recovery_running_cost(self, state, action):
         return self.recovery_cost(state, action)
 
-    def _recovery_terminal_cost(self, state, action):
-        # extract the last state; assume if given 3 dimensions then it's (B x T x nx) or (M x B x T x nx)
-        if len(state.shape) is 3:
-            state = state[:, -1, :]
-        elif len(state.shape) is 4:
-            state = state[:, :, -1, :]
-        state_loss = self.terminal_cost_multiplier * self.recovery_cost(state, action, terminal=True)
-        return state_loss
-
     def _compute_action(self, x):
         assert self.recovery_traj_seeder is not None
         # use only state for dynamics_class selection; this way we can get dynamics_class before calculating action
         a = torch.zeros((1, self.nu), device=self.d, dtype=x.dtype)
         self.dynamics_class = self.gating.sample_class(x.view(1, -1), a).item()
 
-        if self.diff_predicted is not None:
-            logger.debug("abs err %f rel err %f full %s %s", self.diff_predicted.norm(), self.diff_relative.norm(),
-                         self.diff_predicted.cpu().numpy(), self.diff_relative.cpu().numpy())
+        # if self.diff_predicted is not None:
+        #     logger.debug("abs err %f rel err %f full %s %s", self.diff_predicted.norm(), self.diff_relative.norm(),
+        #                  self.diff_predicted.cpu().numpy(), self.diff_relative.cpu().numpy())
         # it's unrecognized if we don't recognize it as any local model (gating function thinks its the nominal model)
         # but we still have high model error
         if self.allow_autonomous_recovery and \
@@ -150,23 +142,31 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                 self.autonomous_recovery_mode = True
                 # change mpc cost
                 # TODO parameterize this
-                goal_set = self.x_history[-10:-3]
-                self.recovery_cost = cost.CostQRGoalSet(goal_set, self.Q, self.R, self.compare_to_goal, self.ds,
+                goal_set = torch.stack(self.x_history[-10:-3])
+                logger.debug(goal_set)
+                Q = self.Q.clone()
+                Q[2, 2] = 10
+                Q[3, 3] = Q[4, 4] = 1
+                logger.debug(Q)
+                self.recovery_cost = cost.CostQRGoalSet(goal_set, Q, self.R, self.compare_to_goal, self.ds,
                                                         compare_in_latent_space=self.compare_in_latent_space)
                 self.mpc.running_cost = self._recovery_running_cost
-                self.mpc.terminal_state_cost = self._recovery_terminal_cost
+                self.mpc.terminal_state_cost = None
                 self.dynamics.use_recovery_nominal_model()
                 # update the local model with the last transition for entering the mode
                 self.dynamics.update(self.x_history[-1], self.u_history[-1], x)
+                self.mpc.change_horizon(10)
         else:
             if self.autonomous_recovery_mode and torch.all(torch.tensor(self.dynamics_class_history[
-                                                                        -self.leave_recovery_num_turns:] != gating_function.DynamicsClass.UNRECOGNIZED)):
+                                                                        -self.leave_recovery_num_turns:]) != gating_function.DynamicsClass.UNRECOGNIZED):
                 logger.debug("Leaving autonomous recovery mode")
+                logger.debug(torch.tensor(self.dynamics_class_history[-self.leave_recovery_num_turns:]))
                 self.autonomous_recovery_mode = False
                 # restore cost functions
                 self.mpc.running_cost = self._running_cost
                 self.mpc.terminal_state_cost = self._terminal_cost
                 self.dynamics.use_normal_nominal_model()
+                self.mpc.change_horizon(self.original_horizon)
                 # TODO if we're sure that we've left an unrecognized class, save as recovery
                 # TODO filter out moves
 
