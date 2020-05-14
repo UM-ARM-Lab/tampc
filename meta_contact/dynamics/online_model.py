@@ -321,7 +321,8 @@ class OnlineGPMixing(OnlineDynamicsModel):
         self.xu = self.init_xu.clone()
         self.y = self.init_y.clone()
         self._recreate_all()
-        self._fit_params(self.training_iter)
+        if len(self.xu):
+            self._fit_params(self.training_iter)
 
     def _recreate_all(self):
         self.likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=self.ds.config.ny).to(

@@ -150,6 +150,9 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                                                         compare_in_latent_space=self.compare_in_latent_space)
                 self.mpc.running_cost = self._recovery_running_cost
                 self.mpc.terminal_state_cost = self._recovery_terminal_cost
+                self.dynamics.use_recovery_nominal_model()
+                # update the local model with the last transition for entering the mode
+                self.dynamics.update(self.x_history[-1], self.u_history[-1], x)
         else:
             if self.autonomous_recovery_mode and torch.all(torch.tensor(self.dynamics_class_history[
                                                                         -self.leave_recovery_num_turns:] != gating_function.DynamicsClass.UNRECOGNIZED)):
@@ -158,6 +161,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                 # restore cost functions
                 self.mpc.running_cost = self._running_cost
                 self.mpc.terminal_state_cost = self._terminal_cost
+                self.dynamics.use_normal_nominal_model()
                 # TODO if we're sure that we've left an unrecognized class, save as recovery
                 # TODO filter out moves
 

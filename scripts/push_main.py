@@ -974,7 +974,8 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
 
 
 def test_autonomous_recovery(seed=1, level=1, allow_update=False, recover_adjust=True, gating=None,
-                             use_tsf=UseTsf.COORD, nominal_adapt=OnlineAdapt.NONE, **kwargs):
+                             use_tsf=UseTsf.COORD, nominal_adapt=OnlineAdapt.NONE, compare_in_latent_space=False,
+                             **kwargs):
     env = get_env(p.GUI, level=level, log_video=True)
     logger.info("initial random seed %d", rand.seed(seed))
 
@@ -993,10 +994,11 @@ def test_autonomous_recovery(seed=1, level=1, allow_update=False, recover_adjust
 
     gating = get_gating(dss, use_tsf.name) if gating is None else gating
 
-    hybrid_dynamics = hybrid_model.HybridDynamicsModel(dynamics_nominal, dynamics_local)
+    hybrid_dynamics = hybrid_model.HybridDynamicsModel(dynamics_nominal, dynamics_local, [pm, ds, env.state_difference])
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                        compare_in_latent_space=compare_in_latent_space,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
     ctrl.set_goal(env.goal)
     ctrl.create_recovery_traj_seeder(dss,
@@ -1778,7 +1780,8 @@ if __name__ == "__main__":
 
     # autonomous recovery
     for seed in range(5):
-        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE)
+        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                                 compare_in_latent_space=False)
 
     # for seed in range(5):
     #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,

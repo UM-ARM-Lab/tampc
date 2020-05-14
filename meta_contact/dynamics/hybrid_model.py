@@ -10,12 +10,11 @@ logger = logging.getLogger(__name__)
 class HybridDynamicsModel(abc.ABC):
     """Different way of mixing local and nominal model; use nominal as mean"""
 
-    def __init__(self, nominal_model, local_models):
+    def __init__(self, nominal_model, local_models, local_model_creation_params):
         self.nominal_model = nominal_model
+        self._original_nominal_model = self.nominal_model
         self.local_models = local_models
-
-        # nominal model could be mixed with local data (and have a local model API)
-        self.local_model_api_for_nom_model = isinstance(self.nominal_model, online_model.OnlineDynamicsModel)
+        self.local_model_creation_params = local_model_creation_params
 
     def num_local_models(self):
         return len(self.local_models)
@@ -26,8 +25,26 @@ class HybridDynamicsModel(abc.ABC):
 
     def update(self, px, pu, cx):
         # we don't touch local models, but we can update our nominal mixed model if applicable
-        if isinstance(self.nominal_model, online_model.OnlineDynamicsModel):
+        if self._uses_local_model_api(self.nominal_model):
             return self.nominal_model.update(px, pu, cx)
+
+    @staticmethod
+    def _uses_local_model_api(model):
+        return isinstance(model, online_model.OnlineDynamicsModel)
+
+    def use_recovery_nominal_model(self):
+        if self._uses_local_model_api(self.nominal_model):
+            # start local model here with no previous data points
+            self.nominal_model.init_xu = self.nominal_model.init_xu[slice(0, 0)]
+            self.nominal_model.init_y = self.nominal_model.init_y[slice(0, 0)]
+            self.nominal_model.reset()
+        else:
+            self.nominal_model = online_model.OnlineGPMixing(*self.local_model_creation_params,
+                                                             allow_update=True, sample=True, slice_to_use=slice(0, 0),
+                                                             device=self.nominal_model.device())
+
+    def use_normal_nominal_model(self):
+        self.nominal_model = self._original_nominal_model
 
     @tensor_utils.handle_batch_input
     def __call__(self, x, u, cls):
@@ -36,7 +53,7 @@ class HybridDynamicsModel(abc.ABC):
         # nominal model
         nominal_cls = cls == 0
         if torch.any(nominal_cls):
-            if self.local_model_api_for_nom_model:
+            if self._uses_local_model_api(self.nominal_model):
                 next_state[nominal_cls] = self.nominal_model.predict(None, None, x[nominal_cls], u[nominal_cls])
             else:
                 next_state[nominal_cls] = self.nominal_model.predict(torch.cat((x[nominal_cls], u[nominal_cls]), dim=1))
