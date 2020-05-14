@@ -96,7 +96,7 @@ class OnlineMPC(OnlineController):
 
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def __init__(self, *args, abs_unrecognized_threshold=1, rel_unrecognized_threshold=5, compare_in_latent_space=False,
-                 **kwargs):
+                 allow_autonomous_recovery=True, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
         self.recovery_traj_seeder = None
         self.abs_unrecognized_threshold = abs_unrecognized_threshold
@@ -105,6 +105,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.leave_recovery_num_turns = 3
         self.recovery_cost = None
         self.compare_in_latent_space = compare_in_latent_space
+        self.allow_autonomous_recovery = allow_autonomous_recovery
 
     def create_recovery_traj_seeder(self, *args, **kwargs):
         self.recovery_traj_seeder = RecoveryTrajectorySeeder(self, *args, **kwargs)
@@ -135,8 +136,12 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                          self.diff_predicted.cpu().numpy(), self.diff_relative.cpu().numpy())
         # it's unrecognized if we don't recognize it as any local model (gating function thinks its the nominal model)
         # but we still have high model error
-        if self.diff_predicted is not None and self.dynamics_class == gating_function.DynamicsClass.NOMINAL and (
-                self.diff_predicted.norm() > self.abs_unrecognized_threshold and self.diff_relative.norm() > self.rel_unrecognized_threshold):
+        if self.allow_autonomous_recovery and \
+                len(self.x_history) > 3 and \
+                self.diff_predicted is not None and \
+                self.dynamics_class == gating_function.DynamicsClass.NOMINAL and \
+                self.diff_predicted.norm() > self.abs_unrecognized_threshold and \
+                self.diff_relative.norm() > self.rel_unrecognized_threshold:
             self.dynamics_class = gating_function.DynamicsClass.UNRECOGNIZED
 
             # TODO if we're sure that we've entered an unrecognized class (consistent dynamics not working)
