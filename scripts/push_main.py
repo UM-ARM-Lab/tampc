@@ -235,7 +235,7 @@ def get_transform(env, ds, use_tsf):
         raise RuntimeError("Unrecgonized transform {}".format(use_tsf))
 
 
-class OnlineAdapt:
+class OnlineAdapt(enum.IntEnum):
     NONE = 0
     LINEARIZE_LIKELIHOOD = 1
     GP_KERNEL = 2
@@ -1008,7 +1008,9 @@ def test_autonomous_recovery(seed=1, level=1, allow_update=False, recover_adjust
     env.draw_user_text(gating.name, 13, left_offset=-1.5)
     sim = block_push.InteractivePush(env, ctrl, num_frames=250, plot=False, save=True, stop_when_done=False)
     seed = rand.seed(seed)
-    run_name = 'auto_recover_{}_{}_{}_{}'.format(level, use_tsf.name, gating.name, seed)
+    run_name = 'auto_recover_{}_{}_{}_{}_{}_{}'.format(nominal_adapt.name,
+                                                       'LATENT' if ctrl.compare_in_latent_space else 'STATE', level,
+                                                       use_tsf.name, gating.name, seed)
     if allow_update:
         run_name += "_online_adapt"
     sim.run(seed, run_name)
@@ -1739,8 +1741,8 @@ class EvaluateTask:
         return min_dist
 
     @staticmethod
-    def closest_distance_to_goal_whole_set(prefix, **kwargs):
-        i = len("test_sufficiency_")
+    def closest_distance_to_goal_whole_set(prefix, expected_prefix="test_sufficiency_", **kwargs):
+        i = len(expected_prefix)
         level = int(prefix[i])
         trials = [filename for filename in os.listdir(os.path.join(cfg.DATA_DIR, "pushing")) if
                   filename.startswith(prefix)]
@@ -1768,6 +1770,7 @@ if __name__ == "__main__":
     #                          restrict_slice=slice(0, 40), step=5)
 
     # EvaluateTask.closest_distance_to_goal_whole_set('test_sufficiency_1_NO_TRANSFORM_AlwaysSelectLocal')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_1_COORD_DecisionTreeClassifier', 'auto_recover_')
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_gating_function(use_tsf=ut, test_file=neg_test_file)
@@ -1775,7 +1778,7 @@ if __name__ == "__main__":
 
     # autonomous recovery
     for seed in range(5):
-        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL)
+        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE)
 
     # for seed in range(5):
     #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,

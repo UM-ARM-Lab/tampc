@@ -95,7 +95,8 @@ class OnlineMPC(OnlineController):
 
 
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
-    def __init__(self, *args, abs_unrecognized_threshold=1, rel_unrecognized_threshold=5, **kwargs):
+    def __init__(self, *args, abs_unrecognized_threshold=1, rel_unrecognized_threshold=5, compare_in_latent_space=False,
+                 **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
         self.recovery_traj_seeder = None
         self.abs_unrecognized_threshold = abs_unrecognized_threshold
@@ -103,6 +104,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.autonomous_recovery_mode = False
         self.leave_recovery_num_turns = 3
         self.recovery_cost = None
+        self.compare_in_latent_space = compare_in_latent_space
 
     def create_recovery_traj_seeder(self, *args, **kwargs):
         self.recovery_traj_seeder = RecoveryTrajectorySeeder(self, *args, **kwargs)
@@ -144,7 +146,8 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                 # change mpc cost
                 # TODO parameterize this
                 goal_set = self.x_history[-10:-3]
-                self.recovery_cost = cost.CostQRGoalSet(goal_set, self.Q, self.R, self.compare_to_goal, self.ds)
+                self.recovery_cost = cost.CostQRGoalSet(goal_set, self.Q, self.R, self.compare_to_goal, self.ds,
+                                                        compare_in_latent_space=self.compare_in_latent_space)
                 self.mpc.running_cost = self._recovery_running_cost
                 self.mpc.terminal_state_cost = self._recovery_terminal_cost
         else:

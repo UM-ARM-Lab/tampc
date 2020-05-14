@@ -50,7 +50,7 @@ class CostQROnlineTorch:
 class CostQRGoalSet:
     """If goal is not just a single target but a set of possible goals"""
 
-    def __init__(self, goal_set, Q, R, compare_to_goal, ds, goal_weights=None, compare_in_latent_space=True):
+    def __init__(self, goal_set, Q, R, compare_to_goal, ds, goal_weights=None, compare_in_latent_space=False):
         self.ds = ds
         self.Q = Q
         self.R = R
