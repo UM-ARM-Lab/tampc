@@ -1,6 +1,6 @@
 import abc
 import logging
-from enum import Enum
+import enum
 
 import numpy as np
 import torch
@@ -105,9 +105,16 @@ class OnlineMPC(OnlineController):
         return u
 
 
+class AutonomousRecovery(enum.IntEnum):
+    NONE = 0
+    RANDOM = 1
+    RETURN_STATE = 2
+    RETURN_LATENT = 3
+
+
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
-    def __init__(self, *args, abs_unrecognized_threshold=1, rel_unrecognized_threshold=5, compare_in_latent_space=False,
-                 allow_autonomous_recovery=True, **kwargs):
+    def __init__(self, *args, abs_unrecognized_threshold=1, rel_unrecognized_threshold=5,
+                 autonomous_recovery=AutonomousRecovery.RETURN_STATE, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
         self.recovery_traj_seeder = None
         self.abs_unrecognized_threshold = abs_unrecognized_threshold
@@ -115,8 +122,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.autonomous_recovery_mode = False
         self.leave_recovery_num_turns = 3
         self.recovery_cost = None
-        self.compare_in_latent_space = compare_in_latent_space
-        self.allow_autonomous_recovery = allow_autonomous_recovery
+        self.autonomous_recovery = autonomous_recovery
         self.original_horizon = self.mpc.T
 
     def create_recovery_traj_seeder(self, *args, **kwargs):
@@ -140,7 +146,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         # it's unrecognized if we don't recognize it as any local model (gating function thinks its the nominal model)
         # but we still have high model error
         # TODO kind of hacky but our model predicts poorly when action has 0 magnitude
-        if self.allow_autonomous_recovery and \
+        if self.autonomous_recovery is not AutonomousRecovery.NONE and \
                 len(self.x_history) > 3 and \
                 self.u_history[-1][1] > 0 and \
                 self.diff_predicted is not None and \
@@ -151,49 +157,58 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             logger.debug(self.diff_predicted)
             logger.debug(self.diff_relative)
 
-            # TODO if we're sure that we've entered an unrecognized class (consistent dynamics not working)
+            # if we're sure that we've entered an unrecognized class (consistent dynamics not working)
             if not self.autonomous_recovery_mode and self.dynamics_class_history[-1] != self.dynamics_class:
                 logger.debug("Entering autonomous recovery mode")
                 self.autonomous_recovery_mode = True
-                # change mpc cost
-                # TODO parameterize this
-                goal_set = torch.stack(self.x_history[-10:-3])
-                logger.debug(goal_set)
-                Q = self.Q.clone()
-                Q[2, 2] = 10
-                Q[3, 3] = Q[4, 4] = 1
-                logger.debug(Q)
-                self.recovery_cost = cost.CostQRGoalSet(goal_set, Q, self.R, self.compare_to_goal, self.ds,
-                                                        compare_in_latent_space=self.compare_in_latent_space)
-                self.mpc.running_cost = self._recovery_running_cost
-                self.mpc.terminal_state_cost = None
-                self.dynamics.use_recovery_nominal_model()
-                # update the local model with the last transition for entering the mode
-                self.dynamics.update(self.x_history[-1], self.u_history[-1], x)
-                self.mpc.change_horizon(10)
+
+                # different strategies for recovery mode
+                if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.RETURN_LATENT]:
+                    # change mpc cost
+                    # TODO parameterize this
+                    goal_set = torch.stack(self.x_history[-10:-3])
+                    logger.debug(goal_set)
+                    Q = self.Q.clone()
+                    Q[2, 2] = 10
+                    Q[3, 3] = Q[4, 4] = 1
+                    logger.debug(Q)
+                    self.recovery_cost = cost.CostQRGoalSet(goal_set, Q, self.R, self.compare_to_goal, self.ds,
+                                                            compare_in_latent_space=self.autonomous_recovery is AutonomousRecovery.RETURN_LATENT)
+                    self.mpc.running_cost = self._recovery_running_cost
+                    self.mpc.terminal_state_cost = None
+                    self.dynamics.use_recovery_nominal_model()
+                    # update the local model with the last transition for entering the mode
+                    self.dynamics.update(self.x_history[-1], self.u_history[-1], x)
+                    self.mpc.change_horizon(10)
         else:
             if self.autonomous_recovery_mode and torch.all(torch.tensor(self.dynamics_class_history[
                                                                         -self.leave_recovery_num_turns:]) != gating_function.DynamicsClass.UNRECOGNIZED):
                 logger.debug("Leaving autonomous recovery mode")
                 logger.debug(torch.tensor(self.dynamics_class_history[-self.leave_recovery_num_turns:]))
                 self.autonomous_recovery_mode = False
-                # restore cost functions
-                self.mpc.running_cost = self._running_cost
-                self.mpc.terminal_state_cost = self._terminal_cost
-                self.dynamics.use_normal_nominal_model()
-                self.mpc.change_horizon(self.original_horizon)
-                # TODO if we're sure that we've left an unrecognized class, save as recovery
-                # TODO filter out moves
+
+                if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.RETURN_LATENT]:
+                    # restore cost functions
+                    self.mpc.running_cost = self._running_cost
+                    self.mpc.terminal_state_cost = self._terminal_cost
+                    self.dynamics.use_normal_nominal_model()
+                    self.mpc.change_horizon(self.original_horizon)
+                    # TODO if we're sure that we've left an unrecognized class, save as recovery
+                    # TODO filter out moves
 
             self.recovery_traj_seeder.update_nominal_trajectory(self.dynamics_class, x)
 
         self.dynamics_class_history.append(self.dynamics_class)
 
-        u = self.mpc.command(x)
+        if self.autonomous_recovery_mode and self.autonomous_recovery is AutonomousRecovery.RANDOM:
+            u = torch.rand(self.nu, device=self.d).cuda() * (self.u_max - self.u_min) + self.u_min
+        else:
+            u = self.mpc.command(x)
+
         return u
 
 
-class NominalTrajFrom(Enum):
+class NominalTrajFrom(enum.IntEnum):
     RANDOM = 0
     ROLLOUT_FROM_RECOVERY_STATES = 1
     RECOVERY_ACTIONS = 2

@@ -974,8 +974,8 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
 
 
 def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
-                             use_tsf=UseTsf.COORD, nominal_adapt=OnlineAdapt.NONE, compare_in_latent_space=False,
-                             allow_autonomous_recovery=True, **kwargs):
+                             use_tsf=UseTsf.COORD, nominal_adapt=OnlineAdapt.NONE,
+                             autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE, **kwargs):
     env = get_env(p.GUI, level=level, log_video=True)
     logger.info("initial random seed %d", rand.seed(seed))
 
@@ -998,8 +998,7 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
-                                        compare_in_latent_space=compare_in_latent_space,
-                                        allow_autonomous_recovery=allow_autonomous_recovery,
+                                        autonomous_recovery=autonomous_recovery,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
     ctrl.set_goal(env.goal)
     ctrl.create_recovery_traj_seeder(dss,
@@ -1011,10 +1010,7 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
     env.draw_user_text(gating.name, 13, left_offset=-1.5)
     sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=True, stop_when_done=False)
     seed = rand.seed(seed)
-    compare_name = 'LATENT' if ctrl.compare_in_latent_space else 'STATE'
-    if not allow_autonomous_recovery:
-        compare_name = 'NONE'
-    run_name = 'auto_recover_{}_{}_{}_{}_{}_{}'.format(nominal_adapt.name, compare_name, level,
+    run_name = 'auto_recover_{}_{}_{}_{}_{}_{}'.format(nominal_adapt.name, autonomous_recovery.name, level,
                                                        use_tsf.name, gating.name, seed)
     sim.run(seed, run_name)
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
@@ -1782,7 +1778,10 @@ if __name__ == "__main__":
     # autonomous recovery
     for seed in range(5):
         test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                 compare_in_latent_space=False)
+                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_LATENT)
+    # for seed in range(5):
+    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
 
     # for seed in range(5):
     #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,

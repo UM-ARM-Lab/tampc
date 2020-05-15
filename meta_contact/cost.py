@@ -63,7 +63,8 @@ class CostQRGoalSet:
             self.Q = torch.eye(ds.config.nx, device=Q.device, dtype=Q.dtype)
 
             # convert goal set to be in z space
-            goal_set = torch.stack(goal_set)
+            if not torch.is_tensor(goal_set):
+                goal_set = torch.stack(goal_set)
             xu = torch.cat(
                 (goal_set,
                  torch.zeros((goal_set.shape[0], self.ds.original_config().nu), device=Q.device, dtype=Q.dtype)),
