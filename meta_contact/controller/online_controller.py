@@ -67,6 +67,17 @@ class OnlineMPC(OnlineController):
         self.dynamics_class_prediction = {}
         self.dynamics_class_history = []
 
+    def predict_next_state(self, state, control):
+        # we'll temporarily ensure usage of the original nominal model for predicting the next state
+        current_model = self.dynamics.nominal_model
+        self.dynamics.nominal_model = self.dynamics._original_nominal_model
+
+        next_state = self.dynamics(state.view(1, -1), control.view(1, -1),
+                                   torch.tensor(gating_function.DynamicsClass.NOMINAL).view(-1)).cpu().numpy()
+
+        self.dynamics.nominal_model = current_model
+        return next_state
+
     @tensor_utils.ensure_2d_input
     def _apply_dynamics(self, state, u, t=0):
         # TODO this is a hack for handling when dynamics blows up
@@ -95,7 +106,7 @@ class OnlineMPC(OnlineController):
 
 
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
-    def __init__(self, *args, abs_unrecognized_threshold=2, rel_unrecognized_threshold=5, compare_in_latent_space=False,
+    def __init__(self, *args, abs_unrecognized_threshold=1, rel_unrecognized_threshold=5, compare_in_latent_space=False,
                  allow_autonomous_recovery=True, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
         self.recovery_traj_seeder = None
@@ -128,13 +139,17 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         #                  self.diff_predicted.cpu().numpy(), self.diff_relative.cpu().numpy())
         # it's unrecognized if we don't recognize it as any local model (gating function thinks its the nominal model)
         # but we still have high model error
+        # TODO kind of hacky but our model predicts poorly when action has 0 magnitude
         if self.allow_autonomous_recovery and \
                 len(self.x_history) > 3 and \
+                self.u_history[-1][1] > 0 and \
                 self.diff_predicted is not None and \
                 self.dynamics_class == gating_function.DynamicsClass.NOMINAL and \
                 self.diff_predicted.norm() > self.abs_unrecognized_threshold and \
                 self.diff_relative.norm() > self.rel_unrecognized_threshold:
             self.dynamics_class = gating_function.DynamicsClass.UNRECOGNIZED
+            logger.debug(self.diff_predicted)
+            logger.debug(self.diff_relative)
 
             # TODO if we're sure that we've entered an unrecognized class (consistent dynamics not working)
             if not self.autonomous_recovery_mode and self.dynamics_class_history[-1] != self.dynamics_class:
