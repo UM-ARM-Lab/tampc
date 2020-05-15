@@ -181,20 +181,26 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                     self.dynamics.update(self.x_history[-1], self.u_history[-1], x)
                     self.mpc.change_horizon(10)
         else:
-            if self.autonomous_recovery_mode and torch.all(torch.tensor(self.dynamics_class_history[
-                                                                        -self.leave_recovery_num_turns:]) != gating_function.DynamicsClass.UNRECOGNIZED):
-                logger.debug("Leaving autonomous recovery mode")
-                logger.debug(torch.tensor(self.dynamics_class_history[-self.leave_recovery_num_turns:]))
-                self.autonomous_recovery_mode = False
+            if self.autonomous_recovery_mode:
+                consecutive_recognized_dynamics_class = 0
+                for i in range(-1, -len(self.u_history), -1):
+                    if self.dynamics_class_history[i] == gating_function.DynamicsClass.UNRECOGNIZED:
+                        break
+                    if self.u_history[i][1] > 0:
+                        consecutive_recognized_dynamics_class += 1
+                if consecutive_recognized_dynamics_class >= self.leave_recovery_num_turns:
+                    logger.debug("Leaving autonomous recovery mode")
+                    logger.debug(torch.tensor(self.dynamics_class_history[-self.leave_recovery_num_turns:]))
+                    self.autonomous_recovery_mode = False
 
-                if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.RETURN_LATENT]:
-                    # restore cost functions
-                    self.mpc.running_cost = self._running_cost
-                    self.mpc.terminal_state_cost = self._terminal_cost
-                    self.dynamics.use_normal_nominal_model()
-                    self.mpc.change_horizon(self.original_horizon)
-                    # TODO if we're sure that we've left an unrecognized class, save as recovery
-                    # TODO filter out moves
+                    if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.RETURN_LATENT]:
+                        # restore cost functions
+                        self.mpc.running_cost = self._running_cost
+                        self.mpc.terminal_state_cost = self._terminal_cost
+                        self.dynamics.use_normal_nominal_model()
+                        self.mpc.change_horizon(self.original_horizon)
+                        # TODO if we're sure that we've left an unrecognized class, save as recovery
+                        # TODO filter out moves
 
             self.recovery_traj_seeder.update_nominal_trajectory(self.dynamics_class, x)
 
