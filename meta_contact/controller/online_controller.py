@@ -113,7 +113,7 @@ class AutonomousRecovery(enum.IntEnum):
 
 
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
-    def __init__(self, *args, abs_unrecognized_threshold=1, rel_unrecognized_threshold=5,
+    def __init__(self, *args, abs_unrecognized_threshold=2, rel_unrecognized_threshold=5,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
         self.recovery_traj_seeder = None

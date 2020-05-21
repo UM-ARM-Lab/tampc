@@ -1008,7 +1008,7 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
 
     env.draw_user_text(name, 14, left_offset=-1.5)
     env.draw_user_text(gating.name, 13, left_offset=-1.5)
-    sim = block_push.InteractivePush(env, ctrl, num_frames=200, plot=False, save=True, stop_when_done=False)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=250, plot=False, save=True, stop_when_done=False)
     seed = rand.seed(seed)
     run_name = 'auto_recover_{}_{}_{}_{}_{}_{}'.format(nominal_adapt.name, autonomous_recovery.name, level,
                                                        use_tsf.name, gating.name, seed)
@@ -1740,9 +1740,13 @@ class EvaluateTask:
         return min_dist
 
     @staticmethod
-    def closest_distance_to_goal_whole_set(prefix, expected_prefix="test_sufficiency_", **kwargs):
-        i = len(expected_prefix)
-        level = int(prefix[i])
+    def closest_distance_to_goal_whole_set(prefix, **kwargs):
+        import re
+        m = re.search(r"\d+", prefix)
+        if m is not None:
+            level = int(m.group())
+        else:
+            raise RuntimeError("Prefix has no level information in it")
         trials = [filename for filename in os.listdir(os.path.join(cfg.DATA_DIR, "pushing")) if
                   filename.startswith(prefix)]
         dists = []
@@ -1769,19 +1773,28 @@ if __name__ == "__main__":
     #                          restrict_slice=slice(0, 40), step=5)
 
     # EvaluateTask.closest_distance_to_goal_whole_set('test_sufficiency_1_NO_TRANSFORM_AlwaysSelectLocal')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_1_COORD_DecisionTreeClassifier', 'auto_recover_')
+    EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RETURN_STATE_3_COORD_DecisionTreeClassifier')
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_gating_function(use_tsf=ut, test_file=neg_test_file)
     # evaluate_ctrl_sampler()
 
     # autonomous recovery
-    for seed in range(5):
-        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_LATENT)
     # for seed in range(5):
     #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
+    # for seed in range(5):
+    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    # for seed in range(5):
+    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_LATENT)
+    # for seed in range(5):
+    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_LATENT)
+    # for seed in range(5):
+    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.NONE)
 
     # for seed in range(5):
     #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
