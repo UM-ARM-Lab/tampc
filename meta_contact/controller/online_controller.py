@@ -116,10 +116,11 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def __init__(self, *args, abs_unrecognized_threshold=2, rel_unrecognized_threshold=5,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
-        self.recovery_traj_seeder = None
+        self.recovery_traj_seeder: RecoveryTrajectorySeeder = None
         self.abs_unrecognized_threshold = abs_unrecognized_threshold
         self.rel_unrecognized_threshold = rel_unrecognized_threshold
         self.autonomous_recovery_mode = False
+        self.autonomous_recovery_start_index = -1
         self.leave_recovery_num_turns = 3
         self.recovery_cost = None
         self.autonomous_recovery = autonomous_recovery
@@ -161,6 +162,8 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             if not self.autonomous_recovery_mode and self.dynamics_class_history[-1] != self.dynamics_class:
                 logger.debug("Entering autonomous recovery mode")
                 self.autonomous_recovery_mode = True
+                self.autonomous_recovery_start_index = len(
+                    self.x_history) + 1  # does not include the current observation
 
                 # different strategies for recovery mode
                 if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.RETURN_LATENT]:
@@ -193,14 +196,22 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                     logger.debug(torch.tensor(self.dynamics_class_history[-self.leave_recovery_num_turns:]))
                     self.autonomous_recovery_mode = False
 
+                    # if we're sure that we've left an unrecognized class, save as recovery
+                    x_recovery = torch.stack(self.x_history[self.autonomous_recovery_start_index:])
+                    u_recovery = torch.stack(self.u_history[self.autonomous_recovery_start_index:])
+                    logger.info("Using data from index %d with len %d for local model",
+                                self.autonomous_recovery_start_index, x_recovery.shape[0])
+                    # TODO filter out moves? / weight later points more?
+                    self.dynamics.create_local_model(x_recovery, u_recovery)
+                    self.gating = self.dynamics.get_gating()
+                    self.recovery_traj_seeder.update_data(self.dynamics.dss)
+
                     if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.RETURN_LATENT]:
                         # restore cost functions
                         self.mpc.running_cost = self._running_cost
                         self.mpc.terminal_state_cost = self._terminal_cost
                         self.dynamics.use_normal_nominal_model()
                         self.mpc.change_horizon(self.original_horizon)
-                        # TODO if we're sure that we've left an unrecognized class, save as recovery
-                        # TODO filter out moves
 
             self.recovery_traj_seeder.update_nominal_trajectory(self.dynamics_class, x)
 
@@ -240,20 +251,25 @@ class RecoveryTrajectorySeeder:
         self.train_i = {}
         self.Z_train = {}
         self.U_train = {}
+        self.update_data(dss)
+
+    def update_data(self, dss):
+        self.train_i = {}
+        self.Z_train = {}
+        self.U_train = {}
         for dyn_cls, ds_local in enumerate(dss):
             if dyn_cls == gating_function.DynamicsClass.NOMINAL:
                 continue
 
-            self.train_i[dyn_cls] = 14
             max_rollout_steps = 10
             XU, Y, info = ds_local.training_set(original=True)
             X_train, self.U_train[dyn_cls] = torch.split(XU, self.ds_nominal.original_config().nx, dim=1)
-            assert self.train_i[dyn_cls] < len(X_train)
+            self.train_i[dyn_cls] = len(X_train) - 1
 
-            if nom_traj_from is NominalTrajFrom.ROLLOUT_FROM_RECOVERY_STATES:
+            if self.nom_traj_from is NominalTrajFrom.ROLLOUT_FROM_RECOVERY_STATES:
                 for ii in range(max(0, self.train_i[dyn_cls] - max_rollout_steps), self.train_i[dyn_cls]):
-                    ctrl.command(X_train[ii].cpu().numpy())
-                self.U_train[dyn_cls] = ctrl.mpc.U.clone()
+                    self.ctrl.command(X_train[ii].cpu().numpy())
+                self.U_train[dyn_cls] = self.ctrl.mpc.U.clone()
             U_zero = torch.zeros_like(self.U_train[dyn_cls])
             self.Z_train[dyn_cls] = self.ds_nominal.preprocessor.transform_x(torch.cat((X_train, U_zero), dim=1))
 

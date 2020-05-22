@@ -16,6 +16,7 @@ from arm_pytorch_utilities import math_utils
 from arm_pytorch_utilities import preprocess
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.model import make
+from arm_pytorch_utilities.optim import get_device
 from meta_contact.controller.online_controller import NominalTrajFrom
 from meta_contact.transform.block_push import CoordTransform, LearnedTransform, \
     translation_generator
@@ -24,9 +25,9 @@ from tensorboardX import SummaryWriter
 from meta_contact import cfg
 from meta_contact.transform import invariant
 from meta_contact.dynamics import online_model, model, prior, hybrid_model
+from meta_contact.dynamics.hybrid_model import OnlineAdapt, get_gating
 from meta_contact.controller import controller
 from meta_contact.controller import online_controller
-from meta_contact.controller import gating_function
 from meta_contact.env import block_push
 
 logger = logging.getLogger(__name__)
@@ -130,10 +131,6 @@ def get_controller_options(env):
     return common_wrapper_opts, mpc_opts
 
 
-def get_device():
-    return torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-
-
 def get_ds(env, data_dir, **kwargs):
     d = get_device()
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
@@ -235,40 +232,16 @@ def get_transform(env, ds, use_tsf):
         raise RuntimeError("Unrecgonized transform {}".format(use_tsf))
 
 
-class OnlineAdapt(enum.IntEnum):
-    NONE = 0
-    LINEARIZE_LIKELIHOOD = 1
-    GP_KERNEL = 2
-
-
-def get_nominal_model(env, use_tsf=UseTsf.COORD, prior_class=prior.NNPrior, online_adapt=OnlineAdapt.NONE, **kwargs):
+def get_prior(env, use_tsf=UseTsf.COORD, prior_class=prior.NNPrior):
     ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
     untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
     pm = get_loaded_prior(prior_class, ds, tsf_name, False)
 
-    # if we use an online adaptation method for the nominal model, we'll always allow updates
-    # this allows the nominal model to be fixed or online adapted, in addition to fixed local models from demonstrations
-    dynamics = get_local_model(env, pm, ds, allow_update=True, online_adapt=online_adapt, **kwargs)
-
-    return ds, pm, dynamics
+    return ds, pm
 
 
-def get_local_model(env, pm, ds_local, allow_update=False, d=get_device(), online_adapt=OnlineAdapt.GP_KERNEL,
-                    train_slice=slice(0, 26)):
-    local_dynamics = pm.dyn_net
-    if online_adapt is OnlineAdapt.LINEARIZE_LIKELIHOOD:
-        local_dynamics = online_model.OnlineLinearizeMixing(0.1 if allow_update else 0.0, pm, ds_local,
-                                                            env.state_difference,
-                                                            local_mix_weight_scale=50, xu_characteristic_length=10,
-                                                            const_local_mix_weight=False, sigreg=1e-10,
-                                                            slice_to_use=train_slice, device=d)
-    elif online_adapt is OnlineAdapt.GP_KERNEL:
-        local_dynamics = online_model.OnlineGPMixing(pm, ds_local, env.state_difference, slice_to_use=train_slice,
-                                                     allow_update=allow_update, sample=True,
-                                                     refit_strategy=online_model.RefitGPStrategy.RESET_DATA,
-                                                     device=d, training_iter=150, use_independent_outputs=False)
-
-    return local_dynamics
+def get_local_model(env, pm, ds_local, d=get_device(), **kwargs):
+    return hybrid_model.HybridDynamicsModel.get_local_model(env.state_difference, pm, d, ds_local, **kwargs)
 
 
 def get_full_controller_name(pm, ctrl, tsf_name):
@@ -296,51 +269,6 @@ def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics):
     else:
         pm = prior_class.from_data(ds)
     return pm
-
-
-class UseGating:
-    MLP = 0
-    KDE = 1
-    GMM = 2
-    TREE = 3
-    FORCE = 4
-    MLP_SKLEARN = 5
-    KNN = 6
-
-
-def get_gating(dss, tsf_name, use_gating=UseGating.TREE, *args, **kwargs):
-    from sklearn.tree import DecisionTreeClassifier
-    from sklearn.neural_network import MLPClassifier
-    from sklearn.neighbors.classification import KNeighborsClassifier
-
-    component_scale = [1, 0.2]
-    # TODO this is specific to coordinate transform to slice just the body frame reaction force
-    # input_slice = slice(3, None)
-    input_slice = None
-
-    if use_gating is UseGating.MLP:
-        gating = gating_function.MLPSelector(dss, *args, **kwargs, name=tsf_name, input_slice=input_slice)
-    elif use_gating is UseGating.KDE:
-        gating = gating_function.KDESelector(dss, component_scale=component_scale, input_slice=input_slice)
-    elif use_gating is UseGating.GMM:
-        opts = {'n_components': 10, }
-        if kwargs is not None:
-            opts.update(kwargs)
-        gating = gating_function.GMMSelector(dss, gmm_opts=opts, variational=True, component_scale=component_scale,
-                                             input_slice=input_slice)
-    elif use_gating is UseGating.TREE:
-        gating = gating_function.SklearnClassifierSelector(dss, DecisionTreeClassifier(**kwargs),
-                                                           input_slice=input_slice)
-    elif use_gating is UseGating.FORCE:
-        gating = gating_function.ReactionForceHeuristicSelector(12, slice(3, None))
-    elif use_gating is UseGating.MLP_SKLEARN:
-        gating = gating_function.SklearnClassifierSelector(dss, MLPClassifier(**kwargs), input_slice=input_slice)
-    elif use_gating is UseGating.KNN:
-        gating = gating_function.SklearnClassifierSelector(dss, KNeighborsClassifier(n_neighbors=1, **kwargs),
-                                                           input_slice=input_slice)
-    else:
-        raise RuntimeError("Unrecognized selector option")
-    return gating
 
 
 # --- pushing specific data structures
@@ -725,7 +653,7 @@ def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTsf.COORD, relearn_dy
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     if online_adapt is not OnlineAdapt.NONE:
-        _, _, dynamics = get_nominal_model(env, use_tsf=use_tsf, online_adapt=online_adapt, **kwargs)
+        _, _, dynamics = get_prior(env, use_tsf=use_tsf, online_adapt=online_adapt, **kwargs)
         # no local models (or no explicit nominal model since it's the mixed local model)
         hybrid_dynamics = hybrid_model.HybridDynamicsModel(dynamics, [])
         ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, untransformed_config, **common_wrapper_opts,
@@ -764,7 +692,7 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
 
     logger.info("initial random seed %d", rand.seed(seed))
 
-    ds, pm, dynamics_nominal = get_nominal_model(env, use_tsf)
+    ds, pm, dynamics_nominal = get_prior(env, use_tsf)
 
     # data from predetermined policy for getting into and out of bug trap
     ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
@@ -979,22 +907,20 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
     env = get_env(p.GUI, level=level, log_video=True)
     logger.info("initial random seed %d", rand.seed(seed))
 
-    ds, pm, dynamics_nominal = get_nominal_model(env, use_tsf, online_adapt=nominal_adapt)
+    ds, pm = get_prior(env, use_tsf)
 
     dss = [ds]
-    dynamics_local = []
-    # demo_trajs = ["pushing/predetermined_bug_trap.mat"]
     demo_trajs = []
+    # demo_trajs = ["pushing/predetermined_bug_trap.mat"]
     for demo in demo_trajs:
         ds_local, config = get_ds(env, demo, validation_ratio=0.)
         ds_local.update_preprocessor(ds.preprocessor)
         dss.append(ds_local)
-        lm = get_local_model(env, pm, ds_local, **kwargs)
-        dynamics_local.append(lm)
 
-    gating = get_gating(dss, use_tsf.name) if gating is None else gating
-
-    hybrid_dynamics = hybrid_model.HybridDynamicsModel(dynamics_nominal, dynamics_local, [pm, ds, env.state_difference])
+    hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, [use_tsf.name],
+                                                       nominal_model_kwargs={'online_adapt': nominal_adapt},
+                                                       local_model_kwargs=kwargs)
+    gating = hybrid_dynamics.get_gating() if gating is None else gating
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
@@ -1296,7 +1222,7 @@ def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
     env.draw_user_text("eval index {}".format(eval_i), 13, left_offset=-1.5)
     logger.info("initial random seed %d", rand.seed(seed))
 
-    ds, pm, dynamics_nominal = get_nominal_model(env, use_tsf)
+    ds, pm, dynamics_nominal = get_prior(env, use_tsf)
 
     ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
     ds_wall.update_preprocessor(ds.preprocessor)
@@ -1532,7 +1458,7 @@ class Visualize:
 
         logger.info("initial random seed %d", rand.seed(seed))
 
-        ds, pm, _ = get_nominal_model(env)
+        ds, pm, _ = get_prior(env)
         ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
         ds_wall.update_preprocessor(ds.preprocessor)
         dynamics_gp = get_local_model(env, pm, ds_wall)
@@ -1773,7 +1699,7 @@ if __name__ == "__main__":
     #                          restrict_slice=slice(0, 40), step=5)
 
     # EvaluateTask.closest_distance_to_goal_whole_set('test_sufficiency_1_NO_TRANSFORM_AlwaysSelectLocal')
-    EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RETURN_STATE_3_COORD_DecisionTreeClassifier')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RETURN_STATE_3_COORD_DecisionTreeClassifier')
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_gating_function(use_tsf=ut, test_file=neg_test_file)
@@ -1789,9 +1715,9 @@ if __name__ == "__main__":
     # for seed in range(5):
     #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_LATENT)
-    # for seed in range(5):
-    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_LATENT)
+    for seed in range(5):
+        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
     # for seed in range(5):
     #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.NONE)
