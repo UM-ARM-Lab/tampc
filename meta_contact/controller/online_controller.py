@@ -114,7 +114,7 @@ class AutonomousRecovery(enum.IntEnum):
 
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def __init__(self, *args, abs_unrecognized_threshold=2, rel_unrecognized_threshold=5,
-                 autonomous_recovery=AutonomousRecovery.RETURN_STATE, **kwargs):
+                 autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
         self.recovery_traj_seeder: RecoveryTrajectorySeeder = None
         self.abs_unrecognized_threshold = abs_unrecognized_threshold
@@ -125,6 +125,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.recovery_cost = None
         self.autonomous_recovery = autonomous_recovery
         self.original_horizon = self.mpc.T
+        self.reuse_escape_as_demonstration = reuse_escape_as_demonstration
 
     def create_recovery_traj_seeder(self, *args, **kwargs):
         self.recovery_traj_seeder = RecoveryTrajectorySeeder(self, *args, **kwargs)
@@ -197,14 +198,21 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                     self.autonomous_recovery_mode = False
 
                     # if we're sure that we've left an unrecognized class, save as recovery
-                    x_recovery = torch.stack(self.x_history[self.autonomous_recovery_start_index:])
-                    u_recovery = torch.stack(self.u_history[self.autonomous_recovery_start_index:])
-                    logger.info("Using data from index %d with len %d for local model",
-                                self.autonomous_recovery_start_index, x_recovery.shape[0])
-                    # TODO filter out moves? / weight later points more?
-                    self.dynamics.create_local_model(x_recovery, u_recovery)
-                    self.gating = self.dynamics.get_gating()
-                    self.recovery_traj_seeder.update_data(self.dynamics.dss)
+                    if self.reuse_escape_as_demonstration:
+                        # TODO filter out moves? / weight later points more?
+                        x_recovery = []
+                        u_recovery = []
+                        for i in range(self.autonomous_recovery_start_index, len(self.x_history)):
+                            if self.u_history[i][1] > 0:
+                                x_recovery.append(self.x_history[i])
+                                u_recovery.append(self.u_history[i])
+                        x_recovery = torch.stack(x_recovery)
+                        u_recovery = torch.stack(u_recovery)
+                        logger.info("Using data from index %d with len %d for local model",
+                                    self.autonomous_recovery_start_index, x_recovery.shape[0])
+                        self.dynamics.create_local_model(x_recovery, u_recovery)
+                        self.gating = self.dynamics.get_gating()
+                        self.recovery_traj_seeder.update_data(self.dynamics.dss)
 
                     if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.RETURN_LATENT]:
                         # restore cost functions
@@ -297,9 +305,11 @@ class RecoveryTrajectorySeeder:
                         (state.view(1, -1), torch.zeros((1, self.ctrl.nu), device=state.device, dtype=state.dtype)),
                         dim=1)
                     z = self.ds_nominal.preprocessor.transform_x(xu)
-                    train_i = (self.Z_train[dyn_cls] - z).norm(dim=1).argmin()
+                    dists = (self.Z_train[dyn_cls] - z).norm(dim=1)
+                    # TODO prioritize points closer to the escape?
+                    train_i = dists.argmin()
 
-                ctrl_rollout_steps = min(len(self.U_train[dyn_cls]) - train_i, self.ctrl.mpc.T)
+                ctrl_rollout_steps = min(len(self.U_train[dyn_cls]) - train_i, self.ctrl.mpc.T - 1)
                 U[1:1 + ctrl_rollout_steps] = self.U_train[dyn_cls][train_i:train_i + ctrl_rollout_steps]
 
         if adjusted_trajectory:

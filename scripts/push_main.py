@@ -903,7 +903,9 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
 
 def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
                              use_tsf=UseTsf.COORD, nominal_adapt=OnlineAdapt.NONE,
-                             autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE, **kwargs):
+                             autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE,
+                             reuse_escape_as_demonstration=False,
+                             **kwargs):
     env = get_env(p.GUI, level=level, log_video=True)
     logger.info("initial random seed %d", rand.seed(seed))
 
@@ -925,6 +927,7 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
                                         autonomous_recovery=autonomous_recovery,
+                                        reuse_escape_as_demonstration=reuse_escape_as_demonstration,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
     ctrl.set_goal(env.goal)
     ctrl.create_recovery_traj_seeder(dss,
@@ -934,10 +937,17 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
 
     env.draw_user_text(name, 14, left_offset=-1.5)
     env.draw_user_text(gating.name, 13, left_offset=-1.5)
+    env.draw_user_text("run seed {}".format(seed), 12, left_offset=-1.5)
+    env.draw_user_text("recovery {}".format(autonomous_recovery.name), 11, left_offset=-1.5)
+    if reuse_escape_as_demonstration:
+        env.draw_user_text("reuse escape", 10, left_offset=-1.5)
+
     sim = block_push.InteractivePush(env, ctrl, num_frames=250, plot=False, save=True, stop_when_done=False)
     seed = rand.seed(seed)
-    run_name = 'auto_recover_{}_{}_{}_{}_{}_{}'.format(nominal_adapt.name, autonomous_recovery.name, level,
-                                                       use_tsf.name, gating.name, seed)
+    run_name = 'auto_recover_{}_{}_{}_{}_{}_{}_{}'.format(nominal_adapt.name, autonomous_recovery.name, level,
+                                                          use_tsf.name,
+                                                          "REUSE" if reuse_escape_as_demonstration else "NOREUSE",
+                                                          gating.name, seed)
     sim.run(seed, run_name)
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
     plt.ioff()
@@ -1699,25 +1709,52 @@ if __name__ == "__main__":
     #                          restrict_slice=slice(0, 40), step=5)
 
     # EvaluateTask.closest_distance_to_goal_whole_set('test_sufficiency_1_NO_TRANSFORM_AlwaysSelectLocal')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RETURN_STATE_3_COORD_DecisionTreeClassifier')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RANDOM_3_COORD_NOREUSE_DecisionTreeClassifier')
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_gating_function(use_tsf=ut, test_file=neg_test_file)
     # evaluate_ctrl_sampler()
 
     # autonomous recovery
+    for seed in range(10, 20):
+        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                                 reuse_escape_as_demonstration=False,
+                                 autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
+    for seed in range(10, 20):
+        test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                                 reuse_escape_as_demonstration=False,
+                                 autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
+
+    # for seed in range(5,10):
+    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              reuse_escape_as_demonstration=True,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    #
+    # for seed in range(5):
+    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              reuse_escape_as_demonstration=True,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
+    #
     # for seed in range(5):
     #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              reuse_escape_as_demonstration=True,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
+    #
+    # # get more data to suppress high variance
+    # for seed in range(5, 10):
+    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              reuse_escape_as_demonstration=False,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+
     # for seed in range(5):
     #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
     # for seed in range(5):
     #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_LATENT)
-    for seed in range(5):
-        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    # for seed in range(5):
+    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
     # for seed in range(5):
     #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.NONE)
