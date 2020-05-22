@@ -277,9 +277,7 @@ class PushLoader(load_utils.DataLoader):
         # separate option deciding whether to predict output of pusher positions or not
         state_col_offset = 0 if self.config.predict_all_dims else 2
         if self.config.predict_difference:
-            dpos = x[1:, state_col_offset:-1] - x[:-1, state_col_offset:-1]
-            dyaw = math_utils.angular_diff_batch(x[1:, -1], x[:-1, -1])
-            y = np.concatenate((dpos, dyaw.reshape(-1, 1)), axis=1)
+            y = PushAgainstWallEnv.state_difference(x[1:], x[:-1])
         else:
             y = x[1:, state_col_offset:]
 
@@ -298,10 +296,7 @@ class PushLoaderRestricted(PushLoader):
         x = d['X']
 
         if self.config.predict_difference:
-            dpos = x[1:, :2] - x[:-1, :2]
-            dyaw = math_utils.angular_diff_batch(x[1:, 2], x[:-1, 2])
-            dalong = x[1:, 3] - x[:-1, 3]
-            y = np.concatenate((dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1)), axis=1)
+            y = PushAgainstWallStickyEnv.state_difference(x[1:], x[:-1])
         else:
             raise RuntimeError("Too hard to predict discontinuous normalized angles; use predict difference")
 
@@ -345,10 +340,7 @@ class PushLoaderPhysicalPusherWithReaction(PushLoaderRestricted):
                 "Incompatible dataset; expected nx = {} got nx = {}".format(PushPhysicallyAnyAlongEnv.nx, x.shape[1]))
 
         if self.config.predict_difference:
-            dpos = x[1:, :2] - x[:-1, :2]
-            dyaw = math_utils.angular_diff_batch(x[1:, 2], x[:-1, 2])
-            dr = x[1:, 3:5] - x[:-1, 3:5]
-            y = np.concatenate((dpos, dyaw.reshape(-1, 1), dr), axis=1)
+            y = PushPhysicallyAnyAlongEnv.state_difference(x[1:], x[:-1])
         else:
             raise RuntimeError("Too hard to predict discontinuous normalized angles; use predict difference")
 
