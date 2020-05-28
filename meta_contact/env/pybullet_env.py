@@ -7,6 +7,7 @@ import time
 import numpy as np
 import torch
 import typing
+import enum
 
 from datetime import datetime
 
@@ -142,8 +143,10 @@ class PybulletEnv:
         return []
 
 
-class ContactInfo:
+class ContactInfo(enum.IntEnum):
     """Semantics for indices of a contact info from getContactPoints"""
+    LINK_A = 3
+    LINK_B = 4
     POS_A = 5
     NORMAL_DIR_B = 7
     NORMAL_MAG = 9

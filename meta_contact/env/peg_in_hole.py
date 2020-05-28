@@ -19,9 +19,12 @@ from meta_contact.controller.gating_function import DynamicsClass
 logger = logging.getLogger(__name__)
 
 _PEG_MID = 0.10
-_EE_Z = _PEG_MID + 0.3
+_EE_Z = _PEG_MID + 0.13
 
 _DIR = "peg_in_hole"
+
+pandaEndEffectorIndex = 11
+pandaNumDofs = 7
 
 
 class PegLoader(PybulletLoader):
@@ -60,24 +63,25 @@ class ReactionForceStrategy:
     MEDIAN_OVER_MINI_STEPS = 3
 
 
-class GripperID(enum.IntEnum):
-    ANGLE = 7
-    FINGER_A = 8
-    FINGER_B = 11
-    TIP_A = 10
-    TIP_B = 13
+class PandaGripperID(enum.IntEnum):
+    FINGER_A = 9
+    FINGER_B = 10
+
+
+class PandaJustGripperID(enum.IntEnum):
+    FINGER_A = 0
+    FINGER_B = 1
 
 
 class PegInHoleEnv(PybulletEnv):
     nu = 2
     nx = 3
     ny = 3
-    MAX_FORCE = 500
-    MAX_GRIPPER_FORCE = 30
-    MAX_TIP_FORCE = 20
+    MAX_FORCE = 5 * 240
+    MAX_GRIPPER_FORCE = 20
     MAX_PUSH_DIST = 0.03
-    OPEN_ANGLE = 0.1
-    CLOSE_ANGLE = 0.00
+    FINGER_OPEN = 0.04
+    FINGER_CLOSED = 0.01
 
     @staticmethod
     def state_names():
@@ -112,8 +116,8 @@ class PegInHoleEnv(PybulletEnv):
     def control_cost(cls):
         return np.diag([1 for _ in range(cls.nu)])
 
-    def __init__(self, hole=(0.0, 0.0), init_peg=(-0.3, 0.2),
-                 environment_level=0, sim_step_wait=None, mini_steps=100, wait_sim_steps_per_mini_step=20,
+    def __init__(self, hole=(0.0, 0.0), init_peg=(-0.1, 0.1),
+                 environment_level=0, sim_step_wait=None, mini_steps=50, wait_sim_steps_per_mini_step=20,
                  debug_visualizations=None, dist_for_done=0.02,
                  reaction_force_strategy=ReactionForceStrategy.MEDIAN_OVER_MINI_STEPS, **kwargs):
         """
@@ -142,7 +146,7 @@ class PegInHoleEnv(PybulletEnv):
         # initial config
         self.hole = None
         self.initPeg = None
-        self.kukaId = None
+        self.armId = None
 
         self._dd = DebugDrawer(_PEG_MID)
         self._debug_visualizations = {
@@ -201,28 +205,25 @@ class PegInHoleEnv(PybulletEnv):
 
     def _set_init_peg(self, init_peg):
         self.initPeg = tuple(init_peg) + (_PEG_MID,)
-        if self.kukaId is not None:
+        if self.armId is not None:
             self._calculate_init_joints_to_hold_peg()
 
     def _calculate_init_joints_to_hold_peg(self):
-        self.initJoints = list(p.calculateInverseKinematics(self.kukaId,
-                                                            self.kukaEndEffectorIndex,
+        self.initJoints = list(p.calculateInverseKinematics(self.armId,
+                                                            self.endEffectorIndex,
                                                             [self.initPeg[0], self.initPeg[1] + 0.025, _EE_Z],
-                                                            self.endEffectorOrientation,
-                                                            jointDamping=self.jd))
+                                                            self.endEffectorOrientation))
 
     def _open_gripper(self):
-        p.resetJointState(self.kukaId, GripperID.FINGER_A, -self.OPEN_ANGLE)
-        p.resetJointState(self.kukaId, GripperID.FINGER_B, self.OPEN_ANGLE)
+        p.resetJointState(self.armId, PandaGripperID.FINGER_A, self.FINGER_OPEN)
+        p.resetJointState(self.armId, PandaGripperID.FINGER_B, self.FINGER_OPEN)
 
     def _close_gripper(self):
-        p.setJointMotorControlArray(self.kukaId,
-                                    [GripperID.ANGLE, GripperID.FINGER_A, GripperID.FINGER_B, GripperID.TIP_A,
-                                     GripperID.TIP_B],
+        p.setJointMotorControlArray(self.armId,
+                                    [PandaGripperID.FINGER_A, PandaGripperID.FINGER_B],
                                     p.POSITION_CONTROL,
-                                    targetPositions=[0, -self.CLOSE_ANGLE, self.CLOSE_ANGLE, 0, 0],
-                                    forces=[self.MAX_FORCE, self.MAX_GRIPPER_FORCE, self.MAX_GRIPPER_FORCE,
-                                            self.MAX_TIP_FORCE, self.MAX_TIP_FORCE])
+                                    targetPositions=[self.FINGER_CLOSED, self.FINGER_CLOSED],
+                                    forces=[self.MAX_GRIPPER_FORCE, self.MAX_GRIPPER_FORCE])
 
     def _setup_experiment(self):
         # add plane to push on (slightly below the base of the robot)
@@ -230,17 +231,31 @@ class PegInHoleEnv(PybulletEnv):
         self.pegId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "pusher.urdf"), self.initPeg)
 
         # add kuka arm
-        self.kukaId = p.loadSDF("kuka_iiwa/kuka_with_gripper2.sdf")[0]
-        p.resetBasePositionAndOrientation(self.kukaId, [0, -0.500000, 0.070000],
-                                          p.getQuaternionFromEuler([0, 0, np.pi / 2]))
+        # self.armId = p.loadSDF("kuka_iiwa/kuka_with_gripper2.sdf")[0]
+        self.armId = p.loadURDF("franka_panda/panda.urdf", useFixedBase=True)
 
+        p.resetBasePositionAndOrientation(self.armId, [0, -0.500000, 0.070000],
+                                          p.getQuaternionFromEuler([0, 0, np.pi / 2]))
+        for j in range(p.getNumJoints(self.armId)):
+            p.changeDynamics(self.armId, j, linearDamping=0, angularDamping=0)
         # orientation of the end effector (pointing down)
         self.endEffectorOrientation = p.getQuaternionFromEuler([0, -math.pi, 0])
-        self.kukaEndEffectorIndex = 6
-        self.numJoints = p.getNumJoints(self.kukaId)
+        self.endEffectorIndex = pandaEndEffectorIndex
+        self.numJoints = p.getNumJoints(self.armId)
         # TODO add gripper and initialize it to hold the peg
         # get the joint ids
-        self.armInds = [i for i in range(self.kukaEndEffectorIndex + 1)]
+        self.armInds = [i for i in range(pandaNumDofs)]
+
+        # create a constraint to keep the fingers centered
+        c = p.createConstraint(self.armId,
+                               9,
+                               self.armId,
+                               10,
+                               jointType=p.JOINT_GEAR,
+                               jointAxis=[1, 0, 0],
+                               parentFramePosition=[0, 0, 0],
+                               childFramePosition=[0, 0, 0])
+        p.changeConstraint(c, gearRatio=-1, erp=0.1, maxForce=50)
 
         # joint damping coefficents
         # self.jd = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
@@ -253,7 +268,7 @@ class PegInHoleEnv(PybulletEnv):
         self._calculate_init_joints_to_hold_peg()
 
         for i in self.armInds:
-            p.resetJointState(self.kukaId, i, self.initJoints[i])
+            p.resetJointState(self.armId, i, self.initJoints[i])
         self._open_gripper()
         self._close_gripper()
 
@@ -335,7 +350,7 @@ class PegInHoleEnv(PybulletEnv):
 
     def _observe_ee(self):
         # TODO do I need to get gripper as well?
-        link_info = p.getLinkState(self.kukaId, self.kukaEndEffectorIndex)
+        link_info = p.getLinkState(self.armId, self.endEffectorIndex)
         pos = link_info[0]
         return pos
 
@@ -359,7 +374,7 @@ class PegInHoleEnv(PybulletEnv):
         reaction_force = [0, 0, 0]
 
         # TODO handle contact for gripper and peg
-        contactInfo = p.getContactPoints(self.pegId, self.kukaId)
+        contactInfo = p.getContactPoints(self.pegId, self.armId)
         info['npb'] = len(contactInfo)
         for i, contact in enumerate(contactInfo):
             f_contact = get_total_contact_force(contact, False)
@@ -459,14 +474,13 @@ class PegInHoleEnv(PybulletEnv):
     # TODO implement following methods
     # --- control (commonly overridden)
     def _move_pusher(self, end):
-        jointPoses = p.calculateInverseKinematics(self.kukaId,
-                                                  self.kukaEndEffectorIndex,
+        jointPoses = p.calculateInverseKinematics(self.armId,
+                                                  self.endEffectorIndex,
                                                   end,
-                                                  self.endEffectorOrientation,
-                                                  jointDamping=self.jd)
+                                                  self.endEffectorOrientation)
 
         num_arm_indices = len(self.armInds)
-        p.setJointMotorControlArray(self.kukaId, self.armInds, controlMode=p.POSITION_CONTROL,
+        p.setJointMotorControlArray(self.armId, self.armInds, controlMode=p.POSITION_CONTROL,
                                     targetPositions=jointPoses[:num_arm_indices],
                                     targetVelocities=[0] * num_arm_indices,
                                     forces=[self.MAX_FORCE] * num_arm_indices,
@@ -480,7 +494,7 @@ class PegInHoleEnv(PybulletEnv):
         p.stepSimulation()
         for _ in range(steps_to_wait):
             self._observe_info()
-            logger.info("%s", self._observe_ee())
+            # logger.info("%s", self._observe_ee())
             p.stepSimulation()
             if self.mode is p.GUI and self.sim_step_wait:
                 time.sleep(self.sim_step_wait)
@@ -508,7 +522,6 @@ class PegInHoleEnv(PybulletEnv):
         # execute push with mini-steps
         for step in range(self.mini_steps):
             intermediate_ee_pos = interpolate_pos(ee_pos, final_ee_pos, (step + 1) / self.mini_steps)
-            logger.info("goal %s", intermediate_ee_pos)
             self._move_and_wait(intermediate_ee_pos, steps_to_wait=self.wait_sim_step_per_mini_step)
 
         cost, done, info = self._finish_action(old_state, action)
@@ -522,7 +535,7 @@ class PegInHoleEnv(PybulletEnv):
         self._calculate_init_joints_to_hold_peg()
 
         for i in self.armInds:
-            p.resetJointState(self.kukaId, i, self.initJoints[i])
+            p.resetJointState(self.armId, i, self.initJoints[i])
         self._open_gripper()
         self._close_gripper()
 
@@ -540,70 +553,63 @@ class PegFloatingGripperEnv(PegInHoleEnv):
     nu = 2
     nx = 3
     ny = 3
-    MAX_FORCE = 200
-    MAX_GRIPPER_FORCE = 30
-    MAX_TIP_FORCE = 20
+    MAX_FORCE = 40
+    MAX_GRIPPER_FORCE = 40
     MAX_PUSH_DIST = 0.03
-    OPEN_ANGLE = 0.1
-    CLOSE_ANGLE = 0.00
+    OPEN_ANGLE = 0.04
+    CLOSE_ANGLE = 0.01
 
     def _observe_ee(self):
-        gripperPose = p.getBasePositionAndOrientation(self.kukaId)
+        gripperPose = p.getBasePositionAndOrientation(self.gripperId)
         return gripperPose[0]
 
     def _calculate_init_joints_to_hold_peg(self):
-        self.initJoints = list(p.calculateInverseKinematics(self.kukaId,
-                                                            self.kukaEndEffectorIndex,
-                                                            [self.initPeg[0], self.initPeg[1] - 0.025, _EE_Z],
-                                                            self.endEffectorOrientation,
-                                                            jointDamping=self.jd))
+        self.initGripperPos = [self.initPeg[0], self.initPeg[1], _EE_Z]
 
     def _open_gripper(self):
-        p.resetJointState(self.kukaId, GripperID.FINGER_A, -self.OPEN_ANGLE)
-        p.resetJointState(self.kukaId, GripperID.FINGER_B, self.OPEN_ANGLE)
+        p.resetJointState(self.gripperId, PandaJustGripperID.FINGER_A, self.OPEN_ANGLE)
+        p.resetJointState(self.gripperId, PandaJustGripperID.FINGER_B, self.OPEN_ANGLE)
 
     def _close_gripper(self):
-        p.setJointMotorControlArray(self.kukaId,
-                                    [GripperID.ANGLE, GripperID.FINGER_A, GripperID.FINGER_B, GripperID.TIP_A,
-                                     GripperID.TIP_B],
+        p.setJointMotorControlArray(self.gripperId,
+                                    [PandaJustGripperID.FINGER_A, PandaJustGripperID.FINGER_B],
                                     p.POSITION_CONTROL,
-                                    targetPositions=[0, -self.CLOSE_ANGLE, self.CLOSE_ANGLE, 0, 0],
-                                    forces=[self.MAX_FORCE, self.MAX_GRIPPER_FORCE, self.MAX_GRIPPER_FORCE,
-                                            self.MAX_TIP_FORCE, self.MAX_TIP_FORCE])
+                                    targetPositions=[self.CLOSE_ANGLE, self.CLOSE_ANGLE],
+                                    forces=[self.MAX_GRIPPER_FORCE, self.MAX_GRIPPER_FORCE])
+
+    def _move_pusher(self, end):
+        p.changeConstraint(self.gripperConstraint, end, maxForce=self.MAX_FORCE)
+        self._close_gripper()
 
     def _setup_experiment(self):
         # add plane to push on (slightly below the base of the robot)
         self.planeId = p.loadURDF("plane.urdf", [0, 0, 0], useFixedBase=True)
         self.pegId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "pusher.urdf"), self.initPeg)
 
-        # TODO use a floating gripper
-        self.kukaId = p.loadSDF("kuka_iiwa/kuka_with_gripper2.sdf")[0]
-        p.resetBasePositionAndOrientation(self.kukaId, [0, -0.500000, 0.070000],
-                                          p.getQuaternionFromEuler([0, 0, np.pi / 2]))
-
-        self.pusherConstraint = p.createConstraint(self.kukaId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
-                                                   self.initPusherPos)
-
         # orientation of the end effector (pointing down)
-        self.endEffectorOrientation = p.getQuaternionFromEuler([0, -math.pi, 0])
-        self.kukaEndEffectorIndex = 6
-        self.numJoints = p.getNumJoints(self.kukaId)
-        # TODO add gripper and initialize it to hold the peg
-        # get the joint ids
-        self.armInds = [i for i in range(self.kukaEndEffectorIndex + 1)]
-
-        # joint damping coefficents
-        # self.jd = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
-        self.jd = [
-            0.00001, 0.00001, 0.00001, 0.00001, 0.00001, 0.00001, 0.00001, 0.00001, 0.00001, 0.00001,
-            0.00001, 0.00001, 0.00001, 0.00001
-        ]
+        self.endEffectorOrientation = p.getQuaternionFromEuler([0, -np.pi, np.pi / 2])
 
         # reset joint states to nominal pose
         self._calculate_init_joints_to_hold_peg()
 
-        for i in self.armInds:
-            p.resetJointState(self.kukaId, i, self.initJoints[i])
+        # use a floating gripper
+        self.gripperId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "panda_gripper.urdf"), self.initGripperPos,
+                                    self.endEffectorOrientation)
+
+        # create a constraint to keep the fingers centered
+        c = p.createConstraint(self.gripperId,
+                               PandaJustGripperID.FINGER_A,
+                               self.gripperId,
+                               PandaJustGripperID.FINGER_B,
+                               jointType=p.JOINT_GEAR,
+                               jointAxis=[1, 0, 0],
+                               parentFramePosition=[0, 0, 0],
+                               childFramePosition=[0, 0, 0])
+        p.changeConstraint(c, gearRatio=-1, erp=0.1, maxForce=50)
+
+        self.gripperConstraint = p.createConstraint(self.gripperId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
+                                                    self.initGripperPos, self.endEffectorOrientation)
+
         self._open_gripper()
         self._close_gripper()
 
@@ -653,17 +659,37 @@ class PegFloatingGripperEnv(PegInHoleEnv):
 
         return np.copy(self.state), -cost, done, info
 
-    def _move_pusher(self, end):
-        p.changeConstraint(self.pusherConstraint, end, maxForce=self.MAX_FORCE)
-        self._close_gripper()
+    def _observe_additional_info(self, info, visualize=True):
+        reaction_force = [0, 0, 0]
+
+        # TODO handle contact for gripper and peg
+        contactInfo = p.getContactPoints(self.pegId, self.gripperId)
+        info['npb'] = len(contactInfo)
+        for i, contact in enumerate(contactInfo):
+            if contact[ContactInfo.LINK_B] not in (PandaJustGripperID.FINGER_A, PandaJustGripperID.FINGER_B):
+                continue
+            f_contact = get_total_contact_force(contact, False)
+            reaction_force = [sum(i) for i in zip(reaction_force, f_contact)]
+
+            name = 'r{}'.format(i)
+            if abs(contact[ContactInfo.NORMAL_MAG]) > abs(self._largest_contact.get(name, 0)):
+                self._largest_contact[name] = contact[ContactInfo.NORMAL_MAG]
+                if visualize and self._debug_visualizations[DebugVisualization.BLOCK_ON_PUSHER]:
+                    self._dd.draw_contact_point(name, contact, False)
+
+        self._observe_raw_reaction_force(info, reaction_force, visualize)
 
     def reset(self):
         # reset robot to nominal pose
         p.resetBasePositionAndOrientation(self.pegId, self.initPeg, [0, 0, 0, 1])
         # reset joint states to nominal pose
         self._calculate_init_joints_to_hold_peg()
-
         self._open_gripper()
+        if self.gripperConstraint:
+            p.removeConstraint(self.gripperConstraint)
+        p.resetBasePositionAndOrientation(self.gripperId, self.initGripperPos, [0, 0, 0, 1])
+        self.gripperConstraint = p.createConstraint(self.gripperId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
+                                                    self.initGripperPos)
         self._close_gripper()
 
         # set robot init config
