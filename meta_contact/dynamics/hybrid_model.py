@@ -102,6 +102,7 @@ class HybridDynamicsModel(abc.ABC):
         self.gating_args = gating_args
         self.gating_kwargs = gating_kwargs or {}
         self.local_model_kwargs = local_model_kwargs or {}
+        self.d = device
 
         nominal_model_kwargs = nominal_model_kwargs or {}
         self.nominal_model = HybridDynamicsModel.get_local_model(self.state_diff, self.pm, device, self.ds_nominal,
@@ -144,7 +145,7 @@ class HybridDynamicsModel(abc.ABC):
         ds_local = DirectDataSource(x[1:], u[1:], y)
         ds_local.update_preprocessor(self.ds_nominal.preprocessor)
 
-        local_model = HybridDynamicsModel.get_local_model(self.state_diff, self.pm, self.nominal_model.device(),
+        local_model = HybridDynamicsModel.get_local_model(self.state_diff, self.pm, self.d,
                                                           ds_local, allow_update=False)
 
         self.dss.append(ds_local)
