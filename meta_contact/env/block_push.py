@@ -12,7 +12,7 @@ from arm_pytorch_utilities import simulation
 from matplotlib import pyplot as plt
 from meta_contact import cfg
 from meta_contact.env.pybullet_env import PybulletEnv, ContactInfo, PybulletLoader, handle_data_format_for_state_diff, \
-    DebugDrawer, get_total_contact_force, get_lateral_friction_forces
+    DebugDrawer, get_total_contact_force, get_lateral_friction_forces, PybulletEnvDataSource
 from meta_contact.controller import controller
 from meta_contact.controller import online_controller
 from meta_contact.controller.gating_function import DynamicsClass
@@ -1291,24 +1291,17 @@ class InteractivePush(simulation.Simulation):
         return self.env.reset()
 
 
-class PushDataSource(datasource.FileDataSource):
+class PushDataSource(PybulletEnvDataSource):
     loader_map = {PushAgainstWallEnv: PushLoader,
                   PushAgainstWallStickyEnv: PushLoaderRestricted,
                   PushWithForceDirectlyEnv: PushLoaderRestricted,
                   PushWithForceDirectlyReactionInStateEnv: PushLoaderWithReaction,
                   PushPhysicallyAnyAlongEnv: PushLoaderPhysicalPusherWithReaction, }
 
-    def __init__(self, env, data_dir='pushing', **kwargs):
-        loader_class = self.loader_map.get(type(env), None)
-        if not loader_class:
-            raise RuntimeError("Unrecognized data source for env {}".format(env))
-        loader = loader_class()
-        super().__init__(loader, data_dir, **kwargs)
+    @staticmethod
+    def _default_data_dir():
+        return "pushing"
 
-    def get_info_cols(self, info, name):
-        """Get the info columns corresponding to this name"""
-        return info[:, self.loader.info_desc[name]]
-
-    def get_info_desc(self):
-        """Get description of returned info columns in name: col slice format"""
-        return self.loader.info_desc
+    @staticmethod
+    def _loader_map(env_type):
+        return PushDataSource.loader_map.get(env_type, None)

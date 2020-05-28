@@ -6,9 +6,11 @@ import random
 import time
 import numpy as np
 import torch
+import typing
 
 from datetime import datetime
 
+from arm_pytorch_utilities.make_data import datasource
 from arm_pytorch_utilities import load_data as load_utils, math_utils
 from arm_pytorch_utilities import array_utils
 from meta_contact import cfg
@@ -287,3 +289,32 @@ class DebugDrawer:
                                                    textColorRGB=[0.5, 0.1, 0.1],
                                                    textSize=2,
                                                    replaceItemUniqueId=uid)
+
+
+class PybulletEnvDataSource(datasource.FileDataSource):
+    def __init__(self, env, data_dir=None, **kwargs):
+        if data_dir is None:
+            data_dir = self._default_data_dir()
+        loader_class = self._loader_map(type(env))
+        if not loader_class:
+            raise RuntimeError("Unrecognized data source for env {}".format(env))
+        loader = loader_class()
+        super().__init__(loader, data_dir, **kwargs)
+
+    @staticmethod
+    @abc.abstractmethod
+    def _default_data_dir():
+        return ""
+
+    @staticmethod
+    @abc.abstractmethod
+    def _loader_map(env_type) -> typing.Union[typing.Callable, None]:
+        return None
+
+    def get_info_cols(self, info, name):
+        """Get the info columns corresponding to this name"""
+        return info[:, self.loader.info_desc[name]]
+
+    def get_info_desc(self):
+        """Get description of returned info columns in name: col slice format"""
+        return self.loader.info_desc
