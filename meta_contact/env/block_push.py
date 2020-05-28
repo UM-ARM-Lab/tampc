@@ -11,7 +11,8 @@ from arm_pytorch_utilities.make_data import datasource
 from arm_pytorch_utilities import simulation
 from matplotlib import pyplot as plt
 from meta_contact import cfg
-from meta_contact.env.pybullet_env import PybulletEnv, ContactInfo, PybulletLoader, handle_data_format_for_state_diff
+from meta_contact.env.pybullet_env import PybulletEnv, ContactInfo, PybulletLoader, handle_data_format_for_state_diff, \
+    DebugDrawer, get_total_contact_force, get_lateral_friction_forces
 from meta_contact.controller import controller
 from meta_contact.controller import online_controller
 from meta_contact.controller.gating_function import DynamicsClass
@@ -82,118 +83,6 @@ def pusher_pos_along_face(block_pos, block_yaw, pusher_pos, face=BlockFace.LEFT)
         along_face, from_center = dxy
         from_center = - from_center
     return along_face, from_center
-
-
-class DebugDrawer:
-    def __init__(self):
-        self._debug_ids = {}
-        self._camera_pos = [0, 0]
-
-    def draw_point(self, name, point, color=(0, 0, 0), length=0.01, height=_BLOCK_HEIGHT):
-        if name not in self._debug_ids:
-            self._debug_ids[name] = [-1, -1]
-        uids = self._debug_ids[name]
-
-        # use default height if point is 2D, otherwise use point's z coordinate
-        if point.shape[0] == 3:
-            height = point[2]
-
-        location = (point[0], point[1], height)
-        uids[0] = p.addUserDebugLine(np.add(location, [length, 0, 0]), np.add(location, [-length, 0, 0]), color, 2,
-                                     replaceItemUniqueId=uids[0])
-        uids[1] = p.addUserDebugLine(np.add(location, [0, length, 0]), np.add(location, [0, -length, 0]), color, 2,
-                                     replaceItemUniqueId=uids[1])
-
-    def draw_2d_pose(self, name, pose, color=(0, 0, 0), length=0.15 / 2, height=_BLOCK_HEIGHT):
-        if name not in self._debug_ids:
-            self._debug_ids[name] = [-1, -1]
-        uids = self._debug_ids[name]
-
-        location = (pose[0], pose[1], height)
-        side_lines = math_utils.rotate_wrt_origin((0, length * 0.2), pose[2])
-        pointer = math_utils.rotate_wrt_origin((length, 0), pose[2])
-        uids[0] = p.addUserDebugLine(np.add(location, [side_lines[0], side_lines[1], 0]),
-                                     np.add(location, [-side_lines[0], -side_lines[1], 0]),
-                                     color, 2, replaceItemUniqueId=uids[0])
-        uids[1] = p.addUserDebugLine(np.add(location, [0, 0, 0]),
-                                     np.add(location, [pointer[0], pointer[1], 0]),
-                                     color, 2, replaceItemUniqueId=uids[1])
-
-    def draw_2d_line(self, name, start, diff, color=(0, 0, 0), size=2., scale=0.4):
-        if name not in self._debug_ids:
-            self._debug_ids[name] = -1
-        uid = self._debug_ids[name]
-
-        self._debug_ids[name] = p.addUserDebugLine(start, np.add(start, [diff[0] * scale, diff[1] * scale,
-                                                                         diff[2] * scale if len(diff) is 3 else 0]),
-                                                   color, lineWidth=size, replaceItemUniqueId=uid)
-
-    def draw_contact_point(self, name, contact, flip=True):
-        start = contact[ContactInfo.POS_A]
-        f_all = _get_total_contact_force(contact, flip)
-        # combined normal vector (adding lateral friction)
-        f_size = np.linalg.norm(f_all)
-        self.draw_2d_line("{} xy".format(name), start, f_all, size=f_size, scale=0.03, color=(1, 1, 0))
-        # _draw_contact_friction(line_unique_ids, contact, flip)
-        return f_size
-
-    def draw_contact_friction(self, name, contact, flip=True):
-        start = list(contact[ContactInfo.POS_A])
-        start[2] = _BLOCK_HEIGHT
-        # friction along y
-        scale = 0.1
-        c = (1, 0.4, 0.7)
-        fyd, fxd = _get_lateral_friction_forces(contact, flip)
-        self.draw_2d_line('{}y'.format(name), start, fyd, size=np.linalg.norm(fyd), scale=scale, color=c)
-        self.draw_2d_line('{}x'.format(name), start, fxd, size=np.linalg.norm(fxd), scale=scale, color=c)
-
-    def draw_transition(self, prev_block, new_block):
-        name = 't'
-        if name not in self._debug_ids:
-            self._debug_ids[name] = []
-
-        self._debug_ids[name].append(
-            p.addUserDebugLine([prev_block[0], prev_block[1], _BLOCK_HEIGHT],
-                               (new_block[0], new_block[1], _BLOCK_HEIGHT),
-                               [0, 0, 1], 2))
-
-    def clear_transitions(self):
-        name = 't'
-        if name in self._debug_ids:
-            for line in self._debug_ids[name]:
-                p.removeUserDebugItem(line)
-            self._debug_ids[name] = []
-
-    def draw_text(self, name, text, location_index, left_offset=1):
-        if name not in self._debug_ids:
-            self._debug_ids[name] = -1
-        uid = self._debug_ids[name]
-
-        move_down = location_index * 0.15
-        self._debug_ids[name] = p.addUserDebugText(str(text),
-                                                   [self._camera_pos[0] + left_offset,
-                                                    self._camera_pos[1] + 1 - move_down, 0.1],
-                                                   textColorRGB=[0.5, 0.1, 0.1],
-                                                   textSize=2,
-                                                   replaceItemUniqueId=uid)
-
-
-def _get_lateral_friction_forces(contact, flip=True):
-    force_sign = -1 if flip else 1
-    fy = force_sign * contact[ContactInfo.LATERAL1_MAG]
-    fyd = [fy * v for v in contact[ContactInfo.LATERAL1_DIR]]
-    fx = force_sign * contact[ContactInfo.LATERAL2_MAG]
-    fxd = [fx * v for v in contact[ContactInfo.LATERAL2_DIR]]
-    return fyd, fxd
-
-
-def _get_total_contact_force(contact, flip=True):
-    force_sign = -1 if flip else 1
-    force = force_sign * contact[ContactInfo.NORMAL_MAG]
-    dv = [force * v for v in contact[ContactInfo.NORMAL_DIR_B]]
-    fyd, fxd = _get_lateral_friction_forces(contact, flip)
-    f_all = [sum(i) for i in zip(dv, fyd, fxd)]
-    return f_all
 
 
 class PushLoader(PybulletLoader):
@@ -373,7 +262,7 @@ class PushAgainstWallEnv(PybulletEnv):
         self.initBlockPos = None
         self.initBlockYaw = None
 
-        self._dd = DebugDrawer()
+        self._dd = DebugDrawer(_BLOCK_HEIGHT)
         self._debug_visualizations = {
             DebugVisualization.FRICTION: False,
             DebugVisualization.REACTION_ON_PUSHER: True,
@@ -904,7 +793,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
             if visualize and self._debug_visualizations[DebugVisualization.FRICTION]:
                 self._dd.draw_contact_friction('bp{}'.format(i), contact)
             info['bp'][i] = (contact[ContactInfo.LATERAL1_MAG], contact[ContactInfo.LATERAL2_MAG])
-            fy, fx = _get_lateral_friction_forces(contact)
+            fy, fx = get_lateral_friction_forces(contact)
             reaction_force = [sum(i) for i in zip(reaction_force, fy, fx)]
 
         if self.level > 0:
@@ -916,7 +805,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
                     name = 'w{}'.format(i)
                     info['bw'][i] = contact[ContactInfo.NORMAL_MAG]
 
-                    f_contact = _get_total_contact_force(contact)
+                    f_contact = get_total_contact_force(contact)
                     reaction_force = [sum(i) for i in zip(reaction_force, f_contact)]
 
                     # only visualize the largest contact
@@ -1115,7 +1004,7 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         contactInfo = p.getContactPoints(self.pusherId, self.blockId)
         info['npb'] = len(contactInfo)
         for i, contact in enumerate(contactInfo):
-            f_contact = _get_total_contact_force(contact, False)
+            f_contact = get_total_contact_force(contact, False)
             reaction_force = [sum(i) for i in zip(reaction_force, f_contact)]
 
             name = 'r{}'.format(i)
