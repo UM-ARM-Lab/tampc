@@ -19,7 +19,7 @@ from meta_contact.controller.gating_function import DynamicsClass
 logger = logging.getLogger(__name__)
 
 _PEG_MID = 0.10
-_EE_Z = _PEG_MID + 0.13
+_EE_Z = _PEG_MID + 0.12
 
 _DIR = "peg_in_hole"
 
@@ -556,7 +556,7 @@ class PegFloatingGripperEnv(PegInHoleEnv):
     MAX_FORCE = 40
     MAX_GRIPPER_FORCE = 40
     MAX_PUSH_DIST = 0.03
-    OPEN_ANGLE = 0.04
+    OPEN_ANGLE = 0.025
     CLOSE_ANGLE = 0.01
 
     def _observe_ee(self):
@@ -584,7 +584,7 @@ class PegFloatingGripperEnv(PegInHoleEnv):
     def _setup_experiment(self):
         # add plane to push on (slightly below the base of the robot)
         self.planeId = p.loadURDF("plane.urdf", [0, 0, 0], useFixedBase=True)
-        self.pegId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "pusher.urdf"), self.initPeg)
+        self.pegId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "peg.urdf"), self.initPeg)
 
         # orientation of the end effector (pointing down)
         self.endEffectorOrientation = p.getQuaternionFromEuler([0, -np.pi, np.pi / 2])
