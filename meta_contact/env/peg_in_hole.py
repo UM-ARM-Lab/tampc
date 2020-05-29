@@ -18,7 +18,7 @@ from meta_contact.controller.gating_function import DynamicsClass
 
 logger = logging.getLogger(__name__)
 
-_PEG_MID = 0.10
+_PEG_MID = 0.075
 _EE_Z = _PEG_MID + 0.12
 
 _DIR = "peg_in_hole"
@@ -116,7 +116,7 @@ class PegInHoleEnv(PybulletEnv):
     def control_cost(cls):
         return np.diag([1 for _ in range(cls.nu)])
 
-    def __init__(self, hole=(0.0, 0.0), init_peg=(-0.1, 0.1),
+    def __init__(self, hole=(0.0, 0.0), init_peg=(-0.3, 0.),
                  environment_level=0, sim_step_wait=None, mini_steps=50, wait_sim_steps_per_mini_step=20,
                  debug_visualizations=None, dist_for_done=0.02,
                  reaction_force_strategy=ReactionForceStrategy.MEDIAN_OVER_MINI_STEPS, **kwargs):
@@ -147,6 +147,7 @@ class PegInHoleEnv(PybulletEnv):
         self.hole = None
         self.initPeg = None
         self.armId = None
+        self.boardId = None
 
         self._dd = DebugDrawer(_PEG_MID)
         self._debug_visualizations = {
@@ -195,13 +196,14 @@ class PegInHoleEnv(PybulletEnv):
         """Change task configuration; assumes only goal position is specified #TOOD relax assumption"""
         if hole is not None:
             self._set_hole(hole)
-            self._draw_goal()
         if init_peg is not None:
             self._set_init_peg(init_peg)
 
     def _set_hole(self, hole):
         # ignore the pusher position
         self.hole = np.array(hole)
+        if self.boardId is not None:
+            p.resetBasePositionAndOrientation(self.boardId, [self.hole[0], self.hole[1], 0])
 
     def _set_init_peg(self, init_peg):
         self.initPeg = tuple(init_peg) + (_PEG_MID,)
@@ -228,8 +230,40 @@ class PegInHoleEnv(PybulletEnv):
     def _setup_experiment(self):
         # add plane to push on (slightly below the base of the robot)
         self.planeId = p.loadURDF("plane.urdf", [0, 0, 0], useFixedBase=True)
-        self.pegId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "pusher.urdf"), self.initPeg)
+        self.pegId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "peg.urdf"), self.initPeg)
+        # add board with hole
+        self.boardId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "hole_board.urdf"), [self.hole[0], self.hole[1], 0],
+                                  useFixedBase=True)
+        # reset joint states to nominal pose
+        self._calculate_init_joints_to_hold_peg()
 
+        # wait for peg to fall
+        for _ in range(1000):
+            p.stepSimulation()
+
+        pegPos = p.getBasePositionAndOrientation(self.pegId)[0]
+        _EE_Z = pegPos[2] + 0.12
+
+        self._setup_gripper()
+
+        self.walls = []
+        wall_z = 0.05
+        if self.level == 0:
+            pass
+        elif self.level == 1:
+            # TODO add random protrusions to shape
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.55, -0.25, wall_z],
+                                         p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
+                                         globalScaling=0.8))
+
+        self.set_camera_position([0, 0])
+        self.state = self._obs()
+        self._draw_state()
+
+        # set gravity
+        p.setGravity(0, 0, -10)
+
+    def _setup_gripper(self):
         # add kuka arm
         # self.armId = p.loadSDF("kuka_iiwa/kuka_with_gripper2.sdf")[0]
         self.armId = p.loadURDF("franka_panda/panda.urdf", useFixedBase=True)
@@ -264,35 +298,10 @@ class PegInHoleEnv(PybulletEnv):
             0.00001, 0.00001, 0.00001, 0.00001
         ]
 
-        # reset joint states to nominal pose
-        self._calculate_init_joints_to_hold_peg()
-
         for i in self.armInds:
             p.resetJointState(self.armId, i, self.initJoints[i])
         self._open_gripper()
         self._close_gripper()
-
-        # adjust dynamics for better stability
-        # p.changeDynamics(self.planeId, -1, lateralFriction=0.3, spinningFriction=0.0, rollingFriction=0.0)
-        # TODO add board with hole
-
-        self.walls = []
-        wall_z = 0.05
-        if self.level == 0:
-            pass
-        elif self.level == 1:
-            # TODO add random protrusions to shape
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.55, -0.25, wall_z],
-                                         p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
-                                         globalScaling=0.8))
-
-        self.set_camera_position([0, 0])
-        self._draw_goal()
-        self.state = self._obs()
-        self._draw_state()
-
-        # set gravity
-        p.setGravity(0, 0, -10)
 
     def visualize_rollouts(self, states):
         """In GUI mode, show how the sequence of states will look like"""
@@ -318,9 +327,6 @@ class PegInHoleEnv(PybulletEnv):
 
     def clear_debug_trajectories(self):
         self._dd.clear_transitions()
-
-    def _draw_goal(self):
-        self._dd.draw_point('goal', self.hole)
 
     def _draw_state(self):
         self._dd.draw_point('state', self.get_ee_pos(self.state))
@@ -349,7 +355,6 @@ class PegInHoleEnv(PybulletEnv):
         return state
 
     def _observe_ee(self):
-        # TODO do I need to get gripper as well?
         link_info = p.getLinkState(self.armId, self.endEffectorIndex)
         pos = link_info[0]
         return pos
@@ -471,7 +476,6 @@ class PegInHoleEnv(PybulletEnv):
 
         return cost, done, info
 
-    # TODO implement following methods
     # --- control (commonly overridden)
     def _move_pusher(self, end):
         jointPoses = p.calculateInverseKinematics(self.armId,
@@ -486,7 +490,7 @@ class PegInHoleEnv(PybulletEnv):
                                     forces=[self.MAX_FORCE] * num_arm_indices,
                                     positionGains=[0.3] * num_arm_indices,
                                     velocityGains=[1] * num_arm_indices)
-        # self._close_gripper()
+        self._close_gripper()
 
     def _move_and_wait(self, eePos, steps_to_wait=50):
         # execute the action
@@ -494,7 +498,6 @@ class PegInHoleEnv(PybulletEnv):
         p.stepSimulation()
         for _ in range(steps_to_wait):
             self._observe_info()
-            # logger.info("%s", self._observe_ee())
             p.stepSimulation()
             if self.mode is p.GUI and self.sim_step_wait:
                 time.sleep(self.sim_step_wait)
@@ -553,7 +556,7 @@ class PegFloatingGripperEnv(PegInHoleEnv):
     nu = 2
     nx = 3
     ny = 3
-    MAX_FORCE = 40
+    MAX_FORCE = 20
     MAX_GRIPPER_FORCE = 40
     MAX_PUSH_DIST = 0.03
     OPEN_ANGLE = 0.025
@@ -581,11 +584,7 @@ class PegFloatingGripperEnv(PegInHoleEnv):
         p.changeConstraint(self.gripperConstraint, end, maxForce=self.MAX_FORCE)
         self._close_gripper()
 
-    def _setup_experiment(self):
-        # add plane to push on (slightly below the base of the robot)
-        self.planeId = p.loadURDF("plane.urdf", [0, 0, 0], useFixedBase=True)
-        self.pegId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "peg.urdf"), self.initPeg)
-
+    def _setup_gripper(self):
         # orientation of the end effector (pointing down)
         self.endEffectorOrientation = p.getQuaternionFromEuler([0, -np.pi, np.pi / 2])
 
@@ -613,28 +612,6 @@ class PegFloatingGripperEnv(PegInHoleEnv):
         self._open_gripper()
         self._close_gripper()
 
-        # adjust dynamics for better stability
-        # p.changeDynamics(self.planeId, -1, lateralFriction=0.3, spinningFriction=0.0, rollingFriction=0.0)
-        # TODO add board with hole
-
-        self.walls = []
-        wall_z = 0.05
-        if self.level == 0:
-            pass
-        elif self.level == 1:
-            # TODO add random protrusions to shape
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.55, -0.25, wall_z],
-                                         p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
-                                         globalScaling=0.8))
-
-        self.set_camera_position([0, 0])
-        self._draw_goal()
-        self.state = self._obs()
-        self._draw_state()
-
-        # set gravity
-        p.setGravity(0, 0, -10)
-
     def step(self, action):
         action = np.clip(action, *self.get_control_bounds())
         # normalize action such that the input can be within a fixed range
@@ -645,11 +622,10 @@ class PegFloatingGripperEnv(PegInHoleEnv):
             self._draw_action(action)
 
         ee_pos = self.get_ee_pos(old_state)
-        # TODO apply force into the floor?
-        final_ee_pos = np.array((ee_pos[0] + dx, ee_pos[1] + dy, _EE_Z))
+        # apply force into the floor
+        final_ee_pos = np.array((ee_pos[0] + dx, ee_pos[1] + dy, _EE_Z - 0.05))
         self._dd.draw_point('final eepos', final_ee_pos, color=(0, 0.5, 0.5))
 
-        # TODO might have to set start_ee_pos's height to be different from ee_pos
         # execute push with mini-steps
         for step in range(self.mini_steps):
             intermediate_ee_pos = interpolate_pos(ee_pos, final_ee_pos, (step + 1) / self.mini_steps)
