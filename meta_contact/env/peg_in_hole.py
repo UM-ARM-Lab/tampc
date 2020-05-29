@@ -75,8 +75,7 @@ class PandaJustGripperID(enum.IntEnum):
 
 class PegInHoleEnv(PybulletEnv):
     nu = 2
-    nx = 3
-    ny = 3
+    nx = 5
     MAX_FORCE = 5 * 240
     MAX_GRIPPER_FORCE = 20
     MAX_PUSH_DIST = 0.03
@@ -85,7 +84,7 @@ class PegInHoleEnv(PybulletEnv):
 
     @staticmethod
     def state_names():
-        return ['x ee (m)', 'y ee (m)', 'z ee (m)']
+        return ['x ee (m)', 'y ee (m)', 'z ee (m)', '$r_x$ (N)', '$r_y$ (N)']
 
     @staticmethod
     def get_ee_pos(state):
@@ -96,11 +95,12 @@ class PegInHoleEnv(PybulletEnv):
     def state_difference(state, other_state):
         """Get state - other_state in state space"""
         dpos = state[:, :3] - other_state[:, :3]
-        return dpos,
+        dreaction = state[:, 3:5] - other_state[:, 3:5]
+        return dpos, dreaction
 
     @classmethod
     def state_cost(cls):
-        return np.diag([1, 1, 1])
+        return np.diag([1, 1, 1, 0, 0])
 
     @staticmethod
     def control_names():
@@ -227,6 +227,17 @@ class PegInHoleEnv(PybulletEnv):
                                     targetPositions=[self.FINGER_CLOSED, self.FINGER_CLOSED],
                                     forces=[self.MAX_GRIPPER_FORCE, self.MAX_GRIPPER_FORCE])
 
+    def _setup_ee(self):
+        p.resetBasePositionAndOrientation(self.pegId, self.initPeg, [0, 0, 0, 1])
+        # wait for peg to fall
+        for _ in range(1000):
+            p.stepSimulation()
+
+        pegPos = p.getBasePositionAndOrientation(self.pegId)[0]
+        _EE_Z = pegPos[2] + 0.12
+        # reset joint states to nominal pose
+        self._calculate_init_joints_to_hold_peg()
+
     def _setup_experiment(self):
         # add plane to push on (slightly below the base of the robot)
         self.planeId = p.loadURDF("plane.urdf", [0, 0, 0], useFixedBase=True)
@@ -234,16 +245,8 @@ class PegInHoleEnv(PybulletEnv):
         # add board with hole
         self.boardId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "hole_board.urdf"), [self.hole[0], self.hole[1], 0],
                                   useFixedBase=True)
-        # reset joint states to nominal pose
-        self._calculate_init_joints_to_hold_peg()
 
-        # wait for peg to fall
-        for _ in range(1000):
-            p.stepSimulation()
-
-        pegPos = p.getBasePositionAndOrientation(self.pegId)[0]
-        _EE_Z = pegPos[2] + 0.12
-
+        self._setup_ee()
         self._setup_gripper()
 
         self.walls = []
@@ -330,6 +333,7 @@ class PegInHoleEnv(PybulletEnv):
 
     def _draw_state(self):
         self._dd.draw_point('state', self.get_ee_pos(self.state))
+        self._draw_reaction_force(self.state[3:5], 'sr', (0, 0, 0))
 
     def _draw_action(self, action, debug=0):
         pass
@@ -532,10 +536,7 @@ class PegInHoleEnv(PybulletEnv):
         return np.copy(self.state), -cost, done, info
 
     def reset(self):
-        # reset robot to nominal pose
-        p.resetBasePositionAndOrientation(self.pegId, self.initPeg, [0, 0, 0, 1])
-        # reset joint states to nominal pose
-        self._calculate_init_joints_to_hold_peg()
+        self._setup_ee()
 
         for i in self.armInds:
             p.resetJointState(self.armId, i, self.initJoints[i])
@@ -554,8 +555,7 @@ class PegInHoleEnv(PybulletEnv):
 
 class PegFloatingGripperEnv(PegInHoleEnv):
     nu = 2
-    nx = 3
-    ny = 3
+    nx = 5
     MAX_FORCE = 20
     MAX_GRIPPER_FORCE = 40
     MAX_PUSH_DIST = 0.03
@@ -656,16 +656,14 @@ class PegFloatingGripperEnv(PegInHoleEnv):
         self._observe_raw_reaction_force(info, reaction_force, visualize)
 
     def reset(self):
-        # reset robot to nominal pose
-        p.resetBasePositionAndOrientation(self.pegId, self.initPeg, [0, 0, 0, 1])
-        # reset joint states to nominal pose
-        self._calculate_init_joints_to_hold_peg()
+        self._setup_ee()
+
         self._open_gripper()
         if self.gripperConstraint:
             p.removeConstraint(self.gripperConstraint)
-        p.resetBasePositionAndOrientation(self.gripperId, self.initGripperPos, [0, 0, 0, 1])
+        p.resetBasePositionAndOrientation(self.gripperId, self.initGripperPos, self.endEffectorOrientation)
         self.gripperConstraint = p.createConstraint(self.gripperId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
-                                                    self.initGripperPos)
+                                                    self.initGripperPos, self.endEffectorOrientation)
         self._close_gripper()
 
         # set robot init config
@@ -881,6 +879,10 @@ class PegInHole(simulation.Simulation):
                 self.ad[i].set_ylabel('d' + axis_name[i])
         for i in range(ctrl_dim):
             self.au[i].set_ylabel('$u_{}$'.format(i))
+
+        self.fig.tight_layout()
+        self.fu.tight_layout()
+        self.fo.tight_layout()
 
         plt.ion()
         plt.show()
