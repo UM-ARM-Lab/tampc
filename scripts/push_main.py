@@ -5,6 +5,7 @@ import os
 import time
 import pickle
 import enum
+import re
 
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -1496,6 +1497,73 @@ class Visualize:
         plt.show()
         input('do visualization')
 
+    @staticmethod
+    def task_res_dist():
+        def name_to_tokens(name):
+            tokens = name.split('_')
+            # skip prefix
+            tokens = tokens[2:]
+            if tokens[0] == "NONE":
+                adaptation = tokens.pop(0)
+            else:
+                adaptation = "{}_{}".format(tokens[0], tokens[1])
+                tokens = tokens[2:]
+            if tokens[0] == "RANDOM":
+                recover_method = tokens.pop(0)
+            else:
+                recover_method = "{}_{}".format(tokens[0], tokens[1])
+                tokens = tokens[2:]
+            level = int(tokens.pop(0))
+
+            tsf = tokens.pop(0)
+            reuse = tokens.pop(0)
+            return adaptation, recover_method, level, tsf, reuse
+
+        fullname = os.path.join(cfg.DATA_DIR, 'push_task_res.pkl')
+        if os.path.exists(fullname):
+            with open(fullname, 'rb') as f:
+                runs = pickle.load(f)
+                logger.info("loaded runs from %s", fullname)
+        else:
+            raise RuntimeError("missing cached task results file {}".format(fullname))
+
+        tasks = {}
+        for prefix, dists in runs.items():
+            m = re.search(r"\d+", prefix)
+            if m is not None:
+                level = int(m.group())
+            else:
+                raise RuntimeError("Prefix has no level information in it")
+            if level not in tasks:
+                tasks[level] = {}
+            if prefix not in tasks[level]:
+                tasks[level][prefix] = dists
+
+        for level, res in tasks.items():
+            min_dist = 100
+            max_dist = 0
+
+            res_list = {k: list(v.values()) for k, v in res.items()}
+            for dists in res_list.values():
+                min_dist = min(min(dists), min_dist)
+                max_dist = max(max(dists), max_dist)
+
+            f, ax = plt.subplots(len(res), 1, figsize=(8, 9))
+            f.suptitle("task {}".format(level))
+
+            for i, (series_name, dists) in enumerate(res_list.items()):
+                adaptation, recover_method, level, tsf, reuse = name_to_tokens(series_name)
+                logger.info("%s with %d runs mean {:.2f} ({:.2f})".format(np.mean(dists) * 10, np.std(dists) * 10),
+                            series_name, len(dists))
+                sns.distplot(dists, ax=ax[i], hist=True, kde=False, bins=np.linspace(min_dist, max_dist, 20))
+                ax[i].set_title((adaptation, recover_method, tsf, reuse))
+                ax[i].set_xlim(min_dist, max_dist)
+                ax[i].set_ylim(0, int(0.6 * len(dists)))
+            ax[-1].set_xlabel('closest dist to goal [m]')
+            f.tight_layout(rect=[0, 0.03, 1, 0.95])
+
+        plt.show()
+
 
 class EvaluateTask:
     class Graph:
@@ -1673,25 +1741,43 @@ class EvaluateTask:
             min_node = next_node
 
         print('min dist: {} lower bound: {}'.format(min_dist, lower_bound_dist))
+        env.close()
         return min_dist
 
     @staticmethod
     def closest_distance_to_goal_whole_set(prefix, **kwargs):
-        import re
         m = re.search(r"\d+", prefix)
         if m is not None:
             level = int(m.group())
         else:
             raise RuntimeError("Prefix has no level information in it")
+
+        fullname = os.path.join(cfg.DATA_DIR, 'push_task_res.pkl')
+        if os.path.exists(fullname):
+            with open(fullname, 'rb') as f:
+                runs = pickle.load(f)
+                logger.info("loaded runs from %s", fullname)
+        else:
+            runs = {}
+
+        if prefix not in runs:
+            runs[prefix] = {}
+
         trials = [filename for filename in os.listdir(os.path.join(cfg.DATA_DIR, "pushing")) if
                   filename.startswith(prefix)]
         dists = []
         for i, trial in enumerate(trials):
-            dists.append(
-                EvaluateTask._closest_distance_to_goal("pushing/{}".format(trial), visualize=i == 0, level=level,
-                                                       **kwargs))
+            d = EvaluateTask._closest_distance_to_goal("pushing/{}".format(trial), visualize=i == 0, level=level,
+                                                       **kwargs)
+            dists.append(d)
+            runs[prefix][trial] = d
+
         logger.info(dists)
         logger.info("mean {:.2f} std {:.2f} cm".format(np.mean(dists) * 10, np.std(dists) * 10))
+        with open(fullname, 'wb') as f:
+            pickle.dump(runs, f)
+            logger.info("saved runs to %s", fullname)
+        time.sleep(0.5)
 
 
 if __name__ == "__main__":
@@ -1708,56 +1794,40 @@ if __name__ == "__main__":
     # Visualize.state_sequence(4, "pushing/test_sufficiency_4_NO_TRANSFORM_AlwaysSelectNominal_0.mat",
     #                          restrict_slice=slice(0, 40), step=5)
 
+    Visualize.task_res_dist()
+
     # EvaluateTask.closest_distance_to_goal_whole_set('test_sufficiency_1_NO_TRANSFORM_AlwaysSelectLocal')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RANDOM_1_COORD_NOREUSE_DecisionTreeClassifier')
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RANDOM_3_COORD_NOREUSE_DecisionTreeClassifier')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RANDOM_1_COORD_REUSE_DecisionTreeClassifier')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RANDOM_3_COORD_REUSE_DecisionTreeClassifier')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RETURN_STATE_1_COORD_NOREUSE_DecisionTreeClassifier')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RETURN_STATE_3_COORD_NOREUSE_DecisionTreeClassifier')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RETURN_STATE_1_COORD_REUSE_DecisionTreeClassifier')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RETURN_STATE_3_COORD_REUSE_DecisionTreeClassifier')
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_gating_function(use_tsf=ut, test_file=neg_test_file)
     # evaluate_ctrl_sampler()
 
     # autonomous recovery
-    for seed in range(10, 20):
-        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                 reuse_escape_as_demonstration=False,
-                                 autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
-    for seed in range(10, 20):
-        test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                 reuse_escape_as_demonstration=False,
-                                 autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
-
-    # for seed in range(5,10):
-    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              reuse_escape_as_demonstration=True,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-    #
-    # for seed in range(5):
-    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              reuse_escape_as_demonstration=True,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
-    #
-    # for seed in range(5):
-    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              reuse_escape_as_demonstration=True,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
-    #
-    # # get more data to suppress high variance
-    # for seed in range(5, 10):
+    # for seed in range(10, 20):
     #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                              reuse_escape_as_demonstration=False,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-
-    # for seed in range(5):
+    # for seed in range(10, 20):
     #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              reuse_escape_as_demonstration=False,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-    # for seed in range(5):
-    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_LATENT)
-    # for seed in range(5):
+    #
+    # for seed in range(10, 20):
     #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              reuse_escape_as_demonstration=True,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-    # for seed in range(5):
-    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.NONE)
+    # for seed in range(10, 20):
+    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              reuse_escape_as_demonstration=True,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # for seed in range(5):
     #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
