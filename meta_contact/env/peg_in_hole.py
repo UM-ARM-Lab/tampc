@@ -19,7 +19,7 @@ from meta_contact.controller.gating_function import DynamicsClass
 logger = logging.getLogger(__name__)
 
 _PEG_MID = 0.075
-_EE_Z = _PEG_MID + 0.12
+_BOARD_TOP = 0.05
 
 _DIR = "peg_in_hole"
 
@@ -213,7 +213,7 @@ class PegInHoleEnv(PybulletEnv):
     def _calculate_init_joints_to_hold_peg(self):
         self.initJoints = list(p.calculateInverseKinematics(self.armId,
                                                             self.endEffectorIndex,
-                                                            [self.initPeg[0], self.initPeg[1] + 0.025, _EE_Z],
+                                                            [self.initPeg[0], self.initPeg[1] + 0.025, self._ee_z],
                                                             self.endEffectorOrientation))
 
     def _open_gripper(self):
@@ -234,7 +234,7 @@ class PegInHoleEnv(PybulletEnv):
             p.stepSimulation()
 
         pegPos = p.getBasePositionAndOrientation(self.pegId)[0]
-        _EE_Z = pegPos[2] + 0.12
+        self._ee_z = pegPos[2] + 0.12
         # reset joint states to nominal pose
         self._calculate_init_joints_to_hold_peg()
 
@@ -250,14 +250,23 @@ class PegInHoleEnv(PybulletEnv):
         self._setup_gripper()
 
         self.walls = []
-        wall_z = 0.05
+        wall_z = _BOARD_TOP / 2
         if self.level == 0:
             pass
         elif self.level == 1:
-            # TODO add random protrusions to shape
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.55, -0.25, wall_z],
+            # add protrusions to board
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.2, 0, wall_z],
+                                         p.getQuaternionFromEuler([0, 0, np.pi / 2]), useFixedBase=True,
+                                         globalScaling=0.03))
+
+        elif self.level == 2:
+            # add protrusions to board
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.3, 0.2, wall_z],
                                          p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
-                                         globalScaling=0.8))
+                                         globalScaling=0.03))
+
+        for wallId in self.walls:
+            p.changeVisualShape(wallId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])
 
         self.set_camera_position([0, 0])
         self.state = self._obs()
@@ -325,7 +334,7 @@ class PegInHoleEnv(PybulletEnv):
 
     def set_camera_position(self, camera_pos):
         self._dd._camera_pos = camera_pos
-        p.resetDebugVisualizerCamera(cameraDistance=0.5, cameraYaw=0, cameraPitch=-85,
+        p.resetDebugVisualizerCamera(cameraDistance=0.3, cameraYaw=0, cameraPitch=-85,
                                      cameraTargetPosition=[camera_pos[0], camera_pos[1], 1])
 
     def clear_debug_trajectories(self):
@@ -522,7 +531,7 @@ class PegInHoleEnv(PybulletEnv):
 
         ee_pos = self.get_ee_pos(old_state)
         # TODO apply force into the floor?
-        final_ee_pos = np.array((ee_pos[0] + dx, ee_pos[1] + dy, _EE_Z))
+        final_ee_pos = np.array((ee_pos[0] + dx, ee_pos[1] + dy, self._ee_z))
         self._dd.draw_point('final eepos', final_ee_pos, color=(0, 0.5, 0.5))
 
         # TODO might have to set start_ee_pos's height to be different from ee_pos
@@ -557,7 +566,7 @@ class PegFloatingGripperEnv(PegInHoleEnv):
     nu = 2
     nx = 5
     MAX_FORCE = 20
-    MAX_GRIPPER_FORCE = 40
+    MAX_GRIPPER_FORCE = 20
     MAX_PUSH_DIST = 0.03
     OPEN_ANGLE = 0.025
     CLOSE_ANGLE = 0.01
@@ -567,7 +576,7 @@ class PegFloatingGripperEnv(PegInHoleEnv):
         return gripperPose[0]
 
     def _calculate_init_joints_to_hold_peg(self):
-        self.initGripperPos = [self.initPeg[0], self.initPeg[1], _EE_Z]
+        self.initGripperPos = [self.initPeg[0], self.initPeg[1], self._ee_z]
 
     def _open_gripper(self):
         p.resetJointState(self.gripperId, PandaJustGripperID.FINGER_A, self.OPEN_ANGLE)
@@ -594,6 +603,8 @@ class PegFloatingGripperEnv(PegInHoleEnv):
         # use a floating gripper
         self.gripperId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "panda_gripper.urdf"), self.initGripperPos,
                                     self.endEffectorOrientation)
+        p.changeDynamics(self.gripperId, PandaJustGripperID.FINGER_A, lateralFriction=2)
+        p.changeDynamics(self.gripperId, PandaJustGripperID.FINGER_B, lateralFriction=2)
 
         # create a constraint to keep the fingers centered
         c = p.createConstraint(self.gripperId,
@@ -623,7 +634,7 @@ class PegFloatingGripperEnv(PegInHoleEnv):
 
         ee_pos = self.get_ee_pos(old_state)
         # apply force into the floor
-        final_ee_pos = np.array((ee_pos[0] + dx, ee_pos[1] + dy, _EE_Z - 0.05))
+        final_ee_pos = np.array((ee_pos[0] + dx, ee_pos[1] + dy, self._ee_z - 0.02))
         self._dd.draw_point('final eepos', final_ee_pos, color=(0, 0.5, 0.5))
 
         # execute push with mini-steps
@@ -638,7 +649,7 @@ class PegFloatingGripperEnv(PegInHoleEnv):
     def _observe_additional_info(self, info, visualize=True):
         reaction_force = [0, 0, 0]
 
-        # TODO handle contact for gripper and peg
+        # handle contact for gripper and peg
         contactInfo = p.getContactPoints(self.pegId, self.gripperId)
         info['npb'] = len(contactInfo)
         for i, contact in enumerate(contactInfo):
