@@ -1508,7 +1508,7 @@ class Visualize:
             else:
                 adaptation = "{}_{}".format(tokens[0], tokens[1])
                 tokens = tokens[2:]
-            if tokens[0] == "RANDOM":
+            if tokens[0] in ("RANDOM", "NONE"):
                 recover_method = tokens.pop(0)
             else:
                 recover_method = "{}_{}".format(tokens[0], tokens[1])
@@ -1811,14 +1811,18 @@ if __name__ == "__main__":
     # evaluate_ctrl_sampler()
 
     # autonomous recovery
-    # for seed in range(10, 20):
-    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    # for seed in range(5, 10):
+    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
     #                              reuse_escape_as_demonstration=False,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-    # for seed in range(10, 20):
-    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.NONE)
+    # for seed in range(5, 10):
+    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
     #                              reuse_escape_as_demonstration=False,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.NONE)
+
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_GP_KERNEL_NONE_1_COORD_NOREUSE_DecisionTreeClassifier')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_GP_KERNEL_NONE_3_COORD_NOREUSE_DecisionTreeClassifier')
+
     #
     # for seed in range(10, 20):
     #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
