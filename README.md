@@ -1,5 +1,6 @@
 ## Installation
-`pip3 install -e .`
+1. install dependent library project: [pytorch utilities](https://github.com/UM-ARM-Lab/arm_pytorch_utilities)
+2. `pip3 install -e .`
 
 ## Usage
 1. generate urdf files `python3 build_models.py`
