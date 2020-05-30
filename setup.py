@@ -12,5 +12,5 @@ setup(
     test_suite='pytest',
     tests_require=[
         'pytest',
-    ], install_requires=['matplotlib', 'numpy', 'scikit-learn', 'torch', 'tensorboardX', 'seaborn']
+    ], install_requires=['pytest', 'matplotlib', 'numpy', 'scikit-learn', 'torch', 'tensorboardX', 'seaborn']
 )
