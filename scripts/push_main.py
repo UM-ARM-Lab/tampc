@@ -654,10 +654,10 @@ def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTsf.COORD, relearn_dy
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     if online_adapt is not OnlineAdapt.NONE:
-        _, _, dynamics = get_prior(env, use_tsf=use_tsf, online_adapt=online_adapt, **kwargs)
+        dynamics = hybrid_model.HybridDynamicsModel.get_local_model(env.state_difference, pm, d, ds, allow_update=True,
+                                                                    online_adapt=online_adapt)
         # no local models (or no explicit nominal model since it's the mixed local model)
-        hybrid_dynamics = hybrid_model.HybridDynamicsModel(dynamics, [])
-        ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, untransformed_config, **common_wrapper_opts,
+        ctrl = online_controller.OnlineMPPI(ds, dynamics, untransformed_config, **common_wrapper_opts,
                                             mpc_opts=mpc_opts)
         ctrl.create_recovery_traj_seeder([ds])
     else:
@@ -683,7 +683,8 @@ def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTsf.COORD, relearn_dy
 
 
 def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_eval=True, plot_online_update=False,
-                                                   use_gp=True, allow_update=False, recover_adjust=True,
+                                                   use_gp=True, allow_update=False,
+                                                   recover_adjust=True,
                                                    gating=None,
                                                    use_tsf=UseTsf.COORD, test_traj=None, **kwargs):
     if plot_model_eval:
@@ -693,21 +694,25 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
 
     logger.info("initial random seed %d", rand.seed(seed))
 
-    ds, pm, dynamics_nominal = get_prior(env, use_tsf)
+    ds, pm = get_prior(env, use_tsf)
 
     # data from predetermined policy for getting into and out of bug trap
     ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
     ds_wall.update_preprocessor(ds.preprocessor)
 
-    # demonstration local datasets
-    dynamics = get_local_model(env, pm, ds_wall, online_adapt=OnlineAdapt.LINEARIZE_LIKELIHOOD,
-                               allow_update=allow_update or plot_online_update, **kwargs)
-    dynamics_gp = get_local_model(env, pm, ds_wall, allow_update=allow_update or plot_online_update, **kwargs)
-
     dss = [ds, ds_wall]
-    gating = get_gating(dss, use_tsf.name) if gating is None else gating
 
-    hybrid_dynamics = hybrid_model.HybridDynamicsModel(dynamics_nominal, [dynamics_gp if use_gp else dynamics])
+    hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, [use_tsf.name],
+                                                       local_model_kwargs={
+                                                           "allow_update": allow_update or plot_online_update,
+                                                           "online_adapt": OnlineAdapt.GP_KERNEL if use_gp else OnlineAdapt.LINEARIZE_LIKELIHOOD
+                                                       }.update(kwargs))
+
+    gating = hybrid_dynamics.get_gating() if gating is None else gating
+
+    common_args = [env.state_difference, pm, get_device(), ds_wall, allow_update or plot_online_update]
+    dynamics_gp = hybrid_model.HybridDynamicsModel.get_local_model(*common_args, OnlineAdapt.GP_KERNEL)
+    dynamics_lin = hybrid_model.HybridDynamicsModel.get_local_model(*common_args, OnlineAdapt.LINEARIZE_LIKELIHOOD)
 
     if plot_model_eval:
         if not test_traj:
@@ -729,16 +734,16 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
         yhat_freespace = pm.dyn_net.user.sample(xu)
         cx, cu = xu[:, :config.nx], xu[:, config.nx:]
         # an actual linear fit on data
-        dynamics.const_local_weight = True
-        dynamics.local_weight_scale = 1000
-        yhat_linear = dynamics._dynamics_in_transformed_space(None, None, cx, cu)
+        dynamics_lin.const_local_weight = True
+        dynamics_lin.local_weight_scale = 1000
+        yhat_linear = dynamics_lin._dynamics_in_transformed_space(None, None, cx, cu)
 
         # our mixed model
-        dynamics.const_local_weight = False
-        dynamics.local_weight_scale = 50
-        dynamics.characteristic_length = 10
-        yhat_linear_mix = dynamics._dynamics_in_transformed_space(None, None, cx, cu)
-        weight_linear_mix = dynamics.get_local_weight(xu)
+        dynamics_lin.const_local_weight = False
+        dynamics_lin.local_weight_scale = 50
+        dynamics_lin.characteristic_length = 10
+        yhat_linear_mix = dynamics_lin._dynamics_in_transformed_space(None, None, cx, cu)
+        weight_linear_mix = dynamics_lin.get_local_weight(xu)
         # scale max for display
         weight_linear_mix /= torch.max(weight_linear_mix) * 2
 
@@ -767,11 +772,11 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
             cu = xu[i, config.nx:]
             if px is not None:
                 px, pu = px.view(1, -1), pu.view(1, -1)
-            yhat_linear_online[i] = dynamics._dynamics_in_transformed_space(px, pu, cx.view(1, -1), cu.view(1, -1))
+            yhat_linear_online[i] = dynamics_lin._dynamics_in_transformed_space(px, pu, cx.view(1, -1), cu.view(1, -1))
             yhat_gp_online[i] = dynamics_gp._dynamics_in_transformed_space(px, pu, cx.view(1, -1), cu.view(1, -1))
             with torch.no_grad():
                 lower_online[i], upper_online[i], yhat_gp_online_mean[i] = dynamics_gp.get_last_prediction_statistics()
-            dynamics._update(cx, cu, y[i])
+            dynamics_lin._update(cx, cu, y[i])
             dynamics_gp._update(cx, cu, y[i])
             px, pu = cx, cu
             gp_online_fit_loss[i], gp_online_fit_last_loss_diff[i] = dynamics_gp.last_loss, dynamics_gp.last_loss_diff
@@ -858,8 +863,8 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
             axes[1].set_ylabel('loss last gradient')
 
         e = (yhat_linear_mix - y).norm(dim=1)
-        logger.info('linear mix scale %f length %f mse %.4f', dynamics.local_weight_scale,
-                    dynamics.characteristic_length,
+        logger.info('linear mix scale %f length %f mse %.4f', dynamics_lin.local_weight_scale,
+                    dynamics_lin.characteristic_length,
                     e.median())
         e = (yhat_linear_online - y).norm(dim=1)
         logger.info('linear online %.4f', e.median())
@@ -1233,13 +1238,13 @@ def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
     env.draw_user_text("eval index {}".format(eval_i), 13, left_offset=-1.5)
     logger.info("initial random seed %d", rand.seed(seed))
 
-    ds, pm, dynamics_nominal = get_prior(env, use_tsf)
+    ds, pm = get_prior(env, use_tsf)
 
     ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
     ds_wall.update_preprocessor(ds.preprocessor)
-    dynamics_local = get_local_model(env, pm, ds_wall)
+    dss = [ds, ds_wall]
 
-    dynamics = hybrid_model.HybridDynamicsModel(dynamics_nominal, [dynamics_local])
+    dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, [use_tsf.name])
 
     ds_eval, _ = get_ds(env, 'pushing/test_sufficiency_selector__i5_o2_s1_pd1_pa1_a0_e0_y0_140891.mat',
                         validation_ratio=0.)
@@ -1253,9 +1258,6 @@ def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
     u = U[eval_i].cpu().numpy()
     env.set_state(x, u)
 
-    dss = [ds, ds_wall]
-    gating = get_gating(dss, use_tsf.name)
-
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     N = 500
     M = 20
@@ -1263,7 +1265,7 @@ def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
     mpc_opts['rollout_samples'] = M
     mpc_opts['rollout_var_cost'] = 0
     ctrl = online_controller.OnlineMPPI(ds, dynamics, ds.original_config(), **common_wrapper_opts, mpc_opts=mpc_opts,
-                                        gating=gating)
+                                        gating=dynamics.get_gating())
     ctrl.set_goal(env.goal)
     ctrl.create_recovery_traj_seeder(dss, nom_traj_from=nom_traj_from)
 
@@ -1469,7 +1471,7 @@ class Visualize:
 
         logger.info("initial random seed %d", rand.seed(seed))
 
-        ds, pm, _ = get_prior(env)
+        ds, pm = get_prior(env)
         ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
         ds_wall.update_preprocessor(ds.preprocessor)
         dynamics_gp = get_local_model(env, pm, ds_wall)
@@ -1794,7 +1796,7 @@ if __name__ == "__main__":
     # Visualize.state_sequence(4, "pushing/test_sufficiency_4_NO_TRANSFORM_AlwaysSelectNominal_0.mat",
     #                          restrict_slice=slice(0, 40), step=5)
 
-    Visualize.task_res_dist()
+    # Visualize.task_res_dist()
 
     # EvaluateTask.closest_distance_to_goal_whole_set('test_sufficiency_1_NO_TRANSFORM_AlwaysSelectLocal')
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RANDOM_1_COORD_NOREUSE_DecisionTreeClassifier')
@@ -1833,9 +1835,9 @@ if __name__ == "__main__":
     #                              reuse_escape_as_demonstration=True,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
-    # for seed in range(5):
-    #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
-    #                                                    test_traj=neg_test_file)
+    for seed in range(5):
+        test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
+                                                       test_traj=neg_test_file)
     # baseline online model adaption method
     # for seed in range(5):
     #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,

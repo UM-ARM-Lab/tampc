@@ -114,7 +114,7 @@ class HybridDynamicsModel(abc.ABC):
         for i, ds_local in enumerate(self.dss):
             if i == 0:
                 continue
-            local_model = HybridDynamicsModel.get_local_model(self.state_diff, self.pm, ds_local,
+            local_model = HybridDynamicsModel.get_local_model(self.state_diff, self.pm, self.d, ds_local,
                                                               **self.local_model_kwargs)
             self.local_models.append(local_model)
 
