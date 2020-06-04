@@ -93,7 +93,7 @@ def get_gating(dss, tsf_name, use_gating=UseGating.TREE, *args, **kwargs):
 class HybridDynamicsModel(abc.ABC):
     """Different way of mixing local and nominal model; use nominal as mean"""
 
-    def __init__(self, dss, pm,  state_diff, gating_args, gating_kwargs=None, nominal_model_kwargs=None,
+    def __init__(self, dss, pm, state_diff, gating_args, gating_kwargs=None, nominal_model_kwargs=None,
                  local_model_kwargs=None, device=optim.get_device()):
         self.dss = dss
         self.pm = pm
@@ -172,16 +172,16 @@ class HybridDynamicsModel(abc.ABC):
     def _uses_local_model_api(model):
         return isinstance(model, online_model.OnlineDynamicsModel)
 
-    def use_recovery_nominal_model(self):
+    def use_temp_local_nominal_model(self):
         if self._uses_local_model_api(self.nominal_model):
             # start local model here with no previous data points
             self.nominal_model.init_xu = self.nominal_model.init_xu[slice(0, 0)]
             self.nominal_model.init_y = self.nominal_model.init_y[slice(0, 0)]
             self.nominal_model.reset()
         else:
-            self.nominal_model = online_model.OnlineGPMixing(self.pm, self.ds_nominal, self.state_diff,
-                                                             allow_update=True, sample=True, slice_to_use=slice(0, 0),
-                                                             device=self.nominal_model.device())
+            self.nominal_model = HybridDynamicsModel.get_local_model(self.state_diff, self.pm,
+                                                                     self.nominal_model.device(), self.ds_nominal,
+                                                                     allow_update=True, train_slice=slice(0, 0))
 
     def use_normal_nominal_model(self):
         self.nominal_model = self._original_nominal_model
