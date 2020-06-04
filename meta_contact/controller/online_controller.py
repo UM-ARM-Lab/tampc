@@ -171,11 +171,9 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                     # change mpc cost
                     # TODO parameterize this
                     goal_set = torch.stack(self.x_history[-10:-3])
-                    logger.debug(goal_set)
                     Q = self.Q.clone()
                     Q[2, 2] = 10
                     Q[3, 3] = Q[4, 4] = 1
-                    logger.debug(Q)
                     self.recovery_cost = cost.CostQRGoalSet(goal_set, Q, self.R, self.compare_to_goal, self.ds,
                                                             compare_in_latent_space=self.autonomous_recovery is AutonomousRecovery.RETURN_LATENT)
                     self.mpc.running_cost = self._recovery_running_cost

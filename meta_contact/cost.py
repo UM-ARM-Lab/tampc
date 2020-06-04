@@ -1,7 +1,9 @@
 """ This file defines utility classes and functions for costs from GPS. """
 import torch
+import logging
 from arm_pytorch_utilities import linalg, tensor_utils
 
+logger = logging.getLogger(__name__)
 
 def qr_cost(diff_function, X, X_goal, Q, R, U=None, terminal=False):
     X = diff_function(X, X_goal)
@@ -58,6 +60,8 @@ class CostQRGoalSet:
         self.goal_weights = goal_weights
         self.compare_to_goal = compare_to_goal
         self.compare_in_latent_space = compare_in_latent_space
+
+        logger.log("goal set\n%s", goal_set)
 
         if compare_in_latent_space:
             self.Q = torch.eye(ds.config.nx, device=Q.device, dtype=Q.dtype)
