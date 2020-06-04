@@ -1,5 +1,6 @@
 ## Installation
-1. install dependent library project: [pytorch utilities](https://github.com/UM-ARM-Lab/arm_pytorch_utilities)
+1. install dependent library project: [pytorch utilities](https://github.com/UM-ARM-Lab/arm_pytorch_utilities), 
+[pytorch mppi](https://github.com/LemonPi/pytorch_mppi)
 2. `pip3 install -e .`
 
 ## Usage
