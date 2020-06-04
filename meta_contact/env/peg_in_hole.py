@@ -203,7 +203,8 @@ class PegInHoleEnv(PybulletEnv):
         # ignore the pusher position
         self.hole = np.array(hole)
         if self.boardId is not None:
-            p.resetBasePositionAndOrientation(self.boardId, [self.hole[0], self.hole[1], 0])
+            p.resetBasePositionAndOrientation(self.boardId, [self.hole[0], self.hole[1], 0],
+                                              p.getQuaternionFromEuler([0, 0, 0]))
 
     def _set_init_peg(self, init_peg):
         self.initPeg = tuple(init_peg) + (_PEG_MID,)

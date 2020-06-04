@@ -343,11 +343,23 @@ def run_direct_push():
     plt.show()
 
 
-def test_init():
-    env = peg_in_hole.PegFloatingGripperEnv(mode=p.GUI, log_video=False)
-    while True:
-        env.step([1, 0])
-        pass
+def test_init(seed=0):
+    env = peg_in_hole.PegFloatingGripperEnv(mode=p.GUI, log_video=True, environment_level=2)
+    N = 20
+    u = [(-1, 1) for _ in range(4)]
+    # u.extend([(1, -1) for _ in range(4)])
+    # u.extend([(0.5, -0.5) for _ in range(4)])
+    # u.extend([(1, 0) for _ in range(4)])
+    # u.extend([(-1, 0) for _ in range(4)])
+    u.extend([(0, 1) for _ in range(4)])
+    u.extend([(0, -1) for _ in range(4)])
+    # u = [(-1, 1) for _ in range(20)]
+    # u.extend([(-0.2, 0) for _ in range(4)])
+    ctrl = controller.PreDeterminedController(u)
+    sim = peg_in_hole.PegInHole(env, ctrl, num_frames=len(u), plot=False, save=False, stop_when_done=False)
+    sim.run(seed)
+    plt.ioff()
+    plt.show()
 
 
 if __name__ == "__main__":
