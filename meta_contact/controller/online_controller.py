@@ -183,7 +183,10 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                     self.dynamics.update(self.x_history[-1], self.u_history[-1], x)
                     self.mpc.change_horizon(10)
         else:
-            if self.autonomous_recovery_mode:
+            # only update nominal trajectory if we're not in autonomous recovery mode
+            if not self.autonomous_recovery_mode:
+                self.recovery_traj_seeder.update_nominal_trajectory(self.dynamics_class, x)
+            else:
                 consecutive_recognized_dynamics_class = 0
                 for i in range(-1, -len(self.u_history), -1):
                     if self.dynamics_class_history[i] == gating_function.DynamicsClass.UNRECOGNIZED:
@@ -218,8 +221,6 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                         self.mpc.terminal_state_cost = self._terminal_cost
                         self.dynamics.use_normal_nominal_model()
                         self.mpc.change_horizon(self.original_horizon)
-
-            self.recovery_traj_seeder.update_nominal_trajectory(self.dynamics_class, x)
 
         self.dynamics_class_history.append(self.dynamics_class)
 
