@@ -429,10 +429,10 @@ class PushAgainstWallEnv(PybulletEnv):
         start = self._observe_pusher()
         self._dd.draw_2d_line(name, start, r, size=np.linalg.norm(r), scale=0.03, color=color)
 
-    def draw_user_text(self, text, location_index=1, left_offset=1):
+    def draw_user_text(self, text, location_index=1, left_offset=1.0):
         if location_index is 0:
             raise RuntimeError("Can't use same location index (0) as cost")
-        self._dd.draw_text('user{}'.format(location_index), text, location_index, left_offset)
+        self._dd.draw_text('user{}_{}'.format(location_index, left_offset), text, location_index, left_offset)
 
     # --- set current state
     def set_state(self, state, action=None, block_id=None):
@@ -1154,7 +1154,14 @@ class InteractivePush(simulation.Simulation):
             if self._predicts_dynamics_cls():
                 self.pred_cls[simTime] = self.ctrl.dynamics_class
                 self.env.draw_user_text("dyn cls {}".format(self.ctrl.dynamics_class), 2)
-                self.env.draw_user_text("recovery" if self.ctrl.autonomous_recovery_mode else "", 3)
+                if self.ctrl.recovery_cost:
+                    self.env.draw_user_text("recovery" if self.ctrl.autonomous_recovery_mode else "", 3)
+                    self.env.draw_user_text("goal set yaws" if self.ctrl.autonomous_recovery_mode else "", 1, -1.5)
+                    for i, goal in enumerate(self.ctrl.recovery_cost.goal_set):
+                        self.env.draw_user_text(
+                            "{:.2f}".format(goal[2].item()) if self.ctrl.autonomous_recovery_mode else "".format(
+                                goal[2]), 2 + i, -1.5)
+
                 for i in range(4):
                     dynamics_class_pred = self.ctrl.dynamics_class_prediction[i]
                     nom_count = (dynamics_class_pred == DynamicsClass.NOMINAL).sum()

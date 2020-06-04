@@ -1228,90 +1228,85 @@ def evaluate_gating_function(use_tsf=UseTsf.COORD, test_file="pushing/model_sele
     plt.show()
 
 
-def evaluate_ctrl_sampler(seed=1, use_tsf=UseTsf.COORD,
-                          nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS, num_best_actions_to_show=6,
-                          do_rollout_best_action=True):
-    eval_i = 43
-
+def evaluate_ctrl_sampler(eval_file, eval_i, seed=1, use_tsf=UseTsf.COORD,
+                          do_rollout_best_action=True, **kwargs):
     env = get_env(p.GUI, level=1, log_video=do_rollout_best_action)
-    env.draw_user_text("nominal traj from {}".format(nom_traj_from.name), 14, left_offset=-1.5)
+    env.draw_user_text("eval {}".format(eval_file), 14, left_offset=-1.5)
     env.draw_user_text("eval index {}".format(eval_i), 13, left_offset=-1.5)
     logger.info("initial random seed %d", rand.seed(seed))
 
     ds, pm = get_prior(env, use_tsf)
+    dss = [ds]
 
-    ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
-    ds_wall.update_preprocessor(ds.preprocessor)
-    dss = [ds, ds_wall]
+    hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, [use_tsf.name],
+                                                       nominal_model_kwargs={'online_adapt': OnlineAdapt.NONE},
+                                                       local_model_kwargs=kwargs)
+    gating = hybrid_dynamics.get_gating()
 
-    dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, [use_tsf.name])
+    common_wrapper_opts, mpc_opts = get_controller_options(env)
+    ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                        autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE,
+                                        reuse_escape_as_demonstration=False,
+                                        **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
+    ctrl.set_goal(env.goal)
+    ctrl.create_recovery_traj_seeder(dss, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS)
 
-    ds_eval, _ = get_ds(env, 'pushing/test_sufficiency_selector__i5_o2_s1_pd1_pa1_a0_e0_y0_140891.mat',
-                        validation_ratio=0.)
+    ds_eval, _ = get_ds(env, eval_file, validation_ratio=0.)
     ds_eval.update_preprocessor(ds.preprocessor)
 
     # evaluate on a non-recovery dataset to see if rolling out the actions from the recovery set is helpful
     XU, Y, info = ds_eval.training_set(original=True)
     X, U = torch.split(XU, env.nx, dim=1)
 
+    # put the state right before the evaluated action
     x = X[eval_i].cpu().numpy()
-    u = U[eval_i].cpu().numpy()
-    env.set_state(x, u)
+    env.set_state(x, U[eval_i].cpu().numpy())
 
-    common_wrapper_opts, mpc_opts = get_controller_options(env)
-    N = 500
-    M = 20
-    mpc_opts['num_samples'] = N
-    mpc_opts['rollout_samples'] = M
-    mpc_opts['rollout_var_cost'] = 0
-    ctrl = online_controller.OnlineMPPI(ds, dynamics, ds.original_config(), **common_wrapper_opts, mpc_opts=mpc_opts,
-                                        gating=dynamics.get_gating())
-    ctrl.set_goal(env.goal)
-    ctrl.create_recovery_traj_seeder(dss, nom_traj_from=nom_traj_from)
+    for i in range(eval_i):
+        ctrl.command(X[i].cpu().numpy())
 
-    env.draw_user_text(
-        "rollout var cost {} discount {}".format(ctrl.mpc.rollout_var_cost, ctrl.mpc.rollout_var_discount), 12,
-        left_offset=-1.5)
+    U_mpc_orig = ctrl.mpc.U.clone()
 
-    if nom_traj_from is NominalTrajFrom.ROLLOUT_WITH_ORIG_ACTIONS:
-        for ii in range(max(0, eval_i - 10), eval_i):
-            ctrl.command(X[ii].cpu().numpy())
+    if ctrl.recovery_cost:
+        env.draw_user_text("recovery" if ctrl.autonomous_recovery_mode else "", 3)
+        env.draw_user_text("goal set yaws" if ctrl.autonomous_recovery_mode else "", 1, -1.5)
+        for i, goal in enumerate(ctrl.recovery_cost.goal_set):
+            env.draw_user_text(
+                "{:.2f}".format(goal[2].item()) if ctrl.autonomous_recovery_mode else "".format(
+                    goal[2]), 2 + i, -1.5)
 
-    steps_to_take = 15 if do_rollout_best_action else 1
-    for _ in range(steps_to_take):
+    samples = [500, 1000, 2000, 5000, 10000, 20000]
+    for K in samples:
+        ctrl.mpc.U = U_mpc_orig.clone()
+        ctrl.mpc.K = K
         # use controller to sample next action
-        u_best = ctrl.command(x)
-        u_sample = ctrl.mpc.actions[0, :, 0, :].cpu().numpy()  # only consider the first step
-        # next_x = dynamics.predict(None, None, np.tile(x, (N, 1)), u_sample)
-        # var = dynamics.last_prediction.variance.detach().cpu().numpy()
-
-        env.draw_user_text("dyn cls {}".format(ctrl.dynamics_class.item()), 1)
-        ctrl.recovery_traj_seeder.update_nominal_trajectory(ctrl.dynamics_class)
+        u_best = ctrl.mpc.command(x)
 
         # visualize best actions in simulator
         path_cost = ctrl.mpc.cost_total.cpu()
-        v, ind = path_cost.sort()
-        for top_k in range(num_best_actions_to_show):
-            env._draw_action(u_sample[ind[top_k]], debug=top_k + 1)
+        # show best action and its rollouts
+        env.draw_user_text("{} samples".format(K), 1)
+        env._draw_action(u_best)
+        env.draw_user_text("{} cost".format(path_cost.min()), 2)
+        for i in range(1, ctrl.mpc.U.shape[0]):
+            env._draw_action(ctrl.mpc.U[i], debug=i)
+        time.sleep(2)
+    time.sleep(5)
 
-        time.sleep(0.2)
-        # take the best action
-        x, rew, done, info = env.step(u_best)
-
-    f, axes = plt.subplots(2, 1, sharex=True)
-    path_sampled_cost = ctrl.mpc.cost_samples[:, ind]
-    t = np.arange(N)
-    axes[0].scatter(np.tile(t, (M, 1)), path_sampled_cost.cpu(), alpha=0.2)
-    axes[0].set_ylabel('cost')
-
-    modes = [ctrl.dynamics_class_prediction[i].view(20, -1) for i in range(ctrl.mpc.T)]
-    modes = torch.stack(modes, dim=0)
-    modes = (modes == 0).sum(dim=0)
-    axes[1].scatter(np.tile(t, (M, 1)), modes[:, ind].cpu(), alpha=0.2)
-    axes[1].set_ylabel('# nominal dyn cls in traj')
-    axes[-1].set_xlabel('u sample')
-
-    plt.show()
+    # f, axes = plt.subplots(2, 1, sharex=True)
+    # path_sampled_cost = ctrl.mpc.cost_samples[:, ind]
+    # t = np.arange(N)
+    # axes[0].scatter(np.tile(t, (M, 1)), path_sampled_cost.cpu(), alpha=0.2)
+    # axes[0].set_ylabel('cost')
+    #
+    # modes = [ctrl.dynamics_class_prediction[i].view(20, -1) for i in range(ctrl.mpc.T)]
+    # modes = torch.stack(modes, dim=0)
+    # modes = (modes == 0).sum(dim=0)
+    # axes[1].scatter(np.tile(t, (M, 1)), modes[:, ind].cpu(), alpha=0.2)
+    # axes[1].set_ylabel('# nominal dyn cls in traj')
+    # axes[-1].set_xlabel('u sample')
+    #
+    # plt.show()
 
 
 class Learn:
@@ -1479,7 +1474,7 @@ class Visualize:
         XU, Y, info = ds_wall.training_set(original=True)
         X, U = torch.split(XU, env.nx, dim=1)
 
-        i = 95
+        i = 15
         x = X[i]
         u = U[i]
         env.set_state(x.cpu().numpy())
@@ -1810,7 +1805,8 @@ if __name__ == "__main__":
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_gating_function(use_tsf=ut, test_file=neg_test_file)
-    # evaluate_ctrl_sampler()
+    evaluate_ctrl_sampler('pushing/auto_recover_NONE_RETURN_STATE_1_COORD_NOREUSE_DecisionTreeClassifier_4.mat', 9)
+    # evaluate_ctrl_sampler('pushing/auto_recover_NONE_RETURN_STATE_1_COORD_NOREUSE_DecisionTreeClassifier_1.mat', 27)
 
     # autonomous recovery
     # for seed in range(5, 10):
@@ -1822,22 +1818,18 @@ if __name__ == "__main__":
     #                              reuse_escape_as_demonstration=False,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.NONE)
 
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_GP_KERNEL_NONE_1_COORD_NOREUSE_DecisionTreeClassifier')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_GP_KERNEL_NONE_3_COORD_NOREUSE_DecisionTreeClassifier')
-
-    #
-    # for seed in range(10, 20):
+    # for seed in range(4, 5):
     #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              reuse_escape_as_demonstration=True,
+    #                              reuse_escape_as_demonstration=False,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
     # for seed in range(10, 20):
     #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                              reuse_escape_as_demonstration=True,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
-    for seed in range(5):
-        test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
-                                                       test_traj=neg_test_file)
+    # for seed in range(5):
+    #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
+    #                                                    test_traj=neg_test_file)
     # baseline online model adaption method
     # for seed in range(5):
     #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,

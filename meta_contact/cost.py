@@ -61,7 +61,7 @@ class CostQRGoalSet:
         self.compare_to_goal = compare_to_goal
         self.compare_in_latent_space = compare_in_latent_space
 
-        logger.log("goal set\n%s", goal_set)
+        logger.debug("goal set\n%s", goal_set)
 
         if compare_in_latent_space:
             self.Q = torch.eye(ds.config.nx, device=Q.device, dtype=Q.dtype)
