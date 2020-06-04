@@ -1154,8 +1154,11 @@ class InteractivePush(simulation.Simulation):
             if self._predicts_dynamics_cls():
                 self.pred_cls[simTime] = self.ctrl.dynamics_class
                 self.env.draw_user_text("dyn cls {}".format(self.ctrl.dynamics_class), 2)
+
+                mode_text = "recovery" if self.ctrl.autonomous_recovery_mode else (
+                    "local" if self.ctrl.using_local_model_for_nonnominal_dynamics else "")
+                self.env.draw_user_text(mode_text, 3)
                 if self.ctrl.recovery_cost:
-                    self.env.draw_user_text("recovery" if self.ctrl.autonomous_recovery_mode else "", 3)
                     self.env.draw_user_text("goal set yaws" if self.ctrl.autonomous_recovery_mode else "", 1, -1.5)
                     for i, goal in enumerate(self.ctrl.recovery_cost.goal_set):
                         self.env.draw_user_text(

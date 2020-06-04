@@ -114,11 +114,21 @@ class AutonomousRecovery(enum.IntEnum):
 
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def __init__(self, *args, abs_unrecognized_threshold=2, rel_unrecognized_threshold=5,
+                 assume_all_nonnominal_dynamics_are_traps=False,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
         self.recovery_traj_seeder: RecoveryTrajectorySeeder = None
         self.abs_unrecognized_threshold = abs_unrecognized_threshold
         self.rel_unrecognized_threshold = rel_unrecognized_threshold
+
+        self.assume_all_nonnominal_dynamics_are_traps = assume_all_nonnominal_dynamics_are_traps
+
+        self.using_local_model_for_nonnominal_dynamics = False
+        self.nonnominal_dynamics_start_index = -1
+        self.nonnominal_dynamics_trend_len = 4
+        # we have to be decreasing cost at this much compared to before nonnominal dynamics to not be in a trap
+        self.nonnominal_dynamics_penalty_tolerance = 0.5
+
         self.autonomous_recovery_mode = False
         self.autonomous_recovery_start_index = -1
         self.leave_recovery_num_turns = 3
@@ -136,91 +146,159 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def _recovery_running_cost(self, state, action):
         return self.recovery_cost(state, action)
 
+    def _in_non_nominal_dynamics(self):
+        return self.diff_predicted is not None and \
+               self.dynamics_class == gating_function.DynamicsClass.NOMINAL and \
+               self.diff_predicted.norm() > self.abs_unrecognized_threshold and \
+               self.diff_relative.norm() > self.rel_unrecognized_threshold and \
+               len(self.u_history) > 0 and \
+               self.u_history[-1][1] > 0
+
+    def _entering_trap(self):
+        # already inside trap
+        if self.autonomous_recovery_mode:
+            return False
+
+        # not in non-nominal dynamics assume not a trap
+        if not self.using_local_model_for_nonnominal_dynamics:
+            return False
+
+        # heuristic for determining if this a trap and should we enter autonomous recovery mode
+        # TODO kind of hacky but our model predicts poorly when action has 0 magnitude
+        if self.autonomous_recovery is not AutonomousRecovery.NONE and \
+                len(self.x_history) > 3 and \
+                self.u_history[-1][1] > 0:
+
+            if self.assume_all_nonnominal_dynamics_are_traps:
+                return True
+
+            # check cost history compared to before we entered non-nominal dyanmics and after we've entered
+            before_trend = torch.cat(self.cost_history[
+                                     self.nonnominal_dynamics_start_index - self.nonnominal_dynamics_trend_len: self.nonnominal_dynamics_start_index])
+            current_trend = torch.cat(self.cost_history[-self.nonnominal_dynamics_trend_len:])
+            # should be negative
+            before_progress_rate = (before_trend[1:] - before_trend[:-1]).mean()
+            current_progress_rate = (current_trend[1:] - current_trend[:-1]).mean()
+            is_trap = before_progress_rate * self.nonnominal_dynamics_penalty_tolerance < current_progress_rate
+            logger.debug("before progress rate %f current progress rate %f trap? %d", before_progress_rate.item(),
+                         current_progress_rate.item(), is_trap)
+            return is_trap
+        return False
+
+    def _left_trap(self):
+        # not in a trap to begin with
+        if not self.autonomous_recovery_mode:
+            return False
+        consecutive_recognized_dynamics_class = 0
+        for i in range(-1, -len(self.u_history), -1):
+            if self.dynamics_class_history[i] == gating_function.DynamicsClass.UNRECOGNIZED:
+                break
+            if self.u_history[i][1] > 0:
+                consecutive_recognized_dynamics_class += 1
+        return consecutive_recognized_dynamics_class >= self.leave_recovery_num_turns
+
+    def _left_local_model(self):
+        # not using local model to begin with
+        if not self.using_local_model_for_nonnominal_dynamics:
+            return False
+        consecutive_recognized_dynamics_class = 0
+        for i in range(-1, -len(self.u_history), -1):
+            if self.dynamics_class_history[i] == gating_function.DynamicsClass.UNRECOGNIZED:
+                break
+            if self.u_history[i][1] > 0:
+                consecutive_recognized_dynamics_class += 1
+        return consecutive_recognized_dynamics_class >= self.leave_recovery_num_turns
+
+    def _start_local_model(self, x):
+        logger.debug("Entering non nominal dynamics")
+        logger.debug(self.diff_predicted)
+        logger.debug(self.diff_relative)
+
+        self.using_local_model_for_nonnominal_dynamics = True
+        # does not include the current observation
+        self.nonnominal_dynamics_start_index = len(self.x_history) + 1
+
+        self.dynamics.use_temp_local_nominal_model()
+        # update the local model with the last transition for entering the mode
+        self.dynamics.update(self.x_history[-1], self.u_history[-1], x)
+
+    def _start_recovery_mode(self):
+        logger.debug("Entering autonomous recovery mode")
+        self.autonomous_recovery_mode = True
+        self.autonomous_recovery_start_index = len(self.x_history) + 1
+
+        # different strategies for recovery mode
+        if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.RETURN_LATENT]:
+            # change mpc cost
+            # TODO parameterize this
+            goal_set = torch.stack(
+                self.x_history[max(0, self.nonnominal_dynamics_start_index - 10):self.nonnominal_dynamics_start_index])
+            Q = self.Q.clone()
+            Q[2, 2] = 10
+            Q[3, 3] = Q[4, 4] = 1
+            self.recovery_cost = cost.CostQRGoalSet(goal_set, Q, self.R, self.compare_to_goal, self.ds,
+                                                    compare_in_latent_space=self.autonomous_recovery is AutonomousRecovery.RETURN_LATENT)
+            self.mpc.running_cost = self._recovery_running_cost
+            self.mpc.terminal_state_cost = None
+            self.mpc.change_horizon(10)
+
+    def _end_recovery_mode(self):
+        logger.debug("Leaving autonomous recovery mode")
+        logger.debug(torch.tensor(self.dynamics_class_history[-self.leave_recovery_num_turns:]))
+        self.autonomous_recovery_mode = False
+
+        # if we're sure that we've left an unrecognized class, save as recovery
+        if self.reuse_escape_as_demonstration:
+            # TODO filter out moves? / weight later points more?
+            x_recovery = []
+            u_recovery = []
+            for i in range(self.autonomous_recovery_start_index, len(self.x_history)):
+                if self.u_history[i][1] > 0:
+                    x_recovery.append(self.x_history[i])
+                    u_recovery.append(self.u_history[i])
+            x_recovery = torch.stack(x_recovery)
+            u_recovery = torch.stack(u_recovery)
+            logger.info("Using data from index %d with len %d for local model",
+                        self.autonomous_recovery_start_index, x_recovery.shape[0])
+            self.dynamics.create_local_model(x_recovery, u_recovery)
+            self.gating = self.dynamics.get_gating()
+            self.recovery_traj_seeder.update_data(self.dynamics.dss)
+
+        if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.RETURN_LATENT]:
+            # restore cost functions
+            self.mpc.running_cost = self._running_cost
+            self.mpc.terminal_state_cost = self._terminal_cost
+            self.mpc.change_horizon(self.original_horizon)
+
+    def _end_local_model(self):
+        logger.debug("Leaving local model")
+        self.dynamics.use_normal_nominal_model()
+        self.using_local_model_for_nonnominal_dynamics = False
+
     def _compute_action(self, x):
         assert self.recovery_traj_seeder is not None
         # use only state for dynamics_class selection; this way we can get dynamics_class before calculating action
         a = torch.zeros((1, self.nu), device=self.d, dtype=x.dtype)
         self.dynamics_class = self.gating.sample_class(x.view(1, -1), a).item()
 
-        # if self.diff_predicted is not None:
-        #     logger.debug("abs err %f rel err %f full %s %s", self.diff_predicted.norm(), self.diff_relative.norm(),
-        #                  self.diff_predicted.cpu().numpy(), self.diff_relative.cpu().numpy())
-        # it's unrecognized if we don't recognize it as any local model (gating function thinks its the nominal model)
-        # but we still have high model error
-        # TODO kind of hacky but our model predicts poorly when action has 0 magnitude
-        if self.autonomous_recovery is not AutonomousRecovery.NONE and \
-                len(self.x_history) > 3 and \
-                self.u_history[-1][1] > 0 and \
-                self.diff_predicted is not None and \
-                self.dynamics_class == gating_function.DynamicsClass.NOMINAL and \
-                self.diff_predicted.norm() > self.abs_unrecognized_threshold and \
-                self.diff_relative.norm() > self.rel_unrecognized_threshold:
+        # in non-nominal dynamics
+        if self._in_non_nominal_dynamics():
             self.dynamics_class = gating_function.DynamicsClass.UNRECOGNIZED
-            logger.debug(self.diff_predicted)
-            logger.debug(self.diff_relative)
 
-            # if we're sure that we've entered an unrecognized class (consistent dynamics not working)
-            if not self.autonomous_recovery_mode and self.dynamics_class_history[-1] != self.dynamics_class:
-                logger.debug("Entering autonomous recovery mode")
-                self.autonomous_recovery_mode = True
-                self.autonomous_recovery_start_index = len(
-                    self.x_history) + 1  # does not include the current observation
-
-                # different strategies for recovery mode
-                if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.RETURN_LATENT]:
-                    # change mpc cost
-                    # TODO parameterize this
-                    goal_set = torch.stack(self.x_history[-10:-3])
-                    Q = self.Q.clone()
-                    Q[2, 2] = 10
-                    Q[3, 3] = Q[4, 4] = 1
-                    self.recovery_cost = cost.CostQRGoalSet(goal_set, Q, self.R, self.compare_to_goal, self.ds,
-                                                            compare_in_latent_space=self.autonomous_recovery is AutonomousRecovery.RETURN_LATENT)
-                    self.mpc.running_cost = self._recovery_running_cost
-                    self.mpc.terminal_state_cost = None
-                    self.dynamics.use_recovery_nominal_model()
-                    # update the local model with the last transition for entering the mode
-                    self.dynamics.update(self.x_history[-1], self.u_history[-1], x)
-                    self.mpc.change_horizon(10)
+            if not self.using_local_model_for_nonnominal_dynamics:
+                self._start_local_model(x)
         else:
-            # only update nominal trajectory if we're not in autonomous recovery mode
+            # TODO check correctness; only update nominal trajectory if we're not in autonomous recovery mode
             if not self.autonomous_recovery_mode:
                 self.recovery_traj_seeder.update_nominal_trajectory(self.dynamics_class, x)
-            else:
-                consecutive_recognized_dynamics_class = 0
-                for i in range(-1, -len(self.u_history), -1):
-                    if self.dynamics_class_history[i] == gating_function.DynamicsClass.UNRECOGNIZED:
-                        break
-                    if self.u_history[i][1] > 0:
-                        consecutive_recognized_dynamics_class += 1
-                if consecutive_recognized_dynamics_class >= self.leave_recovery_num_turns:
-                    logger.debug("Leaving autonomous recovery mode")
-                    logger.debug(torch.tensor(self.dynamics_class_history[-self.leave_recovery_num_turns:]))
-                    self.autonomous_recovery_mode = False
+            if self._left_trap():
+                self._end_recovery_mode()
+                self._end_local_model()
+            elif self._left_local_model():
+                self._end_local_model()
 
-                    # if we're sure that we've left an unrecognized class, save as recovery
-                    if self.reuse_escape_as_demonstration:
-                        # TODO filter out moves? / weight later points more?
-                        x_recovery = []
-                        u_recovery = []
-                        for i in range(self.autonomous_recovery_start_index, len(self.x_history)):
-                            if self.u_history[i][1] > 0:
-                                x_recovery.append(self.x_history[i])
-                                u_recovery.append(self.u_history[i])
-                        x_recovery = torch.stack(x_recovery)
-                        u_recovery = torch.stack(u_recovery)
-                        logger.info("Using data from index %d with len %d for local model",
-                                    self.autonomous_recovery_start_index, x_recovery.shape[0])
-                        self.dynamics.create_local_model(x_recovery, u_recovery)
-                        self.gating = self.dynamics.get_gating()
-                        self.recovery_traj_seeder.update_data(self.dynamics.dss)
-
-                    if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.RETURN_LATENT]:
-                        # restore cost functions
-                        self.mpc.running_cost = self._running_cost
-                        self.mpc.terminal_state_cost = self._terminal_cost
-                        self.dynamics.use_normal_nominal_model()
-                        self.mpc.change_horizon(self.original_horizon)
+        if self._entering_trap():
+            self._start_recovery_mode()
 
         self.dynamics_class_history.append(self.dynamics_class)
 

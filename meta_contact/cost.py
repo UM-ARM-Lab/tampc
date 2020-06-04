@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 def qr_cost(diff_function, X, X_goal, Q, R, U=None, terminal=False):
     X = diff_function(X, X_goal)
     c = linalg.batch_quadratic_product(X, Q)
-    if not terminal:
+    if U is not None and not terminal:
         c += linalg.batch_quadratic_product(U, R)
     return c
 
