@@ -9,6 +9,8 @@ import abc
 
 logger = logging.getLogger(__name__)
 
+MAX_EVALUATE_AT_ONCE = 10000
+
 
 class OnlineDynamicsModel(abc.ABC):
     """Different way of mixing local and nominal model; use nominal as mean"""
@@ -80,7 +82,15 @@ class OnlineDynamicsModel(abc.ABC):
 
         cx[bad_states] = 0
         cu[bad_states] = 0
-        y = self._dynamics_in_transformed_space(px, pu, cx, cu)
+
+        # split evaluation into multiple calls due to GP taking up too much memory when evaluating all at once
+        ys = []
+        for i in range(0, cx.shape[0], MAX_EVALUATE_AT_ONCE):
+            this_slice = slice(i, i + MAX_EVALUATE_AT_ONCE)
+            ys.append(
+                self._dynamics_in_transformed_space(px[this_slice] if px else None, pu[this_slice] if px else None,
+                                                    cx[this_slice], cu[this_slice]))
+        y = torch.cat(ys, dim=0)
 
         if self.ds.preprocessor:
             y = self.ds.preprocessor.invert_transform(y, ocx)
