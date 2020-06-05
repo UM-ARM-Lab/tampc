@@ -300,7 +300,6 @@ class ExperimentalMPPI(mppi.MPPI):
     def __init__(self, *args, rollout_samples=20, rollout_var_cost=0.5, rollout_var_discount=0.95, **kwargs):
         super(ExperimentalMPPI, self).__init__(*args, **kwargs)
         self.M = rollout_samples
-        self.cost_samples = None
         self.rollout_var_cost = rollout_var_cost
         self.rollout_var_discount = rollout_var_discount
 
@@ -321,18 +320,53 @@ class ExperimentalMPPI(mppi.MPPI):
     def _running_cost(self, state, u):
         return self.running_cost(state, u)
 
-    def _compute_total_cost_batch(self):
-        # parallelize sampling across trajectories
-        self.cost_total = torch.zeros(self.K, device=self.d, dtype=self.dtype)
-        self.cost_samples = self.cost_total.repeat(self.M, 1)
-        cost_var = torch.zeros_like(self.cost_total)
+    def _compute_rollout_costs(self, perturbed_actions):
+        K, T, nu = perturbed_actions.shape
+        assert nu == self.nu
+
+        cost_total = torch.zeros(K, device=self.d, dtype=self.dtype)
+        cost_samples = cost_total.repeat(self.M, 1)
+        cost_var = torch.zeros_like(cost_total)
 
         # allow propagation of a sample of states (ex. to carry a distribution), or to start with a single state
-        if self.state.shape == (self.K, self.nx):
+        if self.state.shape == (K, self.nx):
             state = self.state
         else:
-            state = self.state.view(1, -1).repeat(self.K, 1)
+            state = self.state.view(1, -1).repeat(K, 1)
 
+        # rollout action trajectory M times to estimate expected cost
+        state = state.repeat(self.M, 1, 1)
+
+        states = []
+        actions = []
+        for t in range(T):
+            u = perturbed_actions[:, t].repeat(self.M, 1, 1)
+            state = self._dynamics(state, u, t)
+            c = self.running_cost(state, u)
+            cost_samples += c
+            cost_var += c.var(dim=0) * (self.rollout_var_discount ** t)
+            if self.dynamics_variance is not None:
+                cost_total += self.running_cost_variance(self.dynamics_variance(state))
+
+            # Save total states/actions
+            states.append(state)
+            actions.append(u)
+
+        # Actions is K x T x nu
+        # States is K x T x nx
+        actions = torch.stack(actions, dim=-2)
+        states = torch.stack(states, dim=-2)
+
+        # action perturbation cost
+        if self.terminal_state_cost:
+            c = self.terminal_state_cost(states, actions)
+            cost_samples += c
+        cost_total += cost_samples.mean(dim=0)
+        cost_total += cost_var * self.rollout_var_cost
+        return cost_total, states, actions
+
+    def _compute_total_cost_batch(self):
+        # parallelize sampling across trajectories
         # resample noise each time we take an action
         self.noise = self.noise_dist.sample((self.K, self.T))
         # broadcast own control to noise over samples; now it's K x T x nu
@@ -345,37 +379,11 @@ class ExperimentalMPPI(mppi.MPPI):
         self.noise = self.perturbed_action - self.U
         action_cost = self.lambda_ * self.noise @ self.noise_sigma_inv
 
-        # rollout action trajectory M times to estimate expected cost
-        state = state.repeat(self.M, 1, 1)
-
-        self.states = []
-        self.actions = []
-        for t in range(self.T):
-            u = self.perturbed_action[:, t].repeat(self.M, 1, 1)
-            state = self._dynamics(state, u, t)
-            c = self.running_cost(state, u)
-            self.cost_samples += c
-            cost_var += c.var(dim=0) * (self.rollout_var_discount ** t)
-            if self.dynamics_variance is not None:
-                self.cost_total += self.running_cost_variance(self.dynamics_variance(state))
-
-            # Save total states/actions
-            self.states.append(state)
-            self.actions.append(u)
-
-        # Actions is K x T x nu
-        # States is K x T x nx
-        self.actions = torch.stack(self.actions, dim=-2)
-        self.states = torch.stack(self.states, dim=-2)
+        self.cost_total, self.states, self.actions = self._compute_rollout_costs(self.perturbed_action)
 
         # action perturbation cost
         perturbation_cost = torch.sum(self.perturbed_action * action_cost, dim=(1, 2))
-        if self.terminal_state_cost:
-            c = self.terminal_state_cost(self.states, self.actions)
-            self.cost_samples += c
-        self.cost_total += self.cost_samples.mean(dim=0)
         self.cost_total += perturbation_cost
-        self.cost_total += cost_var * self.rollout_var_cost
         return self.cost_total
 
 
