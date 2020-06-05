@@ -202,7 +202,7 @@ class MPC(ControllerWithModelPrediction):
         self.diff_relative = None
         self.x_history = []
         self.u_history = []
-        self.cost_history = []
+        self.orig_cost_history = []
         self.context = None
 
     def set_goal(self, goal):
@@ -264,14 +264,14 @@ class MPC(ControllerWithModelPrediction):
         self.diff_relative = None
         self.x_history = []
         self.u_history = []
-        self.cost_history = []
+        self.orig_cost_history = []
         self.context = None
 
     def command(self, obs, info=None):
         original_obs = obs
         obs = tensor_utils.ensure_tensor(self.d, self.dtype, obs)
         # here so that in command we have access to the latest
-        self.cost_history.append(self.cost(obs.view(1, -1)))
+        self.orig_cost_history.append(self.cost(obs.view(1, -1)))
         if self.predicted_next_state is not None:
             self.diff_predicted = torch.tensor(self.prediction_error(original_obs), device=self.d)
             diff_actual = self.compare_to_goal(obs.view(1, -1), self.x_history[-1])

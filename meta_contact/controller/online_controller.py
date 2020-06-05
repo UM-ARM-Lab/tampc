@@ -13,38 +13,11 @@ from meta_contact import cost
 logger = logging.getLogger(__name__)
 
 
-class OnlineController(controller.MPC):
-    """
-    Controller mixing locally linear model with prior model from https://arxiv.org/pdf/1509.06841.pdf
-
-    External API is in numpy ndarrays, but internally keeps tensors, and interacts with any models using tensors
-    """
-
-    def update_prior(self, prior):
-        self.dynamics.prior = prior
-
-    def _mpc_command(self, obs):
-        t = len(self.u_history)
-        x = obs
-        if t > 0:
-            self.dynamics.update(self.x_history[-1], self.u_history[-1], x)
-
-        u = self._compute_action(x)
-
-        return u
-
-    @abc.abstractmethod
-    def _compute_action(self, x):
-        """
-        Compute nu-dimensional action from current policy
-        """
-
-
 def noop_constrain(state):
     return state
 
 
-class OnlineMPC(OnlineController):
+class OnlineMPC(controller.MPC):
     """
     Online controller with a pytorch based MPC method (CEM, MPPI)
     """
@@ -59,13 +32,18 @@ class OnlineMPC(OnlineController):
         self.dynamics_class = 0
         self.dynamics_class_prediction = {}
         self.dynamics_class_history = []
+        self.mpc_cost_history = []
         super().__init__(*args, **kwargs)
         assert isinstance(self.dynamics, hybrid_model.HybridDynamicsModel)
+
+    def update_prior(self, prior):
+        self.dynamics.prior = prior
 
     def reset(self):
         super(OnlineMPC, self).reset()
         self.dynamics_class_prediction = {}
         self.dynamics_class_history = []
+        self.mpc_cost_history = []
 
     def predict_next_state(self, state, control):
         # we'll temporarily ensure usage of the original nominal model for predicting the next state
@@ -99,6 +77,17 @@ class OnlineMPC(OnlineController):
         next_state[bad_states] = state[bad_states]
 
         return next_state
+
+    def _mpc_command(self, obs):
+        t = len(self.u_history)
+        x = obs
+        if t > 0:
+            self.dynamics.update(self.x_history[-1], self.u_history[-1], x)
+
+        self.mpc_cost_history.append(self.mpc.running_cost(x.view(1, -1), None))
+        u = self._compute_action(x)
+
+        return u
 
     def _compute_action(self, x):
         u = self.mpc.command(x)
@@ -174,10 +163,10 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
             # check cost history compared to before we entered non-nominal dyanmics and after we've entered
             # don't include the first state since the reaction forces are not initialized correctly
-            before_trend = torch.cat(self.cost_history[
+            before_trend = torch.cat(self.orig_cost_history[
                                      max(1, self.nonnominal_dynamics_start_index - self.nonnominal_dynamics_trend_len):
                                      self.nonnominal_dynamics_start_index])
-            current_trend = torch.cat(self.cost_history[-self.nonnominal_dynamics_trend_len:])
+            current_trend = torch.cat(self.orig_cost_history[-self.nonnominal_dynamics_trend_len:])
             # should be negative
             before_progress_rate = (before_trend[1:] - before_trend[:-1]).mean()
             current_progress_rate = (current_trend[1:] - current_trend[:-1]).mean()
@@ -191,13 +180,33 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         # not in a trap to begin with
         if not self.autonomous_recovery_mode:
             return False
+
+        # can leave if we've left non-nominal dynamics for a while
         consecutive_recognized_dynamics_class = 0
         for i in range(-1, -len(self.u_history), -1):
             if self.dynamics_class_history[i] == gating_function.DynamicsClass.UNRECOGNIZED:
                 break
             if self.u_history[i][1] > 0:
                 consecutive_recognized_dynamics_class += 1
-        return consecutive_recognized_dynamics_class >= self.leave_recovery_num_turns
+        if consecutive_recognized_dynamics_class >= self.leave_recovery_num_turns:
+            return True
+
+        cur_index = len(self.mpc_cost_history) - 1
+        if cur_index - self.autonomous_recovery_start_index < self.nonnominal_dynamics_trend_len:
+            return False
+
+        # can also leave if we are as close as we can get to previous states
+        before_trend = torch.cat(self.mpc_cost_history[self.autonomous_recovery_start_index:
+                                                       self.autonomous_recovery_start_index + self.nonnominal_dynamics_trend_len])
+        current_trend = torch.cat(self.mpc_cost_history[max(self.autonomous_recovery_start_index,
+                                                            cur_index - self.nonnominal_dynamics_trend_len):])
+
+        before_progress_rate = (before_trend[1:] - before_trend[:-1]).mean()
+        current_progress_rate = (current_trend[1:] - current_trend[:-1]).mean()
+        left_trap = before_progress_rate * 0.1 < current_progress_rate
+        logger.debug("before recovery rate %f current recovery rate %f left trap? %d", before_progress_rate.item(),
+                     current_progress_rate.item(), left_trap)
+        return left_trap
 
     def _left_local_model(self):
         # not using local model to begin with
@@ -295,14 +304,14 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             # TODO check correctness; only update nominal trajectory if we're not in autonomous recovery mode
             if not self.autonomous_recovery_mode:
                 self.recovery_traj_seeder.update_nominal_trajectory(self.dynamics_class, x)
-            if self._left_trap():
-                self._end_recovery_mode()
-                self._end_local_model()
             elif self._left_local_model():
                 self._end_local_model()
 
         if self._entering_trap():
             self._start_recovery_mode()
+
+        if self._left_trap():
+            self._end_recovery_mode()
 
         self.dynamics_class_history.append(self.dynamics_class)
 
