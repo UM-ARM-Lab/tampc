@@ -910,7 +910,8 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
 def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
                              use_tsf=UseTsf.COORD, nominal_adapt=OnlineAdapt.NONE,
                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE,
-                             reuse_escape_as_demonstration=False,
+                             reuse_escape_as_demonstration=False, num_frames=250, run_name=None,
+                             assume_all_nonnominal_dynamics_are_traps=False,
                              **kwargs):
     env = get_env(p.GUI, level=level, log_video=True)
     logger.info("initial random seed %d", rand.seed(seed))
@@ -933,6 +934,7 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
                                         autonomous_recovery=autonomous_recovery,
+                                        assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
                                         reuse_escape_as_demonstration=reuse_escape_as_demonstration,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
     ctrl.set_goal(env.goal)
@@ -948,12 +950,15 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
     if reuse_escape_as_demonstration:
         env.draw_user_text("reuse escape", 10, left_offset=-1.5)
 
-    sim = block_push.InteractivePush(env, ctrl, num_frames=250, plot=False, save=True, stop_when_done=False)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=False, save=True, stop_when_done=False)
     seed = rand.seed(seed)
-    run_name = 'auto_recover_{}_{}_{}_{}_{}_{}_{}'.format(nominal_adapt.name, autonomous_recovery.name, level,
-                                                          use_tsf.name,
-                                                          "REUSE" if reuse_escape_as_demonstration else "NOREUSE",
-                                                          gating.name, seed)
+    if run_name is None:
+        run_name = 'auto_recover__{}__{}__{}__{}__{}__{}__{}__{}'.format(nominal_adapt.name, autonomous_recovery.name,
+                                                                         level,
+                                                                         use_tsf.name,
+                                                                         "ALLTRAP" if assume_all_nonnominal_dynamics_are_traps else "SOMETRAP",
+                                                                         "REUSE" if reuse_escape_as_demonstration else "NOREUSE",
+                                                                         gating.name, seed)
     sim.run(seed, run_name)
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
     plt.ioff()
@@ -1260,9 +1265,9 @@ def evaluate_ctrl_sampler(eval_file, eval_i, seed=1, use_tsf=UseTsf.COORD,
 
     # put the state right before the evaluated action
     x = X[eval_i].cpu().numpy()
-    env.set_state(x, U[eval_i].cpu().numpy())
-
     for i in range(eval_i):
+        env.draw_user_text(str(i), 1)
+        env.set_state(X[i].cpu().numpy(), U[i].cpu().numpy())
         ctrl.command(X[i].cpu().numpy())
 
     U_mpc_orig = ctrl.mpc.U.clone()
@@ -1275,7 +1280,7 @@ def evaluate_ctrl_sampler(eval_file, eval_i, seed=1, use_tsf=UseTsf.COORD,
                 "{:.2f}".format(goal[2].item()) if ctrl.autonomous_recovery_mode else "".format(
                     goal[2]), 2 + i, -1.5)
 
-    samples = [500, 1000, 2000, 5000, 10000, 20000]
+    samples = [500, 1000, 2000]
     for K in samples:
         ctrl.mpc.U = U_mpc_orig.clone()
         ctrl.mpc.K = K
@@ -1288,11 +1293,30 @@ def evaluate_ctrl_sampler(eval_file, eval_i, seed=1, use_tsf=UseTsf.COORD,
         env.draw_user_text("{} samples".format(K), 1)
         env._draw_action(u_best)
         env.draw_user_text("{} cost".format(path_cost.min()), 2)
-        for i in range(1, ctrl.mpc.U.shape[0]):
+        for i in range(1, 10):
             env._draw_action(ctrl.mpc.U[i], debug=i)
+        env.visualize_rollouts(ctrl.get_rollouts(x))
         time.sleep(2)
-    time.sleep(5)
+    time.sleep(2)
 
+    # give manual dynamics and visualize rollouts
+    u = torch.tensor([-1, 0.8, -0.8], device=ctrl.mpc.U.device, dtype=ctrl.mpc.U.dtype)
+    N = 10
+    U = u.repeat(N, 1)
+    ctrl.mpc.U = U.clone()
+    env._draw_action(ctrl.mpc.U[0])
+    for i in range(1, ctrl.mpc.U.shape[0]):
+        env._draw_action(ctrl.mpc.U[i], debug=i)
+
+    env.draw_user_text("manual actions", 1)
+    total_cost, _, _ = ctrl.mpc._compute_rollout_costs(U.view(1, N, -1))
+    env.draw_user_text("{} cost".format(total_cost.item()), 2)
+    env.visualize_rollouts(ctrl.get_rollouts(x))
+    # execute those moves and compare against rollout
+    for u in U:
+        env.step(u.cpu().numpy())
+
+    time.sleep(5)
     # f, axes = plt.subplots(2, 1, sharex=True)
     # path_sampled_cost = ctrl.mpc.cost_samples[:, ind]
     # t = np.arange(N)
@@ -1805,8 +1829,8 @@ if __name__ == "__main__":
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_gating_function(use_tsf=ut, test_file=neg_test_file)
-    # evaluate_ctrl_sampler('pushing/auto_recover_NONE_RETURN_STATE_1_COORD_NOREUSE_DecisionTreeClassifier_4.mat', 9)
     # evaluate_ctrl_sampler('pushing/auto_recover_NONE_RETURN_STATE_1_COORD_NOREUSE_DecisionTreeClassifier_1.mat', 27)
+    # evaluate_ctrl_sampler('pushing/with_domain_knowledge.mat', 25)
 
     # autonomous recovery
     # for seed in range(5, 10):
@@ -1818,10 +1842,28 @@ if __name__ == "__main__":
     #                              reuse_escape_as_demonstration=False,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.NONE)
 
-    for seed in range(4, 5):
+    for seed in range(10):
         test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
                                  reuse_escape_as_demonstration=False,
+                                 assume_all_nonnominal_dynamics_are_traps=True,
                                  autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    for seed in range(10):
+        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                                 reuse_escape_as_demonstration=False,
+                                 assume_all_nonnominal_dynamics_are_traps=False,
+                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+
+    for seed in range(10):
+        test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                                 reuse_escape_as_demonstration=False,
+                                 assume_all_nonnominal_dynamics_are_traps=True,
+                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    for seed in range(10):
+        test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                                 reuse_escape_as_demonstration=False,
+                                 assume_all_nonnominal_dynamics_are_traps=False,
+                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+
     # for seed in range(10, 20):
     #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                              reuse_escape_as_demonstration=True,
