@@ -120,6 +120,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
         self.autonomous_recovery_mode = False
         self.autonomous_recovery_start_index = -1
+        self.autonomous_recovery_end_index = -1
         self.leave_recovery_num_turns = 3
         self.recovery_cost = None
         self.autonomous_recovery = autonomous_recovery
@@ -160,6 +161,11 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
             if self.assume_all_nonnominal_dynamics_are_traps:
                 return True
+
+            # cooldown on entering and leaving traps
+            cur_index = len(self.x_history)
+            if cur_index - self.autonomous_recovery_end_index < self.leave_recovery_num_turns:
+                return False
 
             # check cost history compared to before we entered non-nominal dyanmics and after we've entered
             # don't include the first state since the reaction forces are not initialized correctly
@@ -259,6 +265,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         logger.debug("Leaving autonomous recovery mode")
         logger.debug(torch.tensor(self.dynamics_class_history[-self.leave_recovery_num_turns:]))
         self.autonomous_recovery_mode = False
+        self.autonomous_recovery_end_index = len(self.x_history) + 1
 
         # if we're sure that we've left an unrecognized class, save as recovery
         if self.reuse_escape_as_demonstration:
