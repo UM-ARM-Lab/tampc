@@ -396,6 +396,15 @@ class PushAgainstWallEnv(PybulletEnv):
             c = (t + 1) / (T + 1)
             self._dd.draw_2d_pose('rx{}'.format(t), pose, (0, c, c))
 
+    def visualize_goal_set(self, states):
+        if states is None:
+            return
+        T = len(states)
+        for t in range(T):
+            pose = self.get_block_pose(states[t])
+            c = (t + 1) / (T + 1)
+            self._dd.draw_2d_pose('gs{}'.format(t), pose, (c, c, c))
+
     def visualize_prediction_error(self, predicted_state):
         """In GUI mode, show the difference between the predicted state and the current actual state"""
         pred_pose = self.get_block_pose(predicted_state)
@@ -1159,6 +1168,8 @@ class InteractivePush(simulation.Simulation):
                     "local" if self.ctrl.using_local_model_for_nonnominal_dynamics else "")
                 self.env.draw_user_text(mode_text, 3)
                 if self.ctrl.recovery_cost:
+                    # plot goal set
+                    self.env.visualize_goal_set(self.ctrl.recovery_cost.goal_set)
                     self.env.draw_user_text("goal set yaws" if self.ctrl.autonomous_recovery_mode else "", 1, -1.5)
                     for i, goal in enumerate(self.ctrl.recovery_cost.goal_set):
                         self.env.draw_user_text(
