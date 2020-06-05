@@ -103,7 +103,7 @@ class AutonomousRecovery(enum.IntEnum):
 
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def __init__(self, *args, abs_unrecognized_threshold=2, rel_unrecognized_threshold=5,
-                 assume_all_nonnominal_dynamics_are_traps=False,
+                 assume_all_nonnominal_dynamics_are_traps=True, nonnominal_dynamics_penalty_tolerance = 0.5,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
         self.recovery_traj_seeder: RecoveryTrajectorySeeder = None
@@ -116,7 +116,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.nonnominal_dynamics_start_index = -1
         self.nonnominal_dynamics_trend_len = 4
         # we have to be decreasing cost at this much compared to before nonnominal dynamics to not be in a trap
-        self.nonnominal_dynamics_penalty_tolerance = 0.5
+        self.nonnominal_dynamics_penalty_tolerance = nonnominal_dynamics_penalty_tolerance
 
         self.autonomous_recovery_mode = False
         self.autonomous_recovery_start_index = -1
@@ -311,8 +311,8 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             # TODO check correctness; only update nominal trajectory if we're not in autonomous recovery mode
             if not self.autonomous_recovery_mode:
                 self.recovery_traj_seeder.update_nominal_trajectory(self.dynamics_class, x)
-            elif self._left_local_model():
-                self._end_local_model()
+
+        self.dynamics_class_history.append(self.dynamics_class)
 
         if self._entering_trap():
             self._start_recovery_mode()
@@ -320,7 +320,8 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         if self._left_trap():
             self._end_recovery_mode()
 
-        self.dynamics_class_history.append(self.dynamics_class)
+        if self._left_local_model():
+            self._end_local_model()
 
         if self.autonomous_recovery_mode and self.autonomous_recovery is AutonomousRecovery.RANDOM:
             u = torch.rand(self.nu, device=self.d).cuda() * (self.u_max - self.u_min) + self.u_min
