@@ -151,7 +151,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                self.dynamics_class == gating_function.DynamicsClass.NOMINAL and \
                self.diff_predicted.norm() > self.abs_unrecognized_threshold and \
                self.diff_relative.norm() > self.rel_unrecognized_threshold and \
-               len(self.u_history) > 0 and \
+               len(self.u_history) > 1 and \
                self.u_history[-1][1] > 0
 
     def _entering_trap(self):
@@ -173,8 +173,10 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                 return True
 
             # check cost history compared to before we entered non-nominal dyanmics and after we've entered
+            # don't include the first state since the reaction forces are not initialized correctly
             before_trend = torch.cat(self.cost_history[
-                                     self.nonnominal_dynamics_start_index - self.nonnominal_dynamics_trend_len: self.nonnominal_dynamics_start_index])
+                                     max(1, self.nonnominal_dynamics_start_index - self.nonnominal_dynamics_trend_len):
+                                     self.nonnominal_dynamics_start_index])
             current_trend = torch.cat(self.cost_history[-self.nonnominal_dynamics_trend_len:])
             # should be negative
             before_progress_rate = (before_trend[1:] - before_trend[:-1]).mean()
@@ -230,12 +232,14 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         # different strategies for recovery mode
         if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.RETURN_LATENT]:
             # change mpc cost
-            # TODO parameterize this
+            # TODO parameterize how far back in history to return to
             goal_set = torch.stack(
                 self.x_history[max(0, self.nonnominal_dynamics_start_index - 10):self.nonnominal_dynamics_start_index])
+            # TODO remove this domain knowledge of what dimensions are import for recovering
             Q = self.Q.clone()
-            Q[2, 2] = 10
-            Q[3, 3] = Q[4, 4] = 1
+            Q[0, 0] = Q[1, 1] = 1
+            Q[2, 2] = 1
+            Q[3, 3] = Q[4, 4] = 0
             self.recovery_cost = cost.CostQRGoalSet(goal_set, Q, self.R, self.compare_to_goal, self.ds,
                                                     compare_in_latent_space=self.autonomous_recovery is AutonomousRecovery.RETURN_LATENT)
             self.mpc.running_cost = self._recovery_running_cost
