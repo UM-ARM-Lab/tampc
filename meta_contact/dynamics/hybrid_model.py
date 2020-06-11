@@ -7,6 +7,7 @@ from arm_pytorch_utilities import optim
 import logging
 import abc
 import enum
+import copy
 
 logger = logging.getLogger(__name__)
 
@@ -94,8 +95,9 @@ class HybridDynamicsModel(abc.ABC):
     """Different way of mixing local and nominal model; use nominal as mean"""
 
     def __init__(self, dss, pm, state_diff, gating_args, gating_kwargs=None, nominal_model_kwargs=None,
-                 local_model_kwargs=None, device=optim.get_device()):
+                 local_model_kwargs=None, device=optim.get_device(), preprocessor=None):
         self.dss = dss
+        self.preprocessor = preprocessor
         self.pm = pm
         self.ds_nominal = dss[0]
         self.state_diff = state_diff
@@ -115,13 +117,20 @@ class HybridDynamicsModel(abc.ABC):
             if i == 0:
                 continue
             local_model = HybridDynamicsModel.get_local_model(self.state_diff, self.pm, self.d, ds_local,
+                                                              preprocessor=self.preprocessor,
                                                               **self.local_model_kwargs)
             self.local_models.append(local_model)
 
     @staticmethod
-    def get_local_model(state_diff, pm, d, ds_local, allow_update=False, online_adapt=OnlineAdapt.GP_KERNEL,
+    def get_local_model(state_diff, pm, d, ds_local, preprocessor=None, allow_update=False,
+                        online_adapt=OnlineAdapt.GP_KERNEL,
                         train_slice=None):
         local_dynamics = pm.dyn_net
+        # if given a preprocessor, we will override the datasource's preprocessor
+        if preprocessor:
+            ds_local = copy.deepcopy(ds_local)
+            ds_local.update_preprocessor(preprocessor)
+
         if online_adapt is OnlineAdapt.LINEARIZE_LIKELIHOOD:
             local_dynamics = online_model.OnlineLinearizeMixing(0.1 if allow_update else 0.0, pm, ds_local,
                                                                 state_diff,
@@ -143,7 +152,11 @@ class HybridDynamicsModel(abc.ABC):
         assert config.predict_difference
         y = self.state_diff(x[1:], x[:-1])
         ds_local = DirectDataSource(x[1:], u[1:], y)
-        ds_local.update_preprocessor(self.ds_nominal.preprocessor)
+
+        if self.preprocessor:
+            ds_local.update_preprocessor(self.preprocessor)
+        else:
+            ds_local.update_preprocessor(self.ds_nominal.preprocessor)
 
         local_model = HybridDynamicsModel.get_local_model(self.state_diff, self.pm, self.d,
                                                           ds_local, allow_update=False)
@@ -181,6 +194,7 @@ class HybridDynamicsModel(abc.ABC):
         else:
             self.nominal_model = HybridDynamicsModel.get_local_model(self.state_diff, self.pm,
                                                                      self.nominal_model.device(), self.ds_nominal,
+                                                                     preprocessor=self.preprocessor,
                                                                      allow_update=True, train_slice=slice(0, 0))
 
     def use_normal_nominal_model(self):

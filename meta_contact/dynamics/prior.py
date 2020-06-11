@@ -111,8 +111,8 @@ class NNPrior(OnlineDynamicsPrior):
         self.full_context = mw.ds.config.expanded_input
 
     def get_batch_predictions(self, xu):
-        # should use private method because everything is already transformed
-        return self.dyn_net._batch_apply_model(xu)
+        # assume not already transformed
+        return self.dyn_net.predict(xu, get_next_state=False)
 
     def get_batch_params(self, nx, nu, xu, pxu, xux):
         # feed pxu and xu to network (full contextual network)

@@ -246,9 +246,10 @@ class OnlineLinearizeMixing(OnlineDynamicsModel):
 
 
 class MixingFullGP(gpytorch.models.ExactGP):
-    def __init__(self, train_x, train_y, likelihood, nominal_model, rank=1):
+    def __init__(self, train_x, train_y, likelihood, nominal_model, preprocessor, rank=1):
         super(MixingFullGP, self).__init__(train_x, train_y, likelihood)
         self.nominal_model = nominal_model
+        self.preprocessor = preprocessor
         ny = train_y.shape[1]
         # TODO use priors and constraints on the kernels
         self.mean_module = gpytorch.means.MultitaskMean(
@@ -259,15 +260,24 @@ class MixingFullGP(gpytorch.models.ExactGP):
         )
 
     def forward(self, x):
-        mean_x = self.mean_module(x) + self.nominal_model(x)
+        # nominal model takes input in untransformed space; so we have to wrap our transform around it
+        orig_x = x
+        if self.preprocessor:
+            orig_x = self.preprocessor.invert_x(x)
+        nominal_pred = self.nominal_model(orig_x)
+        if self.preprocessor:
+            nominal_pred = self.preprocessor.transform_y(nominal_pred)
+
+        mean_x = self.mean_module(x) + nominal_pred
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultitaskMultivariateNormal(mean_x, covar_x)
 
 
 class MixingBatchGP(gpytorch.models.ExactGP):
-    def __init__(self, train_x, train_y, likelihood, nominal_model):
+    def __init__(self, train_x, train_y, likelihood, nominal_model, preprocessor):
         super().__init__(train_x, train_y, likelihood)
         self.nominal_model = nominal_model
+        self.preprocessor = preprocessor
         ny = train_y.shape[1]
         # zero mean
         self.covar_module = gpytorch.kernels.ScaleKernel(
@@ -276,7 +286,12 @@ class MixingBatchGP(gpytorch.models.ExactGP):
         )
 
     def forward(self, x):
-        mean_x = self.nominal_model(x).transpose(0, 1)
+        orig_x = x
+        if self.preprocessor:
+            orig_x = self.preprocessor.invert_x(x)
+        mean_x = self.nominal_model(orig_x).transpose(0, 1)
+        if self.preprocessor:
+            mean_x = self.preprocessor.transform_y(mean_x)
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultitaskMultivariateNormal.from_batch_mvn(
             gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
@@ -341,9 +356,11 @@ class OnlineGPMixing(OnlineDynamicsModel):
 
     def _recreate_gp(self):
         if self.use_independent_outputs:
-            self.gp = MixingBatchGP(self.xu, self.y, self.likelihood, self.prior.get_batch_predictions)
+            self.gp = MixingBatchGP(self.xu, self.y, self.likelihood, self.prior.get_batch_predictions,
+                                    self.ds.preprocessor)
         else:
-            self.gp = MixingFullGP(self.xu, self.y, self.likelihood, self.prior.get_batch_predictions, rank=1)
+            self.gp = MixingFullGP(self.xu, self.y, self.likelihood, self.prior.get_batch_predictions,
+                                   self.ds.preprocessor, rank=1)
         self.gp = self.gp.to(device=self.d, dtype=self.dtype)
         self.optimizer = torch.optim.Adam([
             {'params': self.gp.parameters()},

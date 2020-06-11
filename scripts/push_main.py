@@ -179,14 +179,17 @@ def update_ds_with_transform(env, ds, use_tsf, evaluate_transform=True):
              invariant.InvariantTransformer(invariant_tsf),
              preprocess.PytorchTransformer(preprocess.RobustMinMaxScaler())])
     else:
-        # use minmax scaling if we're not using an invariant transform (baseline)
-        preprocessor = preprocess.PytorchTransformer(preprocess.RobustMinMaxScaler())
-        # preprocessor = preprocess.Compose([preprocess.PytorchTransformer(preprocess.AngleToCosSinRepresentation(2),
-        #                                                                  preprocess.NullSingleTransformer()),
-        #                                    preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
+        preprocessor = no_tsf_preprocessor()
     # update the datasource to use transformed data
     untransformed_config = ds.update_preprocessor(preprocessor)
     return untransformed_config, use_tsf.name, preprocessor
+
+
+def no_tsf_preprocessor():
+    # preprocessor = preprocess.Compose([preprocess.PytorchTransformer(preprocess.AngleToCosSinRepresentation(2),
+    #                                                                  preprocess.NullSingleTransformer()),
+    #                                    preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
+    return preprocess.PytorchTransformer(preprocess.RobustMinMaxScaler())
 
 
 class UseTsf(enum.Enum):
@@ -703,6 +706,7 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
     dss = [ds, ds_wall]
 
     hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, [use_tsf.name],
+                                                       preprocessor=no_tsf_preprocessor(),
                                                        local_model_kwargs={
                                                            "allow_update": allow_update or plot_online_update,
                                                            "online_adapt": OnlineAdapt.GP_KERNEL if use_gp else OnlineAdapt.LINEARIZE_LIKELIHOOD
@@ -929,6 +933,7 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
         dss.append(ds_local)
 
     hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, [use_tsf.name],
+                                                       preprocessor=no_tsf_preprocessor(),
                                                        nominal_model_kwargs={'online_adapt': nominal_adapt},
                                                        local_model_kwargs=kwargs)
     gating = hybrid_dynamics.get_gating() if gating is None else gating
@@ -1238,7 +1243,7 @@ def evaluate_gating_function(use_tsf=UseTsf.COORD, test_file="pushing/model_sele
 
 
 def evaluate_ctrl_sampler(eval_file, eval_i, seed=1, use_tsf=UseTsf.COORD,
-                          do_rollout_best_action=True, **kwargs):
+                          do_rollout_best_action=True, assume_all_nonnominal_dynamics_are_traps=False, **kwargs):
     env = get_env(p.GUI, level=1, log_video=do_rollout_best_action)
     env.draw_user_text("eval {}".format(eval_file), 14, left_offset=-1.5)
     env.draw_user_text("eval index {}".format(eval_i), 13, left_offset=-1.5)
@@ -1248,6 +1253,7 @@ def evaluate_ctrl_sampler(eval_file, eval_i, seed=1, use_tsf=UseTsf.COORD,
     dss = [ds]
 
     hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, [use_tsf.name],
+                                                       preprocessor=no_tsf_preprocessor(),
                                                        nominal_model_kwargs={'online_adapt': OnlineAdapt.NONE},
                                                        local_model_kwargs=kwargs)
     gating = hybrid_dynamics.get_gating()
@@ -1256,6 +1262,7 @@ def evaluate_ctrl_sampler(eval_file, eval_i, seed=1, use_tsf=UseTsf.COORD,
     ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
                                         autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE,
                                         reuse_escape_as_demonstration=False,
+                                        assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
     ctrl.set_goal(env.goal)
     ctrl.create_recovery_traj_seeder(dss, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS)
@@ -1851,7 +1858,7 @@ if __name__ == "__main__":
         return reuse == "NOREUSE" and adaptation == "NONE"
 
 
-    Visualize.task_res_dist(filter_func)
+    # Visualize.task_res_dist(filter_func)
 
     # EvaluateTask.closest_distance_to_goal_whole_set('test_sufficiency_1_NO_TRANSFORM_AlwaysSelectLocal')
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RANDOM_1_COORD_NOREUSE_DecisionTreeClassifier')
@@ -1871,26 +1878,22 @@ if __name__ == "__main__":
     # evaluate_ctrl_sampler('pushing/with_domain_knowledge.mat', 25)
 
     # autonomous recovery
-    for seed in range(5, 10):
-        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
-                                 reuse_escape_as_demonstration=False,
-                                 autonomous_recovery=online_controller.AutonomousRecovery.NONE)
+    # for seed in range(5, 10):
+    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
+    #                              reuse_escape_as_demonstration=False,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.NONE)
     # for seed in range(5, 10):
     #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
     #                              reuse_escape_as_demonstration=False,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.NONE)
 
-    # for seed in range(10):
-    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              reuse_escape_as_demonstration=False,
-    #                              assume_all_nonnominal_dynamics_are_traps=True,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-    # for seed in range(10):
-    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              reuse_escape_as_demonstration=False,
-    #                              assume_all_nonnominal_dynamics_are_traps=False,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-    #
+    for seed in range(10):
+        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                                 run_name="local_model_in_state_space",
+                                 reuse_escape_as_demonstration=False,
+                                 assume_all_nonnominal_dynamics_are_traps=False,
+                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+
     # for seed in range(10):
     #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                              reuse_escape_as_demonstration=False,

@@ -632,6 +632,9 @@ class InvariantTransformer(preprocess.Transformer):
         """Invert transformation on Y"""
         return self.tsf.get_dx(X, Y)
 
+    def invert_x(self, X):
+        raise RuntimeError("Transform loses information and cannot invert X")
+
     def _fit_impl(self, XU, Y, labels):
         """Figure out what the transform outputs"""
         self.model_input_dim = self.tsf.nz
