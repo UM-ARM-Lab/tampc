@@ -231,6 +231,15 @@ class DebugDrawer:
                                      np.add(location, [pointer[0], pointer[1], 0]),
                                      color, 2, replaceItemUniqueId=uids[1])
 
+    def clear_2d_poses_after(self, prefix, index):
+        name = "{}{}".format(prefix, index)
+        while name in self._debug_ids:
+            uids = self._debug_ids.pop(name)
+            for id in uids:
+                p.removeUserDebugItem(id)
+            index += 1
+            name = "{}{}".format(prefix, index)
+
     def draw_2d_line(self, name, start, diff, color=(0, 0, 0), size=2., scale=0.4):
         if name not in self._debug_ids:
             self._debug_ids[name] = -1

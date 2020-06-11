@@ -395,6 +395,8 @@ class PushAgainstWallEnv(PybulletEnv):
             pose = self.get_block_pose(states[t])
             c = (t + 1) / (T + 1)
             self._dd.draw_2d_pose('rx{}'.format(t), pose, (0, c, c))
+        # clear previous rollout buffer
+        self._dd.clear_2d_poses_after('rx', T)
 
     def visualize_goal_set(self, states):
         if states is None:
