@@ -157,12 +157,13 @@ class DynamicsModel(abc.ABC):
         self.advance = advance_state(ds.original_config(), use_np=use_np)
 
     @tensor_utils.handle_batch_input
-    def predict(self, xu, already_transformed=False, get_next_state=True):
+    def predict(self, xu, already_transformed=False, get_next_state=True, return_in_orig_space=True):
         """
         Predict next state; will return with the same dimensions as xu
         :param xu: B x N x (nx + nu) or N x (nx + nu) full input (if missing B will add it)
         :param already_transformed: whether the input xu has already been transformed (such as in chained calls)
         :param get_next_state: whether to output the next state, or the output of the model without advancing state
+        :param return_in_orig_space: whether the output should be in the original space or the transformed space
         :return: B x N x nx or N x nx next states
         """
         if self.ds.preprocessor and not already_transformed:
@@ -170,7 +171,7 @@ class DynamicsModel(abc.ABC):
         else:
             dxb = self._apply_model(xu)
 
-        if self.ds.preprocessor:
+        if self.ds.preprocessor and return_in_orig_space:
             x = xu[:, :self.ds.original_config().nx]
             dxb = self.ds.preprocessor.invert_transform(dxb, x)
 

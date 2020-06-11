@@ -110,9 +110,9 @@ class NNPrior(OnlineDynamicsPrior):
         self.mix_prior_strength = mix_strength
         self.full_context = mw.ds.config.expanded_input
 
-    def get_batch_predictions(self, xu):
-        # assume not already transformed
-        return self.dyn_net.predict(xu, get_next_state=False)
+    def get_batch_predictions(self, xu, all_in_transformed_space=False):
+        return self.dyn_net.predict(xu, already_transformed=all_in_transformed_space,
+                                    return_in_orig_space=not all_in_transformed_space, get_next_state=False)
 
     def get_batch_params(self, nx, nu, xu, pxu, xux):
         # feed pxu and xu to network (full contextual network)

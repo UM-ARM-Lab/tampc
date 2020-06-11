@@ -250,6 +250,12 @@ class MixingFullGP(gpytorch.models.ExactGP):
         super(MixingFullGP, self).__init__(train_x, train_y, likelihood)
         self.nominal_model = nominal_model
         self.preprocessor = preprocessor
+        try:
+            self.preprocessor.invert_x(train_x)
+            self.nominal_in_orig_space = True
+            logger.debug("use preprocess invert in local model")
+        except RuntimeError:
+            self.nominal_in_orig_space = False
         ny = train_y.shape[1]
         # TODO use priors and constraints on the kernels
         self.mean_module = gpytorch.means.MultitaskMean(
@@ -262,10 +268,10 @@ class MixingFullGP(gpytorch.models.ExactGP):
     def forward(self, x):
         # nominal model takes input in untransformed space; so we have to wrap our transform around it
         orig_x = x
-        if self.preprocessor:
+        if self.nominal_in_orig_space:
             orig_x = self.preprocessor.invert_x(x)
-        nominal_pred = self.nominal_model(orig_x)
-        if self.preprocessor:
+        nominal_pred = self.nominal_model(orig_x, all_in_transformed_space=not self.nominal_in_orig_space)
+        if self.nominal_in_orig_space:
             nominal_pred = self.preprocessor.transform_y(nominal_pred)
 
         mean_x = self.mean_module(x) + nominal_pred
@@ -278,6 +284,12 @@ class MixingBatchGP(gpytorch.models.ExactGP):
         super().__init__(train_x, train_y, likelihood)
         self.nominal_model = nominal_model
         self.preprocessor = preprocessor
+        try:
+            self.preprocessor.invert_x(train_x)
+            logger.debug("use preprocess invert in local model")
+            self.use_preprocessor = True
+        except RuntimeError:
+            self.use_preprocessor = False
         ny = train_y.shape[1]
         # zero mean
         self.covar_module = gpytorch.kernels.ScaleKernel(
@@ -286,15 +298,18 @@ class MixingBatchGP(gpytorch.models.ExactGP):
         )
 
     def forward(self, x):
+        raise RuntimeError("update to handle preprocessor like the full GP above")
         orig_x = x
-        if self.preprocessor:
+        if self.use_preprocessor:
             orig_x = self.preprocessor.invert_x(x)
-        mean_x = self.nominal_model(orig_x).transpose(0, 1)
-        if self.preprocessor:
-            mean_x = self.preprocessor.transform_y(mean_x)
+        nominal_pred = self.nominal_model(orig_x, already_transformed=not self.use_preprocessor).transpose(0, 1)
+        if self.use_preprocessor:
+            nominal_pred = self.preprocessor.transform_y(nominal_pred)
+        else:
+            _, nominal_pred, _ = self.preprocessor.tsf.transform(orig_x, nominal_pred)
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultitaskMultivariateNormal.from_batch_mvn(
-            gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+            gpytorch.distributions.MultivariateNormal(nominal_pred, covar_x)
         )
 
 
