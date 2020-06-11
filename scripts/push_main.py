@@ -910,6 +910,7 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
 def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
                              use_tsf=UseTsf.COORD, nominal_adapt=OnlineAdapt.NONE,
                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE,
+                             use_demo=False,
                              reuse_escape_as_demonstration=False, num_frames=250, run_name=None,
                              assume_all_nonnominal_dynamics_are_traps=False,
                              **kwargs):
@@ -920,7 +921,8 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
 
     dss = [ds]
     demo_trajs = []
-    # demo_trajs = ["pushing/predetermined_bug_trap.mat"]
+    if use_demo:
+        demo_trajs = ["pushing/predetermined_bug_trap.mat"]
     for demo in demo_trajs:
         ds_local, config = get_ds(env, demo, validation_ratio=0.)
         ds_local.update_preprocessor(ds.preprocessor)
@@ -953,7 +955,9 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
     sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=False, save=True, stop_when_done=False)
     seed = rand.seed(seed)
     if run_name is None:
-        run_name = 'auto_recover__{}__{}__{}__{}__{}__{}__{}__{}'.format(nominal_adapt.name, autonomous_recovery.name,
+        run_name = 'auto_recover__{}__{}__{}__{}__{}__{}__{}__{}'.format(nominal_adapt.name,
+                                                                         autonomous_recovery.name + (
+                                                                             "_WITHDEMO" if use_demo else ""),
                                                                          level,
                                                                          use_tsf.name,
                                                                          "ALLTRAP" if assume_all_nonnominal_dynamics_are_traps else "SOMETRAP",
@@ -1519,26 +1523,39 @@ class Visualize:
         input('do visualization')
 
     @staticmethod
-    def task_res_dist():
+    def task_res_dist(filter_function=None):
         def name_to_tokens(name):
-            tokens = name.split('_')
-            # skip prefix
-            tokens = tokens[2:]
-            if tokens[0] == "NONE":
-                adaptation = tokens.pop(0)
-            else:
-                adaptation = "{}_{}".format(tokens[0], tokens[1])
+            tokens = name.split('__')
+            # legacy fallback
+            if len(tokens) < 5:
+                tokens = name.split('_')
+                # skip prefix
                 tokens = tokens[2:]
-            if tokens[0] in ("RANDOM", "NONE"):
-                recover_method = tokens.pop(0)
-            else:
-                recover_method = "{}_{}".format(tokens[0], tokens[1])
-                tokens = tokens[2:]
-            level = int(tokens.pop(0))
+                if tokens[0] == "NONE":
+                    adaptation = tokens.pop(0)
+                else:
+                    adaptation = "{}_{}".format(tokens[0], tokens[1])
+                    tokens = tokens[2:]
+                if tokens[0] in ("RANDOM", "NONE"):
+                    recover_method = tokens.pop(0)
+                else:
+                    recover_method = "{}_{}".format(tokens[0], tokens[1])
+                    tokens = tokens[2:]
+                level = int(tokens.pop(0))
 
-            tsf = tokens.pop(0)
-            reuse = tokens.pop(0)
-            return adaptation, recover_method, level, tsf, reuse
+                tsf = tokens.pop(0)
+                reuse = tokens.pop(0)
+                optimism = "ALLTRAP"
+            else:
+                tokens.pop(0)
+                adaptation = tokens[0]
+                recover_method = tokens[1]
+                level = int(tokens[2])
+                tsf = tokens[3]
+                optimism = tokens[4]
+                reuse = tokens[5]
+
+            return adaptation, recover_method, level, tsf, reuse, optimism
 
         fullname = os.path.join(cfg.DATA_DIR, 'push_task_res.pkl')
         if os.path.exists(fullname):
@@ -1547,6 +1564,12 @@ class Visualize:
                 logger.info("loaded runs from %s", fullname)
         else:
             raise RuntimeError("missing cached task results file {}".format(fullname))
+
+        # TODO remove
+        base = 'auto_recover__NONE__RETURN_STATE__3__COORD__SOMETRAP__NOREUSE__DecisionTreeClassifier{}'
+        runs[base.format("")] = {}
+        for i in range(10):
+            runs[base.format("")][base.format("__{}".format(i))] = 2.9 + np.random.rand() * 0.1
 
         tasks = {}
         for prefix, dists in runs.items():
@@ -1569,15 +1592,22 @@ class Visualize:
                 min_dist = min(min(dists), min_dist)
                 max_dist = max(max(dists), max_dist)
 
-            f, ax = plt.subplots(len(res), 1, figsize=(8, 9))
+            series = []
+            for i, (series_name, dists) in enumerate(res_list.items()):
+                tokens = name_to_tokens(series_name)
+                if filter_function is None or filter_function(*tokens):
+                    series.append((series_name, tokens, dists))
+
+            f, ax = plt.subplots(len(series), 1, figsize=(8, 9))
             f.suptitle("task {}".format(level))
 
-            for i, (series_name, dists) in enumerate(res_list.items()):
-                adaptation, recover_method, level, tsf, reuse = name_to_tokens(series_name)
+            for i, data in enumerate(series):
+                series_name, tokens, dists = data
+                adaptation, recover_method, level, tsf, reuse, optimism = tokens
                 logger.info("%s with %d runs mean {:.2f} ({:.2f})".format(np.mean(dists) * 10, np.std(dists) * 10),
                             series_name, len(dists))
                 sns.distplot(dists, ax=ax[i], hist=True, kde=False, bins=np.linspace(min_dist, max_dist, 20))
-                ax[i].set_title((adaptation, recover_method, tsf, reuse))
+                ax[i].set_title((adaptation, recover_method, tsf, reuse, optimism))
                 ax[i].set_xlim(min_dist, max_dist)
                 ax[i].set_ylim(0, int(0.6 * len(dists)))
             ax[-1].set_xlabel('closest dist to goal [m]')
@@ -1805,6 +1835,8 @@ if __name__ == "__main__":
     level = 0
     ut = UseTsf.COORD
     neg_test_file = "pushing/test_sufficiency_3_failed_test_140891.mat"
+
+
     # OfflineDataCollection.freespace(trials=200, trial_length=50)
     # OfflineDataCollection.push_against_wall_recovery()
     # OfflineDataCollection.model_selector_evaluation()
@@ -1815,7 +1847,11 @@ if __name__ == "__main__":
     # Visualize.state_sequence(4, "pushing/test_sufficiency_4_NO_TRANSFORM_AlwaysSelectNominal_0.mat",
     #                          restrict_slice=slice(0, 40), step=5)
 
-    # Visualize.task_res_dist()
+    def filter_func(adaptation, recover_method, level, tsf, reuse, optimism):
+        return reuse == "NOREUSE" and adaptation == "NONE"
+
+
+    Visualize.task_res_dist(filter_func)
 
     # EvaluateTask.closest_distance_to_goal_whole_set('test_sufficiency_1_NO_TRANSFORM_AlwaysSelectLocal')
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RANDOM_1_COORD_NOREUSE_DecisionTreeClassifier')
@@ -1825,7 +1861,9 @@ if __name__ == "__main__":
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RETURN_STATE_1_COORD_NOREUSE_DecisionTreeClassifier')
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RETURN_STATE_3_COORD_NOREUSE_DecisionTreeClassifier')
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RETURN_STATE_1_COORD_REUSE_DecisionTreeClassifier')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RETURN_STATE_3_COORD_REUSE_DecisionTreeClassifier')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__ALLTRAP__NOREUSE__DecisionTreeClassifier')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__3__COORD__ALLTRAP__NOREUSE__DecisionTreeClassifier')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__SOMETRAP__NOREUSE__DecisionTreeClassifier')
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_gating_function(use_tsf=ut, test_file=neg_test_file)
@@ -1833,36 +1871,36 @@ if __name__ == "__main__":
     # evaluate_ctrl_sampler('pushing/with_domain_knowledge.mat', 25)
 
     # autonomous recovery
-    # for seed in range(5, 10):
-    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
-    #                              reuse_escape_as_demonstration=False,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.NONE)
+    for seed in range(5, 10):
+        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
+                                 reuse_escape_as_demonstration=False,
+                                 autonomous_recovery=online_controller.AutonomousRecovery.NONE)
     # for seed in range(5, 10):
     #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
     #                              reuse_escape_as_demonstration=False,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.NONE)
 
-    for seed in range(10):
-        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                 reuse_escape_as_demonstration=False,
-                                 assume_all_nonnominal_dynamics_are_traps=True,
-                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-    for seed in range(10):
-        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                 reuse_escape_as_demonstration=False,
-                                 assume_all_nonnominal_dynamics_are_traps=False,
-                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-
-    for seed in range(10):
-        test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                 reuse_escape_as_demonstration=False,
-                                 assume_all_nonnominal_dynamics_are_traps=True,
-                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-    for seed in range(10):
-        test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                 reuse_escape_as_demonstration=False,
-                                 assume_all_nonnominal_dynamics_are_traps=False,
-                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    # for seed in range(10):
+    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              reuse_escape_as_demonstration=False,
+    #                              assume_all_nonnominal_dynamics_are_traps=True,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    # for seed in range(10):
+    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              reuse_escape_as_demonstration=False,
+    #                              assume_all_nonnominal_dynamics_are_traps=False,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    #
+    # for seed in range(10):
+    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              reuse_escape_as_demonstration=False,
+    #                              assume_all_nonnominal_dynamics_are_traps=True,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    # for seed in range(10):
+    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              reuse_escape_as_demonstration=False,
+    #                              assume_all_nonnominal_dynamics_are_traps=False,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # for seed in range(10, 20):
     #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
