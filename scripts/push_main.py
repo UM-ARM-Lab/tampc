@@ -29,6 +29,7 @@ from meta_contact.dynamics import online_model, model, prior, hybrid_model
 from meta_contact.dynamics.hybrid_model import OnlineAdapt, get_gating
 from meta_contact.controller import controller
 from meta_contact.controller import online_controller
+from meta_contact.controller.gating_function import AlwaysSelectNominal
 from meta_contact.env import block_push
 
 logger = logging.getLogger(__name__)
@@ -936,7 +937,12 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
                                                        preprocessor=no_tsf_preprocessor(),
                                                        nominal_model_kwargs={'online_adapt': nominal_adapt},
                                                        local_model_kwargs=kwargs)
-    gating = hybrid_dynamics.get_gating() if gating is None else gating
+
+    # we're always going to be in the nominal mode in this case; might as well speed up testing
+    if not use_demo and not reuse_escape_as_demonstration:
+        gating = AlwaysSelectNominal()
+    else:
+        gating = hybrid_dynamics.get_gating() if gating is None else gating
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
     ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
@@ -1243,7 +1249,8 @@ def evaluate_gating_function(use_tsf=UseTsf.COORD, test_file="pushing/model_sele
 
 
 def evaluate_ctrl_sampler(eval_file, eval_i, seed=1, use_tsf=UseTsf.COORD,
-                          do_rollout_best_action=True, assume_all_nonnominal_dynamics_are_traps=False, **kwargs):
+                          do_rollout_best_action=True, assume_all_nonnominal_dynamics_are_traps=False,
+                          rollout_prev_xu=True, manual_control=None, step_N_steps=80, **kwargs):
     env = get_env(p.GUI, level=1, log_video=do_rollout_best_action)
     env.draw_user_text("eval {}".format(eval_file), 14, left_offset=-1.5)
     env.draw_user_text("eval index {}".format(eval_i), 13, left_offset=-1.5)
@@ -1276,58 +1283,93 @@ def evaluate_ctrl_sampler(eval_file, eval_i, seed=1, use_tsf=UseTsf.COORD,
 
     # put the state right before the evaluated action
     x = X[eval_i].cpu().numpy()
-    for i in range(eval_i):
-        env.draw_user_text(str(i), 1)
-        env.set_state(X[i].cpu().numpy(), U[i].cpu().numpy())
-        ctrl.command(X[i].cpu().numpy())
+    logger.info(np.array2string(x, separator=', '))
+    if rollout_prev_xu:
+        # only need to do rollouts; don't need control samples
+        T = ctrl.mpc.T
+        ctrl.original_horizon = 1
+        for i in range(eval_i):
+            env.draw_user_text(str(i), 1)
+            env.set_state(X[i].cpu().numpy(), U[i].cpu().numpy())
+            ctrl.mpc.change_horizon(1)
+            ctrl.command(X[i].cpu().numpy())
 
-    U_mpc_orig = ctrl.mpc.U.clone()
+        ctrl.original_horizon = T
+        ctrl.mpc.change_horizon(T)
 
-    if ctrl.recovery_cost:
-        env.draw_user_text("recovery" if ctrl.autonomous_recovery_mode else "", 3)
-        env.draw_user_text("goal set yaws" if ctrl.autonomous_recovery_mode else "", 1, -1.5)
-        for i, goal in enumerate(ctrl.recovery_cost.goal_set):
-            env.draw_user_text(
-                "{:.2f}".format(goal[2].item()) if ctrl.autonomous_recovery_mode else "".format(
-                    goal[2]), 2 + i, -1.5)
+        # U_mpc_orig = ctrl.mpc.U.clone()
+        # if ctrl.recovery_cost:
+        #     env.draw_user_text("recovery" if ctrl.autonomous_recovery_mode else "", 3)
+        #     env.draw_user_text("goal set yaws" if ctrl.autonomous_recovery_mode else "", 1, -1.5)
+        #     for i, goal in enumerate(ctrl.recovery_cost.goal_set):
+        #         env.draw_user_text(
+        #             "{:.2f}".format(goal[2].item()) if ctrl.autonomous_recovery_mode else "".format(
+        #                 goal[2]), 2 + i, -1.5)
+        #
+        # samples = [500, 1000, 2000]
+        # for K in samples:
+        #     ctrl.mpc.U = U_mpc_orig.clone()
+        #     ctrl.mpc.K = K
+        #     # use controller to sample next action
+        #     u_best = ctrl.mpc.command(x)
+        #
+        #     # visualize best actions in simulator
+        #     path_cost = ctrl.mpc.cost_total.cpu()
+        #     # show best action and its rollouts
+        #     env.draw_user_text("{} samples".format(K), 1)
+        #     env._draw_action(u_best)
+        #     env.draw_user_text("{} cost".format(path_cost.min()), 2)
+        #     for i in range(1, 10):
+        #         env._draw_action(ctrl.mpc.U[i], debug=i)
+        #     env.visualize_rollouts(ctrl.get_rollouts(x))
+        #     time.sleep(2)
+        # time.sleep(2)
+    else:
+        env.set_state(x, U[eval_i].cpu().numpy())
+        ctrl.command(x)
 
-    samples = [500, 1000, 2000]
-    for K in samples:
-        ctrl.mpc.U = U_mpc_orig.clone()
-        ctrl.mpc.K = K
-        # use controller to sample next action
-        u_best = ctrl.mpc.command(x)
+    # give manual control and visualize rollouts
+    if manual_control is not None:
+        u = manual_control
+        N = u.shape[0]
+        U = u.repeat(N, 1)
+        ctrl.mpc.U = U.clone()
 
-        # visualize best actions in simulator
-        path_cost = ctrl.mpc.cost_total.cpu()
-        # show best action and its rollouts
-        env.draw_user_text("{} samples".format(K), 1)
-        env._draw_action(u_best)
-        env.draw_user_text("{} cost".format(path_cost.min()), 2)
-        for i in range(1, 10):
-            env._draw_action(ctrl.mpc.U[i], debug=i)
+        env.draw_user_text("manual actions", 1)
+        total_cost, _, _ = ctrl.mpc._compute_rollout_costs(U.view(1, N, -1))
+        env.draw_user_text("{} cost".format(total_cost.item()), 2)
         env.visualize_rollouts(ctrl.get_rollouts(x))
-        time.sleep(2)
-    time.sleep(2)
+        # execute those moves and compare against rollout
+        for u in U:
+            env.step(u.cpu().numpy())
 
-    # give manual dynamics and visualize rollouts
-    u = torch.tensor([-1, 0.8, -0.8], device=ctrl.mpc.U.device, dtype=ctrl.mpc.U.dtype)
-    N = 10
-    U = u.repeat(N, 1)
-    ctrl.mpc.U = U.clone()
-    env._draw_action(ctrl.mpc.U[0])
-    for i in range(1, ctrl.mpc.U.shape[0]):
-        env._draw_action(ctrl.mpc.U[i], debug=i)
+        time.sleep(5)
 
-    env.draw_user_text("manual actions", 1)
-    total_cost, _, _ = ctrl.mpc._compute_rollout_costs(U.view(1, N, -1))
-    env.draw_user_text("{} cost".format(total_cost.item()), 2)
-    env.visualize_rollouts(ctrl.get_rollouts(x))
-    # execute those moves and compare against rollout
-    for u in U:
-        env.step(u.cpu().numpy())
+    else:
+        obs = X[eval_i + 1].cpu().numpy()
+        # if not given manual control, just do control
+        for _ in range(step_N_steps):
+            action = ctrl.command(obs)
+            if torch.is_tensor(action):
+                action = action.cpu()
+            action = np.array(action).flatten()
+            obs, rew, done, info = env.step(action)
 
-    time.sleep(5)
+            env.draw_user_text("dyn cls {}".format(ctrl.dynamics_class), 2)
+
+            mode_text = "recovery" if ctrl.autonomous_recovery_mode else (
+                "local" if ctrl.using_local_model_for_nonnominal_dynamics else "")
+            env.draw_user_text(mode_text, 3)
+            if ctrl.recovery_cost:
+                # plot goal set
+                env.visualize_goal_set(ctrl.recovery_cost.goal_set)
+                env.draw_user_text("goal set yaws" if ctrl.autonomous_recovery_mode else "", 1, -1.5)
+                for i, goal in enumerate(ctrl.recovery_cost.goal_set):
+                    env.draw_user_text(
+                        "{:.2f}".format(goal[2].item()) if ctrl.autonomous_recovery_mode else "".format(
+                            goal[2]), 2 + i, -1.5)
+            env.visualize_rollouts(ctrl.get_rollouts(obs))
+
     # f, axes = plt.subplots(2, 1, sharex=True)
     # path_sampled_cost = ctrl.mpc.cost_samples[:, ind]
     # t = np.arange(N)
@@ -1876,23 +1918,16 @@ if __name__ == "__main__":
     # evaluate_gating_function(use_tsf=ut, test_file=neg_test_file)
     # evaluate_ctrl_sampler('pushing/auto_recover_NONE_RETURN_STATE_1_COORD_NOREUSE_DecisionTreeClassifier_1.mat', 27)
     # evaluate_ctrl_sampler('pushing/with_domain_knowledge.mat', 25)
+    # evaluate_ctrl_sampler('pushing/local_model_in_state_space.mat', 23, seed=0, rollout_prev_xu=False)
+    # evaluate_ctrl_sampler('pushing/see_saw.mat', 10, seed=0, rollout_prev_xu=True)
+    evaluate_ctrl_sampler('pushing/see_saw.mat', 113, seed=0, rollout_prev_xu=True)
 
     # autonomous recovery
-    # for seed in range(5, 10):
-    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
+    # for seed in range(1):
+    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                              reuse_escape_as_demonstration=False,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.NONE)
-    # for seed in range(5, 10):
-    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
-    #                              reuse_escape_as_demonstration=False,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.NONE)
-
-    for seed in range(10):
-        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                 run_name="local_model_in_state_space",
-                                 reuse_escape_as_demonstration=False,
-                                 assume_all_nonnominal_dynamics_are_traps=False,
-                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    #                              assume_all_nonnominal_dynamics_are_traps=False,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # for seed in range(10):
     #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
