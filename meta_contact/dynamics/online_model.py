@@ -12,12 +12,11 @@ logger = logging.getLogger(__name__)
 MAX_EVALUATE_AT_ONCE = 10000
 
 
-class OnlineDynamicsModel(abc.ABC):
+class OnlineDynamicsModel(model.DynamicsBase):
     """Different way of mixing local and nominal model; use nominal as mean"""
 
     def __init__(self, ds, state_difference, device=torch.device("cpu")):
-        self.ds = ds
-        self.advance = model.advance_state(ds.original_config(), use_np=False)
+        super(OnlineDynamicsModel, self).__init__(ds)
         self.state_difference = state_difference
 
         self.nx = ds.config.nx

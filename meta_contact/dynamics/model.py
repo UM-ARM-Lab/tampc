@@ -74,44 +74,6 @@ class DeterministicUser(ModelUser):
         return y
 
 
-def advance_state(config: load_data.DataConfig, use_np=True):
-    if use_np:
-        def cat(seq):
-            return np.column_stack(seq)
-    else:
-        def cat(seq):
-            return torch.cat(seq, dim=1)
-
-    if config.predict_difference:
-        if config.predict_all_dims:
-            def advance(xu, dx):
-                x = xu[:, :config.nx]
-                return x + dx
-        else:
-            def advance(xu, dxb):
-                raise NotImplementedError(
-                    "When not predicting full state the config's parameters are not"
-                    " currently sufficiently to figure out which dims to predict")
-                # TODO not general; specific to the case where the first nu states are controlled directly
-                # x = xu[:, :config.nx]
-                # u = xu[:, config.nx:config.nx + config.nu]
-                # return x + cat((u, dxb))
-    else:
-        if config.predict_all_dims:
-            def advance(xu, xup):
-                return xup
-        else:
-            def advance(xu, xb):
-                raise NotImplementedError(
-                    "When not predicting full state the config's parameters are not"
-                    " currently sufficiently to figure out which dims to predict")
-                # TODO not general; specific to the case where the first nu states are controlled directly
-                # u = xu[:, config.nx:config.nx + config.nu]
-                # return cat((xu[:, :config.nu] + u, xb))
-
-    return advance
-
-
 def linear_model_from_ds(ds):
     XU, Y, _ = ds.training_set()
     XU = XU.numpy()
@@ -144,17 +106,42 @@ def linear_model_from_ds(ds):
     return A, B
 
 
-class DynamicsModel(abc.ABC):
+class DynamicsBase(abc.ABC):
+    def __init__(self, ds):
+        self.ds = ds
+        config = ds.original_config()
+        self.orig_config = config
+
+        if config.predict_difference:
+            if config.predict_all_dims:
+                self.advance = self.advance_pred_all_diff
+            else:
+                raise NotImplementedError(
+                    "When not predicting full state the config's parameters are not"
+                    " currently sufficiently to figure out which dims to predict")
+        else:
+            if config.predict_all_dims:
+                self.advance = self.advance_pred_all
+            else:
+                raise NotImplementedError(
+                    "When not predicting full state the config's parameters are not"
+                    " currently sufficiently to figure out which dims to predict")
+
+    def advance_pred_all_diff(self, xu, dx):
+        x = xu[:, :self.orig_config.nx]
+        return x + dx
+
+    def advance_pred_all(self, xu, xup):
+        return xup
+
+
+class DynamicsModel(DynamicsBase):
     """
     All public API takes input and returns output in original xu space,
     while internally (functions starting with underscore) they all operate in transformed space.
 
     All API takes torch tensors as input.
     """
-
-    def __init__(self, ds, use_np=False):
-        self.ds = ds
-        self.advance = advance_state(ds.original_config(), use_np=use_np)
 
     @tensor_utils.handle_batch_input
     def predict(self, xu, already_transformed=False, get_next_state=True, return_in_orig_space=True):
