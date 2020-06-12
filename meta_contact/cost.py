@@ -1,9 +1,12 @@
 """ This file defines utility classes and functions for costs from GPS. """
 import torch
+import enum
 import logging
+import abc
 from arm_pytorch_utilities import linalg, tensor_utils
 
 logger = logging.getLogger(__name__)
+
 
 def qr_cost(diff_function, X, X_goal, Q, R, U=None, terminal=False):
     X = diff_function(X, X_goal)
@@ -13,7 +16,13 @@ def qr_cost(diff_function, X, X_goal, Q, R, U=None, terminal=False):
     return c
 
 
-class CostQROnlineTorch:
+class Cost(abc.ABC):
+    @abc.abstractmethod
+    def __call__(self, X, U=None, terminal=False):
+        """Get cost of state and control"""
+
+
+class CostQROnlineTorch(Cost):
     def __init__(self, target, Q, R, compare_to_goal):
         self.Q = Q
         self.R = R
@@ -49,10 +58,16 @@ class CostQROnlineTorch:
         return l, lx, lu, lxx, luu, lux
 
 
-class CostQRGoalSet:
-    """If goal is not just a single target but a set of possible goals"""
+class CostSetReduction(enum.IntEnum):
+    MIN = 0
+    SUM = 1
 
-    def __init__(self, goal_set, Q, R, compare_to_goal, ds, goal_weights=None, compare_in_latent_space=False):
+
+class CostQRSet(Cost):
+    """If cost is not dependent on a single target but a set of targets"""
+
+    def __init__(self, goal_set, Q, R, compare_to_goal, ds, reduce=CostSetReduction.MIN, goal_weights=None,
+                 compare_in_latent_space=False):
         self.ds = ds
         self.Q = Q
         self.R = R
@@ -60,6 +75,7 @@ class CostQRGoalSet:
         self.goal_weights = goal_weights
         self.compare_to_goal = compare_to_goal
         self.compare_in_latent_space = compare_in_latent_space
+        self.reduce = reduce
 
         logger.debug("goal set\n%s", goal_set)
 
@@ -94,6 +110,22 @@ class CostQRGoalSet:
             costs.append(c)
 
         costs = torch.stack(costs, dim=0)
-        # take the minimum to any of the goals
-        costs = costs.min(dim=0).values
+        if self.reduce is CostSetReduction.MIN:
+            # take the minimum to any of the goals
+            costs = costs.min(dim=0).values
+        elif self.reduce is CostSetReduction.SUM:
+            costs = costs.sum(dim=0)
+
+        return costs
+
+
+class ComposeCost(Cost):
+    def __init__(self, costs):
+        self.fn = costs
+
+    @tensor_utils.handle_batch_input
+    def __call__(self, X, U=None, terminal=False):
+        costs = [cost_fn(X, U, terminal) for cost_fn in self.fn]
+        costs = torch.stack(costs, dim=0)
+        costs = costs.sum(dim=0)
         return costs

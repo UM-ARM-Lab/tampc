@@ -255,8 +255,8 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             Q[0, 0] = Q[1, 1] = 1
             Q[2, 2] = 1
             Q[3, 3] = Q[4, 4] = 0
-            self.recovery_cost = cost.CostQRGoalSet(goal_set, Q, self.R, self.compare_to_goal, self.ds,
-                                                    compare_in_latent_space=self.autonomous_recovery is AutonomousRecovery.RETURN_LATENT)
+            self.recovery_cost = cost.CostQRSet(goal_set, Q, self.R, self.compare_to_goal, self.ds,
+                                                compare_in_latent_space=self.autonomous_recovery is AutonomousRecovery.RETURN_LATENT)
             self.mpc.running_cost = self._recovery_running_cost
             self.mpc.terminal_state_cost = None
             self.mpc.change_horizon(10)
