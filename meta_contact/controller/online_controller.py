@@ -22,10 +22,9 @@ class OnlineMPC(controller.MPC):
     Online controller with a pytorch based MPC method (CEM, MPPI)
     """
 
-    def __init__(self, ds, *args, constrain_state=noop_constrain,
+    def __init__(self, *args, constrain_state=noop_constrain,
                  gating: gating_function.GatingFunction = gating_function.AlwaysSelectNominal(),
                  **kwargs):
-        self.ds = ds
         self.constrain_state = constrain_state
         self.mpc = None
         self.gating = gating
@@ -102,13 +101,12 @@ class AutonomousRecovery(enum.IntEnum):
 
 
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
-    def __init__(self, *args, abs_unrecognized_threshold=2, rel_unrecognized_threshold=5,
+    def __init__(self, *args, abs_unrecognized_threshold=10,
                  assume_all_nonnominal_dynamics_are_traps=True, nonnominal_dynamics_penalty_tolerance = 0.5,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
         self.recovery_traj_seeder: RecoveryTrajectorySeeder = None
         self.abs_unrecognized_threshold = abs_unrecognized_threshold
-        self.rel_unrecognized_threshold = rel_unrecognized_threshold
 
         self.assume_all_nonnominal_dynamics_are_traps = assume_all_nonnominal_dynamics_are_traps
 
@@ -140,7 +138,6 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         return self.diff_predicted is not None and \
                self.dynamics_class == gating_function.DynamicsClass.NOMINAL and \
                self.diff_predicted.norm() > self.abs_unrecognized_threshold and \
-               self.diff_relative.norm() > self.rel_unrecognized_threshold and \
                len(self.u_history) > 1 and \
                self.u_history[-1][1] > 0
 

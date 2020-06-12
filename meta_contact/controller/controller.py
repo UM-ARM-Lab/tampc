@@ -174,11 +174,12 @@ class PreDeterminedControllerWithPrediction(PreDeterminedController, ControllerW
 
 
 class MPC(ControllerWithModelPrediction):
-    def __init__(self, dynamics, config, Q=1, R=1, compare_to_goal=torch.sub, u_min=None, u_max=None, device='cpu',
+    def __init__(self, ds, dynamics, config, Q=1, R=1, compare_to_goal=torch.sub, u_min=None, u_max=None, device='cpu',
                  terminal_cost_multiplier=0., adjust_model_pred_with_prev_error=False,
                  use_orientation_terminal_cost=False):
         super().__init__(compare_to_goal)
 
+        self.ds = ds
         self.nu = config.nu
         self.nx = config.nx
         self.dtype = torch.double
@@ -190,6 +191,16 @@ class MPC(ControllerWithModelPrediction):
         self.adjust_model_pred_with_prev_error = adjust_model_pred_with_prev_error
         self.use_orientation_terminal_cost = use_orientation_terminal_cost
 
+        # get error per dimension to scale our expectations of accuracy
+        XU, Y, _ = ds.training_set(original=True)
+        X, U = torch.split(XU, config.nx, dim=1)
+        Yhat = self._apply_dynamics(X, U)
+        if config.predict_difference:
+            Yhat = Yhat - X
+        E = Yhat - Y
+        E_per_dim = E.abs().mean(dim=0)
+        self.model_error_per_dim = E_per_dim / E_per_dim.norm()
+
         # cost
         self.Q = tensor_utils.ensure_diagonal(Q, self.nx).to(device=self.d, dtype=self.dtype)
         self.R = tensor_utils.ensure_diagonal(R, self.nu).to(device=self.d, dtype=self.dtype)
@@ -199,7 +210,6 @@ class MPC(ControllerWithModelPrediction):
         # analysis attributes
         self.pred_error_log = []
         self.diff_predicted = None
-        self.diff_relative = None
         self.x_history = []
         self.u_history = []
         self.orig_cost_history = []
@@ -261,7 +271,6 @@ class MPC(ControllerWithModelPrediction):
             logger.debug("median relative error %s", median)
         self.pred_error_log = []
         self.diff_predicted = None
-        self.diff_relative = None
         self.x_history = []
         self.u_history = []
         self.orig_cost_history = []
@@ -273,10 +282,11 @@ class MPC(ControllerWithModelPrediction):
         # here so that in command we have access to the latest
         self.orig_cost_history.append(self.cost(obs.view(1, -1)))
         if self.predicted_next_state is not None:
-            self.diff_predicted = torch.tensor(self.prediction_error(original_obs), device=self.d)
-            diff_actual = self.compare_to_goal(obs.view(1, -1), self.x_history[-1])
-            self.diff_relative = self.diff_predicted / diff_actual
-            self.pred_error_log.append(self.diff_relative.abs())
+            # scale with model error for each dimension
+            self.diff_predicted = torch.tensor(self.prediction_error(original_obs),
+                                               device=self.d) / self.model_error_per_dim
+            self.pred_error_log.append(self.diff_predicted.abs())
+            # logger.debug("diff normalized error %.2f", self.diff_predicted.norm())
 
         self.context = [info, self.diff_predicted]
 
