@@ -66,42 +66,21 @@ class CostSetReduction(enum.IntEnum):
 class CostQRSet(Cost):
     """If cost is not dependent on a single target but a set of targets"""
 
-    def __init__(self, goal_set, Q, R, compare_to_goal, ds, reduce=CostSetReduction.MIN, goal_weights=None,
-                 compare_in_latent_space=False):
+    def __init__(self, goal_set, Q, R, compare_to_goal, ds, reduce=CostSetReduction.MIN, goal_weights=None):
         self.ds = ds
         self.Q = Q
         self.R = R
         self.goal_set = goal_set
         self.goal_weights = goal_weights
         self.compare_to_goal = compare_to_goal
-        self.compare_in_latent_space = compare_in_latent_space
         self.reduce = reduce
 
         logger.debug("goal set\n%s", goal_set)
 
-        if compare_in_latent_space:
-            self.Q = torch.eye(ds.config.nx, device=Q.device, dtype=Q.dtype)
-
-            # convert goal set to be in z space
-            if not torch.is_tensor(goal_set):
-                goal_set = torch.stack(goal_set)
-            xu = torch.cat(
-                (goal_set,
-                 torch.zeros((goal_set.shape[0], self.ds.original_config().nu), device=Q.device, dtype=Q.dtype)),
-                dim=1)
-
-            self.goal_set = self.ds.preprocessor.transform_x(xu)
 
     @tensor_utils.handle_batch_input
     def __call__(self, X, U=None, terminal=False):
         costs = []
-        # convert to latent space
-        if self.compare_in_latent_space:
-            xu = torch.cat(
-                (X,
-                 torch.zeros((X.shape[0], self.ds.original_config().nu), device=X.device, dtype=X.dtype)),
-                dim=1)
-            X = self.ds.preprocessor.transform_x(xu)
 
         for i, goal in enumerate(self.goal_set):
             c = qr_cost(self.compare_to_goal, X, goal, self.Q, self.R, U, terminal)

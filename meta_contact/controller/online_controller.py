@@ -97,7 +97,6 @@ class AutonomousRecovery(enum.IntEnum):
     NONE = 0
     RANDOM = 1
     RETURN_STATE = 2
-    RETURN_LATENT = 3
 
 
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
@@ -226,7 +225,6 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def _start_local_model(self, x):
         logger.debug("Entering non nominal dynamics")
         logger.debug(self.diff_predicted)
-        logger.debug(self.diff_relative)
 
         self.using_local_model_for_nonnominal_dynamics = True
         # does not include the current observation
@@ -242,7 +240,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.autonomous_recovery_start_index = len(self.x_history) + 1
 
         # different strategies for recovery mode
-        if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.RETURN_LATENT]:
+        if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE]:
             # change mpc cost
             # TODO parameterize how far back in history to return to
             goal_set = torch.stack(
@@ -252,8 +250,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             Q[0, 0] = Q[1, 1] = 1
             Q[2, 2] = 1
             Q[3, 3] = Q[4, 4] = 0
-            self.recovery_cost = cost.CostQRSet(goal_set, Q, self.R, self.compare_to_goal, self.ds,
-                                                compare_in_latent_space=self.autonomous_recovery is AutonomousRecovery.RETURN_LATENT)
+            self.recovery_cost = cost.CostQRSet(goal_set, Q, self.R, self.compare_to_goal, self.ds)
             self.mpc.running_cost = self._recovery_running_cost
             self.mpc.terminal_state_cost = None
             self.mpc.change_horizon(10)
@@ -281,7 +278,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             self.gating = self.dynamics.get_gating()
             self.recovery_traj_seeder.update_data(self.dynamics.dss)
 
-        if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.RETURN_LATENT]:
+        if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE]:
             # restore cost functions
             self.mpc.running_cost = self._running_cost
             self.mpc.terminal_state_cost = self._terminal_cost
