@@ -229,7 +229,7 @@ class PushAgainstWallEnv(PybulletEnv):
 
     def __init__(self, goal=(1.0, 0.), init_pusher=(-0.25, 0), init_block=(0., 0.), init_yaw=0.,
                  environment_level=0, sim_step_wait=None, mini_steps=100, wait_sim_steps_per_mini_step=20,
-                 max_pusher_force=20, debug_visualizations=None, state_cost_for_done=0.06,
+                 max_pusher_force=15, debug_visualizations=None, state_cost_for_done=0.06,
                  reaction_force_strategy=ReactionForceStrategy.MEDIAN_OVER_MINI_STEPS, **kwargs):
         """
         :param goal:
