@@ -144,6 +144,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         return self.diff_predicted is not None and \
                self.dynamics_class == gating_function.DynamicsClass.NOMINAL and \
                self.diff_predicted.norm() > self.abs_unrecognized_threshold and \
+               self.autonomous_recovery is not AutonomousRecovery.NONE and \
                len(self.u_history) > 1 and \
                self.u_history[-1][1] > 0
 
@@ -250,7 +251,8 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         # avoid these points in the future
         for i in range(min(len(self.u_history), self.steps_before_entering_trap_to_avoid)):
             self.trap_set.append((self.x_history[-i-1], self.u_history[-i-1]))
-        logger.debug("trap set updated to be\n%s", self.trap_set)
+        temp = torch.stack([torch.cat((x, u)) for x,u in self.trap_set])
+        logger.debug("trap set updated to be\n%s", temp)
 
         # different strategies for recovery mode
         if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE]:
