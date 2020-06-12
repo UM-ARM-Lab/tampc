@@ -101,7 +101,7 @@ class AutonomousRecovery(enum.IntEnum):
 
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def __init__(self, *args, abs_unrecognized_threshold=10,
-                 assume_all_nonnominal_dynamics_are_traps=True, nonnominal_dynamics_penalty_tolerance = 0.5,
+                 assume_all_nonnominal_dynamics_are_traps=True, nonnominal_dynamics_penalty_tolerance=0.5,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
         self.recovery_traj_seeder: RecoveryTrajectorySeeder = None
@@ -111,14 +111,21 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
         self.using_local_model_for_nonnominal_dynamics = False
         self.nonnominal_dynamics_start_index = -1
+        # window of points we take to calculate the average trend
         self.nonnominal_dynamics_trend_len = 4
         # we have to be decreasing cost at this much compared to before nonnominal dynamics to not be in a trap
         self.nonnominal_dynamics_penalty_tolerance = nonnominal_dynamics_penalty_tolerance
 
+        # avoid these number of actions before entering a trap (inclusive of the transition into the trap)
+        self.steps_before_entering_trap_to_avoid = 1
+
         self.autonomous_recovery_mode = False
         self.autonomous_recovery_start_index = -1
         self.autonomous_recovery_end_index = -1
+
+        # how many consecutive turns of thinking we are out of non-nominal dynamics for it to stick (avoid jitter)
         self.leave_recovery_num_turns = 3
+
         self.recovery_cost = None
         self.autonomous_recovery = autonomous_recovery
         self.original_horizon = self.mpc.T
@@ -158,7 +165,8 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             if self.assume_all_nonnominal_dynamics_are_traps:
                 return True
 
-            # cooldown on entering and leaving traps
+            # cooldown on entering and leaving traps (can't use our progress during recovery for calculating whether we
+            # enter a trap or not since the recovery policy isn't expected to decrease goal cost)
             cur_index = len(self.x_history)
             if cur_index - self.autonomous_recovery_end_index < self.leave_recovery_num_turns:
                 return False
@@ -224,7 +232,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
     def _start_local_model(self, x):
         logger.debug("Entering non nominal dynamics")
-        logger.debug(self.diff_predicted)
+        logger.debug(self.diff_predicted.norm())
 
         self.using_local_model_for_nonnominal_dynamics = True
         # does not include the current observation
@@ -239,18 +247,22 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.autonomous_recovery_mode = True
         self.autonomous_recovery_start_index = len(self.x_history) + 1
 
+        # avoid these points in the future
+        for i in range(min(len(self.u_history), self.steps_before_entering_trap_to_avoid)):
+            self.trap_set.append((self.x_history[-i-1], self.u_history[-i-1]))
+        logger.debug("trap set updated to be\n%s", self.trap_set)
+
         # different strategies for recovery mode
         if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE]:
             # change mpc cost
             # TODO parameterize how far back in history to return to
             goal_set = torch.stack(
                 self.x_history[max(0, self.nonnominal_dynamics_start_index - 10):self.nonnominal_dynamics_start_index])
-            # TODO remove this domain knowledge of what dimensions are import for recovering
             Q = self.Q.clone()
             Q[0, 0] = Q[1, 1] = 1
             Q[2, 2] = 1
             Q[3, 3] = Q[4, 4] = 0
-            self.recovery_cost = cost.CostQRSet(goal_set, Q, self.R, self.compare_to_goal, self.ds)
+            self.recovery_cost = cost.CostQRSet(goal_set, Q, self.R, self.compare_to_goal)
             self.mpc.running_cost = self._recovery_running_cost
             self.mpc.terminal_state_cost = None
             self.mpc.change_horizon(10)

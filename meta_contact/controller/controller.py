@@ -173,9 +173,17 @@ class PreDeterminedControllerWithPrediction(PreDeterminedController, ControllerW
         return self.dynamics(state.view(1, -1), control.view(1, -1)).cpu().numpy()
 
 
+TRAP_COST_DIM = 0.5
+TRAP_MAX_COST = 100
+
+
+def trap_cost_reduce(costs):
+    return torch.clamp((1 / costs).max(dim=0).values, 0, TRAP_MAX_COST)
+
+
 class MPC(ControllerWithModelPrediction):
     def __init__(self, ds, dynamics, config, Q=1, R=1, compare_to_goal=torch.sub, u_min=None, u_max=None, device='cpu',
-                 terminal_cost_multiplier=0., adjust_model_pred_with_prev_error=False,
+                 terminal_cost_multiplier=0., adjust_model_pred_with_prev_error=False, use_trap_cost=True,
                  use_orientation_terminal_cost=False):
         super().__init__(compare_to_goal)
 
@@ -202,10 +210,21 @@ class MPC(ControllerWithModelPrediction):
         self.model_error_per_dim = E_per_dim / E_per_dim.norm()
 
         # cost
+        self.trap_set = []
         self.Q = tensor_utils.ensure_diagonal(Q, self.nx).to(device=self.d, dtype=self.dtype)
         self.R = tensor_utils.ensure_diagonal(R, self.nu).to(device=self.d, dtype=self.dtype)
-        self.cost = cost.CostQROnlineTorch(self.goal, self.Q, self.R, self.compare_to_goal)
+        self.goal_cost = cost.CostQROnlineTorch(self.goal, self.Q, self.R, self.compare_to_goal)
         self.terminal_cost_multiplier = terminal_cost_multiplier
+
+        if use_trap_cost:
+            trap_q = tensor_utils.ensure_diagonal([TRAP_COST_DIM, TRAP_COST_DIM, TRAP_COST_DIM, 0, 0], self.nx).to(
+                device=self.d, dtype=self.dtype)
+            trap_r = tensor_utils.ensure_diagonal([TRAP_COST_DIM, TRAP_COST_DIM, TRAP_COST_DIM], self.nu).to(device=self.d,
+                                                                                                             dtype=self.dtype)
+            self.trap_cost = cost.CostQRSet(self.trap_set, trap_q, trap_r, self.compare_to_goal, reduce=trap_cost_reduce)
+            self.cost = cost.ComposeCost([self.goal_cost, self.trap_cost])
+        else:
+            self.cost = self.goal_cost
 
         # analysis attributes
         self.pred_error_log = []
@@ -218,7 +237,7 @@ class MPC(ControllerWithModelPrediction):
     def set_goal(self, goal):
         goal = torch.tensor(goal, dtype=self.dtype, device=self.d)
         super().set_goal(goal)
-        self.cost.eetgt = goal
+        self.goal_cost.goal = goal
 
     def _running_cost(self, state, action):
         return self.cost(state, action)
@@ -280,7 +299,7 @@ class MPC(ControllerWithModelPrediction):
         original_obs = obs
         obs = tensor_utils.ensure_tensor(self.d, self.dtype, obs)
         # here so that in command we have access to the latest
-        self.orig_cost_history.append(self.cost(obs.view(1, -1)))
+        self.orig_cost_history.append(self.goal_cost(obs.view(1, -1)))
         if self.predicted_next_state is not None:
             # scale with model error for each dimension
             self.diff_predicted = torch.tensor(self.prediction_error(original_obs),

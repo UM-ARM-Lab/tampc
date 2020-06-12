@@ -425,9 +425,9 @@ class OnlineGPMixing(OnlineDynamicsModel):
 
         self.gp.eval()
         self.likelihood.eval()
-        elapsed = time.time() - start
-        logger.debug('training %d iter took %.4fs loss %.3f last loss diff %.3f', training_iter, elapsed,
-                     self.last_loss, self.last_loss_diff)
+        # elapsed = time.time() - start
+        # logger.debug('training %d iter took %.4fs loss %.3f last loss diff %.3f', training_iter, elapsed,
+        #              self.last_loss, self.last_loss_diff)
 
     def _make_prediction(self, cx, cu):
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
