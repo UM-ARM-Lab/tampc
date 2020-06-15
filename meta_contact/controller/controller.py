@@ -224,6 +224,7 @@ class MPC(ControllerWithModelPrediction):
             self.trap_cost = cost.CostQRSet(self.trap_set, trap_q, trap_r, self.compare_to_goal, reduce=trap_cost_reduce)
             self.cost = cost.ComposeCost([self.goal_cost, self.trap_cost])
         else:
+            self.trap_cost = None
             self.cost = self.goal_cost
 
         # analysis attributes

@@ -407,6 +407,17 @@ class PushAgainstWallEnv(PybulletEnv):
             c = (t + 1) / (T + 1)
             self._dd.draw_2d_pose('gs{}'.format(t), pose, (c, c, c))
 
+    def visualize_trap_set(self, trap_set):
+        if trap_set is None:
+            return
+        T = len(trap_set)
+        for t in range(T):
+            state, action = trap_set[t]
+            pose = self.get_block_pose(state)
+            c = (t + 1) / (T + 1)
+            self._dd.draw_2d_pose('ts{}'.format(t), pose, (1, 0, c))
+            self._draw_action(action.cpu().numpy(), old_state=state.cpu().numpy(), debug=t + 1)
+
     def visualize_prediction_error(self, predicted_state):
         """In GUI mode, show the difference between the predicted state and the current actual state"""
         pred_pose = self.get_block_pose(predicted_state)
@@ -433,7 +444,7 @@ class PushAgainstWallEnv(PybulletEnv):
     def _draw_state(self):
         self._dd.draw_2d_pose('state', self.get_block_pose(self.state))
 
-    def _draw_action(self, action, debug=0):
+    def _draw_action(self, action, old_state=None, debug=0):
         pass
 
     def _draw_reaction_force(self, r, name, color=(1, 0, 1)):
@@ -464,7 +475,7 @@ class PushAgainstWallEnv(PybulletEnv):
             pusher_pos = self.get_pusher_pos(state, action)
             p.resetBasePositionAndOrientation(self.pusherId, (pusher_pos[0], pusher_pos[1], _PUSHER_MID),
                                               p.getQuaternionFromEuler([0, 0, 0]))
-            self._draw_action(action)
+            self._draw_action(action, old_state=state)
 
     # --- observing state from simulation
     def _obs(self):
@@ -993,15 +1004,16 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         # NOTE this is visualizing the reaction from the previous action, rather than the instantaneous reaction
         self._draw_reaction_force(self.state[3:5], 'sr', (0, 0, 0))
 
-    def _draw_action(self, action, debug=0):
-        old_state = self._obs()
+    def _draw_action(self, action, old_state=None, debug=0):
+        if old_state is None:
+            old_state = self._obs()
         push_along, push_dist, push_dir = self._unpack_action(action)
         start = pusher_pos_for_touching(old_state[:2], old_state[2], from_center=DIST_FOR_JUST_TOUCHING, face=self.face,
                                         along_face=push_along)
         start = np.concatenate((start, (self.initPusherPos[2],)))
         pointer = math_utils.rotate_wrt_origin((push_dist, 0), push_dir + old_state[2])
         if debug:
-            self._dd.draw_2d_line('u{}'.format(debug), start, pointer, (1, debug / 10, debug / 10), scale=5)
+            self._dd.draw_2d_line('u{}'.format(debug), start, pointer, (1, debug / 30, debug / 10), scale=5)
         else:
             self._dd.draw_2d_line('u', start, pointer, (1, 0, 0), scale=5)
 
@@ -1143,21 +1155,11 @@ class InteractivePush(simulation.Simulation):
         obs = self._reset_sim()
         info = None
 
-        U_nom_unadjusted = None
-
         for simTime in range(self.num_frames - 1):
             self.traj[simTime, :] = obs
             self.env.draw_user_text("{}".format(simTime), 1)
 
             start = time.perf_counter()
-
-            if U_nom_unadjusted is not None:
-                # display what our action would've been if we did not adjust our control
-                U_nom_adjusted = self.ctrl.mpc.U
-                self.ctrl.mpc.U = U_nom_unadjusted
-                action_unadjusted = self.ctrl.command(obs, info)
-                self.env._draw_action(action_unadjusted, debug=4)
-                self.ctrl.mpc.U = U_nom_adjusted
 
             action = self.ctrl.command(obs, info)
 
