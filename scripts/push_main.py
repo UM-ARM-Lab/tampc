@@ -38,7 +38,8 @@ logging.basicConfig(level=logging.DEBUG,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
                     datefmt='%m-%d %H:%M:%S')
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
-logger.addHandler(fh)
+rootLogger = logging.getLogger()
+rootLogger.addHandler(fh)
 logging.getLogger('matplotlib.font_manager').disabled = True
 
 REACTION_IN_STATE = True
@@ -267,7 +268,7 @@ def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics, seed=0):
     d = get_device()
     if prior_class is prior.NNPrior:
         mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(ds.config).to(device=d)), ds,
-                           name="dynamics_{}_{}".format(tsf_name, seed))
+                           name="dynamics_{}".format(tsf_name))
 
         train_epochs = 500
         pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(),
@@ -1964,7 +1965,7 @@ if __name__ == "__main__":
     # evaluate_ctrl_sampler('pushing/see_saw.mat', 150, seed=0, rollout_prev_xu=True)
 
     # autonomous recovery
-    for seed in range(4, 10):
+    for seed in range(3, 10):
         test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
                                  reuse_escape_as_demonstration=False, use_trap_cost=False,
                                  assume_all_nonnominal_dynamics_are_traps=False,
