@@ -155,11 +155,12 @@ class InvariantTransform(LearnableParameterizedModel):
                     mse_loss = torch.norm(E, dim=1)
                     batch_losses[i] = mse_loss
 
-                    per_dim_mse = E.abs().mean(dim=0)
-                    for d in range(per_dim_mse.shape[0]):
-                        self.writer.add_scalar(
-                            'per_dim_mean_abs_diff_tsf/{}{}'.format('validation' if ds_test is None else 'test', d),
-                            per_dim_mse[d].item(), self.step)
+                    if self.writer is not None:
+                        per_dim_mse = E.abs().mean(dim=0)
+                        for d in range(per_dim_mse.shape[0]):
+                            self.writer.add_scalar(
+                                'per_dim_mean_abs_diff_tsf/{}{}'.format('validation' if ds_test is None else 'test', d),
+                                per_dim_mse[d].item(), self.step)
 
             batch_losses = [math_utils.replace_nan_and_inf(losses) if losses is not None else None for losses in
                             batch_losses]

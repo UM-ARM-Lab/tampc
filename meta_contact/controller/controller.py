@@ -306,7 +306,7 @@ class MPC(ControllerWithModelPrediction):
             self.diff_predicted = torch.tensor(self.prediction_error(original_obs),
                                                device=self.d) / self.model_error_per_dim
             self.pred_error_log.append(self.diff_predicted.abs())
-            # logger.debug("diff normalized error %.2f", self.diff_predicted.norm())
+            logger.debug("diff normalized error %.2f", self.diff_predicted.norm())
 
         self.context = [info, self.diff_predicted]
 

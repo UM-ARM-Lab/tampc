@@ -100,7 +100,7 @@ class AutonomousRecovery(enum.IntEnum):
 
 
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
-    def __init__(self, *args, abs_unrecognized_threshold=10,
+    def __init__(self, *args, abs_unrecognized_threshold=8,
                  assume_all_nonnominal_dynamics_are_traps=True, nonnominal_dynamics_penalty_tolerance=0.5,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)

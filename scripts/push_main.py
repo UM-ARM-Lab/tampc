@@ -260,11 +260,11 @@ def get_full_controller_name(pm, ctrl, tsf_name):
     return name
 
 
-def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics):
+def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics, seed=0):
     d = get_device()
     if prior_class is prior.NNPrior:
         mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(ds.config).to(device=d)), ds,
-                           name="dynamics_{}".format(tsf_name))
+                           name="dynamics_{}_{}".format(tsf_name, seed))
 
         train_epochs = 500
         pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(),
@@ -963,7 +963,6 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
 
     name = get_full_controller_name(pm, ctrl, use_tsf.name)
 
-    env.draw_user_text(name, 14, left_offset=-1.5)
     env.draw_user_text(gating.name, 13, left_offset=-1.5)
     env.draw_user_text("run seed {}".format(seed), 12, left_offset=-1.5)
     env.draw_user_text("recovery {}".format(autonomous_recovery.name), 11, left_offset=-1.6)
@@ -992,6 +991,7 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
         affix_run_name("TRAPCOST" if use_trap_cost else "NOTRAPCOST")
         affix_run_name(seed)
 
+    env.draw_user_text(run_name, 14, left_offset=-1.5)
     sim.run(seed, run_name)
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
     plt.ioff()
@@ -1270,7 +1270,7 @@ def evaluate_ctrl_sampler(eval_file, eval_i, seed=1, use_tsf=UseTsf.COORD,
                           do_rollout_best_action=True, assume_all_nonnominal_dynamics_are_traps=False,
                           rollout_prev_xu=True, manual_control=None, step_N_steps=80, **kwargs):
     env = get_env(p.GUI, level=1, log_video=do_rollout_best_action)
-    env.draw_user_text("eval {}".format(eval_file), 14, left_offset=-1.5)
+    env.draw_user_text("eval {} seed {}".format(eval_file, seed), 14, left_offset=-1.5)
     env.draw_user_text("eval index {}".format(eval_i), 13, left_offset=-1.5)
     logger.info("initial random seed %d", rand.seed(seed))
 
@@ -1287,6 +1287,7 @@ def evaluate_ctrl_sampler(eval_file, eval_i, seed=1, use_tsf=UseTsf.COORD,
     ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
                                         autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE,
                                         reuse_escape_as_demonstration=False,
+                                        use_trap_cost=True,
                                         assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
     ctrl.set_goal(env.goal)
@@ -1382,11 +1383,9 @@ def evaluate_ctrl_sampler(eval_file, eval_i, seed=1, use_tsf=UseTsf.COORD,
             if ctrl.recovery_cost:
                 # plot goal set
                 env.visualize_goal_set(ctrl.recovery_cost.goal_set)
-                env.draw_user_text("goal set yaws" if ctrl.autonomous_recovery_mode else "", 1, -1.5)
-                for i, goal in enumerate(ctrl.recovery_cost.goal_set):
-                    env.draw_user_text(
-                        "{:.2f}".format(goal[2].item()) if ctrl.autonomous_recovery_mode else "".format(
-                            goal[2]), 2 + i, -1.5)
+            if ctrl.trap_cost is not None and ctrl.trap_set:
+                # only show last few to reduce clutter
+                env.visualize_trap_set(ctrl.trap_set[-10:])
             env.visualize_rollouts(ctrl.get_rollouts(obs))
 
     # f, axes = plt.subplots(2, 1, sharex=True)
@@ -1919,6 +1918,12 @@ if __name__ == "__main__":
     # Visualize.state_sequence(4, "pushing/test_sufficiency_4_NO_TRANSFORM_AlwaysSelectNominal_0.mat",
     #                          restrict_slice=slice(0, 40), step=5)
 
+    # test_online_model()
+    # for seed in range(0, 5):
+    #     Learn.invariant(ut, seed=seed, name="refine", MAX_EPOCH=6000, BATCH_SIZE=500)
+    # for seed in range(1):
+    #     Learn.model(ut, seed=seed, name="")
+
     def filter_func(tk):
         logger.info(tk)
         # return ['reuse'] == "NOREUSE"
@@ -1944,7 +1949,8 @@ if __name__ == "__main__":
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__3__COORD__ALLTRAP__NOREUSE__DecisionTreeClassifier')
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__SOMETRAP__NOREUSE__DecisionTreeClassifier')
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__GP_KERNEL__NONE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_gating_function(use_tsf=ut, test_file=neg_test_file)
@@ -1955,12 +1961,11 @@ if __name__ == "__main__":
     # evaluate_ctrl_sampler('pushing/see_saw.mat', 150, seed=0, rollout_prev_xu=True)
 
     # autonomous recovery
-    # ctrl_opts = {'use_trap_cost': True}
-    # for seed in range(2,10):
-    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              reuse_escape_as_demonstration=False, use_trap_cost=False,
-    #                              assume_all_nonnominal_dynamics_are_traps=False,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    for seed in range(1,2):
+        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                                 reuse_escape_as_demonstration=False, use_trap_cost=False,
+                                 assume_all_nonnominal_dynamics_are_traps=False,
+                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # for seed in range(1,10):
     #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
@@ -1980,11 +1985,11 @@ if __name__ == "__main__":
     #                              assume_all_nonnominal_dynamics_are_traps=False,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
     #
-    for seed in range(10):
-        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
-                                 reuse_escape_as_demonstration=False, use_trap_cost=False,
-                                 assume_all_nonnominal_dynamics_are_traps=False,
-                                 autonomous_recovery=online_controller.AutonomousRecovery.NONE)
+    # for seed in range(10):
+    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
+    #                              reuse_escape_as_demonstration=False, use_trap_cost=False,
+    #                              assume_all_nonnominal_dynamics_are_traps=False,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.NONE)
 
     # for seed in range(5):
     #     test_local_model_sufficiency_for_escaping_wall(seed=seed, level=1, plot_model_eval=False, use_tsf=ut,
@@ -2002,9 +2007,3 @@ if __name__ == "__main__":
 
     # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.GP_KERNEL,
     #                            override=True, full_evaluation=True, plot_model_error=False, relearn_dynamics=False)
-
-    # test_online_model()
-    # for seed in range(0, 5):
-    #     Learn.invariant(ut, seed=seed, name="refine", MAX_EPOCH=6000, BATCH_SIZE=500)
-    # for seed in range(1):
-    #     Learn.model(ut, seed=seed, name="")
