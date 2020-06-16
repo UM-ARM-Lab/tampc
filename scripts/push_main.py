@@ -6,6 +6,7 @@ import time
 import pickle
 import enum
 import re
+from datetime import datetime
 
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -36,6 +37,8 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
                     datefmt='%m-%d %H:%M:%S')
+fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
+logger.addHandler(fh)
 logging.getLogger('matplotlib.font_manager').disabled = True
 
 REACTION_IN_STATE = True
@@ -1961,7 +1964,7 @@ if __name__ == "__main__":
     # evaluate_ctrl_sampler('pushing/see_saw.mat', 150, seed=0, rollout_prev_xu=True)
 
     # autonomous recovery
-    for seed in range(1,2):
+    for seed in range(4, 10):
         test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
                                  reuse_escape_as_demonstration=False, use_trap_cost=False,
                                  assume_all_nonnominal_dynamics_are_traps=False,
