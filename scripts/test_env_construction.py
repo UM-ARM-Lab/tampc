@@ -282,11 +282,15 @@ def run_direct_push():
     init_block_pos = [0., 0.15]
     # init_block_yaw = 0
     init_block_yaw = -math.pi / 2
-    # init_block_pos = [0., 0.175]
-    # init_block_yaw = -0.9 # -math.pi/2
-    goal_pos = [0.85, -0.35]
+    ctrl = controller.PreDeterminedController([(0.8, 1.0, -0.7) for _ in range(N)])
+
+    init_block_pos = [0., 0.175]
+    init_block_yaw = -0.9 # -math.pi/2
+    ctrl = controller.PreDeterminedController([(-0.8, 1.0, -0.95) for _ in range(N)])
+
     # env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=0.5, log_video=True, goal=goal_pos,
     #                                           init_block=init_block_pos, init_yaw=init_block_yaw, environment_level=0)
+    goal_pos = [0.85, -0.35]
     env = block_push.PushPhysicallyAnyAlongEnv(mode=p.GUI, log_video=True, init_block=init_block_pos,
                                                init_yaw=init_block_yaw,
                                                environment_level=1)
@@ -294,7 +298,6 @@ def run_direct_push():
     # env.sim_step_wait = 0.01
     env.draw_user_text('run direct push', 2)
     # ctrl = controller.PreDeterminedController([(0.0, 1.0, 0.0) for _ in range(N)])
-    ctrl = controller.PreDeterminedController([(0.5, 1.0, -1.0) for _ in range(N)])
     # record how many steps of pushing to reach 1m
     contacts = {}
     obs = env.reset()
@@ -368,5 +371,5 @@ if __name__ == "__main__":
     # test_env_set()
     # test_simulator_friction_isometry()
     # tune_direct_push()
-    # run_direct_push()
-    test_init()
+    run_direct_push()
+    # test_init()
