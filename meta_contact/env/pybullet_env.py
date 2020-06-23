@@ -231,6 +231,9 @@ class DebugDrawer:
                                      np.add(location, [pointer[0], pointer[1], 0]),
                                      color, 2, replaceItemUniqueId=uids[1])
 
+    def clear_point_after(self, prefix, index):
+        self.clear_2d_poses_after(prefix, index)
+
     def clear_2d_poses_after(self, prefix, index):
         name = "{}{}".format(prefix, index)
         while name in self._debug_ids:

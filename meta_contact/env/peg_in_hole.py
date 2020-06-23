@@ -100,7 +100,7 @@ class PegInHoleEnv(PybulletEnv):
 
     @classmethod
     def state_cost(cls):
-        return np.diag([1, 1, 1, 0, 0])
+        return np.diag([1, 1, 0, 0, 0])
 
     @staticmethod
     def control_names():
@@ -256,8 +256,11 @@ class PegInHoleEnv(PybulletEnv):
             pass
         elif self.level == 1:
             # add protrusions to board
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.2, 0, wall_z],
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0., 0.05, wall_z],
                                          p.getQuaternionFromEuler([0, 0, np.pi / 2]), useFixedBase=True,
+                                         globalScaling=0.03))
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.05, 0.1, wall_z],
+                                         p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
                                          globalScaling=0.03))
 
         elif self.level == 2:
@@ -326,6 +329,16 @@ class PegInHoleEnv(PybulletEnv):
             pos = self.get_ee_pos(states[t])
             c = (t + 1) / (T + 1)
             self._dd.draw_point('rx{}'.format(t), pos, (0, c, c))
+        self._dd.clear_point_after('rx', T)
+
+    def visualize_goal_set(self, states):
+        if states is None:
+            return
+        T = len(states)
+        for t in range(T):
+            pos = self.get_ee_pos(states[t])
+            c = (t + 1) / (T + 1)
+            self._dd.draw_point('gs{}'.format(t), pos, (c, c, c))
 
     def visualize_prediction_error(self, predicted_state):
         """In GUI mode, show the difference between the predicted state and the current actual state"""
@@ -793,7 +806,14 @@ class PegInHole(simulation.Simulation):
             if self._predicts_dynamics_cls():
                 self.pred_cls[simTime] = self.ctrl.dynamics_class
                 self.env.draw_user_text("dyn cls {}".format(self.ctrl.dynamics_class), 2)
-                self.env.draw_user_text("recovery" if self.ctrl.autonomous_recovery_mode else "", 3)
+
+                mode_text = "recovery" if self.ctrl.autonomous_recovery_mode else (
+                    "local" if self.ctrl.using_local_model_for_nonnominal_dynamics else "")
+                self.env.draw_user_text(mode_text, 3)
+                if self.ctrl.recovery_cost:
+                    # plot goal set
+                    self.env.visualize_goal_set(self.ctrl.recovery_cost.goal_set)
+
                 for i in range(4):
                     dynamics_class_pred = self.ctrl.dynamics_class_prediction[i]
                     nom_count = (dynamics_class_pred == DynamicsClass.NOMINAL).sum()
