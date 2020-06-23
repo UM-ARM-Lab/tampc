@@ -345,8 +345,15 @@ class PegInHoleEnv(PybulletEnv):
         self._dd.draw_point('state', self.get_ee_pos(self.state))
         self._draw_reaction_force(self.state[3:5], 'sr', (0, 0, 0))
 
-    def _draw_action(self, action, debug=0):
-        pass
+    def _draw_action(self, action, old_state=None, debug=0):
+        if old_state is None:
+            old_state = self._obs()
+        start = old_state[:3]
+        pointer = np.concatenate((action, (0,)))
+        if debug:
+            self._dd.draw_2d_line('u{}'.format(debug), start, pointer, (1, debug / 30, debug / 10), scale=0.2)
+        else:
+            self._dd.draw_2d_line('u', start, pointer, (1, 0, 0), scale=0.2)
 
     def _draw_reaction_force(self, r, name, color=(1, 0, 1)):
         start = self._observe_ee()
@@ -631,7 +638,7 @@ class PegFloatingGripperEnv(PegInHoleEnv):
         dx, dy = self._unpack_action(action)
 
         if self._debug_visualizations[DebugVisualization.ACTION]:
-            self._draw_action(action)
+            self._draw_action(action, old_state=old_state)
 
         ee_pos = self.get_ee_pos(old_state)
         # apply force into the floor
