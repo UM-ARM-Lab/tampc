@@ -255,7 +255,7 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE,
                              use_demo=False,
                              use_trap_cost=True,
-                             reuse_escape_as_demonstration=False, num_frames=250, run_name=None,
+                             reuse_escape_as_demonstration=False, num_frames=150, run_name=None,
                              assume_all_nonnominal_dynamics_are_traps=False,
                              ctrl_opts=None,
                              **kwargs):
@@ -286,7 +286,9 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
         gating = hybrid_dynamics.get_gating() if gating is None else gating
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
+    ctrl_opts.update({'trap_cost_per_dim': 30.})
     ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                        abs_unrecognized_threshold=30,
                                         autonomous_recovery=autonomous_recovery,
                                         assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
                                         reuse_escape_as_demonstration=reuse_escape_as_demonstration,
@@ -350,7 +352,7 @@ if __name__ == "__main__":
     #     Learn.model(ut, seed=seed, name="")
 
     for seed in range(0, 5):
-        test_autonomous_recovery(seed=seed, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                 reuse_escape_as_demonstration=False, use_trap_cost=False,
+        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                                 reuse_escape_as_demonstration=False, use_trap_cost=True,
                                  assume_all_nonnominal_dynamics_are_traps=False,
                                  autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
