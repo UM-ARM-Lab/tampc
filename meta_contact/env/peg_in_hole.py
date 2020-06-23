@@ -927,7 +927,7 @@ class PegInHole(simulation.Simulation):
 
 
 class PegInHoleDataSource(PybulletEnvDataSource):
-    loader_map = {PegInHoleEnv: PegLoader}
+    loader_map = {PegInHoleEnv: PegLoader, PegFloatingGripperEnv: PegLoader}
 
     @staticmethod
     def _default_data_dir():

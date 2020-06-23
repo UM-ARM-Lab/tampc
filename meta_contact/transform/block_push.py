@@ -1,6 +1,5 @@
 import torch.nn
 import torch
-import copy
 from arm_pytorch_utilities import math_utils, load_data, linalg, tensor_utils
 from arm_pytorch_utilities.model import make
 from meta_contact.dynamics import model
