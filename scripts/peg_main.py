@@ -21,7 +21,6 @@ from meta_contact.dynamics import online_model, model, prior, hybrid_model
 
 from arm_pytorch_utilities.model import make
 from meta_contact.controller.online_controller import NominalTrajFrom
-from tensorboardX import SummaryWriter
 
 from meta_contact.dynamics.hybrid_model import OnlineAdapt, get_gating
 from meta_contact.controller import online_controller
@@ -129,6 +128,65 @@ def no_tsf_preprocessor():
     return preprocess.PytorchTransformer(preprocess.RobustMinMaxScaler())
 
 
+def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics, seed=0):
+    d = get_device()
+    if prior_class is prior.NNPrior:
+        mw = PegNetwork(model.DeterministicUser(make.make_sequential_network(ds.config).to(device=d)), ds,
+                        name="peg_{}_{}".format(tsf_name, seed))
+
+        train_epochs = 500
+        pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(),
+                                     train_epochs=train_epochs)
+    elif prior_class is prior.NoPrior:
+        pm = prior.NoPrior()
+    else:
+        pm = prior_class.from_data(ds)
+    return pm
+
+
+def get_prior(env, use_tsf=UseTsf.COORD, prior_class=prior.NNPrior):
+    ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
+    untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
+    pm = get_loaded_prior(prior_class, ds, tsf_name, False)
+    return ds, pm
+
+
+def get_controller_options(env):
+    d = get_device()
+    u_min, u_max = env.get_control_bounds()
+    Q = torch.tensor(env.state_cost(), dtype=torch.double)
+    R = 0.01
+    sigma = [0.2, 0.2]
+    noise_mu = [0, 0]
+    u_init = [0, 0]
+    # tune this so that we figure out to make u-turns
+    sigma = torch.tensor(sigma, dtype=torch.double, device=d)
+    common_wrapper_opts = {
+        'Q': Q,
+        'R': R,
+        'u_min': u_min,
+        'u_max': u_max,
+        'compare_to_goal': env.state_difference,
+        'device': d,
+        'terminal_cost_multiplier': 50,
+        'adjust_model_pred_with_prev_error': False,
+        'use_orientation_terminal_cost': False,
+    }
+    mpc_opts = {
+        'num_samples': 500,
+        'noise_sigma': torch.diag(sigma),
+        'noise_mu': torch.tensor(noise_mu, dtype=torch.double, device=d),
+        'lambda_': 1e-2,
+        'horizon': 20,
+        'u_init': torch.tensor(u_init, dtype=torch.double, device=d),
+        'sample_null_action': False,
+        'step_dependent_dynamics': True,
+        'rollout_samples': 10,
+        'rollout_var_cost': 0,
+    }
+    return common_wrapper_opts, mpc_opts
+
+
 class OfflineDataCollection:
     @staticmethod
     def random_config(env):
@@ -192,11 +250,107 @@ class Learn:
         mw.learn_model(train_epochs, batch_N=batch_N)
 
 
+def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
+                             use_tsf=UseTsf.COORD, nominal_adapt=OnlineAdapt.NONE,
+                             autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE,
+                             use_demo=False,
+                             use_trap_cost=True,
+                             reuse_escape_as_demonstration=False, num_frames=250, run_name=None,
+                             assume_all_nonnominal_dynamics_are_traps=False,
+                             ctrl_opts=None,
+                             **kwargs):
+    if ctrl_opts is None:
+        ctrl_opts = {}
+
+    env = get_env(p.GUI, level=level, log_video=True)
+    logger.info("initial random seed %d", rand.seed(seed))
+
+    ds, pm = get_prior(env, use_tsf)
+
+    dss = [ds]
+    demo_trajs = []
+    for demo in demo_trajs:
+        ds_local, config = get_ds(env, demo, validation_ratio=0.)
+        ds_local.update_preprocessor(ds.preprocessor)
+        dss.append(ds_local)
+
+    hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, [use_tsf.name],
+                                                       preprocessor=no_tsf_preprocessor(),
+                                                       nominal_model_kwargs={'online_adapt': nominal_adapt},
+                                                       local_model_kwargs=kwargs)
+
+    # we're always going to be in the nominal mode in this case; might as well speed up testing
+    if not use_demo and not reuse_escape_as_demonstration:
+        gating = AlwaysSelectNominal()
+    else:
+        gating = hybrid_dynamics.get_gating() if gating is None else gating
+
+    common_wrapper_opts, mpc_opts = get_controller_options(env)
+    ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                        autonomous_recovery=autonomous_recovery,
+                                        assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
+                                        reuse_escape_as_demonstration=reuse_escape_as_demonstration,
+                                        use_trap_cost=use_trap_cost,
+                                        **common_wrapper_opts, **ctrl_opts,
+                                        mpc_opts=mpc_opts)
+
+    # TODO set sequence of goals
+    z = env.initGripperPos[2]
+    goal = np.r_[env.hole, z, 0, 0]
+    ctrl.set_goal(goal)
+    # env._dd.draw_point('hole', env.hole, color=(0, 0.5, 0.8))
+    ctrl.create_recovery_traj_seeder(dss,
+                                     nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS if recover_adjust else NominalTrajFrom.NO_ADJUSTMENT)
+
+    env.draw_user_text(gating.name, 13, left_offset=-1.5)
+    env.draw_user_text("run seed {}".format(seed), 12, left_offset=-1.5)
+    env.draw_user_text("recovery {}".format(autonomous_recovery.name), 11, left_offset=-1.6)
+    if reuse_escape_as_demonstration:
+        env.draw_user_text("reuse escape", 10, left_offset=-1.6)
+    if use_trap_cost:
+        env.draw_user_text("trap set cost".format(autonomous_recovery.name), 9, left_offset=-1.6)
+
+    sim = peg_in_hole.PegInHole(env, ctrl, num_frames=num_frames, plot=False, save=True, stop_when_done=True)
+    seed = rand.seed(seed)
+
+    if run_name is None:
+        def affix_run_name(*args):
+            nonlocal run_name
+            for token in args:
+                run_name += "__{}".format(token)
+
+        run_name = 'auto_recover'
+        affix_run_name(nominal_adapt.name)
+        affix_run_name(autonomous_recovery.name + ("_WITHDEMO" if use_demo else ""))
+        affix_run_name(level)
+        affix_run_name(use_tsf.name)
+        affix_run_name("ALLTRAP" if assume_all_nonnominal_dynamics_are_traps else "SOMETRAP")
+        affix_run_name("REUSE" if reuse_escape_as_demonstration else "NOREUSE")
+        affix_run_name(gating.name)
+        affix_run_name("TRAPCOST" if use_trap_cost else "NOTRAPCOST")
+        affix_run_name(seed)
+        affix_run_name(num_frames)
+
+    env.draw_user_text(run_name, 14, left_offset=-1.5)
+    sim.run(seed, run_name)
+    logger.info("last run cost %f", np.sum(sim.last_run_cost))
+    plt.ioff()
+    plt.show()
+
+    env.close()
+
+
 if __name__ == "__main__":
     level = 0
     ut = UseTsf.COORD
 
     # OfflineDataCollection.freespace(trials=200, trial_length=50, mode=p.GUI)
 
-    for seed in range(1):
-        Learn.model(ut, seed=seed, name="")
+    # for seed in range(1):
+    #     Learn.model(ut, seed=seed, name="")
+
+    for seed in range(0, 5):
+        test_autonomous_recovery(seed=seed, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                                 reuse_escape_as_demonstration=False, use_trap_cost=False,
+                                 assume_all_nonnominal_dynamics_are_traps=False,
+                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
