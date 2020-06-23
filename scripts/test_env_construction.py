@@ -285,7 +285,7 @@ def run_direct_push():
     ctrl = controller.PreDeterminedController([(0.8, 1.0, -0.7) for _ in range(N)])
 
     init_block_pos = [0., 0.175]
-    init_block_yaw = -0.9 # -math.pi/2
+    init_block_yaw = -0.9  # -math.pi/2
     ctrl = controller.PreDeterminedController([(-0.8, 1.0, -0.95) for _ in range(N)])
 
     # env = block_push.PushWithForceDirectlyEnv(mode=p.GUI, init_pusher=0.5, log_video=True, goal=goal_pos,
@@ -350,10 +350,10 @@ def test_init(seed=0):
     env = peg_in_hole.PegFloatingGripperEnv(mode=p.GUI, log_video=True, environment_level=2)
     N = 20
     u = [(-1, 1) for _ in range(4)]
-    # u.extend([(1, -1) for _ in range(4)])
-    # u.extend([(0.5, -0.5) for _ in range(4)])
-    # u.extend([(1, 0) for _ in range(4)])
-    # u.extend([(-1, 0) for _ in range(4)])
+    u.extend([(1, -1) for _ in range(4)])
+    u.extend([(0.5, -0.5) for _ in range(4)])
+    u.extend([(1, 0) for _ in range(4)])
+    u.extend([(-1, 0) for _ in range(4)])
     u.extend([(0, 1) for _ in range(4)])
     u.extend([(0, -1) for _ in range(4)])
     # u = [(-1, 1) for _ in range(20)]
@@ -371,5 +371,5 @@ if __name__ == "__main__":
     # test_env_set()
     # test_simulator_friction_isometry()
     # tune_direct_push()
-    run_direct_push()
-    # test_init()
+    # run_direct_push()
+    test_init()
