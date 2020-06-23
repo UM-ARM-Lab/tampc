@@ -33,14 +33,16 @@ from meta_contact.controller import online_controller
 from meta_contact.controller.gating_function import AlwaysSelectNominal
 from meta_contact.env import block_push
 
-logger = logging.getLogger(__name__)
+ch = logging.StreamHandler()
+fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
+
 logging.basicConfig(level=logging.DEBUG,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
-                    datefmt='%m-%d %H:%M:%S')
-fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
-rootLogger = logging.getLogger()
-rootLogger.addHandler(fh)
+                    datefmt='%m-%d %H:%M:%S', handlers=[ch, fh])
+
 logging.getLogger('matplotlib.font_manager').disabled = True
+
+logger = logging.getLogger(__name__)
 
 REACTION_IN_STATE = True
 
@@ -994,6 +996,7 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
         affix_run_name(gating.name)
         affix_run_name("TRAPCOST" if use_trap_cost else "NOTRAPCOST")
         affix_run_name(seed)
+        affix_run_name(num_frames)
 
     env.draw_user_text(run_name, 14, left_offset=-1.5)
     sim.run(seed, run_name)
@@ -1965,11 +1968,17 @@ if __name__ == "__main__":
     # evaluate_ctrl_sampler('pushing/see_saw.mat', 150, seed=0, rollout_prev_xu=True)
 
     # autonomous recovery
-    for seed in range(3, 10):
-        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    for seed in range(0, 5):
+        test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
                                  reuse_escape_as_demonstration=False, use_trap_cost=False,
-                                 assume_all_nonnominal_dynamics_are_traps=False,
+                                 assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
                                  autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+
+    # for seed in range(0, 10):
+    #     test_autonomous_recovery(seed=seed, level=5, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              reuse_escape_as_demonstration=False, use_trap_cost=False, use_demo=True,
+    #                              assume_all_nonnominal_dynamics_are_traps=False,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # for seed in range(1,10):
     #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
