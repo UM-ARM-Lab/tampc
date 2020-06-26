@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 _PEG_MID = 0.075
 _BOARD_TOP = 0.05
 
-_DIR = "peg_in_hole"
+_DIR = "peg"
 
 pandaEndEffectorIndex = 11
 pandaNumDofs = 7
