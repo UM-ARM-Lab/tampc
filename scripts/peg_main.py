@@ -1,6 +1,9 @@
 import enum
 import math
 import torch
+import pickle
+import re
+import time
 import pybullet as p
 import numpy as np
 import matplotlib.pyplot as plt
@@ -255,7 +258,7 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE,
                              use_demo=False,
                              use_trap_cost=True,
-                             reuse_escape_as_demonstration=False, num_frames=150, run_name=None,
+                             reuse_escape_as_demonstration=False, num_frames=200, run_name=None,
                              assume_all_nonnominal_dynamics_are_traps=False,
                              ctrl_opts=None,
                              **kwargs):
@@ -341,18 +344,239 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
 
     env.close()
 
+class EvaluateTask:
+    class Graph:
+        def __init__(self):
+            from collections import defaultdict
+            self.nodes = set()
+            self.edges = defaultdict(list)
+            self.distances = {}
+
+        def add_node(self, value):
+            self.nodes.add(value)
+
+        def add_edge(self, from_node, to_node, distance):
+            self.edges[from_node].append(to_node)
+            self.distances[(from_node, to_node)] = distance
+
+    @staticmethod
+    def dijsktra(graph, initial):
+        visited = {initial: 0}
+        path = {}
+
+        nodes = set(graph.nodes)
+
+        while nodes:
+            min_node = None
+            for node in nodes:
+                if node in visited:
+                    if min_node is None:
+                        min_node = node
+                    elif visited[node] < visited[min_node]:
+                        min_node = node
+
+            if min_node is None:
+                break
+
+            nodes.remove(min_node)
+            current_weight = visited[min_node]
+
+            for edge in graph.edges[min_node]:
+                weight = current_weight + graph.distances[(min_node, edge)]
+                if edge not in visited or weight < visited[edge]:
+                    visited[edge] = weight
+                    path[edge] = min_node
+
+        return visited, path
+
+    @staticmethod
+    def _closest_distance_to_goal(file, level, visualize=True, nodes_per_side=100):
+        from sklearn.preprocessing import MinMaxScaler
+        env = get_env(p.GUI if visualize else p.DIRECT, level=level)
+        ds, _ = get_ds(env, file, validation_ratio=0.)
+        XU, _, _ = ds.training_set(original=True)
+        X, U = torch.split(XU, ds.original_config().nx, dim=1)
+
+        if level is 1:
+            min_pos = [-0.4, -0.5]
+            max_pos = [0.5, 0.5]
+        else:
+            raise RuntimeError("Unspecified range for level {}".format(level))
+
+        scaler = MinMaxScaler(feature_range=(0, nodes_per_side - 1))
+        scaler.fit(np.array([min_pos, max_pos]))
+
+        reached_states = X[:, :2].cpu().numpy()
+        goal_pos = env.hole[:2]
+
+        lower_bound_dist = np.linalg.norm((reached_states - goal_pos), axis=1).min()
+        # we expect there not to be walls between us if the minimum distance is this small
+        # if lower_bound_dist < 0.2:
+        #     return lower_bound_dist
+
+        def node_to_pos(node):
+            return scaler.inverse_transform([node])[0]
+            # return float(node[0]) / nodes_per_side + min_pos[0], float(node[1]) / nodes_per_side + min_pos[1]
+
+        def pos_to_node(pos):
+            pair = scaler.transform([pos])[0]
+            node = tuple(int(round(v)) for v in pair)
+            return node
+            # return int(round((pos[0] - min_pos[0]) * nodes_per_side)), int(
+            #     round((pos[1] - min_pos[1]) * nodes_per_side))
+
+        z = env.initGripperPos[2]
+        # draw search boundaries
+        rgb = [0, 0, 0]
+        p.addUserDebugLine([min_pos[0], min_pos[1], z], [max_pos[0], min_pos[1], z], rgb)
+        p.addUserDebugLine([max_pos[0], min_pos[1], z], [max_pos[0], max_pos[1], z], rgb)
+        p.addUserDebugLine([max_pos[0], max_pos[1], z], [min_pos[0], max_pos[1], z], rgb)
+        p.addUserDebugLine([min_pos[0], max_pos[1], z], [min_pos[0], min_pos[1], z], rgb)
+
+        # draw previous trajectory
+        rgb = [0, 0, 1]
+        start = reached_states[0, 0], reached_states[0, 1], z
+        for i in range(1, len(reached_states)):
+            next = reached_states[i, 0], reached_states[i, 1], z
+            p.addUserDebugLine(start, next, rgb)
+            start = next
+
+        # try to load it if possible
+        fullname = os.path.join(cfg.DATA_DIR, 'ok_peg{}_{}.pkl'.format(level, nodes_per_side))
+        if os.path.exists(fullname):
+            with open(fullname, 'rb') as f:
+                ok_nodes = pickle.load(f)
+                logger.info("loaded ok nodes from %s", fullname)
+        else:
+            ok_nodes = [[None for _ in range(nodes_per_side)] for _ in range(nodes_per_side)]
+            orientation = p.getQuaternionFromEuler([0, 0, 0])
+            pointer = p.loadURDF(os.path.join(cfg.ROOT_DIR, "peg.urdf"), (0, 0, z))
+            # discretize positions and show goal states
+            xs = np.linspace(min_pos[0], max_pos[0], nodes_per_side)
+            ys = np.linspace(min_pos[1], max_pos[1], nodes_per_side)
+            for i, x in enumerate(xs):
+                for j, y in enumerate(ys):
+                    p.resetBasePositionAndOrientation(pointer, (x, y, z), orientation)
+                    for wall in env.walls:
+                        c = p.getClosestPoints(pointer, wall, 0)
+                        if c:
+                            break
+                    else:
+                        n = pos_to_node((x, y))
+                        ok_nodes[i][j] = n
+
+        with open(fullname, 'wb') as f:
+            pickle.dump(ok_nodes, f)
+            logger.info("saved ok nodes to %s", fullname)
+
+        # distance 1 step along x
+        dxx = (max_pos[0] - min_pos[0]) / nodes_per_side
+        dyy = (max_pos[1] - min_pos[1]) / nodes_per_side
+        neighbours = [[-1, 0], [0, 1], [1, 0], [0, -1]]
+        distances = [dxx, dyy, dxx, dyy]
+        # create graph and do search on it based on environment obstacles
+        g = EvaluateTask.Graph()
+        for i in range(nodes_per_side):
+            for j in range(nodes_per_side):
+                u = ok_nodes[i][j]
+                if u is None:
+                    continue
+                g.add_node(u)
+                for dxy, dist in zip(neighbours, distances):
+                    ii = i + dxy[0]
+                    jj = j + dxy[1]
+                    if ii < 0 or ii >= nodes_per_side:
+                        continue
+                    if jj < 0 or jj >= nodes_per_side:
+                        continue
+                    v = ok_nodes[ii][jj]
+                    if v is not None:
+                        g.add_edge(u, v, dist)
+
+        goal_node = pos_to_node(goal_pos)
+        visited, path = EvaluateTask.dijsktra(g, goal_node)
+        # find min across visited states
+        min_dist = 100
+        min_node = None
+        for xy in reached_states:
+            n = pos_to_node(xy)
+            if n in visited and visited[n] < min_dist:
+                min_dist = visited[n]
+                min_node = n
+
+        if min_node is None:
+            print('min node outside search region, return lower bound')
+            return lower_bound_dist * 1.2
+        # display minimum path to goal
+        rgb = [1, 0, 0]
+        min_xy = node_to_pos(min_node)
+        start = min_xy[0], min_xy[1], z
+        while min_node != goal_node:
+            next_node = path[min_node]
+            next_xy = node_to_pos(next_node)
+            next = next_xy[0], next_xy[1], z
+            p.addUserDebugLine(start, next, rgb)
+            start = next
+            min_node = next_node
+
+        print('min dist: {} lower bound: {}'.format(min_dist, lower_bound_dist))
+        env.close()
+        return min_dist
+
+    @staticmethod
+    def closest_distance_to_goal_whole_set(prefix, **kwargs):
+        m = re.search(r"\d+", prefix)
+        if m is not None:
+            level = int(m.group())
+        else:
+            raise RuntimeError("Prefix has no level information in it")
+
+        fullname = os.path.join(cfg.DATA_DIR, 'peg_task_res.pkl')
+        if os.path.exists(fullname):
+            with open(fullname, 'rb') as f:
+                runs = pickle.load(f)
+                logger.info("loaded runs from %s", fullname)
+        else:
+            runs = {}
+
+        if prefix not in runs:
+            runs[prefix] = {}
+
+        trials = [filename for filename in os.listdir(os.path.join(cfg.DATA_DIR, "peg")) if
+                  filename.startswith(prefix)]
+        dists = []
+        for i, trial in enumerate(trials):
+            d = EvaluateTask._closest_distance_to_goal("peg/{}".format(trial), visualize=i == 0, level=level,
+                                                       **kwargs)
+            dists.append(d)
+            runs[prefix][trial] = d
+
+        logger.info(dists)
+        logger.info("mean {:.2f} std {:.2f} cm".format(np.mean(dists) * 10, np.std(dists) * 10))
+        with open(fullname, 'wb') as f:
+            pickle.dump(runs, f)
+            logger.info("saved runs to %s", fullname)
+        time.sleep(0.5)
 
 if __name__ == "__main__":
     level = 0
     ut = UseTsf.COORD
 
-    # OfflineDataCollection.freespace(trials=200, trial_length=50, mode=p.GUI)
+    # OfflineDataCollection.freespace(trials=200, trial_length=50, mode=p.DIRECT)
 
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")
 
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
+
+    # for seed in range(0, 5):
+    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              reuse_escape_as_demonstration=False, use_trap_cost=True,
+    #                              assume_all_nonnominal_dynamics_are_traps=False,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+
     for seed in range(0, 5):
-        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                 reuse_escape_as_demonstration=False, use_trap_cost=True,
+        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
+                                 reuse_escape_as_demonstration=False, use_trap_cost=False,
                                  assume_all_nonnominal_dynamics_are_traps=False,
-                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+                                 autonomous_recovery=online_controller.AutonomousRecovery.NONE)
