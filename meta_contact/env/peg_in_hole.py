@@ -256,10 +256,19 @@ class PegInHoleEnv(PybulletEnv):
             pass
         elif self.level == 1:
             # add protrusions to board
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0., 0.05, wall_z],
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.1, -0.07, wall_z],
                                          p.getQuaternionFromEuler([0, 0, np.pi / 2]), useFixedBase=True,
                                          globalScaling=0.06))
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.05, 0.1, wall_z],
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.1, 0.07, wall_z],
+                                         p.getQuaternionFromEuler([0, 0, np.pi / 2]), useFixedBase=True,
+                                         globalScaling=0.06))
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.1, 0.25, wall_z],
+                                         p.getQuaternionFromEuler([0, 0, np.pi / 2]), useFixedBase=True,
+                                         globalScaling=0.06))
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.02, 0.35, wall_z],
+                                         p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
+                                         globalScaling=0.06))
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.16, 0.35, wall_z],
                                          p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
                                          globalScaling=0.06))
 
@@ -587,7 +596,7 @@ class PegFloatingGripperEnv(PegInHoleEnv):
     nu = 2
     nx = 5
     MAX_FORCE = 10
-    MAX_GRIPPER_FORCE = 20
+    MAX_GRIPPER_FORCE = 30
     MAX_PUSH_DIST = 0.03
     OPEN_ANGLE = 0.025
     CLOSE_ANGLE = 0.01
