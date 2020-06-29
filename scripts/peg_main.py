@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import logging
 import os
 from datetime import datetime
+import seaborn as sns
 
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.optim import get_device
@@ -344,6 +345,7 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
 
     env.close()
 
+
 class EvaluateTask:
     class Graph:
         def __init__(self):
@@ -398,7 +400,7 @@ class EvaluateTask:
         X, U = torch.split(XU, ds.original_config().nx, dim=1)
 
         if level is 1:
-            min_pos = [-0.4, -0.5]
+            min_pos = [-0.3, -0.3]
             max_pos = [0.5, 0.5]
         else:
             raise RuntimeError("Unspecified range for level {}".format(level))
@@ -410,6 +412,7 @@ class EvaluateTask:
         goal_pos = env.hole[:2]
 
         lower_bound_dist = np.linalg.norm((reached_states - goal_pos), axis=1).min()
+
         # we expect there not to be walls between us if the minimum distance is this small
         # if lower_bound_dist < 0.2:
         #     return lower_bound_dist
@@ -425,7 +428,7 @@ class EvaluateTask:
             # return int(round((pos[0] - min_pos[0]) * nodes_per_side)), int(
             #     round((pos[1] - min_pos[1]) * nodes_per_side))
 
-        z = env.initGripperPos[2]
+        z = env.initPeg[2]
         # draw search boundaries
         rgb = [0, 0, 0]
         p.addUserDebugLine([min_pos[0], min_pos[1], z], [max_pos[0], min_pos[1], z], rgb)
@@ -458,7 +461,7 @@ class EvaluateTask:
                 for j, y in enumerate(ys):
                     p.resetBasePositionAndOrientation(pointer, (x, y, z), orientation)
                     for wall in env.walls:
-                        c = p.getClosestPoints(pointer, wall, 0)
+                        c = p.getClosestPoints(pointer, wall, 0.0)
                         if c:
                             break
                     else:
@@ -558,6 +561,100 @@ class EvaluateTask:
             logger.info("saved runs to %s", fullname)
         time.sleep(0.5)
 
+
+class Visualize:
+    @staticmethod
+    def task_res_dist(filter_function=None):
+        def name_to_tokens(name):
+            tk = {'name': name}
+            tokens = name.split('__')
+            # legacy fallback
+            if len(tokens) < 5:
+                tokens = name.split('_')
+                # skip prefix
+                tokens = tokens[2:]
+                if tokens[0] == "NONE":
+                    tk['adaptation'] = tokens.pop(0)
+                else:
+                    tk['adaptation'] = "{}_{}".format(tokens[0], tokens[1])
+                    tokens = tokens[2:]
+                if tokens[0] in ("RANDOM", "NONE"):
+                    tk['recovery'] = tokens.pop(0)
+                else:
+                    tk['recovery'] = "{}_{}".format(tokens[0], tokens[1])
+                    tokens = tokens[2:]
+                tk['level'] = int(tokens.pop(0))
+                tk['tsf'] = tokens.pop(0)
+                tk['reuse'] = tokens.pop(0)
+                tk['optimism'] = "ALLTRAP"
+                tk['trap_use'] = "NOTRAPCOST"
+            else:
+                tokens.pop(0)
+                tk['adaptation'] = tokens[0]
+                tk['recovery'] = tokens[1]
+                tk['level'] = int(tokens[2])
+                tk['tsf'] = tokens[3]
+                tk['optimism'] = tokens[4]
+                tk['reuse'] = tokens[5]
+                if len(tokens) > 7:
+                    tk['trap_use'] = tokens[7]
+                else:
+                    tk['trap_use'] = "NOTRAPCOST"
+
+            return tk
+
+        fullname = os.path.join(cfg.DATA_DIR, 'peg_task_res.pkl')
+        if os.path.exists(fullname):
+            with open(fullname, 'rb') as f:
+                runs = pickle.load(f)
+                logger.info("loaded runs from %s", fullname)
+        else:
+            raise RuntimeError("missing cached task results file {}".format(fullname))
+
+        tasks = {}
+        for prefix, dists in sorted(runs.items()):
+            m = re.search(r"\d+", prefix)
+            if m is not None:
+                level = int(m.group())
+            else:
+                raise RuntimeError("Prefix has no level information in it")
+            if level not in tasks:
+                tasks[level] = {}
+            if prefix not in tasks[level]:
+                tasks[level][prefix] = dists
+
+        for level, res in tasks.items():
+            min_dist = 100
+            max_dist = 0
+
+            res_list = {k: list(v.values()) for k, v in res.items()}
+            for dists in res_list.values():
+                min_dist = min(min(dists), min_dist)
+                max_dist = max(max(dists), max_dist)
+
+            series = []
+            for i, (series_name, dists) in enumerate(res_list.items()):
+                tokens = name_to_tokens(series_name)
+                if filter_function is None or filter_function(tokens):
+                    series.append((series_name, tokens, dists))
+
+            f, ax = plt.subplots(len(series), 1, figsize=(8, 9))
+            f.suptitle("task {}".format(level))
+
+            for i, data in enumerate(series):
+                series_name, tk, dists = data
+                logger.info("%s with %d runs mean {:.2f} ({:.2f})".format(np.mean(dists) * 10, np.std(dists) * 10),
+                            series_name, len(dists))
+                sns.distplot(dists, ax=ax[i], hist=True, kde=False, bins=np.linspace(min_dist, max_dist, 20))
+                ax[i].set_title((tk['adaptation'], tk['recovery'], tk['optimism']))
+                ax[i].set_xlim(min_dist, max_dist)
+                ax[i].set_ylim(0, int(0.6 * len(dists)))
+            ax[-1].set_xlabel('closest dist to goal [m]')
+            f.tight_layout(rect=[0, 0.03, 1, 0.95])
+
+        plt.show()
+
+
 if __name__ == "__main__":
     level = 0
     ut = UseTsf.COORD
@@ -568,6 +665,10 @@ if __name__ == "__main__":
     #     Learn.model(ut, seed=seed, name="")
 
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__GP_KERNEL__NONE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RANDOM__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST')
+
+    Visualize.task_res_dist()
 
     # for seed in range(0, 5):
     #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
@@ -575,8 +676,14 @@ if __name__ == "__main__":
     #                              assume_all_nonnominal_dynamics_are_traps=False,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
-    for seed in range(0, 5):
-        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
-                                 reuse_escape_as_demonstration=False, use_trap_cost=False,
-                                 assume_all_nonnominal_dynamics_are_traps=False,
-                                 autonomous_recovery=online_controller.AutonomousRecovery.NONE)
+    # for seed in range(0, 5):
+    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              reuse_escape_as_demonstration=False, use_trap_cost=False,
+    #                              assume_all_nonnominal_dynamics_are_traps=False,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
+
+    # for seed in range(0, 5):
+    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
+    #                              reuse_escape_as_demonstration=False, use_trap_cost=False,
+    #                              assume_all_nonnominal_dynamics_are_traps=False,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.NONE)

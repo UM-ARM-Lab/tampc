@@ -1644,12 +1644,6 @@ class Visualize:
         else:
             raise RuntimeError("missing cached task results file {}".format(fullname))
 
-        # TODO remove
-        base = 'auto_recover__NONE__RETURN_STATE__3__COORD__SOMETRAP__NOREUSE__DecisionTreeClassifier{}'
-        runs[base.format("")] = {}
-        for i in range(10):
-            runs[base.format("")][base.format("__{}".format(i))] = 2.9 + np.random.rand() * 0.1
-
         tasks = {}
         for prefix, dists in runs.items():
             m = re.search(r"\d+", prefix)
@@ -1942,7 +1936,7 @@ if __name__ == "__main__":
                                                    "auto_recover__NONE__RETURN_STATE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST"]
 
 
-    # Visualize.task_res_dist(filter_func)
+    Visualize.task_res_dist(filter_func)
 
     # EvaluateTask.closest_distance_to_goal_whole_set('test_sufficiency_1_NO_TRANSFORM_AlwaysSelectLocal')
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RANDOM_1_COORD_NOREUSE_DecisionTreeClassifier')
@@ -1958,6 +1952,7 @@ if __name__ == "__main__":
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST')
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__GP_KERNEL__NONE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST')
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_gating_function(use_tsf=ut, test_file=neg_test_file)
@@ -1968,17 +1963,17 @@ if __name__ == "__main__":
     # evaluate_ctrl_sampler('pushing/see_saw.mat', 150, seed=0, rollout_prev_xu=True)
 
     # autonomous recovery
-    for seed in range(0, 5):
-        test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                 reuse_escape_as_demonstration=False, use_trap_cost=False,
-                                 assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
-                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-
-    # for seed in range(0, 10):
-    #     test_autonomous_recovery(seed=seed, level=5, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              reuse_escape_as_demonstration=False, use_trap_cost=False, use_demo=True,
-    #                              assume_all_nonnominal_dynamics_are_traps=False,
+    # for seed in range(0, 5):
+    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              reuse_escape_as_demonstration=False, use_trap_cost=False,
+    #                              assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+
+    for seed in range(0, 10):
+        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                                 reuse_escape_as_demonstration=False, use_trap_cost=True, use_demo=False,
+                                 assume_all_nonnominal_dynamics_are_traps=False,
+                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # for seed in range(1,10):
     #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
