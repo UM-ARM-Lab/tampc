@@ -81,7 +81,7 @@ class OnlineMPC(controller.MPC):
         t = len(self.u_history)
         x = obs
         if t > 0:
-            self.dynamics.update(self.x_history[-1], self.u_history[-1], x)
+            self.dynamics.update(self.x_history[-2], self.u_history[-1], x)
 
         self.mpc_cost_history.append(self.mpc.running_cost(x.view(1, -1), None))
         u = self._compute_action(x)
@@ -97,6 +97,11 @@ class AutonomousRecovery(enum.IntEnum):
     NONE = 0
     RANDOM = 1
     RETURN_STATE = 2
+
+
+# TODO take this as input instead of hard coding it
+def state_displacement(before, after):
+    return (before[:2] - after[:2]).norm()
 
 
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
@@ -160,7 +165,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         # heuristic for determining if this a trap and should we enter autonomous recovery mode
         # TODO kind of hacky but our model predicts poorly when action has 0 magnitude
         if self.autonomous_recovery is not AutonomousRecovery.NONE and \
-                len(self.x_history) > 3 and \
+                len(self.x_history) >= self.nonnominal_dynamics_trend_len and \
                 self.u_history[-1][1] > 0:
 
             if self.assume_all_nonnominal_dynamics_are_traps:
@@ -169,21 +174,18 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             # cooldown on entering and leaving traps (can't use our progress during recovery for calculating whether we
             # enter a trap or not since the recovery policy isn't expected to decrease goal cost)
             cur_index = len(self.x_history)
-            if cur_index - self.autonomous_recovery_end_index < self.leave_recovery_num_turns:
+            if cur_index - self.autonomous_recovery_end_index < self.nonnominal_dynamics_trend_len:
                 return False
 
-            # check cost history compared to before we entered non-nominal dyanmics and after we've entered
-            # don't include the first state since the reaction forces are not initialized correctly
-            before_trend = torch.cat(self.orig_cost_history[
-                                     max(1, self.nonnominal_dynamics_start_index - self.nonnominal_dynamics_trend_len):
-                                     self.nonnominal_dynamics_start_index])
-            current_trend = torch.cat(self.orig_cost_history[-self.nonnominal_dynamics_trend_len:])
-            # should be negative
-            before_progress_rate = (before_trend[1:] - before_trend[:-1]).mean()
-            current_progress_rate = (current_trend[1:] - current_trend[:-1]).mean()
-            is_trap = before_progress_rate * self.nonnominal_dynamics_penalty_tolerance < current_progress_rate
-            logger.debug("before progress rate %f current progress rate %f trap? %d", before_progress_rate.item(),
-                         current_progress_rate.item(), is_trap)
+            # look at displacement
+            before = state_displacement(
+                self.x_history[max(0, self.nonnominal_dynamics_start_index - self.nonnominal_dynamics_trend_len)],
+                self.x_history[self.nonnominal_dynamics_start_index])
+
+            current = state_displacement(
+                self.x_history[max(-len(self.x_history), -self.nonnominal_dynamics_trend_len - 1)], self.x_history[-1])
+            is_trap = current < before * self.nonnominal_dynamics_penalty_tolerance
+            logger.debug("before displacement %f current displacement %f trap? %d", before, current, is_trap)
             return is_trap
         return False
 
@@ -236,22 +238,23 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         logger.debug(self.diff_predicted.norm())
 
         self.using_local_model_for_nonnominal_dynamics = True
-        # does not include the current observation
-        self.nonnominal_dynamics_start_index = len(self.x_history) + 1
+        # includes the current observation
+        self.nonnominal_dynamics_start_index = len(self.x_history) - 1
 
         self.dynamics.use_temp_local_nominal_model()
         # update the local model with the last transition for entering the mode
-        self.dynamics.update(self.x_history[-1], self.u_history[-1], x)
+        self.dynamics.update(self.x_history[-2], self.u_history[-1], x)
 
     def _start_recovery_mode(self):
         logger.debug("Entering autonomous recovery mode")
         self.autonomous_recovery_mode = True
-        self.autonomous_recovery_start_index = len(self.x_history) + 1
+        # TODO also make autonomous recovery index include this observation
+        self.autonomous_recovery_start_index = len(self.x_history)
 
         # avoid these points in the future
         for i in range(min(len(self.u_history), self.steps_before_entering_trap_to_avoid)):
-            self.trap_set.append((self.x_history[-i-1], self.u_history[-i-1]))
-        temp = torch.stack([torch.cat((x, u)) for x,u in self.trap_set])
+            self.trap_set.append((self.x_history[-i - 2], self.u_history[-i - 1]))
+        temp = torch.stack([torch.cat((x, u)) for x, u in self.trap_set])
         logger.debug("trap set updated to be\n%s", temp)
 
         # different strategies for recovery mode
@@ -273,14 +276,14 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         logger.debug("Leaving autonomous recovery mode")
         logger.debug(torch.tensor(self.dynamics_class_history[-self.leave_recovery_num_turns:]))
         self.autonomous_recovery_mode = False
-        self.autonomous_recovery_end_index = len(self.x_history) + 1
+        self.autonomous_recovery_end_index = len(self.x_history)
 
         # if we're sure that we've left an unrecognized class, save as recovery
         if self.reuse_escape_as_demonstration:
             # TODO filter out moves? / weight later points more?
             x_recovery = []
             u_recovery = []
-            for i in range(self.autonomous_recovery_start_index, len(self.x_history)):
+            for i in range(self.autonomous_recovery_start_index, len(self.u_history)):
                 if self.u_history[i][1] > 0:
                     x_recovery.append(self.x_history[i])
                     u_recovery.append(self.u_history[i])

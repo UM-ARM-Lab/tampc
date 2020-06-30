@@ -668,13 +668,13 @@ if __name__ == "__main__":
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__GP_KERNEL__NONE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST')
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RANDOM__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST')
 
-    Visualize.task_res_dist()
+    # Visualize.task_res_dist()
 
-    # for seed in range(0, 5):
-    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              reuse_escape_as_demonstration=False, use_trap_cost=True,
-    #                              assume_all_nonnominal_dynamics_are_traps=False,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    for seed in range(0, 5):
+        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                                 reuse_escape_as_demonstration=False, use_trap_cost=True,
+                                 assume_all_nonnominal_dynamics_are_traps=False,
+                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # for seed in range(0, 5):
     #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
