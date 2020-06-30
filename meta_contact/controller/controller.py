@@ -174,11 +174,11 @@ class PreDeterminedControllerWithPrediction(PreDeterminedController, ControllerW
 
 
 TRAP_COST_DIM = 0.5
-TRAP_MAX_COST = 100
+TRAP_MAX_COST = 30
 
 
 def trap_cost_reduce(costs):
-    return torch.clamp((1 / costs).max(dim=0).values, 0, TRAP_MAX_COST)
+    return torch.clamp((1 / costs).sum(dim=0), 0, TRAP_MAX_COST)
 
 
 class MPC(ControllerWithModelPrediction):
