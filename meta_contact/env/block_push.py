@@ -986,6 +986,10 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
     def control_names():
         return ['$p$', 'd push distance', '$\\beta$ push angle (wrt normal)']
 
+    @classmethod
+    def control_cost(cls):
+        return np.diag([0, 1, 0])
+
     @staticmethod
     def get_control_bounds():
         u_min = np.array([-1, 0, -1])
