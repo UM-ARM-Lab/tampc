@@ -221,9 +221,9 @@ class MPC(ControllerWithModelPrediction):
             # TODO hacky way of handling trap cost in reaction force dimensions
             trap_q = tensor_utils.ensure_diagonal([trap_cost_per_dim, trap_cost_per_dim, trap_cost_per_dim, 0, 0], self.nx).to(
                 device=self.d, dtype=self.dtype)
-            trap_r = tensor_utils.ensure_diagonal(trap_cost_per_dim, self.nu).to(device=self.d,
-                                                                                                             dtype=self.dtype)
-            self.trap_cost = cost.CostQRSet(self.trap_set, trap_q, trap_r, self.compare_to_goal, reduce=trap_cost_reduce)
+            trap_r = tensor_utils.ensure_diagonal(trap_cost_per_dim, self.nu).to(device=self.d, dtype=self.dtype)
+            self.trap_set_weight = 1
+            self.trap_cost = cost.CostQRSet(self.trap_set, trap_q, trap_r, self.compare_to_goal, reduce=self._trap_cost_reduce)
             self.cost = cost.ComposeCost([self.goal_cost, self.trap_cost])
         else:
             self.trap_cost = None
@@ -241,6 +241,9 @@ class MPC(ControllerWithModelPrediction):
         goal = torch.tensor(goal, dtype=self.dtype, device=self.d)
         super().set_goal(goal)
         self.goal_cost.goal = goal
+
+    def _trap_cost_reduce(self, costs):
+        return trap_cost_reduce(costs) * self.trap_set_weight
 
     def _running_cost(self, state, action):
         return self.cost(state, action)
