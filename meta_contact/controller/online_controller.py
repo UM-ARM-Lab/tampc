@@ -145,13 +145,16 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def _recovery_running_cost(self, state, action):
         return self.recovery_cost(state, action)
 
+    def _control_effort(self, u):
+        return u @ self.R @ u
+
     def _in_non_nominal_dynamics(self):
         return self.diff_predicted is not None and \
                self.dynamics_class == gating_function.DynamicsClass.NOMINAL and \
                self.diff_predicted.norm() > self.abs_unrecognized_threshold and \
                self.autonomous_recovery is not AutonomousRecovery.NONE and \
                len(self.u_history) > 1 and \
-               self.u_history[-1][1] > 0
+               self._control_effort(self.u_history[-1]) > 0
 
     def _entering_trap(self):
         # already inside trap
@@ -163,10 +166,9 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             return False
 
         # heuristic for determining if this a trap and should we enter autonomous recovery mode
-        # TODO kind of hacky but our model predicts poorly when action has 0 magnitude
         if self.autonomous_recovery is not AutonomousRecovery.NONE and \
                 len(self.x_history) >= self.nonnominal_dynamics_trend_len and \
-                self.u_history[-1][1] > 0:
+                self._control_effort(self.u_history[-1]) > 0:
 
             if self.assume_all_nonnominal_dynamics_are_traps:
                 return True
@@ -199,7 +201,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         for i in range(-1, -len(self.u_history), -1):
             if self.dynamics_class_history[i] == gating_function.DynamicsClass.UNRECOGNIZED:
                 break
-            if self.u_history[i][1] > 0:
+            if self._control_effort(self.u_history[i]) > 0:
                 consecutive_recognized_dynamics_class += 1
         if consecutive_recognized_dynamics_class >= self.leave_recovery_num_turns:
             return True
@@ -229,7 +231,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         for i in range(-1, -len(self.u_history), -1):
             if self.dynamics_class_history[i] == gating_function.DynamicsClass.UNRECOGNIZED:
                 break
-            if self.u_history[i][1] > 0:
+            if self._control_effort(self.u_history[i]) > 0:
                 consecutive_recognized_dynamics_class += 1
         return consecutive_recognized_dynamics_class >= self.leave_recovery_num_turns
 
@@ -284,7 +286,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             x_recovery = []
             u_recovery = []
             for i in range(self.autonomous_recovery_start_index, len(self.u_history)):
-                if self.u_history[i][1] > 0:
+                if self._control_effort(self.u_history[i]) > 0:
                     x_recovery.append(self.x_history[i])
                     u_recovery.append(self.u_history[i])
             x_recovery = torch.stack(x_recovery)
@@ -325,8 +327,16 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
         self.dynamics_class_history.append(self.dynamics_class)
 
+        if not self.using_local_model_for_nonnominal_dynamics:
+            current_trend = torch.cat(self.orig_cost_history[-self.nonnominal_dynamics_trend_len:])
+            current_progress_rate = (current_trend[1:] - current_trend[:-1]).mean()
+            # only decrease trap set weight if we're not making progress towards goal
+            if current_progress_rate >= 0:
+                self.trap_set_weight *= 0.97
+
         if self._entering_trap():
             self._start_recovery_mode()
+            self.trap_set_weight *= 1.1
 
         if self._left_trap():
             self._end_recovery_mode()
@@ -338,6 +348,8 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             u = torch.rand(self.nu, device=self.d).cuda() * (self.u_max - self.u_min) + self.u_min
         else:
             u = self.mpc.command(x)
+
+        logger.debug("trap set weight %f", self.trap_set_weight)
 
         return u
 
