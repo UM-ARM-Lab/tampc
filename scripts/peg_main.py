@@ -684,19 +684,25 @@ if __name__ == "__main__":
     # Visualize.task_res_dist()
 
     for seed in range(0, 5):
-        test_autonomous_recovery(seed=seed, level=4, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+        test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
                                  reuse_escape_as_demonstration=False, use_trap_cost=True,
                                  assume_all_nonnominal_dynamics_are_traps=False,
                                  autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # for seed in range(0, 5):
-    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                              reuse_escape_as_demonstration=False, use_trap_cost=False,
     #                              assume_all_nonnominal_dynamics_are_traps=False,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
+    #
+    for seed in range(0, 5):
+        test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                                 reuse_escape_as_demonstration=False, use_trap_cost=True,
+                                 assume_all_nonnominal_dynamics_are_traps=False,
+                                 autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
 
     # for seed in range(0, 5):
-    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
+    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
     #                              reuse_escape_as_demonstration=False, use_trap_cost=False,
     #                              assume_all_nonnominal_dynamics_are_traps=False,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.NONE)

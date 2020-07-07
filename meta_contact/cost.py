@@ -99,9 +99,31 @@ class CostQRSet(Cost):
         return costs
 
 
+class CostLeaveState(Cost):
+    """Reward for distance away from current state"""
+
+    def __init__(self, X, Q, R, compare_to_goal, max_cost):
+        self.x = X
+        self.Q = Q
+        self.R = R
+        self.compare_to_goal = compare_to_goal
+        self.max_cost = max_cost
+
+    def update_state(self, x):
+        self.x = x
+
+    @tensor_utils.handle_batch_input
+    def __call__(self, X, U=None, terminal=False):
+        dist_cost = qr_cost(self.compare_to_goal, X, self.x, self.Q, self.R, U=U, terminal=terminal)
+        # reward for having high dist (invert cost)
+        costs = torch.clamp((1 / dist_cost), 0, self.max_cost)
+        return costs
+
+
 class ComposeCost(Cost):
-    def __init__(self, costs):
+    def __init__(self, costs, weights=None):
         self.fn = costs
+        self.weights = weights
 
     @tensor_utils.handle_batch_input
     def __call__(self, X, U=None, terminal=False):
@@ -113,6 +135,11 @@ class ComposeCost(Cost):
         #     logger.info("sampled cost ratios %s", _debug_cost_ratio)
 
         costs = torch.stack(costs, dim=0)
+        if self.weights is not None:
+            if callable(self.weights):
+                costs *= self.weights().view(-1, 1)
+            else:
+                costs *= self.weights.view(-1, 1)
 
         costs = costs.sum(dim=0)
         return costs

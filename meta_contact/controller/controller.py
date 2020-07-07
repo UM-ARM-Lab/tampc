@@ -217,12 +217,12 @@ class MPC(ControllerWithModelPrediction):
         self.goal_cost = cost.CostQROnlineTorch(self.goal, self.Q, self.R, self.compare_to_goal)
         self.terminal_cost_multiplier = terminal_cost_multiplier
 
+        self.trap_set_weight = 1
         if use_trap_cost:
             # TODO hacky way of handling trap cost in reaction force dimensions
             trap_q = tensor_utils.ensure_diagonal([trap_cost_per_dim, trap_cost_per_dim, trap_cost_per_dim, 0, 0], self.nx).to(
                 device=self.d, dtype=self.dtype)
             trap_r = tensor_utils.ensure_diagonal(trap_cost_per_dim, self.nu).to(device=self.d, dtype=self.dtype)
-            self.trap_set_weight = 1
             self.trap_cost = cost.CostQRSet(self.trap_set, trap_q, trap_r, self.compare_to_goal, reduce=self._trap_cost_reduce)
             self.cost = cost.ComposeCost([self.goal_cost, self.trap_cost])
         else:

@@ -1,12 +1,11 @@
-import abc
 import logging
 import enum
 
-import numpy as np
 import torch
+from meta_contact.controller.multi_arm_bandit import KFMANDB
 
-from arm_pytorch_utilities import math_utils, linalg, tensor_utils
-from meta_contact.dynamics import online_model, hybrid_model
+from arm_pytorch_utilities import tensor_utils
+from meta_contact.dynamics import hybrid_model
 from meta_contact.controller import controller, gating_function
 from meta_contact import cost
 
@@ -97,6 +96,7 @@ class AutonomousRecovery(enum.IntEnum):
     NONE = 0
     RANDOM = 1
     RETURN_STATE = 2
+    MAB = 3
 
 
 # TODO take this as input instead of hard coding it
@@ -135,6 +135,25 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.autonomous_recovery = autonomous_recovery
         self.original_horizon = self.mpc.T
         self.reuse_escape_as_demonstration = reuse_escape_as_demonstration
+
+        # MAB specific properties
+        self.obs_noise = torch.ones(1, device=self.d) * 1
+        self.process_noise_scaling = 1
+        self.last_arm_pulled = None
+        self.pull_arm_every_n_steps = 3
+        self.turns_since_last_pull = self.pull_arm_every_n_steps
+        self.num_arms = 100
+        self.num_costs = 3
+        self.cost_weights = torch.rand((self.num_arms, self.num_costs), device=self.d)
+        # each arm is a row of the cost weight; normalize so it sums to 1
+        self.cost_weights /= self.cost_weights.sum(dim=1).view(self.num_arms, 1)
+        # give special meaning to the first few arms (they are 1-hot)
+        self.cost_weights[:self.num_costs, :self.num_costs] = torch.eye(self.num_costs, device=self.d)
+        # TODO include a more informed prior
+        self.mab = KFMANDB(torch.zeros(self.num_arms, device=self.d), torch.eye(self.num_arms, device=self.d))
+        # TODO figure out a consistent way of setting max costs for all these inverted costs
+        # TODO should scale by what movement we can maximally achieve in freespace in 1 step
+        self.leave_current_cost = cost.CostLeaveState(None, self.Q * 0.1, self.R, self.compare_to_goal, 10)
 
     def create_recovery_traj_seeder(self, *args, **kwargs):
         self.recovery_traj_seeder = RecoveryTrajectorySeeder(self, *args, **kwargs)
@@ -180,12 +199,11 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                 return False
 
             # look at displacement
-            before = state_displacement(
-                self.x_history[max(0, self.nonnominal_dynamics_start_index - self.nonnominal_dynamics_trend_len)],
-                self.x_history[self.nonnominal_dynamics_start_index])
+            before = self._avg_displacement(
+                max(0, self.nonnominal_dynamics_start_index - self.nonnominal_dynamics_trend_len),
+                self.nonnominal_dynamics_start_index)
 
-            current = state_displacement(
-                self.x_history[max(-len(self.x_history), -self.nonnominal_dynamics_trend_len - 1)], self.x_history[-1])
+            current = self._avg_displacement(max(-len(self.x_history), -self.nonnominal_dynamics_trend_len - 1), -1)
             is_trap = current < before * self.nonnominal_dynamics_penalty_tolerance
             logger.debug("before displacement %f current displacement %f trap? %d", before, current, is_trap)
             return is_trap
@@ -210,18 +228,36 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         if cur_index - self.autonomous_recovery_start_index < self.nonnominal_dynamics_trend_len:
             return False
 
-        # can also leave if we are as close as we can get to previous states
-        before_trend = torch.cat(self.mpc_cost_history[self.autonomous_recovery_start_index:
-                                                       self.autonomous_recovery_start_index + self.nonnominal_dynamics_trend_len])
-        current_trend = torch.cat(self.mpc_cost_history[max(self.autonomous_recovery_start_index,
-                                                            cur_index - self.nonnominal_dynamics_trend_len):])
+        if self.autonomous_recovery is AutonomousRecovery.RETURN_STATE:
+            # can also leave if we are as close as we can get to previous states
+            before_trend = torch.cat(self.mpc_cost_history[self.autonomous_recovery_start_index:
+                                                           self.autonomous_recovery_start_index + self.nonnominal_dynamics_trend_len])
+            current_trend = torch.cat(self.mpc_cost_history[max(self.autonomous_recovery_start_index,
+                                                                cur_index - self.nonnominal_dynamics_trend_len):])
 
-        before_progress_rate = (before_trend[1:] - before_trend[:-1]).mean()
-        current_progress_rate = (current_trend[1:] - current_trend[:-1]).mean()
-        left_trap = before_progress_rate * 0.1 < current_progress_rate
-        logger.debug("before recovery rate %f current recovery rate %f left trap? %d", before_progress_rate.item(),
-                     current_progress_rate.item(), left_trap)
-        return left_trap
+            before_progress_rate = (before_trend[1:] - before_trend[:-1]).mean()
+            current_progress_rate = (current_trend[1:] - current_trend[:-1]).mean()
+            left_trap = before_progress_rate * 0.1 < current_progress_rate
+            logger.debug("before recovery rate %f current recovery rate %f left trap? %d", before_progress_rate.item(),
+                         current_progress_rate.item(), left_trap)
+            return left_trap
+        elif self.autonomous_recovery is AutonomousRecovery.MAB:
+            # reward for MAB (shared across arms) is displacement
+            # look at displacement
+            before = self._avg_displacement(
+                max(0, self.nonnominal_dynamics_start_index - self.nonnominal_dynamics_trend_len),
+                self.nonnominal_dynamics_start_index)
+            current = self._avg_displacement(max(-len(self.x_history), -self.nonnominal_dynamics_trend_len - 1), -1)
+            # TODO parameterize the ratio of reluctance to leave recovery mode relative to tolerance of entering it
+            left_trap = current > before * self.nonnominal_dynamics_penalty_tolerance * 3
+            logger.debug("before velocity %f current velocity %f left trap? %d", before, current, left_trap)
+            return left_trap
+        else:
+            return False
+
+    def _avg_displacement(self, start, end):
+        total = state_displacement(self.x_history[start], self.x_history[end])
+        return total / (end - start)
 
     def _left_local_model(self):
         # not using local model to begin with
@@ -260,19 +296,31 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         logger.debug("trap set updated to be\n%s", temp)
 
         # different strategies for recovery mode
-        if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE]:
+        if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.MAB]:
             # change mpc cost
             # TODO parameterize how far back in history to return to
-            goal_set = torch.stack(
+            nominal_dynamics_set = torch.stack(
                 self.x_history[max(0, self.nonnominal_dynamics_start_index - 10):self.nonnominal_dynamics_start_index])
-            Q = self.Q.clone()
-            Q[0, 0] = Q[1, 1] = 1
-            Q[2, 2] = 1
-            Q[3, 3] = Q[4, 4] = 0
-            self.recovery_cost = cost.CostQRSet(goal_set, Q, self.R, self.compare_to_goal)
+            nominal_return_cost = cost.CostQRSet(nominal_dynamics_set, self.Q, self.R, self.compare_to_goal)
+
+            if self.autonomous_recovery is AutonomousRecovery.RETURN_STATE:
+                self.recovery_cost = nominal_return_cost
+            elif self.autonomous_recovery is AutonomousRecovery.MAB:
+                self.last_arm_pulled = None
+                local_dynamics_set = torch.stack(self.x_history[-5:-1])
+                local_return_cost = cost.CostQRSet(local_dynamics_set, self.Q, self.R, self.compare_to_goal)
+                # linear combination of costs over the different cost functions
+                self.recovery_cost = cost.ComposeCost([nominal_return_cost, local_return_cost, self.leave_current_cost],
+                                                      weights=self.recovery_cost_weight)
+            else:
+                raise RuntimeError("Unhandled recovery strategy")
+
             self.mpc.running_cost = self._recovery_running_cost
             self.mpc.terminal_state_cost = None
             self.mpc.change_horizon(10)
+
+    def recovery_cost_weight(self):
+        return self.cost_weights[self.last_arm_pulled]
 
     def _end_recovery_mode(self):
         logger.debug("Leaving autonomous recovery mode")
@@ -297,11 +345,14 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             self.gating = self.dynamics.get_gating()
             self.recovery_traj_seeder.update_data(self.dynamics.dss)
 
-        if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE]:
+        if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.MAB]:
             # restore cost functions
             self.mpc.running_cost = self._running_cost
             self.mpc.terminal_state_cost = self._terminal_cost
             self.mpc.change_horizon(self.original_horizon)
+
+            if self.autonomous_recovery is AutonomousRecovery.MAB and self.last_arm_pulled is not None:
+                self._update_mab_arm(self.last_arm_pulled.item())
 
     def _end_local_model(self):
         logger.debug("Leaving local model")
@@ -310,6 +361,8 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
     def _compute_action(self, x):
         assert self.recovery_traj_seeder is not None
+        self.leave_current_cost.update_state(x)
+
         # use only state for dynamics_class selection; this way we can get dynamics_class before calculating action
         a = torch.zeros((1, self.nu), device=self.d, dtype=x.dtype)
         self.dynamics_class = self.gating.sample_class(x.view(1, -1), a).item()
@@ -347,11 +400,45 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         if self.autonomous_recovery_mode and self.autonomous_recovery is AutonomousRecovery.RANDOM:
             u = torch.rand(self.nu, device=self.d).cuda() * (self.u_max - self.u_min) + self.u_min
         else:
+            if self.autonomous_recovery_mode and self.autonomous_recovery is AutonomousRecovery.MAB:
+                self.turns_since_last_pull += 1
+                if self.last_arm_pulled is None or self.turns_since_last_pull >= self.pull_arm_every_n_steps:
+                    # update arms if we've pulled before
+                    if self.last_arm_pulled is not None:
+                        self._update_mab_arm(self.last_arm_pulled.item())
+
+                    # pull an arm and assign cost weight
+                    self.last_arm_pulled = self.mab.select_arm_to_pull()
+                    self.turns_since_last_pull = 0
+                    logger.debug("pulled arm %d = %s", self.last_arm_pulled.item(), self.recovery_cost_weight())
             u = self.mpc.command(x)
 
         logger.debug("trap set weight %f", self.trap_set_weight)
 
         return u
+
+    def _update_mab_arm(self, arm):
+        nominal = self._avg_displacement(
+            max(0, self.nonnominal_dynamics_start_index - self.nonnominal_dynamics_trend_len),
+            self.nonnominal_dynamics_start_index)
+
+        reward = self._avg_displacement(-self.pull_arm_every_n_steps - 1, -1)
+        # normalize reward with respect to displacement in nominal environment so that a reward of 1
+        # means equivalent to it
+        reward /= nominal
+        logger.debug("reward %f for pulling arm %d = %s", reward, arm, self.cost_weights[arm])
+        self.mab.update_arms(arm, reward,
+                             transition_cov=self._calculate_mab_process_noise() *
+                                            self.process_noise_scaling, obs_cov=self.obs_noise)
+
+    def _calculate_mab_process_noise(self):
+        # TODO consider correlating with randomly sampling states and taking the cosine sim of their cost
+        P = torch.eye(self.num_arms, device=self.d)
+        for i in range(self.num_arms):
+            for j in range(i + 1, self.num_arms):
+                sim = torch.cosine_similarity(self.cost_weights[i], self.cost_weights[j], dim=0)
+                P[i, j] = P[j, i] = sim
+        return P
 
 
 class NominalTrajFrom(enum.IntEnum):

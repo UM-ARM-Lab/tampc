@@ -15,6 +15,7 @@ from meta_contact.env.pybullet_env import PybulletEnv, PybulletLoader, handle_da
 from meta_contact.controller import controller
 from meta_contact.controller import online_controller
 from meta_contact.controller.gating_function import DynamicsClass
+from meta_contact import cost as control_cost
 
 logger = logging.getLogger(__name__)
 
@@ -839,7 +840,7 @@ class PegInHole(simulation.Simulation):
                 mode_text = "recovery" if self.ctrl.autonomous_recovery_mode else (
                     "local" if self.ctrl.using_local_model_for_nonnominal_dynamics else "")
                 self.env.draw_user_text(mode_text, 3)
-                if self.ctrl.recovery_cost:
+                if self.ctrl.recovery_cost and isinstance(self.ctrl.recovery_cost, control_cost.CostQRSet):
                     # plot goal set
                     self.env.visualize_goal_set(self.ctrl.recovery_cost.goal_set)
 
