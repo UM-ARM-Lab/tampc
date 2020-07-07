@@ -14,6 +14,9 @@ def main():
         if not f.endswith('.xacro'):
             continue
 
+        if f.startswith('_'):
+            continue
+
         name = os.path.splitext(f)[0]
         full_path = os.path.join(model_dir, f)
 

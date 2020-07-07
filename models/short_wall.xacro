@@ -2,5 +2,5 @@
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="wall">
 
 <xacro:include filename="_wall_base.xacro"/>
-<wall l="3" w="0.5" h="0.3"/>
+<wall l="1.5" w="0.5" h="0.3"/>
 </robot>

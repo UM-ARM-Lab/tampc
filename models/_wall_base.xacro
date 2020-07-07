@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<robot name="wall" xmlns:xacro="http://www.ros.org/wiki/xacro">
+<xacro:macro name="wall" params="w l h">
+
+<xacro:property name="m" value="10" />
+<xacro:property name="Ih" value="${1/12*m*(w*w + l*l)}" />
+<xacro:property name="Iw" value="${1/12*m*(h*h + l*l)}" />
+<xacro:property name="Il" value="${1/12*m*(w*w + h*h)}" />
+
+
+
+  <link name="base_link">
+    <contact>
+      <lateral_friction value="0.7"/>
+      <spinning_friction value=".001"/>
+    </contact>
+    <inertial>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <mass value="${m}"/>
+      <inertia ixx="${Il}" ixy="0" ixz="0" iyy="${Iw}" iyz="0" izz="${Ih}"/>
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
+      <geometry>
+        <box size="${l} ${w} ${h}"/>
+      </geometry>
+      <material name="blockmat">
+        <color rgba="0.5 0.5 0.5 0.8"/>
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
+      <geometry>
+        <box size="${l} ${w} ${h}"/>
+      </geometry>
+    </collision>
+ </link>
+
+</xacro:macro>
+</robot>
