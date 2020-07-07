@@ -328,11 +328,11 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.dynamics_class_history.append(self.dynamics_class)
 
         if not self.using_local_model_for_nonnominal_dynamics:
-            current_trend = torch.cat(self.orig_cost_history[-self.nonnominal_dynamics_trend_len:])
-            current_progress_rate = (current_trend[1:] - current_trend[:-1]).mean()
-            # only decrease trap set weight if we're not making progress towards goal
-            if current_progress_rate >= 0:
-                self.trap_set_weight *= 0.97
+            # current_trend = torch.cat(self.orig_cost_history[-self.nonnominal_dynamics_trend_len:])
+            # current_progress_rate = (current_trend[1:] - current_trend[:-1]).mean()
+            # # only decrease trap set weight if we're not making progress towards goal
+            # if current_progress_rate >= 0:
+            self.trap_set_weight *= 0.97
 
         if self._entering_trap():
             self._start_recovery_mode()
