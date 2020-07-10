@@ -232,6 +232,10 @@ class PybulletEnv:
         pass
 
     @abc.abstractmethod
+    def visualize_trap_set(self, states):
+        pass
+
+    @abc.abstractmethod
     def visualize_rollouts(self, states):
         pass
 

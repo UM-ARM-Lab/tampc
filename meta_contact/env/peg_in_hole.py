@@ -383,6 +383,16 @@ class PegInHoleEnv(PybulletEnv):
             c = (t + 1) / (T + 1)
             self._dd.draw_point('gs{}'.format(t), pos, (c, c, c))
 
+    def visualize_trap_set(self, trap_set):
+        if trap_set is None:
+            return
+        T = len(trap_set)
+        for t in range(T):
+            state, action = trap_set[t]
+            pose = self.get_ee_pos(state)
+            c = (t + 1) / (T + 1)
+            self._dd.draw_point('ts{}'.format(t), pose, (1, 0, c))
+
     def visualize_prediction_error(self, predicted_state):
         """In GUI mode, show the difference between the predicted state and the current actual state"""
         pred = self.get_ee_pos(predicted_state)

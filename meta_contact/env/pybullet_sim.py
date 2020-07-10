@@ -102,6 +102,9 @@ class PybulletSim(simulation.Simulation):
                     # plot goal set
                     self.env.visualize_goal_set(self.ctrl.recovery_cost.goal_set)
 
+                if self.ctrl.trap_set:
+                    self.env.visualize_trap_set(self.ctrl.trap_set)
+
                 if self._has_recovery_policy() and self.ctrl.autonomous_recovery is online_controller.AutonomousRecovery.MAB:
                     for i in range(self.ctrl.num_costs):
                         self.env.draw_user_text(
