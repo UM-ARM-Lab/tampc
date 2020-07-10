@@ -149,11 +149,8 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.cost_weights /= self.cost_weights.sum(dim=1).view(self.num_arms, 1)
         # give special meaning to the first few arms (they are 1-hot)
         self.cost_weights[:self.num_costs, :self.num_costs] = torch.eye(self.num_costs, device=self.d)
-        # TODO include a more informed prior
+        # TODO include a more informed prior (from previous iterations)
         self.mab = KFMANDB(torch.zeros(self.num_arms, device=self.d), torch.eye(self.num_arms, device=self.d))
-        # TODO figure out a consistent way of setting max costs for all these inverted costs
-        # TODO should scale by what movement we can maximally achieve in freespace in 1 step
-        self.leave_current_cost = cost.CostLeaveState(None, self.Q * 0.1, self.R, self.compare_to_goal, 10)
 
     def create_recovery_traj_seeder(self, *args, **kwargs):
         self.recovery_traj_seeder = RecoveryTrajectorySeeder(self, *args, **kwargs)
@@ -310,7 +307,8 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                 local_dynamics_set = torch.stack(self.x_history[-5:-1])
                 local_return_cost = cost.CostQRSet(local_dynamics_set, self.Q, self.R, self.compare_to_goal)
                 # linear combination of costs over the different cost functions
-                self.recovery_cost = cost.ComposeCost([nominal_return_cost, local_return_cost, self.leave_current_cost],
+                # TODO normalize costs by their value at the current state? (to get on the same magnitude)
+                self.recovery_cost = cost.ComposeCost([nominal_return_cost, local_return_cost, self.goal_cost],
                                                       weights=self.recovery_cost_weight)
             else:
                 raise RuntimeError("Unhandled recovery strategy")
@@ -361,7 +359,6 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
     def _compute_action(self, x):
         assert self.recovery_traj_seeder is not None
-        self.leave_current_cost.update_state(x)
 
         # use only state for dynamics_class selection; this way we can get dynamics_class before calculating action
         a = torch.zeros((1, self.nu), device=self.d, dtype=x.dtype)
