@@ -137,8 +137,9 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.reuse_escape_as_demonstration = reuse_escape_as_demonstration
 
         # MAB specific properties
+        # these are all normalized to be relative to 1
         self.obs_noise = torch.ones(1, device=self.d) * 1
-        self.process_noise_scaling = 1
+        self.process_noise_scaling = 0.1
         self.last_arm_pulled = None
         self.pull_arm_every_n_steps = 3
         self.turns_since_last_pull = self.pull_arm_every_n_steps
