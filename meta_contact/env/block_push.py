@@ -9,7 +9,8 @@ from arm_pytorch_utilities import math_utils
 from arm_pytorch_utilities import simulation
 from meta_contact import cfg
 from meta_contact.env.pybullet_env import PybulletEnv, ContactInfo, PybulletLoader, handle_data_format_for_state_diff, \
-    get_total_contact_force, get_lateral_friction_forces, PybulletEnvDataSource, PybulletSim
+    get_total_contact_force, get_lateral_friction_forces, PybulletEnvDataSource
+from meta_contact.env.pybullet_sim import PybulletSim
 
 logger = logging.getLogger(__name__)
 

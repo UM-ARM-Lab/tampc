@@ -8,7 +8,8 @@ import enum
 import numpy as np
 from meta_contact import cfg
 from meta_contact.env.pybullet_env import PybulletEnv, PybulletLoader, handle_data_format_for_state_diff, \
-    get_total_contact_force, ContactInfo, PybulletEnvDataSource, PybulletSim
+    get_total_contact_force, ContactInfo, PybulletEnvDataSource
+from meta_contact.env.pybullet_sim import PybulletSim
 
 logger = logging.getLogger(__name__)
 
