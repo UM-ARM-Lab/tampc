@@ -411,11 +411,6 @@ class PushAgainstWallEnv(PybulletEnv):
         # draw line from current pose to predicted pose
         self._dd.draw_2d_line('el', pose, (pred_pose - pose)[:2], c, scale=20, size=angle_diff * 50)
 
-    def set_camera_position(self, camera_pos):
-        self._dd._camera_pos = camera_pos
-        p.resetDebugVisualizerCamera(cameraDistance=0.5, cameraYaw=0, cameraPitch=-85,
-                                     cameraTargetPosition=[camera_pos[0], camera_pos[1], 1])
-
     def clear_debug_trajectories(self):
         self._dd.clear_transitions()
 

@@ -136,20 +136,26 @@ class PybulletEnv:
     def control_cost(cls):
         return np.diag([])
 
-    def __init__(self, mode=Mode.DIRECT, log_video=False, default_debug_height=0):
+    def __init__(self, mode=Mode.DIRECT, log_video=False, default_debug_height=0, camera_dist=1.5):
         self.log_video = log_video
         self.mode = mode
         self.realtime = False
         self.sim_step_s = 1. / 240.
         self.randseed = None
+        self.camera_dist = camera_dist
 
         # quadratic cost
         self.Q = self.state_cost()
         self.R = self.control_cost()
 
-        self._dd = DebugDrawer(default_debug_height)
+        self._dd = DebugDrawer(default_debug_height, camera_dist)
 
         self._configure_physics_engine()
+
+    def set_camera_position(self, camera_pos):
+        self._dd._camera_pos = camera_pos
+        p.resetDebugVisualizerCamera(cameraDistance=self.camera_dist, cameraYaw=0, cameraPitch=-89,
+                                     cameraTargetPosition=[camera_pos[0], camera_pos[1], 0])
 
     def _configure_physics_engine(self):
         mode_dict = {Mode.GUI: p.GUI, Mode.DIRECT: p.DIRECT}
@@ -283,9 +289,10 @@ def get_lateral_friction_forces(contact, flip=True):
 
 
 class DebugDrawer:
-    def __init__(self, default_height):
+    def __init__(self, default_height, camera_height):
         self._debug_ids = {}
         self._camera_pos = [0, 0]
+        self._camera_height = camera_height
         self._default_height = default_height
 
     def draw_point(self, name, point, color=(0, 0, 0), length=0.01, height=None):
@@ -389,9 +396,10 @@ class DebugDrawer:
         uid = self._debug_ids[name]
 
         move_down = location_index * 0.15
+        height_scale = self._camera_height * 0.7
         self._debug_ids[name] = p.addUserDebugText(str(text),
-                                                   [self._camera_pos[0] + left_offset,
-                                                    self._camera_pos[1] + 1 - move_down, 0.1],
+                                                   [self._camera_pos[0] + left_offset * height_scale,
+                                                    self._camera_pos[1] + (1 - move_down) * height_scale, 0.1],
                                                    textColorRGB=[0.5, 0.1, 0.1],
                                                    textSize=2,
                                                    replaceItemUniqueId=uid)

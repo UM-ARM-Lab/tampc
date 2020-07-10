@@ -129,7 +129,7 @@ class PegInHoleEnv(PybulletEnv):
         :param reaction_force_strategy how to aggregate measured reaction forces over control step into 1 value
         :param kwargs:
         """
-        super().__init__(**kwargs, default_debug_height=_PEG_MID)
+        super().__init__(**kwargs, default_debug_height=_PEG_MID, camera_dist=1.0)
         self.level = environment_level
         self.sim_step_wait = sim_step_wait
         # as long as this is above a certain amount we won't exceed it in freespace pushing if we have many mini steps
@@ -370,11 +370,6 @@ class PegInHoleEnv(PybulletEnv):
         pred = self.get_ee_pos(predicted_state)
         c = (0.5, 0, 0.5)
         self._dd.draw_point('ep', pred, c)
-
-    def set_camera_position(self, camera_pos):
-        self._dd._camera_pos = camera_pos
-        p.resetDebugVisualizerCamera(cameraDistance=0.3, cameraYaw=0, cameraPitch=-85,
-                                     cameraTargetPosition=[camera_pos[0], camera_pos[1], 1])
 
     def clear_debug_trajectories(self):
         self._dd.clear_transitions()
