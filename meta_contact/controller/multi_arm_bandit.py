@@ -53,3 +53,46 @@ class KFMANDB(MultiArmBandit):
         self._cov = pred_cov - kalman_gain @ C @ pred_cov
         # fix to be symmetric
         self._cov = (self._cov + self._cov.t()) * 0.5
+
+
+if __name__ == "__main__":
+    from arm_pytorch_utilities import rand
+
+    rand.seed(0)
+
+    num_arms = 7
+    obs_noise = torch.ones(1) * 1
+    process_noise_scaling = 0.1
+    num_costs = 3
+    cost_weights = torch.rand((num_arms, num_costs))
+    # each arm is a row of the cost weight; normalize so it sums to 1
+    cost_weights /= cost_weights.sum(dim=1).view(num_arms, 1)
+    # give special meaning to the first few arms (they are 1-hot)
+    cost_weights[:num_costs, :num_costs] = torch.eye(num_costs)
+
+    print("cost weights")
+    print(cost_weights)
+
+
+    def _calculate_mab_process_noise():
+        P = torch.eye(num_arms)
+        for i in range(num_arms):
+            for j in range(i + 1, num_arms):
+                sim = torch.cosine_similarity(cost_weights[i], cost_weights[j], dim=0)
+                P[i, j] = P[j, i] = sim
+        return P
+
+
+    process_noise = _calculate_mab_process_noise()
+    print("process noise")
+    print(process_noise)
+
+    mab = KFMANDB(torch.zeros(num_arms), torch.eye(num_arms))
+    print(mab._mean)
+    print(mab._cov)
+    mab.update_arms(0, 0.5, transition_cov=process_noise * process_noise_scaling, obs_cov=obs_noise)
+    print(mab._mean)
+    print(mab._cov)
+    mab.update_arms(3, 0.2, transition_cov=process_noise * process_noise_scaling, obs_cov=obs_noise)
+    print(mab._mean)
+    print(mab._cov)
