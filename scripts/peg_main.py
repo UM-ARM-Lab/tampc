@@ -66,6 +66,10 @@ def get_env(mode=p.GUI, level=0, log_video=False):
         init_peg = [-0.15, 0.2]
         hole_pos = [0, 0.2]
 
+    if level is 10:
+        init_peg = [0., 0.05]
+        hole_pos = [0, 0.2]
+
 
     env_opts = {
         'mode': mode,
@@ -415,6 +419,9 @@ class EvaluateTask:
         if level is 1:
             min_pos = [-0.3, -0.3]
             max_pos = [0.5, 0.5]
+        elif level is 3:
+            min_pos = [-0.3, -0.1]
+            max_pos = [0.3, 0.5]
         else:
             raise RuntimeError("Unspecified range for level {}".format(level))
 
@@ -677,10 +684,12 @@ if __name__ == "__main__":
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")
 
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__GP_KERNEL__NONE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RANDOM__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST')
-
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__MAB__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__GP_KERNEL__NONE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RANDOM__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST')
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RANDOM__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
+    #
     # Visualize.task_res_dist()
 
     for seed in range(0, 5):
