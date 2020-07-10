@@ -74,6 +74,9 @@ class PybulletSim(simulation.Simulation):
     def _predicts_dynamics_cls(self):
         return isinstance(self.ctrl, online_controller.OnlineMPC)
 
+    def _has_recovery_policy(self):
+        return isinstance(self.ctrl, online_controller.OnlineMPPI)
+
     def _run_experiment(self):
         self.last_run_cost = []
         obs = self._reset_sim()
@@ -99,13 +102,11 @@ class PybulletSim(simulation.Simulation):
                     # plot goal set
                     self.env.visualize_goal_set(self.ctrl.recovery_cost.goal_set)
 
-                # TODO change
-                for i in range(4):
-                    break
-                    # dynamics_class_pred = self.ctrl.dynamics_class_prediction[i]
-                    # nom_count = (dynamics_class_pred == DynamicsClass.NOMINAL).sum()
-                    # text = "nom: {:.2f}".format(nom_count.float() / len(dynamics_class_pred))
-                    # self.env.draw_user_text("t={} {}".format(i, text), 4 + i)
+                if self._has_recovery_policy() and self.ctrl.autonomous_recovery is online_controller.AutonomousRecovery.MAB:
+                    for i in range(self.ctrl.num_costs):
+                        self.env.draw_user_text(
+                            "a{} {:.2f} ({:.2f})".format(i, self.ctrl.mab._mean[i], self.ctrl.mab._cov[i, i]),
+                            4 + i)
 
             if self.visualize_action_sample and isinstance(self.ctrl, controller.MPPI_MPC):
                 self._plot_action_sample(self.ctrl.mpc.perturbed_action)

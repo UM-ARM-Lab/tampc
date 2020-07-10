@@ -696,7 +696,7 @@ if __name__ == "__main__":
         test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
                                  reuse_escape_as_demonstration=False, use_trap_cost=True,
                                  assume_all_nonnominal_dynamics_are_traps=False,
-                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+                                 autonomous_recovery=online_controller.AutonomousRecovery.MAB)
 
     # for seed in range(0, 5):
     #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
