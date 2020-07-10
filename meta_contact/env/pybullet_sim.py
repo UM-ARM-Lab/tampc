@@ -107,6 +107,12 @@ class PybulletSim(simulation.Simulation):
                         self.env.draw_user_text(
                             "a{} {:.2f} ({:.2f})".format(i, self.ctrl.mab._mean[i], self.ctrl.mab._cov[i, i]),
                             4 + i)
+                    if self.ctrl.last_arm_pulled is not None:
+                        text = ["a"]
+                        for value in self.ctrl.recovery_cost_weight():
+                            text.append("{:.2f}".format(value))
+                        self.env.draw_user_text(" ".join(text), 4 + self.ctrl.num_costs,
+                                                left_offset=1 - (self.ctrl.num_costs - 3) * 0.1)
 
             if self.visualize_action_sample and isinstance(self.ctrl, controller.MPPI_MPC):
                 self._plot_action_sample(self.ctrl.mpc.perturbed_action)
