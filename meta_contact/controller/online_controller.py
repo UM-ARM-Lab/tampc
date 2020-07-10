@@ -56,7 +56,7 @@ class OnlineMPC(controller.MPC):
 
     @tensor_utils.ensure_2d_input
     def _apply_dynamics(self, state, u, t=0):
-        # TODO this is a hack for handling when dynamics blows up
+        # hack for handling when dynamics blows up
         bad_states = state.norm(dim=1) > 1e5
         x = state
         x[bad_states] = 0
@@ -326,22 +326,22 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.autonomous_recovery_mode = False
         self.autonomous_recovery_end_index = len(self.x_history)
 
+        # deprecated
         # if we're sure that we've left an unrecognized class, save as recovery
-        if self.reuse_escape_as_demonstration:
-            # TODO filter out moves? / weight later points more?
-            x_recovery = []
-            u_recovery = []
-            for i in range(self.autonomous_recovery_start_index, len(self.u_history)):
-                if self._control_effort(self.u_history[i]) > 0:
-                    x_recovery.append(self.x_history[i])
-                    u_recovery.append(self.u_history[i])
-            x_recovery = torch.stack(x_recovery)
-            u_recovery = torch.stack(u_recovery)
-            logger.info("Using data from index %d with len %d for local model",
-                        self.autonomous_recovery_start_index, x_recovery.shape[0])
-            self.dynamics.create_local_model(x_recovery, u_recovery)
-            self.gating = self.dynamics.get_gating()
-            self.recovery_traj_seeder.update_data(self.dynamics.dss)
+        # if self.reuse_escape_as_demonstration:
+        #     x_recovery = []
+        #     u_recovery = []
+        #     for i in range(self.autonomous_recovery_start_index, len(self.u_history)):
+        #         if self._control_effort(self.u_history[i]) > 0:
+        #             x_recovery.append(self.x_history[i])
+        #             u_recovery.append(self.u_history[i])
+        #     x_recovery = torch.stack(x_recovery)
+        #     u_recovery = torch.stack(u_recovery)
+        #     logger.info("Using data from index %d with len %d for local model",
+        #                 self.autonomous_recovery_start_index, x_recovery.shape[0])
+        #     self.dynamics.create_local_model(x_recovery, u_recovery)
+        #     self.gating = self.dynamics.get_gating()
+        #     self.recovery_traj_seeder.update_data(self.dynamics.dss)
 
         if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.MAB]:
             # restore cost functions
@@ -370,10 +370,10 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
             if not self.using_local_model_for_nonnominal_dynamics:
                 self._start_local_model(x)
-        else:
-            # TODO check correctness; only update nominal trajectory if we're not in autonomous recovery mode
-            if not self.autonomous_recovery_mode:
-                self.recovery_traj_seeder.update_nominal_trajectory(self.dynamics_class, x)
+
+        # deprecated
+        # if not self.autonomous_recovery_mode:
+        #     self.recovery_traj_seeder.update_nominal_trajectory(self.dynamics_class, x)
 
         self.dynamics_class_history.append(self.dynamics_class)
 
