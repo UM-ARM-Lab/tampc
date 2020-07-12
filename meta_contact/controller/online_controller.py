@@ -107,10 +107,13 @@ def state_displacement(before, after):
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def __init__(self, *args, abs_unrecognized_threshold=8,
                  assume_all_nonnominal_dynamics_are_traps=True, nonnominal_dynamics_penalty_tolerance=0.5,
+                 Q_recovery=None,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
         self.recovery_traj_seeder: RecoveryTrajectorySeeder = None
         self.abs_unrecognized_threshold = abs_unrecognized_threshold
+
+        self.Q_recovery = Q_recovery.to(device=self.d) if Q_recovery is not None else self.Q
 
         self.assume_all_nonnominal_dynamics_are_traps = assume_all_nonnominal_dynamics_are_traps
 
@@ -299,14 +302,14 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             # TODO parameterize how far back in history to return to
             nominal_dynamics_set = torch.stack(
                 self.x_history[max(0, self.nonnominal_dynamics_start_index - 10):self.nonnominal_dynamics_start_index])
-            nominal_return_cost = cost.CostQRSet(nominal_dynamics_set, self.Q, self.R, self.compare_to_goal)
+            nominal_return_cost = cost.CostQRSet(nominal_dynamics_set, self.Q_recovery, self.R, self.compare_to_goal)
 
             if self.autonomous_recovery is AutonomousRecovery.RETURN_STATE:
                 self.recovery_cost = nominal_return_cost
             elif self.autonomous_recovery is AutonomousRecovery.MAB:
                 self.last_arm_pulled = None
                 local_dynamics_set = torch.stack(self.x_history[-5:-1])
-                local_return_cost = cost.CostQRSet(local_dynamics_set, self.Q, self.R, self.compare_to_goal)
+                local_return_cost = cost.CostQRSet(local_dynamics_set, self.Q_recovery, self.R, self.compare_to_goal)
                 # linear combination of costs over the different cost functions
                 # TODO normalize costs by their value at the current state? (to get on the same magnitude)
                 self.recovery_cost = cost.ComposeCost([nominal_return_cost, local_return_cost, self.goal_cost],

@@ -108,6 +108,9 @@ def get_controller_options(env):
     u_min, u_max = env.get_control_bounds()
     Q = torch.tensor(env.state_cost(), dtype=torch.double)
     R = torch.tensor(env.control_cost(), dtype=torch.double)
+    # care about theta when recovering
+    Q_recovery = Q.clone()
+    Q_recovery[0, 0] = Q_recovery[1, 1] = Q_recovery[2, 2] = 1
     sigma = [0.2, 0.4, 0.7]
     noise_mu = [0, 0.1, 0]
     u_init = [0, 0.5, 0]
@@ -116,6 +119,7 @@ def get_controller_options(env):
     common_wrapper_opts = {
         'Q': Q,
         'R': R,
+        'Q_recovery': Q_recovery,
         'u_min': u_min,
         'u_max': u_max,
         'compare_to_goal': env.state_difference,
@@ -1936,7 +1940,7 @@ if __name__ == "__main__":
                                                    "auto_recover__NONE__RETURN_STATE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST"]
 
 
-    Visualize.task_res_dist(filter_func)
+    # Visualize.task_res_dist(filter_func)
 
     # EvaluateTask.closest_distance_to_goal_whole_set('test_sufficiency_1_NO_TRANSFORM_AlwaysSelectLocal')
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RANDOM_1_COORD_NOREUSE_DecisionTreeClassifier')
@@ -1969,9 +1973,9 @@ if __name__ == "__main__":
     #                              assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
-    for seed in range(0, 10):
+    for seed in range(0, 5):
         test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                 reuse_escape_as_demonstration=False, use_trap_cost=True, use_demo=False,
+                                 reuse_escape_as_demonstration=False, use_trap_cost=False, use_demo=False,
                                  assume_all_nonnominal_dynamics_are_traps=False,
                                  autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
