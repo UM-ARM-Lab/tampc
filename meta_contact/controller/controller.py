@@ -182,7 +182,8 @@ def trap_cost_reduce(costs):
 
 
 class MPC(ControllerWithModelPrediction):
-    def __init__(self, ds, dynamics, config, Q=1, R=1, compare_to_goal=torch.sub, u_min=None, u_max=None, device='cpu',
+    def __init__(self, ds, dynamics, config, Q=1, R=1, compare_to_goal=torch.sub, u_min=None, u_max=None,
+                 device='cpu',
                  terminal_cost_multiplier=0., adjust_model_pred_with_prev_error=False, use_trap_cost=True,
                  trap_cost_per_dim=TRAP_COST_DIM,
                  use_orientation_terminal_cost=False):
@@ -220,10 +221,12 @@ class MPC(ControllerWithModelPrediction):
         self.trap_set_weight = 1
         if use_trap_cost:
             # TODO hacky way of handling trap cost in reaction force dimensions
-            trap_q = tensor_utils.ensure_diagonal([trap_cost_per_dim, trap_cost_per_dim, trap_cost_per_dim, 0, 0], self.nx).to(
+            trap_q = tensor_utils.ensure_diagonal([trap_cost_per_dim, trap_cost_per_dim, trap_cost_per_dim, 0, 0],
+                                                  self.nx).to(
                 device=self.d, dtype=self.dtype)
             trap_r = tensor_utils.ensure_diagonal(trap_cost_per_dim, self.nu).to(device=self.d, dtype=self.dtype)
-            self.trap_cost = cost.CostQRSet(self.trap_set, trap_q, trap_r, self.compare_to_goal, reduce=self._trap_cost_reduce)
+            self.trap_cost = cost.CostQRSet(self.trap_set, trap_q, trap_r, self.compare_to_goal,
+                                            reduce=self._trap_cost_reduce)
             self.cost = cost.ComposeCost([self.goal_cost, self.trap_cost])
         else:
             self.trap_cost = None

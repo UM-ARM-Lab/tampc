@@ -112,7 +112,6 @@ def get_controller_options(env):
     Q_recovery = Q.clone()
     Q_recovery[0, 0] = Q_recovery[1, 1] = Q_recovery[2, 2] = 1
     R = 0.01
-    # R = torch.tensor(np.diag([0, 0.01, 0]), dtype=torch.double)
     sigma = [0.2, 0.4, 0.7]
     noise_mu = [0, 0.1, 0]
     u_init = [0, 0.5, 0]
@@ -121,6 +120,7 @@ def get_controller_options(env):
     common_wrapper_opts = {
         'Q': Q,
         'R': R,
+        'R_env': env.control_cost(),
         'Q_recovery': Q_recovery,
         'u_min': u_min,
         'u_max': u_max,

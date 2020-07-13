@@ -107,13 +107,15 @@ def state_displacement(before, after):
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def __init__(self, *args, abs_unrecognized_threshold=10,
                  assume_all_nonnominal_dynamics_are_traps=True, nonnominal_dynamics_penalty_tolerance=0.5,
-                 Q_recovery=None,
+                 Q_recovery=None, R_env=None,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
         self.recovery_traj_seeder: RecoveryTrajectorySeeder = None
         self.abs_unrecognized_threshold = abs_unrecognized_threshold
 
         self.Q_recovery = Q_recovery.to(device=self.d) if Q_recovery is not None else self.Q
+        self.R_env = tensor_utils.ensure_diagonal(R_env, self.nu).to(device=self.d,
+                                                                     dtype=self.dtype) if R_env is not None else self.R
 
         self.assume_all_nonnominal_dynamics_are_traps = assume_all_nonnominal_dynamics_are_traps
 
@@ -166,7 +168,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         return self.recovery_cost(state, action)
 
     def _control_effort(self, u):
-        return u @ self.R @ u
+        return u @ self.R_env @ u
 
     def _in_non_nominal_dynamics(self):
         return self.diff_predicted is not None and \
@@ -196,7 +198,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             # cooldown on entering and leaving traps (can't use our progress during recovery for calculating whether we
             # enter a trap or not since the recovery policy isn't expected to decrease goal cost)
             cur_index = len(self.x_history)
-            if cur_index - self.autonomous_recovery_end_index < self.nonnominal_dynamics_trend_len:
+            if cur_index - self.autonomous_recovery_end_index < (self.nonnominal_dynamics_trend_len - 1):
                 return False
 
             # check cost history compared to before we entered non-nominal dyanmics and after we've entered
