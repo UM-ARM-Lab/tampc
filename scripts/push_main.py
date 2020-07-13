@@ -111,6 +111,7 @@ def get_controller_options(env):
     # care about theta when recovering
     Q_recovery = Q.clone()
     Q_recovery[0, 0] = Q_recovery[1, 1] = Q_recovery[2, 2] = 1
+    R = 0.01
     sigma = [0.2, 0.4, 0.7]
     noise_mu = [0, 0.1, 0]
     u_init = [0, 0.5, 0]
@@ -1973,7 +1974,7 @@ if __name__ == "__main__":
     #                              assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
-    for seed in range(0, 5):
+    for seed in range(2, 5):
         test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
                                  reuse_escape_as_demonstration=False, use_trap_cost=False, use_demo=False,
                                  assume_all_nonnominal_dynamics_are_traps=False,
