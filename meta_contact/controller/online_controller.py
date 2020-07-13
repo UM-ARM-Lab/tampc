@@ -312,44 +312,29 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         logger.debug("trap set updated to be\n%s", temp)
 
         # different strategies for recovery mode
-        if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE]:
+        if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.MAB]:
             # change mpc cost
             # TODO parameterize how far back in history to return to
-            goal_set = torch.stack(
+            nominal_dynamics_set = torch.stack(
                 self.x_history[max(0, self.nonnominal_dynamics_start_index - 10):self.nonnominal_dynamics_start_index])
-            Q = self.Q.clone()
-            Q[0, 0] = Q[1, 1] = 1
-            Q[2, 2] = 1
-            Q[3, 3] = Q[4, 4] = 0
-            self.recovery_cost = cost.CostQRSet(goal_set, Q, self.R, self.compare_to_goal)
+            nominal_return_cost = cost.CostQRSet(nominal_dynamics_set, self.Q_recovery, self.R, self.compare_to_goal)
+
+            if self.autonomous_recovery is AutonomousRecovery.RETURN_STATE:
+                self.recovery_cost = nominal_return_cost
+            elif self.autonomous_recovery is AutonomousRecovery.MAB:
+                self.last_arm_pulled = None
+                local_dynamics_set = torch.stack(self.x_history[-5:-1])
+                local_return_cost = cost.CostQRSet(local_dynamics_set, self.Q_recovery, self.R, self.compare_to_goal)
+                # linear combination of costs over the different cost functions
+                # TODO normalize costs by their value at the current state? (to get on the same magnitude)
+                self.recovery_cost = cost.ComposeCost([nominal_return_cost, local_return_cost, self.goal_cost],
+                                                      weights=self.recovery_cost_weight)
+            else:
+                raise RuntimeError("Unhandled recovery strategy")
+
             self.mpc.running_cost = self._recovery_running_cost
             self.mpc.terminal_state_cost = None
             self.mpc.change_horizon(10)
-
-        # # different strategies for recovery mode
-        # if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.MAB]:
-        #     # change mpc cost
-        #     # TODO parameterize how far back in history to return to
-        #     nominal_dynamics_set = torch.stack(
-        #         self.x_history[max(0, self.nonnominal_dynamics_start_index - 10):self.nonnominal_dynamics_start_index])
-        #     nominal_return_cost = cost.CostQRSet(nominal_dynamics_set, self.Q_recovery, self.R, self.compare_to_goal)
-        #
-        #     if self.autonomous_recovery is AutonomousRecovery.RETURN_STATE:
-        #         self.recovery_cost = nominal_return_cost
-        #     elif self.autonomous_recovery is AutonomousRecovery.MAB:
-        #         self.last_arm_pulled = None
-        #         local_dynamics_set = torch.stack(self.x_history[-5:-1])
-        #         local_return_cost = cost.CostQRSet(local_dynamics_set, self.Q_recovery, self.R, self.compare_to_goal)
-        #         # linear combination of costs over the different cost functions
-        #         # TODO normalize costs by their value at the current state? (to get on the same magnitude)
-        #         self.recovery_cost = cost.ComposeCost([nominal_return_cost, local_return_cost, self.goal_cost],
-        #                                               weights=self.recovery_cost_weight)
-        #     else:
-        #         raise RuntimeError("Unhandled recovery strategy")
-        #
-        #     self.mpc.running_cost = self._recovery_running_cost
-        #     self.mpc.terminal_state_cost = None
-        #     self.mpc.change_horizon(10)
 
     def recovery_cost_weight(self):
         return self.cost_weights[self.last_arm_pulled]
