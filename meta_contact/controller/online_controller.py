@@ -201,28 +201,14 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             if cur_index - self.autonomous_recovery_end_index < (self.nonnominal_dynamics_trend_len - 1):
                 return False
 
-            # check cost history compared to before we entered non-nominal dyanmics and after we've entered
-            # don't include the first state since the reaction forces are not initialized correctly
-            before_trend = torch.cat(self.orig_cost_history[
-                                     max(1,
-                                         self.nonnominal_dynamics_start_index + 1 - self.nonnominal_dynamics_trend_len):
-                                     self.nonnominal_dynamics_start_index + 1])
-            current_trend = torch.cat(self.orig_cost_history[-self.nonnominal_dynamics_trend_len:])
-            # should be negative
-            before_progress_rate = (before_trend[1:] - before_trend[:-1]).mean()
-            current_progress_rate = (current_trend[1:] - current_trend[:-1]).mean()
-            is_trap = before_progress_rate * self.nonnominal_dynamics_penalty_tolerance < current_progress_rate
-            logger.debug("before progress rate %f current progress rate %f trap? %d", before_progress_rate.item(),
-                         current_progress_rate.item(), is_trap)
+            # look at displacement
+            before = self._avg_displacement(
+                max(0, self.nonnominal_dynamics_start_index - self.nonnominal_dynamics_trend_len),
+                self.nonnominal_dynamics_start_index)
 
-            # # look at displacement
-            # before = self._avg_displacement(
-            #     max(0, self.nonnominal_dynamics_start_index - self.nonnominal_dynamics_trend_len),
-            #     self.nonnominal_dynamics_start_index)
-            #
-            # current = self._avg_displacement(max(-len(self.x_history), -self.nonnominal_dynamics_trend_len - 1), -1)
-            # is_trap = current < before * self.nonnominal_dynamics_penalty_tolerance
-            # logger.debug("before displacement %f current displacement %f trap? %d", before, current, is_trap)
+            current = self._avg_displacement(max(-len(self.x_history), -self.nonnominal_dynamics_trend_len - 1), -1)
+            is_trap = current < before * self.nonnominal_dynamics_penalty_tolerance
+            logger.debug("before displacement %f current displacement %f trap? %d", before, current, is_trap)
             return is_trap
         return False
 
