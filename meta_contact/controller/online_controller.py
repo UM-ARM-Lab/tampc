@@ -105,7 +105,7 @@ def state_displacement(before, after):
 
 
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
-    def __init__(self, *args, abs_unrecognized_threshold=8,
+    def __init__(self, *args, abs_unrecognized_threshold=10,
                  assume_all_nonnominal_dynamics_are_traps=True, nonnominal_dynamics_penalty_tolerance=0.5,
                  Q_recovery=None,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
@@ -442,7 +442,8 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                     logger.debug("pulled arm %d = %s", self.last_arm_pulled.item(), self.recovery_cost_weight())
             u = self.mpc.command(x)
 
-        logger.debug("trap set weight %f", self.trap_set_weight)
+        if self.trap_cost is not None:
+            logger.debug("trap set weight %f", self.trap_set_weight)
 
         return u
 
