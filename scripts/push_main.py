@@ -107,11 +107,12 @@ def get_controller_options(env):
     d = get_device()
     u_min, u_max = env.get_control_bounds()
     Q = torch.tensor(env.state_cost(), dtype=torch.double)
-    R = torch.tensor(env.control_cost(), dtype=torch.double)
+    # R = torch.tensor(env.control_cost(), dtype=torch.double)
     # care about theta when recovering
     Q_recovery = Q.clone()
     Q_recovery[0, 0] = Q_recovery[1, 1] = Q_recovery[2, 2] = 1
     R = 0.01
+    # R = torch.tensor(np.diag([0, 0.01, 0]), dtype=torch.double)
     sigma = [0.2, 0.4, 0.7]
     noise_mu = [0, 0.1, 0]
     u_init = [0, 0.5, 0]

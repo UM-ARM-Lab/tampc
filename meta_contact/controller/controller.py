@@ -304,7 +304,6 @@ class MPC(ControllerWithModelPrediction):
     def command(self, obs, info=None):
         original_obs = obs
         obs = tensor_utils.ensure_tensor(self.d, self.dtype, obs)
-        self.x_history.append(obs)
         # here so that in command we have access to the latest
         self.orig_cost_history.append(self.goal_cost(obs.view(1, -1)))
         if self.predicted_next_state is not None:
@@ -320,6 +319,7 @@ class MPC(ControllerWithModelPrediction):
         if self.u_max is not None:
             u = math_utils.clip(u, self.u_min, self.u_max)
 
+        self.x_history.append(obs)
         self.u_history.append(u)
         self.predicted_next_state = self.predict_next_state(obs, u)
         return u.cpu().numpy()
