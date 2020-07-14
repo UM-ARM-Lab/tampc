@@ -66,6 +66,9 @@ def get_env(mode=p.GUI, level=0, log_video=False):
         init_peg = [-0.15, 0.2]
         hole_pos = [0, 0.2]
 
+    if level is 6:
+        init_peg = [0.15, 0.07]
+
     if level is 10:
         init_peg = [0., 0.05]
         hole_pos = [0, 0.2]
@@ -779,7 +782,7 @@ if __name__ == "__main__":
     #                    autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     for seed in range(0, 5):
-        test_autonomous_recovery(seed=seed, level=5, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+        test_autonomous_recovery(seed=seed, level=6, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
                                  reuse_escape_as_demonstration=False, use_trap_cost=True,
                                  assume_all_nonnominal_dynamics_are_traps=False,
                                  autonomous_recovery=online_controller.AutonomousRecovery.MAB)
