@@ -152,7 +152,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.pull_arm_every_n_steps = 3
         self.turns_since_last_pull = self.pull_arm_every_n_steps
         self.num_arms = 100
-        self.num_costs = 3
+        self.num_costs = 2
         self.cost_weights = torch.rand((self.num_arms, self.num_costs), device=self.d)
         # each arm is a row of the cost weight; normalize so it sums to 1
         self.cost_weights /= self.cost_weights.sum(dim=1).view(self.num_arms, 1)
@@ -337,7 +337,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                 local_return_cost = cost.CostQRSet(local_dynamics_set, self.Q_recovery, self.R, self.compare_to_goal)
                 # linear combination of costs over the different cost functions
                 # TODO normalize costs by their value at the current state? (to get on the same magnitude)
-                self.recovery_cost = cost.ComposeCost([nominal_return_cost, local_return_cost, self.goal_cost],
+                self.recovery_cost = cost.ComposeCost([nominal_return_cost, local_return_cost],
                                                       weights=self.recovery_cost_weight)
             else:
                 raise RuntimeError("Unhandled recovery strategy")
