@@ -126,6 +126,10 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         # we have to be decreasing cost at this much compared to before nonnominal dynamics to not be in a trap
         self.nonnominal_dynamics_penalty_tolerance = nonnominal_dynamics_penalty_tolerance
 
+        # heuristic for determining if we're a trap or not, first set when we enter local dynamics
+        # assumes we don't start in a trap
+        self.nominal_avg_velocity = None
+
         # avoid these number of actions before entering a trap (inclusive of the transition into the trap)
         self.steps_before_entering_trap_to_avoid = 1
 
@@ -202,9 +206,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                 return False
 
             # look at displacement
-            before = self._avg_displacement(
-                max(0, self.nonnominal_dynamics_start_index - self.nonnominal_dynamics_trend_len),
-                self.nonnominal_dynamics_start_index)
+            before = self.nominal_avg_velocity
 
             start = max(self.nonnominal_dynamics_start_index, self.autonomous_recovery_end_index - 1)
             lowest_current = before
@@ -285,6 +287,10 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def _start_local_model(self, x):
         logger.debug("Entering non nominal dynamics")
         logger.debug(self.diff_predicted.norm())
+
+        if self.nominal_avg_velocity is None:
+            self.nominal_avg_velocity = self._avg_displacement(0, len(self.x_history)-1)
+            logger.debug("determined nominal avg velocity to be %f", self.nominal_avg_velocity)
 
         self.using_local_model_for_nonnominal_dynamics = True
         # includes the current observation
