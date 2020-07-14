@@ -414,7 +414,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
         if self._entering_trap():
             self._start_recovery_mode()
-            self.trap_set_weight *= 1.1
+            self.tune_trapset_cost_with_constraints(x)
 
         if self._left_trap():
             self._end_recovery_mode()
@@ -442,6 +442,33 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             logger.debug("trap set weight %f", self.trap_set_weight)
 
         return u
+
+    def tune_trapset_cost_with_constraints(self, x):
+        if self.trap_cost is None or len(self.trap_set) is 0:
+            return
+        x = x.view(1, -1)
+        goal_cost_at_state = self.goal_cost(x)
+        # relative cost at goal would be -reference, trap cost needs to be lower than reference at goal
+        trap_cost_at_goal = self.trap_cost(self.goal)
+        trap_cost_at_state = self.trap_cost(x)
+
+        # bounds on the trap set weight
+        upper_bound_goal = 0.5 * goal_cost_at_state / trap_cost_at_goal
+        # want similar magnitude at state
+        similarity_tolerance = 0.5  # allow 0.5 to 1/(0.5) magnitude
+        lower_bound_state = similarity_tolerance * goal_cost_at_state / trap_cost_at_state
+        upper_bound_state = (1 / similarity_tolerance) * goal_cost_at_state / trap_cost_at_state
+
+        logger.debug("tune trap cost goal at state %f trap at goal %f (< %f) trap at state %f +-%d%% (%f - %f)",
+                     goal_cost_at_state, trap_cost_at_goal, upper_bound_goal, trap_cost_at_state,
+                     int(similarity_tolerance * 100), lower_bound_state, upper_bound_state)
+        # apply these bounds and select something in the middle
+        lower = lower_bound_state
+        upper = min(upper_bound_state, upper_bound_goal)
+        # if lower > upper:
+        #     raise RuntimeError("lower bound greater than upper bound - impossible")
+        self.trap_set_weight = 0.5 * goal_cost_at_state / trap_cost_at_state
+        logger.debug("tune trap cost weight %f", self.trap_set_weight)
 
     def _update_mab_arm(self, arm):
         nominal = self._avg_displacement(
