@@ -414,10 +414,10 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
         if self._entering_trap():
             self._start_recovery_mode()
-            self.tune_trapset_cost_with_constraints(x)
 
         if self._left_trap():
             self._end_recovery_mode()
+            self.tune_trapset_cost_with_constraints(x)
 
         if self._left_local_model():
             self._end_local_model()
@@ -467,7 +467,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         upper = min(upper_bound_state, upper_bound_goal)
         # if lower > upper:
         #     raise RuntimeError("lower bound greater than upper bound - impossible")
-        self.trap_set_weight = 0.5 * goal_cost_at_state / trap_cost_at_state
+        self.trap_set_weight = max(upper_bound_goal, lower_bound_state)
         logger.debug("tune trap cost weight %f", self.trap_set_weight)
 
     def _update_mab_arm(self, arm):
