@@ -70,7 +70,6 @@ def get_env(mode=p.GUI, level=0, log_video=False):
         init_peg = [0., 0.05]
         hole_pos = [0, 0.2]
 
-
     env_opts = {
         'mode': mode,
         'hole': hole_pos,
@@ -190,6 +189,7 @@ def get_controller_options(env):
         'compare_to_goal': env.state_difference,
         'device': d,
         'terminal_cost_multiplier': 50,
+        'trap_cost_per_dim': 10.,
         'adjust_model_pred_with_prev_error': False,
         'use_orientation_terminal_cost': False,
     }
@@ -198,7 +198,7 @@ def get_controller_options(env):
         'noise_sigma': torch.diag(sigma),
         'noise_mu': torch.tensor(noise_mu, dtype=torch.double, device=d),
         'lambda_': 1e-2,
-        'horizon': 20,
+        'horizon': 10,
         'u_init': torch.tensor(u_init, dtype=torch.double, device=d),
         'sample_null_action': False,
         'step_dependent_dynamics': True,
@@ -307,7 +307,6 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
         gating = hybrid_dynamics.get_gating() if gating is None else gating
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
-    ctrl_opts.update({'trap_cost_per_dim': 30.})
     ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
                                         abs_unrecognized_threshold=30,
                                         autonomous_recovery=autonomous_recovery,
@@ -317,7 +316,6 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
                                         **common_wrapper_opts, **ctrl_opts,
                                         mpc_opts=mpc_opts)
 
-    # TODO set sequence of goals
     z = env.initGripperPos[2]
     goal = np.r_[env.hole, z, 0, 0]
     ctrl.set_goal(goal)
@@ -355,6 +353,90 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
         affix_run_name(num_frames)
 
     env.draw_user_text(run_name, 14, left_offset=-1.5)
+    sim.run(seed, run_name)
+    logger.info("last run cost %f", np.sum(sim.last_run_cost))
+    plt.ioff()
+    plt.show()
+
+    env.close()
+
+
+def tune_trap_set_cost(seed=1, level=1,
+                       use_tsf=UseTsf.COORD, nominal_adapt=OnlineAdapt.NONE,
+                       autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE,
+                       use_trap_cost=True,
+                       num_frames=100, run_name=None,
+                       assume_all_nonnominal_dynamics_are_traps=False,
+                       ctrl_opts=None,
+                       **kwargs):
+    if ctrl_opts is None:
+        ctrl_opts = {}
+
+    env = get_env(p.GUI, level=level, log_video=True)
+    logger.info("initial random seed %d", rand.seed(seed))
+
+    ds, pm = get_prior(env, use_tsf)
+
+    dss = [ds]
+    hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, [use_tsf.name],
+                                                       preprocessor=no_tsf_preprocessor(),
+                                                       nominal_model_kwargs={'online_adapt': nominal_adapt},
+                                                       local_model_kwargs=kwargs)
+
+    gating = AlwaysSelectNominal()
+
+    common_wrapper_opts, mpc_opts = get_controller_options(env)
+    ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                        abs_unrecognized_threshold=30,
+                                        autonomous_recovery=autonomous_recovery,
+                                        assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
+                                        use_trap_cost=use_trap_cost,
+                                        **common_wrapper_opts, **ctrl_opts,
+                                        mpc_opts=mpc_opts)
+
+    z = env.initGripperPos[2]
+    hole = [0, 0.2]
+    x = [hole[0], hole[1] - 0.3, z, 0, 0]
+    env.set_task_config(hole=hole, init_peg=x[:2])
+    x = torch.tensor(x, device=ctrl.d, dtype=ctrl.dtype)
+    goal = np.r_[env.hole, z, 0, 0]
+    ctrl.set_goal(goal)
+
+    env.draw_user_text("run seed {}".format(seed), 12, left_offset=-1.5)
+    env.draw_user_text("recovery {}".format(autonomous_recovery.name), 11, left_offset=-1.6)
+    if use_trap_cost:
+        env.draw_user_text("trap set cost".format(autonomous_recovery.name), 9, left_offset=-1.6)
+
+    sim = peg_in_hole.PegInHole(env, ctrl, num_frames=num_frames, plot=False, save=True, stop_when_done=True)
+    seed = rand.seed(seed)
+
+    if run_name is None:
+        def affix_run_name(*args):
+            nonlocal run_name
+            for token in args:
+                run_name += "__{}".format(token)
+
+        run_name = 'tune_trap_cost'
+        affix_run_name(nominal_adapt.name)
+        affix_run_name(autonomous_recovery.name)
+        affix_run_name(level)
+        affix_run_name(use_tsf.name)
+        affix_run_name("ALLTRAP" if assume_all_nonnominal_dynamics_are_traps else "SOMETRAP")
+        affix_run_name("TRAPCOST" if use_trap_cost else "NOTRAPCOST")
+        affix_run_name(seed)
+        affix_run_name(num_frames)
+
+    env.draw_user_text(run_name, 14, left_offset=-1.5)
+
+    # setup initial conditions where we are close to a trap and have items in our trap set
+    ctrl.trap_set.append((torch.tensor([env.hole[0], env.hole[1] - 0.2, z, 0, 0], device=ctrl.d, dtype=ctrl.dtype),
+                          torch.tensor([0, -1], device=ctrl.d, dtype=ctrl.dtype)))
+    ctrl.trap_set.append(
+        (torch.tensor([env.hole[0] - 0.1, env.hole[1] - 0.2, z, 0, 0], device=ctrl.d, dtype=ctrl.dtype),
+         torch.tensor([0, -1], device=ctrl.d, dtype=ctrl.dtype)))
+
+    ctrl.tune_trapset_cost_with_constraints(x)
+
     sim.run(seed, run_name)
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
     plt.ioff()
@@ -692,11 +774,15 @@ if __name__ == "__main__":
     #
     # Visualize.task_res_dist()
 
-    for seed in range(0, 5):
-        test_autonomous_recovery(seed=seed, level=5, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                 reuse_escape_as_demonstration=False, use_trap_cost=True,
-                                 assume_all_nonnominal_dynamics_are_traps=False,
-                                 autonomous_recovery=online_controller.AutonomousRecovery.MAB)
+    tune_trap_set_cost(seed=0, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                       use_trap_cost=True,
+                       autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+
+    # for seed in range(0, 5):
+    #     test_autonomous_recovery(seed=seed, level=5, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              reuse_escape_as_demonstration=False, use_trap_cost=True,
+    #                              assume_all_nonnominal_dynamics_are_traps=False,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.MAB)
 
     # for seed in range(0, 5):
     #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
@@ -704,11 +790,11 @@ if __name__ == "__main__":
     #                              assume_all_nonnominal_dynamics_are_traps=False,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
     #
-    for seed in range(0, 5):
-        test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                 reuse_escape_as_demonstration=False, use_trap_cost=True,
-                                 assume_all_nonnominal_dynamics_are_traps=False,
-                                 autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
+    # for seed in range(0, 5):
+    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              reuse_escape_as_demonstration=False, use_trap_cost=True,
+    #                              assume_all_nonnominal_dynamics_are_traps=False,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
 
     # for seed in range(0, 5):
     #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
