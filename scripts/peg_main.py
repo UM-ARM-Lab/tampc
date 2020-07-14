@@ -774,15 +774,15 @@ if __name__ == "__main__":
     #
     # Visualize.task_res_dist()
 
-    tune_trap_set_cost(seed=0, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                       use_trap_cost=True,
-                       autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    # tune_trap_set_cost(seed=0, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                    use_trap_cost=True,
+    #                    autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
-    # for seed in range(0, 5):
-    #     test_autonomous_recovery(seed=seed, level=5, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              reuse_escape_as_demonstration=False, use_trap_cost=True,
-    #                              assume_all_nonnominal_dynamics_are_traps=False,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.MAB)
+    for seed in range(0, 5):
+        test_autonomous_recovery(seed=seed, level=5, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                                 reuse_escape_as_demonstration=False, use_trap_cost=True,
+                                 assume_all_nonnominal_dynamics_are_traps=False,
+                                 autonomous_recovery=online_controller.AutonomousRecovery.MAB)
 
     # for seed in range(0, 5):
     #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
