@@ -300,15 +300,13 @@ class DebugDrawer:
         self._default_height = default_height
 
     def draw_point(self, name, point, color=(0, 0, 0), length=0.01, height=None):
-        if height is None:
-            height = self._default_height
         if name not in self._debug_ids:
             self._debug_ids[name] = [-1, -1]
         uids = self._debug_ids[name]
 
-        # use default height if point is 2D, otherwise use point's z coordinate
-        if point.shape[0] == 3:
-            height = point[2]
+        # ignore 3rd dimension if it exists to plot everything at the same height
+        if height is None:
+            height = self._default_height
 
         location = (point[0], point[1], height)
         uids[0] = p.addUserDebugLine(np.add(location, [length, 0, 0]), np.add(location, [-length, 0, 0]), color, 2,
