@@ -277,12 +277,19 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         if not self.using_local_model_for_nonnominal_dynamics:
             return False
         consecutive_recognized_dynamics_class = 0
+        i = -1
         for i in range(-1, -len(self.u_history), -1):
             if self.dynamics_class_history[i] == gating_function.DynamicsClass.UNRECOGNIZED:
                 break
             if self._control_effort(self.u_history[i]) > 0:
                 consecutive_recognized_dynamics_class += 1
-        return consecutive_recognized_dynamics_class >= self.leave_recovery_num_turns
+        # have to first pass the test of recognizing the dynamics
+        dynamics_class_test = consecutive_recognized_dynamics_class >= self.leave_recovery_num_turns
+        if not dynamics_class_test:
+            return False
+        # we also have to move sufficiently compared to average nominal dynamics
+        recent_movement = self._avg_displacement(len(self.x_history) + i, len(self.x_history) - 1)
+        return recent_movement > self.nominal_avg_velocity * self.nonnominal_dynamics_penalty_tolerance
 
     def _start_local_model(self, x):
         logger.debug("Entering non nominal dynamics")
@@ -392,6 +399,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
             if not self.using_local_model_for_nonnominal_dynamics:
                 self._start_local_model(x)
+        
 
         # deprecated
         # if not self.autonomous_recovery_mode:
