@@ -297,7 +297,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         logger.debug(self.diff_predicted.norm())
 
         if self.nominal_avg_velocity is None:
-            self.nominal_avg_velocity = self._avg_displacement(0, len(self.x_history)-1)
+            self.nominal_avg_velocity = self._avg_displacement(0, len(self.x_history) - 1)
             logger.debug("determined nominal avg velocity to be %f", self.nominal_avg_velocity)
 
         self.using_local_model_for_nonnominal_dynamics = True
@@ -398,7 +398,6 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
             if not self.using_local_model_for_nonnominal_dynamics:
                 self._start_local_model(x)
-        
 
         # deprecated
         # if not self.autonomous_recovery_mode:
