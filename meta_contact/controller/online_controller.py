@@ -110,7 +110,6 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                  Q_recovery=None, R_env=None,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
-        self.recovery_traj_seeder: RecoveryTrajectorySeeder = None
         self.abs_unrecognized_threshold = abs_unrecognized_threshold
 
         self.Q_recovery = Q_recovery.to(device=self.d) if Q_recovery is not None else self.Q
@@ -163,7 +162,9 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.mab = KFMANDB(torch.zeros(self.num_arms, device=self.d), torch.eye(self.num_arms, device=self.d))
 
     def create_recovery_traj_seeder(self, *args, **kwargs):
-        self.recovery_traj_seeder = RecoveryTrajectorySeeder(self, *args, **kwargs)
+        # deprecated
+        # self.recovery_traj_seeder = RecoveryTrajectorySeeder(self, *args, **kwargs)
+        pass
 
     def _mpc_command(self, obs):
         return OnlineMPC._mpc_command(self, obs)
@@ -387,8 +388,6 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.using_local_model_for_nonnominal_dynamics = False
 
     def _compute_action(self, x):
-        assert self.recovery_traj_seeder is not None
-
         # use only state for dynamics_class selection; this way we can get dynamics_class before calculating action
         a = torch.zeros((1, self.nu), device=self.d, dtype=x.dtype)
         self.dynamics_class = self.gating.sample_class(x.view(1, -1), a).item()
