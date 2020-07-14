@@ -206,9 +206,17 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                 max(0, self.nonnominal_dynamics_start_index - self.nonnominal_dynamics_trend_len),
                 self.nonnominal_dynamics_start_index)
 
-            current = self._avg_displacement(max(-len(self.x_history), -self.nonnominal_dynamics_trend_len - 1), -1)
-            is_trap = current < before * self.nonnominal_dynamics_penalty_tolerance
-            logger.debug("before displacement %f current displacement %f trap? %d", before, current, is_trap)
+            start = max(self.nonnominal_dynamics_start_index, self.autonomous_recovery_end_index - 1)
+            lowest_current = before
+            lowest_i = start
+            for i in range(start, cur_index - self.nonnominal_dynamics_trend_len):
+                current = self._avg_displacement(i, cur_index)
+                if current < lowest_current:
+                    lowest_current = current
+                    lowest_i = i
+            is_trap = lowest_current < before * self.nonnominal_dynamics_penalty_tolerance
+            logger.debug("before displacement %f current lowest (since %d to %d) %f trap? %d", before, lowest_i,
+                         cur_index, lowest_current, is_trap)
             return is_trap
         return False
 
@@ -361,6 +369,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
     def _end_local_model(self):
         logger.debug("Leaving local model")
+        logger.debug(torch.tensor(self.dynamics_class_history[-10:]))
         self.dynamics.use_normal_nominal_model()
         self.using_local_model_for_nonnominal_dynamics = False
 

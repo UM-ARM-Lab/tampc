@@ -128,7 +128,8 @@ class PybulletSim(simulation.Simulation):
             action = np.array(action).flatten()
             obs, rew, done, info = self.env.step(action)
             cost = -rew
-            logger.debug("cost %-5.2f took %.3fs done %d action %-12s obs %s", cost, time.perf_counter() - start, done,
+            logger.debug("%d cost %-5.2f took %.3fs done %d action %-12s obs %s", simTime, cost,
+                         time.perf_counter() - start, done,
                          np.round(action, 2), np.round(obs, 3))
 
             self.last_run_cost.append(cost)
