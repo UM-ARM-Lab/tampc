@@ -106,6 +106,7 @@ def state_displacement(before, after):
 
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def __init__(self, *args, abs_unrecognized_threshold=10,
+                 trap_cost_annealing_rate=0.97,
                  assume_all_nonnominal_dynamics_are_traps=True, nonnominal_dynamics_penalty_tolerance=0.6,
                  Q_recovery=None, R_env=None,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
@@ -117,6 +118,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                                                                      dtype=self.dtype) if R_env is not None else self.R
 
         self.assume_all_nonnominal_dynamics_are_traps = assume_all_nonnominal_dynamics_are_traps
+        self.trap_cost_annealing_rate = trap_cost_annealing_rate
 
         self.using_local_model_for_nonnominal_dynamics = False
         self.nonnominal_dynamics_start_index = -1
@@ -410,7 +412,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             # current_progress_rate = (current_trend[1:] - current_trend[:-1]).mean()
             # # only decrease trap set weight if we're not making progress towards goal
             # if current_progress_rate >= 0:
-            self.trap_set_weight *= 0.97
+            self.trap_set_weight *= self.trap_cost_annealing_rate
 
         if self._entering_trap():
             self._start_recovery_mode()
@@ -451,13 +453,6 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         # relative cost at goal would be -reference, trap cost needs to be lower than reference at goal
         trap_cost_at_goal = self.trap_cost(self.goal)
         trap_cost_at_state = self.trap_cost(x)
-
-        # bounds on the trap set weight
-        upper_bound_goal = 0.5 * goal_cost_at_state / trap_cost_at_goal
-        # want similar magnitude at state
-        similarity_tolerance = 0.5  # allow 0.5 to 1/(0.5) magnitude
-        lower_bound_state = similarity_tolerance * goal_cost_at_state / trap_cost_at_state
-        upper_bound_state = (1 / similarity_tolerance) * goal_cost_at_state / trap_cost_at_state
 
         logger.debug("tune trap cost goal at state %f trap at goal %f trap at state %f",
                      goal_cost_at_state, trap_cost_at_goal, trap_cost_at_state)
