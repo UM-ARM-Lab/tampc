@@ -173,8 +173,8 @@ class PreDeterminedControllerWithPrediction(PreDeterminedController, ControllerW
         return self.dynamics(state.view(1, -1), control.view(1, -1)).cpu().numpy()
 
 
-TRAP_COST_DIM = 0.5
-TRAP_MAX_COST = 30
+# not really important, just has to be high enough to avoid saturating everywhere
+TRAP_MAX_COST = 100000
 
 
 def trap_cost_reduce(costs):
@@ -185,7 +185,7 @@ class MPC(ControllerWithModelPrediction):
     def __init__(self, ds, dynamics, config, Q=1, R=1, compare_to_goal=torch.sub, u_min=None, u_max=None,
                  device='cpu',
                  terminal_cost_multiplier=0., adjust_model_pred_with_prev_error=False, use_trap_cost=True,
-                 trap_cost_per_dim=TRAP_COST_DIM,
+                 trap_cost_per_dim=1,
                  use_orientation_terminal_cost=False):
         super().__init__(compare_to_goal)
 

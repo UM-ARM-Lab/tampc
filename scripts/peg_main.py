@@ -192,7 +192,7 @@ def get_controller_options(env):
         'compare_to_goal': env.state_difference,
         'device': d,
         'terminal_cost_multiplier': 50,
-        'trap_cost_per_dim': 10.,
+        'trap_cost_per_dim': 1,
         'adjust_model_pred_with_prev_error': False,
         'use_orientation_terminal_cost': False,
     }
@@ -777,15 +777,15 @@ if __name__ == "__main__":
     #
     # Visualize.task_res_dist()
 
-    # tune_trap_set_cost(seed=0, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                    use_trap_cost=True,
-    #                    autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    tune_trap_set_cost(seed=0, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                       use_trap_cost=True,
+                       autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
-    for seed in range(0, 5):
-        test_autonomous_recovery(seed=seed, level=6, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                 reuse_escape_as_demonstration=False, use_trap_cost=True,
-                                 assume_all_nonnominal_dynamics_are_traps=False,
-                                 autonomous_recovery=online_controller.AutonomousRecovery.MAB)
+    # for seed in range(0, 1):
+    #     test_autonomous_recovery(seed=seed, level=6, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              reuse_escape_as_demonstration=False, use_trap_cost=True,
+    #                              assume_all_nonnominal_dynamics_are_traps=False,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # for seed in range(0, 5):
     #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
