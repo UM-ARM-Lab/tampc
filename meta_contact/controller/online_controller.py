@@ -417,7 +417,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
         if self._left_trap():
             self._end_recovery_mode()
-            self.tune_trapset_cost_with_constraints(x)
+            self.tune_trapset_cost_with_constraints(self.x_history[self.nonnominal_dynamics_start_index - 1])
 
         if self._left_local_model():
             self._end_local_model()
@@ -459,15 +459,12 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         lower_bound_state = similarity_tolerance * goal_cost_at_state / trap_cost_at_state
         upper_bound_state = (1 / similarity_tolerance) * goal_cost_at_state / trap_cost_at_state
 
-        logger.debug("tune trap cost goal at state %f trap at goal %f (< %f) trap at state %f +-%d%% (%f - %f)",
-                     goal_cost_at_state, trap_cost_at_goal, upper_bound_goal, trap_cost_at_state,
-                     int(similarity_tolerance * 100), lower_bound_state, upper_bound_state)
-        # apply these bounds and select something in the middle
-        lower = lower_bound_state
-        upper = min(upper_bound_state, upper_bound_goal)
-        # if lower > upper:
-        #     raise RuntimeError("lower bound greater than upper bound - impossible")
-        self.trap_set_weight = max(upper_bound_goal, lower_bound_state)
+        logger.debug("tune trap cost goal at state %f trap at goal %f trap at state %f",
+                     goal_cost_at_state, trap_cost_at_goal, trap_cost_at_state)
+
+        # trap cost at last nominal state should have similar magnitude as the goal cost
+        self.trap_set_weight = goal_cost_at_state / trap_cost_at_state
+
         logger.debug("tune trap cost weight %f", self.trap_set_weight)
 
     def _update_mab_arm(self, arm):
