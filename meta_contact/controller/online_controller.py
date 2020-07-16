@@ -107,7 +107,7 @@ def state_displacement(before, after):
 
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def __init__(self, *args, abs_unrecognized_threshold=10,
-                 trap_cost_annealing_rate=0.97,
+                 trap_cost_annealing_rate=0.97, manual_init_trap_weight=None,
                  assume_all_nonnominal_dynamics_are_traps=True, nonnominal_dynamics_penalty_tolerance=0.6,
                  Q_recovery=None, R_env=None,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
@@ -120,6 +120,9 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
         self.assume_all_nonnominal_dynamics_are_traps = assume_all_nonnominal_dynamics_are_traps
         self.trap_cost_annealing_rate = trap_cost_annealing_rate
+        self.auto_init_trap_cost = manual_init_trap_weight is None
+        if manual_init_trap_weight is not None:
+            self.trap_set_weight = manual_init_trap_weight
 
         # list of strings of nominal states (separated by uses of local dynamics)
         self.nominal_dynamic_states = [[]]
@@ -426,11 +429,12 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
         if self._left_trap():
             self._end_recovery_mode()
-            self.normalize_trapset_cost_to_state(self.nominal_dynamic_states[-1][-1])
-
-            normalized_weights = [self.normalize_trapset_cost_to_state(prev_state) for prev_state in
-                                  self.x_history[-6:]]
-            self.trap_set_weight = statistics.median(normalized_weights)
+            if self.auto_init_trap_cost:
+                normalized_weights = [self.normalize_trapset_cost_to_state(prev_state) for prev_state in
+                                      self.x_history[-6:]]
+                self.trap_set_weight = statistics.median(normalized_weights)
+            else:
+                self.trap_set_weight *= (1 / self.trap_cost_annealing_rate) * 5
             logger.debug("tune trap cost weight %f", self.trap_set_weight)
 
         if self._left_local_model():
