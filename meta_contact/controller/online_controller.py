@@ -431,7 +431,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             self._end_recovery_mode()
             if self.auto_init_trap_cost:
                 normalized_weights = [self.normalize_trapset_cost_to_state(prev_state) for prev_state in
-                                      self.x_history[-6:]]
+                                      self.nominal_dynamic_states[-1][-6:]]
                 self.trap_set_weight = statistics.median(normalized_weights)
             else:
                 self.trap_set_weight *= (1 / self.trap_cost_annealing_rate) * 5
