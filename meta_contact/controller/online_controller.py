@@ -120,6 +120,9 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.assume_all_nonnominal_dynamics_are_traps = assume_all_nonnominal_dynamics_are_traps
         self.trap_cost_annealing_rate = trap_cost_annealing_rate
 
+        # list of strings of nominal states (separated by uses of local dynamics)
+        self.nominal_dynamic_states = [[]]
+
         self.using_local_model_for_nonnominal_dynamics = False
         self.nonnominal_dynamics_start_index = -1
         # window of points we take to calculate the average trend
@@ -260,6 +263,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         elif self.autonomous_recovery is AutonomousRecovery.MAB:
             # reward for MAB (shared across arms) is displacement
             # look at displacement
+            # TODO consider displacement from where trap started to avoid rewarding oscillation
             before = self._avg_displacement(
                 max(0, self.nonnominal_dynamics_start_index - self.nonnominal_dynamics_trend_len),
                 self.nonnominal_dynamics_start_index)
@@ -328,10 +332,8 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         # different strategies for recovery mode
         if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.MAB]:
             # change mpc cost
-            # TODO parameterize how far back in history to return to
-            nominal_dynamics_set = torch.stack(
-                self.x_history[
-                max(0, self.nonnominal_dynamics_start_index + 1 - 10):self.nonnominal_dynamics_start_index + 1])
+            # return to last set of nominal states
+            nominal_dynamics_set = torch.stack(self.nominal_dynamic_states[-1])
             nominal_return_cost = cost.CostQRSet(nominal_dynamics_set, self.Q_recovery, self.R, self.compare_to_goal)
 
             if self.autonomous_recovery is AutonomousRecovery.RETURN_STATE:
@@ -391,6 +393,8 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         logger.debug(torch.tensor(self.dynamics_class_history[-10:]))
         self.dynamics.use_normal_nominal_model()
         self.using_local_model_for_nonnominal_dynamics = False
+        # start new string of nominal dynamic states
+        self.nominal_dynamic_states.append([])
 
     def _compute_action(self, x):
         # use only state for dynamics_class selection; this way we can get dynamics_class before calculating action
@@ -422,7 +426,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
         if self._left_trap():
             self._end_recovery_mode()
-            self.tune_trapset_cost_with_constraints(self.x_history[self.nonnominal_dynamics_start_index - 1])
+            self.tune_trapset_cost_with_constraints(self.nominal_dynamic_states[-1][-1])
 
         if self._left_local_model():
             self._end_local_model()
@@ -446,6 +450,9 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         if self.trap_cost is not None:
             logger.debug("trap set weight %f", self.trap_set_weight)
 
+        if not self.using_local_model_for_nonnominal_dynamics:
+            self.nominal_dynamic_states[-1].append(x)
+
         return u
 
     def tune_trapset_cost_with_constraints(self, x):
@@ -466,6 +473,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         logger.debug("tune trap cost weight %f", self.trap_set_weight)
 
     def _update_mab_arm(self, arm):
+        # TODO replace this with the fixed expected nominal velocity
         nominal = self._avg_displacement(
             max(0, self.nonnominal_dynamics_start_index - self.nonnominal_dynamics_trend_len),
             self.nonnominal_dynamics_start_index)
