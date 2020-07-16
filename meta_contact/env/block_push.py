@@ -26,6 +26,7 @@ class BlockFace:
 _MAX_ALONG = 0.3 / 2  # half length of block
 _BLOCK_HEIGHT = 0.05
 _PUSHER_MID = 0.10
+_RADIUS_GYRATION = math.sqrt(((2 * _MAX_ALONG) ** 2 + (2 * _MAX_ALONG) ** 2) / 12)
 DIST_FOR_JUST_TOUCHING = _MAX_ALONG + 0.021 - 0.00001
 
 
@@ -661,6 +662,11 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
         dpos = state[:, :2] - other_state[:, :2]
         dalong = state[:, 3] - other_state[:, 3]
         return dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1)
+
+    @staticmethod
+    def state_distance(state_difference):
+        # TODO try including theta normalized to radius of gyration
+        return state_difference[:, :2].norm(dim=1)
 
     @classmethod
     def state_cost(cls):

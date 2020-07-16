@@ -117,6 +117,12 @@ class PybulletEnv:
 
     @staticmethod
     @abc.abstractmethod
+    def state_distance(state_difference):
+        """Get a measure of distance in the state space"""
+        return 0
+
+    @staticmethod
+    @abc.abstractmethod
     def control_names():
         return []
 

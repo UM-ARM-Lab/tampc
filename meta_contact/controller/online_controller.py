@@ -100,18 +100,18 @@ class AutonomousRecovery(enum.IntEnum):
     MAB = 3
 
 
-# TODO take this as input instead of hard coding it
-def state_displacement(before, after):
-    return (before[:2] - after[:2]).norm()
+def default_state_dist(state_difference):
+    return state_difference[:, :2].norm(dim=1)
 
 
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
-    def __init__(self, *args, abs_unrecognized_threshold=10,
+    def __init__(self, *args, state_dist=default_state_dist, abs_unrecognized_threshold=10,
                  trap_cost_annealing_rate=0.97, manual_init_trap_weight=None,
                  assume_all_nonnominal_dynamics_are_traps=True, nonnominal_dynamics_penalty_tolerance=0.6,
                  Q_recovery=None, R_env=None,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
+        self.state_dist = state_dist
         self.abs_unrecognized_threshold = abs_unrecognized_threshold
 
         self.Q_recovery = Q_recovery.to(device=self.d) if Q_recovery is not None else self.Q
@@ -280,7 +280,8 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             return False
 
     def _avg_displacement(self, start, end):
-        total = state_displacement(self.x_history[start], self.x_history[end])
+        diff = self.compare_to_goal(self.x_history[start], self.x_history[end])
+        total = self.state_dist(diff)[0]
         return total / (end - start)
 
     def _left_local_model(self):

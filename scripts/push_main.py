@@ -125,6 +125,7 @@ def get_controller_options(env):
         'u_min': u_min,
         'u_max': u_max,
         'compare_to_goal': env.state_difference,
+        'state_dist': env.state_distance,
         'device': d,
         'terminal_cost_multiplier': 50,
         'trap_cost_per_dim': 10.,
@@ -2053,17 +2054,17 @@ if __name__ == "__main__":
     #                    autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # autonomous recovery
-    # for seed in range(0, 5):
-    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              reuse_escape_as_demonstration=False, use_trap_cost=False,
-    #                              assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-
-    for seed in range(3, 4):
+    for seed in range(0, 5):
         test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                 reuse_escape_as_demonstration=False, use_trap_cost=True, use_demo=False,
-                                 assume_all_nonnominal_dynamics_are_traps=False,
+                                 reuse_escape_as_demonstration=False, use_trap_cost=True,
+                                 assume_all_nonnominal_dynamics_are_traps=False, num_frames=250,
                                  autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+
+    # for seed in range(3, 4):
+    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              reuse_escape_as_demonstration=False, use_trap_cost=True, use_demo=False,
+    #                              assume_all_nonnominal_dynamics_are_traps=False,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # for seed in range(1,10):
     #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,

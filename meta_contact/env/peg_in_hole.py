@@ -98,6 +98,10 @@ class PegInHoleEnv(PybulletEnv):
         return np.diag([1, 1, 0, 0, 0])
 
     @staticmethod
+    def state_distance(state_difference):
+        return state_difference[:, :2].norm(dim=1)
+
+    @staticmethod
     def control_names():
         return ['d$x_r$', 'd$y_r$']
 
