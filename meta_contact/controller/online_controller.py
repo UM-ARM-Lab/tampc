@@ -219,7 +219,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             before = self.nominal_avg_velocity
 
             start = max(self.nonnominal_dynamics_start_index, self.autonomous_recovery_end_index - 1)
-            lowest_current = before
+            lowest_current = 1e6
             lowest_i = start
             for i in range(start, cur_index - self.nonnominal_dynamics_trend_len):
                 current = self._avg_displacement(i, cur_index)
