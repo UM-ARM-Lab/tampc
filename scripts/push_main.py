@@ -1486,7 +1486,7 @@ def tune_trap_set_cost(seed=1, level=1,
     x = [0.4, 0.15, -math.pi / 8, 0, 0]
     env.set_task_config(init_block=x[:2], init_yaw=x[2])
     x = torch.tensor(x, device=ctrl.d, dtype=ctrl.dtype)
-    ctrl.tune_trapset_cost_with_constraints(x)
+    ctrl.normalize_trapset_cost_to_state(x)
 
     sim.run(seed, run_name)
     logger.info("last run cost %f", np.sum(sim.last_run_cost))

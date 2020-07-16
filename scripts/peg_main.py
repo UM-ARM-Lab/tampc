@@ -439,7 +439,7 @@ def tune_trap_set_cost(seed=1, level=1,
     #     (torch.tensor([env.hole[0] - 0.1, env.hole[1] - 0.2, z, 0, 0], device=ctrl.d, dtype=ctrl.dtype),
     #      torch.tensor([0, -1], device=ctrl.d, dtype=ctrl.dtype)))
 
-    ctrl.tune_trapset_cost_with_constraints(x)
+    ctrl.normalize_trapset_cost_to_state(x)
 
     sim.run(seed, run_name)
     logger.info("last run cost %f", np.sum(sim.last_run_cost))

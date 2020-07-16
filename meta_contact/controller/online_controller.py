@@ -1,5 +1,6 @@
 import logging
 import enum
+import statistics
 
 import torch
 from meta_contact.controller.multi_arm_bandit import KFMANDB
@@ -300,7 +301,6 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         # return recent_movement > self.nominal_avg_velocity * self.nonnominal_dynamics_penalty_tolerance
         return dynamics_class_test
 
-
     def _start_local_model(self, x):
         logger.debug("Entering non nominal dynamics")
         logger.debug(self.diff_predicted.norm())
@@ -426,7 +426,12 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
         if self._left_trap():
             self._end_recovery_mode()
-            self.tune_trapset_cost_with_constraints(self.nominal_dynamic_states[-1][-1])
+            self.normalize_trapset_cost_to_state(self.nominal_dynamic_states[-1][-1])
+
+            normalized_weights = [self.normalize_trapset_cost_to_state(prev_state) for prev_state in
+                                  self.x_history[-6:]]
+            self.trap_set_weight = statistics.median(normalized_weights)
+            logger.debug("tune trap cost weight %f", self.trap_set_weight)
 
         if self._left_local_model():
             self._end_local_model()
@@ -455,7 +460,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
         return u
 
-    def tune_trapset_cost_with_constraints(self, x):
+    def normalize_trapset_cost_to_state(self, x):
         if self.trap_cost is None or len(self.trap_set) is 0:
             return
         x = x.view(1, -1)
@@ -468,9 +473,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                      goal_cost_at_state, trap_cost_at_goal, trap_cost_at_state)
 
         # trap cost at last nominal state should have similar magnitude as the goal cost
-        self.trap_set_weight = goal_cost_at_state / trap_cost_at_state
-
-        logger.debug("tune trap cost weight %f", self.trap_set_weight)
+        return goal_cost_at_state / trap_cost_at_state
 
     def _update_mab_arm(self, arm):
         # TODO replace this with the fixed expected nominal velocity
