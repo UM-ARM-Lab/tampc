@@ -141,7 +141,7 @@ class HybridDynamicsModel(abc.ABC):
             local_dynamics = online_model.OnlineGPMixing(pm, ds_local, state_diff, slice_to_use=train_slice,
                                                          allow_update=allow_update, sample=True,
                                                          refit_strategy=online_model.RefitGPStrategy.RESET_DATA,
-                                                         device=d, training_iter=150, use_independent_outputs=False)
+                                                         device=d, training_iter=150, use_independent_outputs=True)
 
         return local_dynamics
 

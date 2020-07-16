@@ -286,9 +286,9 @@ class MixingBatchGP(gpytorch.models.ExactGP):
         try:
             self.preprocessor.invert_x(train_x)
             logger.debug("use preprocess invert in local model")
-            self.use_preprocessor = True
+            self.nominal_in_orig_space = True
         except RuntimeError:
-            self.use_preprocessor = False
+            self.nominal_in_orig_space = False
         ny = train_y.shape[1]
         # zero mean
         self.covar_module = gpytorch.kernels.ScaleKernel(
@@ -297,18 +297,16 @@ class MixingBatchGP(gpytorch.models.ExactGP):
         )
 
     def forward(self, x):
-        raise RuntimeError("update to handle preprocessor like the full GP above")
         orig_x = x
-        if self.use_preprocessor:
+        if self.nominal_in_orig_space:
             orig_x = self.preprocessor.invert_x(x)
-        nominal_pred = self.nominal_model(orig_x, already_transformed=not self.use_preprocessor).transpose(0, 1)
-        if self.use_preprocessor:
+        nominal_pred = self.nominal_model(orig_x, all_in_transformed_space=not self.nominal_in_orig_space)
+        if self.nominal_in_orig_space:
             nominal_pred = self.preprocessor.transform_y(nominal_pred)
-        else:
-            _, nominal_pred, _ = self.preprocessor.tsf.transform(orig_x, nominal_pred)
+
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultitaskMultivariateNormal.from_batch_mvn(
-            gpytorch.distributions.MultivariateNormal(nominal_pred, covar_x)
+            gpytorch.distributions.MultivariateNormal(nominal_pred.transpose(0, 1), covar_x)
         )
 
 
@@ -442,12 +440,8 @@ class OnlineGPMixing(OnlineDynamicsModel):
 
     def sample(self, sample_shape=torch.Size([])):
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
-            if self.use_independent_outputs:
-                return self.last_prediction.sample(sample_shape)
-            else:
-                # TODO this is the preferred way to sample; the batch indep implementation currently is bugged
-                p = distributions.Normal(self.last_prediction.mean, self.last_prediction.stddev)
-                return p.sample(sample_shape)
+            p = distributions.Normal(self.last_prediction.mean, self.last_prediction.stddev)
+            return p.sample(sample_shape)
 
     def mean(self):
         return self.last_prediction.mean

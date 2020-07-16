@@ -2057,18 +2057,18 @@ if __name__ == "__main__":
     #                    use_trap_cost=True,
     #                    autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
-    test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_eval=True, plot_online_update=False,
-                                                   use_gp=True, allow_update=False,
-                                                   recover_adjust=False,
-                                                   gating=AlwaysSelectNominal(),
-                                                   use_tsf=ut, test_traj=None)
+    # test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_eval=True, plot_online_update=False,
+    #                                                use_gp=True, allow_update=False,
+    #                                                recover_adjust=False,
+    #                                                gating=AlwaysSelectNominal(),
+    #                                                use_tsf=ut, test_traj=None)
 
     # autonomous recovery
-    # for seed in range(0, 1):
-    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              reuse_escape_as_demonstration=False, use_trap_cost=False,
-    #                              assume_all_nonnominal_dynamics_are_traps=False, num_frames=250,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    for seed in range(0, 1):
+        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                                 reuse_escape_as_demonstration=False, use_trap_cost=False,
+                                 assume_all_nonnominal_dynamics_are_traps=False, num_frames=250,
+                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # for seed in range(3, 4):
     #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
