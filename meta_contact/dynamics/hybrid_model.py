@@ -3,7 +3,6 @@ from arm_pytorch_utilities import tensor_utils
 from meta_contact.controller import gating_function
 from meta_contact.dynamics import online_model
 from arm_pytorch_utilities.make_data import datasource
-from arm_pytorch_utilities import optim
 import logging
 import abc
 import enum
@@ -95,7 +94,7 @@ class HybridDynamicsModel(abc.ABC):
     """Different way of mixing local and nominal model; use nominal as mean"""
 
     def __init__(self, dss, pm, state_diff, gating_args, gating_kwargs=None, nominal_model_kwargs=None,
-                 local_model_kwargs=None, device=optim.get_device(), preprocessor=None):
+                 local_model_kwargs=None, device='cpu', preprocessor=None):
         self.dss = dss
         self.preprocessor = preprocessor
         self.pm = pm
@@ -141,7 +140,7 @@ class HybridDynamicsModel(abc.ABC):
             local_dynamics = online_model.OnlineGPMixing(pm, ds_local, state_diff, slice_to_use=train_slice,
                                                          allow_update=allow_update, sample=True,
                                                          refit_strategy=online_model.RefitGPStrategy.RESET_DATA,
-                                                         device=d, training_iter=150, use_independent_outputs=True)
+                                                         device=d, training_iter=150, use_independent_outputs=False)
 
         return local_dynamics
 
