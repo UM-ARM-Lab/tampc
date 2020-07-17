@@ -1809,7 +1809,7 @@ class EvaluateTask:
         return visited, path
 
     @staticmethod
-    def _closest_distance_to_goal(file, level, visualize=True, nodes_per_side=100):
+    def _closest_distance_to_goal(file, level, visualize=True, nodes_per_side=150):
         from sklearn.preprocessing import MinMaxScaler
         env = get_env(p.GUI if visualize else p.DIRECT, level=level)
         ds, _ = get_ds(env, file, validation_ratio=0.)
@@ -1817,7 +1817,7 @@ class EvaluateTask:
         X, U = torch.split(XU, ds.original_config().nx, dim=1)
 
         if level is 1:
-            min_pos = [-0.1, -1.0]
+            min_pos = [-0.9, -0.8]
             max_pos = [1.3, 0.5]
         elif level is 3:
             min_pos = [-0.5, -1.0]
@@ -1832,20 +1832,18 @@ class EvaluateTask:
         goal_pos = env.goal[:2]
 
         lower_bound_dist = np.linalg.norm((reached_states - goal_pos), axis=1).min()
+
         # we expect there not to be walls between us if the minimum distance is this small
-        if lower_bound_dist < 0.2:
-            return lower_bound_dist
+        # if lower_bound_dist < 0.2:
+        #     return lower_bound_dist
 
         def node_to_pos(node):
             return scaler.inverse_transform([node])[0]
-            # return float(node[0]) / nodes_per_side + min_pos[0], float(node[1]) / nodes_per_side + min_pos[1]
 
         def pos_to_node(pos):
             pair = scaler.transform([pos])[0]
             node = tuple(int(round(v)) for v in pair)
             return node
-            # return int(round((pos[0] - min_pos[0]) * nodes_per_side)), int(
-            #     round((pos[1] - min_pos[1]) * nodes_per_side))
 
         z = env.initPusherPos[2]
         # draw search boundaries
@@ -1917,11 +1915,17 @@ class EvaluateTask:
         # find min across visited states
         min_dist = 100
         min_node = None
+        dists = []
         for xy in reached_states:
             n = pos_to_node(xy)
-            if n in visited and visited[n] < min_dist:
-                min_dist = visited[n]
-                min_node = n
+            if n not in visited:
+                logger.warning("reached state %s node %s not visited", xy, n)
+                dists.append(None)
+            else:
+                dists.append(visited[n])
+                if visited[n] < min_dist:
+                    min_dist = visited[n]
+                    min_node = n
 
         if min_node is None:
             print('min node outside search region, return lower bound')
@@ -1940,10 +1944,10 @@ class EvaluateTask:
 
         print('min dist: {} lower bound: {}'.format(min_dist, lower_bound_dist))
         env.close()
-        return min_dist
+        return dists
 
     @staticmethod
-    def closest_distance_to_goal_whole_set(prefix, **kwargs):
+    def closest_distance_to_goal_whole_set(prefix, suffix=".mat", **kwargs):
         m = re.search(r"\d+", prefix)
         if m is not None:
             level = int(m.group())
@@ -1962,12 +1966,12 @@ class EvaluateTask:
             runs[prefix] = {}
 
         trials = [filename for filename in os.listdir(os.path.join(cfg.DATA_DIR, "pushing")) if
-                  filename.startswith(prefix)]
+                  filename.startswith(prefix) and filename.endswith(suffix)]
         dists = []
         for i, trial in enumerate(trials):
             d = EvaluateTask._closest_distance_to_goal("pushing/{}".format(trial), visualize=i == 0, level=level,
                                                        **kwargs)
-            dists.append(d)
+            dists.append(min([dd for dd in d if dd is not None]))
             runs[prefix][trial] = d
 
         logger.info(dists)
@@ -2013,21 +2017,9 @@ if __name__ == "__main__":
 
     # Visualize.task_res_dist(filter_func)
 
-    # EvaluateTask.closest_distance_to_goal_whole_set('test_sufficiency_1_NO_TRANSFORM_AlwaysSelectLocal')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RANDOM_1_COORD_NOREUSE_DecisionTreeClassifier')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RANDOM_3_COORD_NOREUSE_DecisionTreeClassifier')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RANDOM_1_COORD_REUSE_DecisionTreeClassifier')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RANDOM_3_COORD_REUSE_DecisionTreeClassifier')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RETURN_STATE_1_COORD_NOREUSE_DecisionTreeClassifier')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RETURN_STATE_3_COORD_NOREUSE_DecisionTreeClassifier')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover_NONE_RETURN_STATE_1_COORD_REUSE_DecisionTreeClassifier')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__ALLTRAP__NOREUSE__DecisionTreeClassifier')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__3__COORD__ALLTRAP__NOREUSE__DecisionTreeClassifier')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__SOMETRAP__NOREUSE__DecisionTreeClassifier')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__GP_KERNEL__NONE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST')
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
+    EvaluateTask.closest_distance_to_goal_whole_set(
+        'auto_recover__GP_KERNEL__NONE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST', suffix="500.mat")
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_gating_function(use_tsf=ut, test_file=neg_test_file)
@@ -2055,11 +2047,11 @@ if __name__ == "__main__":
     #     test_autonomous_recovery(seed=0, level=0, adaptive_control_baseline=True, num_frames=250)
 
     # autonomous recovery
-    for seed in range(3, 4):
-        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                 reuse_escape_as_demonstration=False, use_trap_cost=False,
-                                 assume_all_nonnominal_dynamics_are_traps=False, num_frames=250,
-                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    # for seed in range(0, 3):
+    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              reuse_escape_as_demonstration=False, use_trap_cost=False,
+    #                              assume_all_nonnominal_dynamics_are_traps=False, num_frames=250,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # baseline ++
     # for level in [1, 3]:
