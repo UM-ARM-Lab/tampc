@@ -30,8 +30,10 @@ from meta_contact.dynamics import online_model, model, prior, hybrid_model
 from meta_contact.dynamics.hybrid_model import OnlineAdapt, get_gating
 from meta_contact.controller import controller
 from meta_contact.controller import online_controller
+from meta_contact.controller import ilqr
 from meta_contact.controller.gating_function import AlwaysSelectNominal
 from meta_contact.env import block_push
+from meta_contact.util import modified_environ
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
@@ -60,7 +62,7 @@ def get_env(mode=p.GUI, level=0, log_video=False):
     init_block_pos = [-0.8, 0.12 - 0.025]
     init_block_yaw = 0
     init_pusher = 0
-    goal_pos = [-0.5, 0.52]
+    goal_pos = [0.5, 0.2]
     if level is 1:
         init_block_pos = [-0.8, 0.23]
         init_block_yaw = -math.pi / 5
@@ -933,12 +935,15 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
 def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, recover_adjust=True, gating=None,
                    use_tsf=UseTsf.COORD, nominal_adapt=OnlineAdapt.NONE,
                    autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE,
+                   adaptive_control_baseline=False,
                    use_demo=False,
                    use_trap_cost=True,
                    reuse_escape_as_demonstration=False, num_frames=250, run_name=None,
                    assume_all_nonnominal_dynamics_are_traps=False,
                    ctrl_opts=None,
                    **kwargs):
+    if adaptive_control_baseline:
+        use_tsf = UseTsf.NO_TRANSFORM
     if ctrl_opts is None:
         ctrl_opts = {}
 
@@ -946,7 +951,6 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, recover_a
     logger.info("initial random seed %d", rand.seed(seed))
 
     ds, pm = get_prior(env, use_tsf)
-
     dss = [ds]
     demo_trajs = []
     if use_demo:
@@ -956,36 +960,49 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, recover_a
         ds_local.update_preprocessor(ds.preprocessor)
         dss.append(ds_local)
 
-    hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, [use_tsf.name],
-                                                       preprocessor=no_tsf_preprocessor(),
-                                                       nominal_model_kwargs={'online_adapt': nominal_adapt},
-                                                       local_model_kwargs=kwargs)
-
-    # we're always going to be in the nominal mode in this case; might as well speed up testing
-    if not use_demo and not reuse_escape_as_demonstration:
-        gating = AlwaysSelectNominal()
-    else:
-        gating = hybrid_dynamics.get_gating() if gating is None else gating
-
     common_wrapper_opts, mpc_opts = get_controller_options(env)
-    ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
-                                        autonomous_recovery=autonomous_recovery,
-                                        assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
-                                        reuse_escape_as_demonstration=reuse_escape_as_demonstration,
-                                        use_trap_cost=use_trap_cost,
-                                        **common_wrapper_opts, **ctrl_opts, constrain_state=constrain_state,
-                                        mpc_opts=mpc_opts)
-    ctrl.set_goal(env.goal)
-    ctrl.create_recovery_traj_seeder(dss,
-                                     nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS if recover_adjust else NominalTrajFrom.NO_ADJUSTMENT)
 
-    env.draw_user_text(gating.name, 13, left_offset=-1.5)
-    env.draw_user_text("run seed {}".format(seed), 12, left_offset=-1.5)
-    env.draw_user_text("recovery {}".format(autonomous_recovery.name), 11, left_offset=-1.6)
-    if reuse_escape_as_demonstration:
-        env.draw_user_text("reuse escape", 10, left_offset=-1.6)
-    if use_trap_cost:
-        env.draw_user_text("trap set cost".format(autonomous_recovery.name), 9, left_offset=-1.6)
+    if adaptive_control_baseline:
+        online_dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds,
+                                                             env.state_difference,
+                                                             local_mix_weight_scale=0,
+                                                             const_local_mix_weight=True, sigreg=1e-10,
+                                                             device=get_device())
+        ctrl = ilqr.OnlineLQR(online_dynamics, ds.original_config(), u_min=common_wrapper_opts['u_min'],
+                              u_max=common_wrapper_opts['u_max'], Q=np.diag([1, 1, 0, 0, 0]),
+                              R=np.diag([0.1, 0.2, 0.1]), device=get_device(), max_timestep=num_frames,
+                              horizon=mpc_opts['horizon'])
+        ctrl.set_goal(env.goal)
+        env.draw_user_text("adaptive baseline", 13, left_offset=-1.5)
+    else:
+        hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, [use_tsf.name],
+                                                           preprocessor=no_tsf_preprocessor(),
+                                                           nominal_model_kwargs={'online_adapt': nominal_adapt},
+                                                           local_model_kwargs=kwargs)
+
+        # we're always going to be in the nominal mode in this case; might as well speed up testing
+        if not use_demo and not reuse_escape_as_demonstration:
+            gating = AlwaysSelectNominal()
+        else:
+            gating = hybrid_dynamics.get_gating() if gating is None else gating
+
+        ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                            autonomous_recovery=autonomous_recovery,
+                                            assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
+                                            reuse_escape_as_demonstration=reuse_escape_as_demonstration,
+                                            use_trap_cost=use_trap_cost,
+                                            **common_wrapper_opts, **ctrl_opts, constrain_state=constrain_state,
+                                            mpc_opts=mpc_opts)
+        ctrl.set_goal(env.goal)
+        ctrl.create_recovery_traj_seeder(dss,
+                                         nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS if recover_adjust else NominalTrajFrom.NO_ADJUSTMENT)
+        env.draw_user_text(gating.name, 13, left_offset=-1.5)
+        env.draw_user_text("run seed {}".format(seed), 12, left_offset=-1.5)
+        env.draw_user_text("recovery {}".format(autonomous_recovery.name), 11, left_offset=-1.6)
+        if reuse_escape_as_demonstration:
+            env.draw_user_text("reuse escape", 10, left_offset=-1.6)
+        if use_trap_cost:
+            env.draw_user_text("trap set cost".format(autonomous_recovery.name), 9, left_offset=-1.6)
 
     sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=False, save=True, stop_when_done=False)
     seed = rand.seed(seed)
@@ -997,14 +1014,18 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, recover_a
                 run_name += "__{}".format(token)
 
         run_name = default_run_prefix
-        affix_run_name(nominal_adapt.name)
-        affix_run_name(autonomous_recovery.name + ("_WITHDEMO" if use_demo else ""))
+        if adaptive_control_baseline:
+            affix_run_name("ADAPTIVE_BASELINE")
+        else:
+            affix_run_name(nominal_adapt.name)
+            affix_run_name(autonomous_recovery.name + ("_WITHDEMO" if use_demo else ""))
         affix_run_name(level)
         affix_run_name(use_tsf.name)
-        affix_run_name("ALLTRAP" if assume_all_nonnominal_dynamics_are_traps else "SOMETRAP")
-        affix_run_name("REUSE" if reuse_escape_as_demonstration else "NOREUSE")
-        affix_run_name(gating.name)
-        affix_run_name("TRAPCOST" if use_trap_cost else "NOTRAPCOST")
+        if not adaptive_control_baseline:
+            affix_run_name("ALLTRAP" if assume_all_nonnominal_dynamics_are_traps else "SOMETRAP")
+            affix_run_name("REUSE" if reuse_escape_as_demonstration else "NOREUSE")
+            affix_run_name(gating.name)
+            affix_run_name("TRAPCOST" if use_trap_cost else "NOTRAPCOST")
         affix_run_name(seed)
         affix_run_name(num_frames)
 
@@ -2029,37 +2050,16 @@ if __name__ == "__main__":
     #                                                gating=AlwaysSelectNominal(),
     #                                                use_tsf=ut, test_traj=None)
 
+    with modified_environ(USE_CPU='1'):
+        test_autonomous_recovery(seed=0, level=0, adaptive_control_baseline=True, num_frames=250)
+
     # autonomous recovery
-    for seed in range(0, 1):
-        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                 reuse_escape_as_demonstration=False, use_trap_cost=False,
-                                 assume_all_nonnominal_dynamics_are_traps=False, num_frames=250,
-                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-
-    # for seed in range(3, 4):
-    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              reuse_escape_as_demonstration=False, use_trap_cost=True, use_demo=False,
-    #                              assume_all_nonnominal_dynamics_are_traps=False,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-
-    # for seed in range(1,10):
+    # for seed in range(0, 3):
     #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                              reuse_escape_as_demonstration=False, use_trap_cost=False,
-    #                              assume_all_nonnominal_dynamics_are_traps=False,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
-    #
-    # for seed in range(10):
-    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              reuse_escape_as_demonstration=False,
-    #                              assume_all_nonnominal_dynamics_are_traps=False,
+    #                              assume_all_nonnominal_dynamics_are_traps=False, num_frames=250,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-    #
-    # for seed in range(10):
-    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              reuse_escape_as_demonstration=False, use_trap_cost=False,
-    #                              assume_all_nonnominal_dynamics_are_traps=False,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
-    #
+
     # for seed in range(10):
     #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
     #                              reuse_escape_as_demonstration=False, use_trap_cost=False,

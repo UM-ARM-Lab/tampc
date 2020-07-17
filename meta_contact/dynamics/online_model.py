@@ -210,6 +210,12 @@ class OnlineLinearizeMixing(OnlineDynamicsModel):
         self.xxt = 0.5 * (self.xxt + self.xxt.t())
         self.sigma = self.xxt - torch.ger(self.mu, self.mu)
 
+    def get_dynamics(self, t, px, pu, cx, cu):
+        cx, cu, px, pu = self._make_2d_tensor(cx, cu, px, pu)
+        Fm, fv, dyn_cov = self._get_batch_dynamics(px, pu, cx, cu)
+        return Fm[0].cpu().numpy(), fv[0].cpu().numpy(), dyn_cov
+
+
     def _get_batch_dynamics(self, px, pu, cx, cu):
         """
         Compute F, f - the linear dynamics where either dx or next_x = F*[curx, curu] + f

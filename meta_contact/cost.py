@@ -2,6 +2,7 @@
 import torch
 import logging
 import abc
+import numpy as np
 from arm_pytorch_utilities import linalg, tensor_utils
 
 logger = logging.getLogger(__name__)
@@ -34,9 +35,11 @@ class CostQROnlineTorch(Cost):
     def __call__(self, X, U=None, terminal=False):
         return qr_cost(self.compare_to_goal, X, self.goal, self.Q, self.R, U=U, U_goal=None, terminal=terminal)
 
+
     def eval(self, X, U, t, jac=None):
         """
         Get cost and up to its second order derivatives wrt X and U (to approximate a quadratic cost)
+        numpy API for LQR
 
         :param X:
         :param U:
@@ -44,17 +47,18 @@ class CostQROnlineTorch(Cost):
         :param jac:
         :return:
         """
+        # Constants.
         nx = X.shape[1]
         nu = U.shape[1]
         T = X.shape[0]
 
-        l = self.__call__(X, U)
         X = self.compare_to_goal(X, self.goal)
-        lu = 2 * U @ self.R
-        lx = 2 * X @ self.Q
-        luu = 2 * self.R.repeat(T, 1, 1)
-        lxx = 2 * self.Q.repeat(T, 1, 1)
-        lux = torch.zeros((T, nu, nx), dtype=X.dtype, device=X.device)
+        l = 0.5 * (np.einsum('ij,kj,ik->i', X, self.Q, X) + np.einsum('ij,kj,ik->i', U, self.R, U))
+        lu = U @ self.R
+        lx = X @ self.Q
+        luu = np.tile(self.R, (T, 1, 1))
+        lxx = np.tile(self.Q, (T, 1, 1))
+        lux = np.zeros((T, nu, nx))
 
         return l, lx, lu, lxx, luu, lux
 
