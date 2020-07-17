@@ -43,6 +43,7 @@ class OnlineAdapt(enum.IntEnum):
     NONE = 0
     LINEARIZE_LIKELIHOOD = 1
     GP_KERNEL = 2
+    GP_KERNEL_INDEP_OUT = 3
 
 
 class UseGating:
@@ -136,11 +137,12 @@ class HybridDynamicsModel(abc.ABC):
                                                                 local_mix_weight_scale=50, xu_characteristic_length=10,
                                                                 const_local_mix_weight=False, sigreg=1e-10,
                                                                 slice_to_use=train_slice, device=d)
-        elif online_adapt is OnlineAdapt.GP_KERNEL:
+        elif online_adapt in [OnlineAdapt.GP_KERNEL, OnlineAdapt.GP_KERNEL_INDEP_OUT]:
             local_dynamics = online_model.OnlineGPMixing(pm, ds_local, state_diff, slice_to_use=train_slice,
                                                          allow_update=allow_update, sample=True,
                                                          refit_strategy=online_model.RefitGPStrategy.RESET_DATA,
-                                                         device=d, training_iter=150, use_independent_outputs=False)
+                                                         device=d, training_iter=150,
+                                                         use_independent_outputs=online_adapt is OnlineAdapt.GP_KERNEL_INDEP_OUT)
 
         return local_dynamics
 
