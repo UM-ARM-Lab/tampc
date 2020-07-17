@@ -930,15 +930,15 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
     env.close()
 
 
-def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
-                             use_tsf=UseTsf.COORD, nominal_adapt=OnlineAdapt.NONE,
-                             autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE,
-                             use_demo=False,
-                             use_trap_cost=True,
-                             reuse_escape_as_demonstration=False, num_frames=250, run_name=None,
-                             assume_all_nonnominal_dynamics_are_traps=False,
-                             ctrl_opts=None,
-                             **kwargs):
+def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, recover_adjust=True, gating=None,
+                   use_tsf=UseTsf.COORD, nominal_adapt=OnlineAdapt.NONE,
+                   autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE,
+                   use_demo=False,
+                   use_trap_cost=True,
+                   reuse_escape_as_demonstration=False, num_frames=250, run_name=None,
+                   assume_all_nonnominal_dynamics_are_traps=False,
+                   ctrl_opts=None,
+                   **kwargs):
     if ctrl_opts is None:
         ctrl_opts = {}
 
@@ -979,8 +979,6 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
     ctrl.create_recovery_traj_seeder(dss,
                                      nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS if recover_adjust else NominalTrajFrom.NO_ADJUSTMENT)
 
-    name = get_full_controller_name(pm, ctrl, use_tsf.name)
-
     env.draw_user_text(gating.name, 13, left_offset=-1.5)
     env.draw_user_text("run seed {}".format(seed), 12, left_offset=-1.5)
     env.draw_user_text("recovery {}".format(autonomous_recovery.name), 11, left_offset=-1.6)
@@ -998,7 +996,7 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
             for token in args:
                 run_name += "__{}".format(token)
 
-        run_name = 'auto_recover'
+        run_name = default_run_prefix
         affix_run_name(nominal_adapt.name)
         affix_run_name(autonomous_recovery.name + ("_WITHDEMO" if use_demo else ""))
         affix_run_name(level)
@@ -1011,12 +1009,55 @@ def test_autonomous_recovery(seed=1, level=1, recover_adjust=True, gating=None,
         affix_run_name(num_frames)
 
     env.draw_user_text(run_name, 14, left_offset=-1.5)
+
+    pre_run_setup(env, ctrl)
+
     sim.run(seed, run_name)
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
     plt.ioff()
     plt.show()
 
     env.close()
+
+
+def test_autonomous_recovery(*args, **kwargs):
+    def default_setup(env, ctrl):
+        return
+
+    run_controller('auto_recover', default_setup, *args, **kwargs)
+
+
+def tune_trap_set_cost(*args, num_frames=100, **kwargs):
+    def setup(env, ctrl):
+        # setup initial conditions where we are close to a trap and have items in our trap set
+        ctrl.nominal_avg_velocity = 0.012
+        ctrl.trap_set.append((torch.tensor([0.6147, 0.1381, -1.2658, 6.9630, 14.9701], device=ctrl.d, dtype=ctrl.dtype),
+                              torch.tensor([-0.5439, 0.6192, -0.5857], device=ctrl.d, dtype=ctrl.dtype)))
+
+        x = [0.4, 0.15, -math.pi / 8, 0, 0]
+        env.set_task_config(init_block=x[:2], init_yaw=x[2])
+        x = torch.tensor(x, device=ctrl.d, dtype=ctrl.dtype)
+        ctrl.normalize_trapset_cost_to_state(x)
+
+    run_controller('tune_trap_cost', setup, *args, num_frames=num_frames, **kwargs)
+
+
+def tune_recovery_policy(*args, num_frames=100, **kwargs):
+    def setup(env, ctrl: online_controller.OnlineMPPI):
+        # setup initial conditions where we are close to a trap and have items in our trap set
+        ctrl.nominal_avg_velocity = 0.012
+        ctrl.trap_set.append((torch.tensor([0.6147, 0.1381, -1.2658, 6.9630, 14.9701], device=ctrl.d, dtype=ctrl.dtype),
+                              torch.tensor([-0.5439, 0.6192, -0.5857], device=ctrl.d, dtype=ctrl.dtype)))
+
+        x = [0.063, 0.14, -1.246, 0., 0.]
+        env.set_task_config(init_block=x[:2], init_yaw=x[2])
+
+        ctrl.nominal_dynamic_states = [
+            [torch.tensor([-0.0525, 0.1609, -0.4940, -3.0287, 15.0308], device=ctrl.d, dtype=ctrl.dtype)]]
+
+        ctrl._start_recovery_mode()
+
+    run_controller('tune_recovery', setup, *args, num_frames=num_frames, use_trap_cost=False, **kwargs)
 
 
 def evaluate_controller(env: block_push.PushAgainstWallStickyEnv, ctrl: controller.Controller, name,
@@ -1421,84 +1462,6 @@ def evaluate_ctrl_sampler(eval_file, eval_i, seed=1, use_tsf=UseTsf.COORD,
     # axes[-1].set_xlabel('u sample')
     #
     # plt.show()
-
-
-def tune_trap_set_cost(seed=1, level=1,
-                       use_tsf=UseTsf.COORD, nominal_adapt=OnlineAdapt.NONE,
-                       autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE,
-                       use_trap_cost=True,
-                       num_frames=100, run_name=None,
-                       assume_all_nonnominal_dynamics_are_traps=False,
-                       ctrl_opts=None,
-                       **kwargs):
-    if ctrl_opts is None:
-        ctrl_opts = {}
-
-    env = get_env(p.GUI, level=level, log_video=True)
-    logger.info("initial random seed %d", rand.seed(seed))
-
-    ds, pm = get_prior(env, use_tsf)
-
-    dss = [ds]
-    hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, [use_tsf.name],
-                                                       preprocessor=no_tsf_preprocessor(),
-                                                       nominal_model_kwargs={'online_adapt': nominal_adapt},
-                                                       local_model_kwargs=kwargs)
-
-    gating = AlwaysSelectNominal()
-
-    common_wrapper_opts, mpc_opts = get_controller_options(env)
-    ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
-                                        autonomous_recovery=autonomous_recovery,
-                                        assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
-                                        reuse_escape_as_demonstration=False,
-                                        use_trap_cost=use_trap_cost,
-                                        **common_wrapper_opts, **ctrl_opts, constrain_state=constrain_state,
-                                        mpc_opts=mpc_opts)
-    ctrl.set_goal(env.goal)
-
-    env.draw_user_text("run seed {}".format(seed), 12, left_offset=-1.5)
-    env.draw_user_text("recovery {}".format(autonomous_recovery.name), 11, left_offset=-1.6)
-    if use_trap_cost:
-        env.draw_user_text("trap set cost".format(autonomous_recovery.name), 9, left_offset=-1.6)
-
-    sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=False, save=True, stop_when_done=False)
-    seed = rand.seed(seed)
-
-    if run_name is None:
-        def affix_run_name(*args):
-            nonlocal run_name
-            for token in args:
-                run_name += "__{}".format(token)
-
-        run_name = 'tune_trap_cost'
-        affix_run_name(nominal_adapt.name)
-        affix_run_name(autonomous_recovery.name)
-        affix_run_name(level)
-        affix_run_name(use_tsf.name)
-        affix_run_name("ALLTRAP" if assume_all_nonnominal_dynamics_are_traps else "SOMETRAP")
-        affix_run_name("TRAPCOST" if use_trap_cost else "NOTRAPCOST")
-        affix_run_name(seed)
-        affix_run_name(num_frames)
-
-    env.draw_user_text(run_name, 14, left_offset=-1.5)
-
-    # setup initial conditions where we are close to a trap and have items in our trap set
-    ctrl.nominal_avg_velocity = 0.012
-    ctrl.trap_set.append((torch.tensor([0.6147, 0.1381, -1.2658, 6.9630, 14.9701], device=ctrl.d, dtype=ctrl.dtype),
-                          torch.tensor([-0.5439, 0.6192, -0.5857], device=ctrl.d, dtype=ctrl.dtype)))
-
-    x = [0.4, 0.15, -math.pi / 8, 0, 0]
-    env.set_task_config(init_block=x[:2], init_yaw=x[2])
-    x = torch.tensor(x, device=ctrl.d, dtype=ctrl.dtype)
-    ctrl.normalize_trapset_cost_to_state(x)
-
-    sim.run(seed, run_name)
-    logger.info("last run cost %f", np.sum(sim.last_run_cost))
-    plt.ioff()
-    plt.show()
-
-    env.close()
 
 
 class Learn:
@@ -2056,6 +2019,9 @@ if __name__ == "__main__":
     # tune_trap_set_cost(seed=0, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                    use_trap_cost=True,
     #                    autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+
+    # tune_recovery_policy(seed=0, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_eval=True, plot_online_update=False,
     #                                                use_gp=True, allow_update=False,
