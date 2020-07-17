@@ -22,8 +22,9 @@ logger = logging.getLogger(__name__)
 
 
 class PybulletLoader(load_utils.DataLoader):
-    def __init__(self, *args, file_cfg=cfg, **kwargs):
+    def __init__(self, *args, file_cfg=cfg, ignore_masks=False, **kwargs):
         self.info_desc = {}
+        self.ignore_masks = ignore_masks
         super().__init__(file_cfg, *args, **kwargs)
 
     @staticmethod
@@ -79,9 +80,11 @@ class PybulletLoader(load_utils.DataLoader):
 
         mask = mask.reshape(-1) != 0
 
-        xu = xu[mask]
-        info = info[mask]
-        y = y[mask]
+        # might want to ignore masks if we need all data points
+        if not self.ignore_masks:
+            xu = xu[mask]
+            info = info[mask]
+            y = y[mask]
 
         self.config.load_data_info(x, u, y, xu)
         return xu, y, info
@@ -414,13 +417,15 @@ class DebugDrawer:
 
 
 class PybulletEnvDataSource(datasource.FileDataSource):
-    def __init__(self, env, data_dir=None, **kwargs):
+    def __init__(self, env, data_dir=None, loader_args=None, **kwargs):
         if data_dir is None:
             data_dir = self._default_data_dir()
+        if loader_args is None:
+            loader_args = {}
         loader_class = self._loader_map(type(env))
         if not loader_class:
             raise RuntimeError("Unrecognized data source for env {}".format(env))
-        loader = loader_class()
+        loader = loader_class(**loader_args)
         super().__init__(loader, data_dir, **kwargs)
 
     @staticmethod
