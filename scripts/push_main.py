@@ -978,7 +978,8 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, recover_a
         hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, [use_tsf.name],
                                                            preprocessor=no_tsf_preprocessor(),
                                                            nominal_model_kwargs={'online_adapt': nominal_adapt},
-                                                           local_model_kwargs=kwargs)
+                                                           local_model_kwargs=kwargs,
+                                                           device=common_wrapper_opts['device'])
 
         # we're always going to be in the nominal mode in this case; might as well speed up testing
         if not use_demo and not reuse_escape_as_demonstration:
@@ -2050,21 +2051,24 @@ if __name__ == "__main__":
     #                                                gating=AlwaysSelectNominal(),
     #                                                use_tsf=ut, test_traj=None)
 
-    with modified_environ(USE_CPU='1'):
-        test_autonomous_recovery(seed=0, level=0, adaptive_control_baseline=True, num_frames=250)
+    # with modified_environ(USE_CPU='1'):
+    #     test_autonomous_recovery(seed=0, level=0, adaptive_control_baseline=True, num_frames=250)
 
     # autonomous recovery
-    # for seed in range(0, 3):
-    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              reuse_escape_as_demonstration=False, use_trap_cost=False,
-    #                              assume_all_nonnominal_dynamics_are_traps=False, num_frames=250,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    for seed in range(3, 4):
+        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                                 reuse_escape_as_demonstration=False, use_trap_cost=False,
+                                 assume_all_nonnominal_dynamics_are_traps=False, num_frames=250,
+                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
-    # for seed in range(10):
-    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
-    #                              reuse_escape_as_demonstration=False, use_trap_cost=False,
-    #                              assume_all_nonnominal_dynamics_are_traps=False,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.NONE)
+    # baseline ++
+    # for level in [1, 3]:
+    #     for seed in range(10):
+    #         test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
+    #                                  num_frames=500,
+    #                                  reuse_escape_as_demonstration=False, use_trap_cost=False,
+    #                                  assume_all_nonnominal_dynamics_are_traps=False,
+    #                                  autonomous_recovery=online_controller.AutonomousRecovery.NONE)
 
     # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.GP_KERNEL,
     #                            override=True, full_evaluation=True, plot_model_error=False, relearn_dynamics=False)
