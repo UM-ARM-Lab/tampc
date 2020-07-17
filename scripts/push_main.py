@@ -1672,7 +1672,8 @@ class Visualize:
         input('do visualization')
 
     @staticmethod
-    def task_res_dist(filter_function=None):
+    def task_res_dist(filter_function=None, plot_cumulative_distribution=True, plot_min_distribution=False,
+                      series_name_map=None):
         def name_to_tokens(name):
             tk = {'name': name}
             tokens = name.split('__')
@@ -1736,29 +1737,69 @@ class Visualize:
             max_dist = 0
 
             res_list = {k: list(v.values()) for k, v in res.items()}
-            for dists in res_list.values():
-                min_dist = min(min(dists), min_dist)
-                max_dist = max(max(dists), max_dist)
-
             series = []
-            for i, (series_name, dists) in enumerate(res_list.items()):
+
+            for series_name, dists in res_list.items():
                 tokens = name_to_tokens(series_name)
                 if filter_function is None or filter_function(tokens):
-                    series.append((series_name, tokens, dists))
+                    # remove any non-list elements (historical)
+                    dists = [dlist for dlist in dists if type(dlist) is list]
+                    # process the dists so they are all valid (replace nones)
+                    for dhistory in dists:
+                        min_dist_up_to_now = 100
+                        for i, d in enumerate(dhistory):
+                            if d is None:
+                                dhistory[i] = min_dist_up_to_now
+                            else:
+                                min_dist_up_to_now = min(min_dist_up_to_now, d)
+                                dhistory[i] = min(min_dist_up_to_now, d)
+                        min_dist = min(min(dhistory), min_dist)
+                        max_dist = max(max(dhistory), max_dist)
 
-            f, ax = plt.subplots(len(series), 1, figsize=(8, 9))
-            f.suptitle("task {}".format(level))
+                    series.append((series_name, tokens, np.stack(dists)))
 
-            for i, data in enumerate(series):
-                series_name, tk, dists = data
-                logger.info("%s with %d runs mean {:.2f} ({:.2f})".format(np.mean(dists) * 10, np.std(dists) * 10),
-                            series_name, len(dists))
-                sns.distplot(dists, ax=ax[i], hist=True, kde=False, bins=np.linspace(min_dist, max_dist, 20))
-                ax[i].set_title((tk['adaptation'], tk['recovery'], tk['optimism']))
-                ax[i].set_xlim(min_dist, max_dist)
-                ax[i].set_ylim(0, int(0.6 * len(dists)))
-            ax[-1].set_xlabel('closest dist to goal [m]')
-            f.tight_layout(rect=[0, 0.03, 1, 0.95])
+            if plot_min_distribution:
+                f, ax = plt.subplots(len(series), 1, figsize=(8, 9))
+                f.suptitle("task {}".format(level))
+
+                for i, data in enumerate(series):
+                    series_name, tk, dists = data
+                    dists = np.min(dists, axis=1)
+                    logger.info("%s with %d runs mean {:.2f} ({:.2f})".format(np.mean(dists) * 10, np.std(dists) * 10),
+                                series_name, len(dists))
+                    sns.distplot(dists, ax=ax[i], hist=True, kde=False, bins=np.linspace(min_dist, max_dist, 20))
+                    ax[i].set_title((tk['adaptation'], tk['recovery'], tk['optimism']))
+                    ax[i].set_xlim(min_dist, max_dist)
+                    ax[i].set_ylim(0, int(0.6 * len(dists)))
+                ax[-1].set_xlabel('closest dist to goal [m]')
+                f.tight_layout(rect=[0, 0.03, 1, 0.95])
+            if plot_cumulative_distribution:
+                f, ax = plt.subplots(1, figsize=(8, 9))
+                f.suptitle("task {}".format(level))
+
+                colors = ['blue', 'yellow', 'red', 'green']
+                max_t = 0
+
+                for i, data in enumerate(series):
+                    series_name, tk, dists = data
+                    if series_name_map is not None and series_name in series_name_map:
+                        series_name = series_name_map[series_name]
+
+                    max_t = max(max_t, dists.shape[1] + 1)
+                    t = np.arange(dists.shape[1])
+                    m = np.median(dists, axis=0)
+                    lower = np.percentile(dists, 10, axis=0)
+                    upper = np.percentile(dists, 90, axis=0)
+
+                    ax.plot(t, m, color=colors[i], label=series_name)
+                    plt.fill_between(t, lower, upper, facecolor=colors[i], alpha=0.3)
+
+                ax.legend()
+                ax.set_xlim(0, max_t)
+                ax.set_ylim(0, max_dist * 1.05)
+                ax.set_ylabel('closest dist to goal')
+                ax.set_xlabel('control step')
+                f.tight_layout(rect=[0, 0.03, 1, 0.95])
 
         plt.show()
 
@@ -1812,7 +1853,7 @@ class EvaluateTask:
     def _closest_distance_to_goal(file, level, visualize=True, nodes_per_side=150):
         from sklearn.preprocessing import MinMaxScaler
         env = get_env(p.GUI if visualize else p.DIRECT, level=level)
-        ds, _ = get_ds(env, file, validation_ratio=0.)
+        ds, _ = get_ds(env, file, validation_ratio=0., loader_args={'ignore_masks': True})
         XU, _, _ = ds.training_set(original=True)
         X, U = torch.split(XU, ds.original_config().nx, dim=1)
 
@@ -2007,19 +2048,21 @@ if __name__ == "__main__":
     def filter_func(tk):
         logger.info(tk)
         # return ['reuse'] == "NOREUSE"
-        return tk['level'] is 1 and tk['name'] in ["auto_recover_NONE_RANDOM_1_COORD_NOREUSE_DecisionTreeClassifier",
-                                                   "auto_recover_GP_KERNEL_NONE_1_COORD_NOREUSE_DecisionTreeClassifier",
-                                                   "auto_recover__NONE__RETURN_STATE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST"] or \
-               tk['level'] is 3 and tk['name'] in ["auto_recover_NONE_RANDOM_3_COORD_NOREUSE_DecisionTreeClassifier",
-                                                   "auto_recover_GP_KERNEL_NONE_3_COORD_NOREUSE_DecisionTreeClassifier",
-                                                   "auto_recover__NONE__RETURN_STATE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST"]
+        return tk['level'] is 1 and tk['name'] in [
+            "auto_recover__GP_KERNEL__NONE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST"] or \
+               tk['level'] is 3 and tk['name'] in [
+                   "auto_recover__GP_KERNEL__NONE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST"]
 
 
-    # Visualize.task_res_dist(filter_func)
+    # Visualize.task_res_dist(filter_func, series_name_map={
+    #     'auto_recover__GP_KERNEL__NONE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': 'adaptive baseline++',
+    #     'auto_recover__GP_KERNEL__NONE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': 'adaptive baseline++'})
 
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__GP_KERNEL__NONE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST', suffix="500.mat")
     EvaluateTask.closest_distance_to_goal_whole_set(
-        'auto_recover__GP_KERNEL__NONE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST', suffix="500.mat")
+        'auto_recover__GP_KERNEL__NONE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST', suffix="500.mat")
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_gating_function(use_tsf=ut, test_file=neg_test_file)
@@ -2047,7 +2090,7 @@ if __name__ == "__main__":
     #     test_autonomous_recovery(seed=0, level=0, adaptive_control_baseline=True, num_frames=250)
 
     # autonomous recovery
-    # for seed in range(0, 3):
+    # for seed in range(0, 2):
     #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                              reuse_escape_as_demonstration=False, use_trap_cost=False,
     #                              assume_all_nonnominal_dynamics_are_traps=False, num_frames=250,
