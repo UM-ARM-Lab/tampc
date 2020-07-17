@@ -399,6 +399,12 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.using_local_model_for_nonnominal_dynamics = False
         # start new string of nominal dynamic states
         self.nominal_dynamic_states.append([])
+        # skip current state since we'll add it later
+        for i in range(-2, -len(self.u_history), -1):
+            if self.dynamics_class_history[i] != gating_function.DynamicsClass.NOMINAL:
+                break
+            elif self._control_effort(self.u_history[i]) > 0:
+                self.nominal_dynamic_states[-1].insert(0, self.x_history[i])
 
     def _compute_action(self, x):
         # use only state for dynamics_class selection; this way we can get dynamics_class before calculating action
