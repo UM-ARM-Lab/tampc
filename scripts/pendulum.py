@@ -1,4 +1,3 @@
-# TODO depcrated; need to update online model to use new API
 import gym
 import numpy as np
 import torch
@@ -15,6 +14,9 @@ from meta_contact.dynamics import online_model, model, prior
 from meta_contact import cfg
 from arm_pytorch_utilities.model import make
 from arm_pytorch_utilities.make_data import datasource
+from meta_contact.controller import gating_function
+from meta_contact.dynamics import hybrid_model
+from meta_contact.env.pybullet_env import handle_data_format_for_state_diff
 import time
 
 gym_log.set_level(gym_log.INFO)
@@ -30,9 +32,6 @@ class PendulumDataset(datasource.DataSource):
         self.data = data
         self._val_unprocessed = None
         super().__init__(**kwargs)
-
-    def unprocessed_validation_set(self):
-        return self._val_unprocessed
 
     def make_data(self):
         if self.data is None:
@@ -52,8 +51,8 @@ class PendulumDataset(datasource.DataSource):
         if self.preprocessor:
             self.preprocessor.tsf.fit(XU, Y)
             self.preprocessor.update_data_config(self.config)
-            self._val_unprocessed = XU, Y, None
-            # apply
+            self._original_train = XU, Y, None
+            self._original_val = self._original_train
             XU, Y, _ = self.preprocessor.tsf.transform(XU, Y)
 
         self._train = XU, Y, None
@@ -64,13 +63,11 @@ class PendulumDataset(datasource.DataSource):
         return "{}".format(self.N)
 
 
+@handle_data_format_for_state_diff
 def compare_to_goal(state, goal):
-    if len(goal.shape) == 1:
-        goal = goal.view(1, -1)
     dtheta = math_utils.angular_diff_batch(state[:, 0], goal[:, 0])
     dtheta_dt = state[:, 1] - goal[:, 1]
-    diff = torch.cat((dtheta.view(-1, 1), dtheta_dt.view(-1, 1)), dim=1)
-    return diff
+    return dtheta.reshape(-1, 1), dtheta_dt.reshape(-1, 1)
 
 
 def compare_to_goal_np(state, goal):
@@ -188,7 +185,15 @@ if __name__ == "__main__":
         model.DeterministicUser(
             make.make_sequential_network(config, activation_factory=torch.nn.Tanh, h_units=(16, 16)).to(device=d)), ds)
     pm = prior.NNPrior.from_data(mw, train_epochs=0)
-    linearizable_dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, sigreg=1e-10)
+    # linearizable_dynamics = online_model.OnlineDynamicsModel(0.1, pm, ds, sigreg=1e-10)
+    online_dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds,
+                                                         compare_to_goal,
+                                                         local_mix_weight_scale=1, xu_characteristic_length=10,
+                                                         const_local_mix_weight=True, sigreg=1e-10,
+                                                         device=d)
+    hybrid_dynamics = hybrid_model.HybridDynamicsModel([ds], pm, compare_to_goal, ['none'], preprocessor=preprocessor,
+                                                       nominal_model_kwargs={
+                                                           'online_adapt': hybrid_model.OnlineAdapt.LINEARIZE_LIKELIHOOD})
 
     Nv = 1000
     statev = torch.cat(((torch.rand(Nv, 1, dtype=torch.double) - 0.5) * 2 * math.pi,
@@ -242,16 +247,14 @@ if __name__ == "__main__":
     #                                    init_gamma=0.1, u_max=ACTION_HIGH, compare_to_goal=compare_to_goal_np)
     mppi_opts = {'num_samples': N_SAMPLES, 'horizon': TIMESTEPS, 'lambda_': 1,
                  'noise_sigma': torch.eye(nu, dtype=dtype, device=d) * 1}
-    ctrl = online_controller.OnlineMPPI(linearizable_dynamics, untransformed_config, Q=Q, R=R, u_max=ACTION_HIGH,
+    ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(),
+                                        gating=gating_function.AlwaysSelectNominal(),
+                                        Q=Q, R=R, u_max=ACTION_HIGH, u_min=ACTION_LOW,
                                         compare_to_goal=compare_to_goal,
-                                        constrain_state=constrain_state,
                                         device=d,
-                                        mpc_opts=mppi_opts)
-    # ctrl = global_controller.GlobalMPPIController(dynamics, untransformed_config, R=R, Q=Q,
-    #                                               compare_to_goal=compare_to_goal,
-    #                                               u_max=torch.tensor(ACTION_HIGH, dtype=dtype),
-    #                                               device=d,
-    #                                               mpc_opts=mppi_opts)
+                                        use_trap_cost=False,
+                                        autonomous_recovery=online_controller.AutonomousRecovery.NONE,
+                                        constrain_state=constrain_state, mpc_opts=mppi_opts)
 
     ctrl.set_goal(np.array([0, 0]))
 
