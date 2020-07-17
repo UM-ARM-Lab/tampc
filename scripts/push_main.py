@@ -1861,8 +1861,8 @@ class EvaluateTask:
             min_pos = [-0.9, -0.8]
             max_pos = [1.3, 0.5]
         elif level is 3:
-            min_pos = [-0.5, -1.0]
-            max_pos = [1.3, 1.0]
+            min_pos = [-0.5, -1.1]
+            max_pos = [1.3, 0.9]
         else:
             raise RuntimeError("Unspecified range for level {}".format(level))
 
@@ -2054,15 +2054,15 @@ if __name__ == "__main__":
                    "auto_recover__GP_KERNEL__NONE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST"]
 
 
-    # Visualize.task_res_dist(filter_func, series_name_map={
-    #     'auto_recover__GP_KERNEL__NONE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': 'adaptive baseline++',
-    #     'auto_recover__GP_KERNEL__NONE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': 'adaptive baseline++'})
+    Visualize.task_res_dist(filter_func, series_name_map={
+        'auto_recover__GP_KERNEL__NONE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': 'adaptive baseline++',
+        'auto_recover__GP_KERNEL__NONE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': 'adaptive baseline++'})
 
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
     # EvaluateTask.closest_distance_to_goal_whole_set(
     #     'auto_recover__GP_KERNEL__NONE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST', suffix="500.mat")
-    EvaluateTask.closest_distance_to_goal_whole_set(
-        'auto_recover__GP_KERNEL__NONE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST', suffix="500.mat")
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__GP_KERNEL__NONE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST', suffix="500.mat")
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_gating_function(use_tsf=ut, test_file=neg_test_file)
