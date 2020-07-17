@@ -127,6 +127,9 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         # list of strings of nominal states (separated by uses of local dynamics)
         self.nominal_dynamic_states = [[]]
 
+        # how much single-step distance the corresponding action in u_history moved the state
+        self.single_step_move_dist = []
+
         self.using_local_model_for_nonnominal_dynamics = False
         self.nonnominal_dynamics_start_index = -1
         # window of points we take to calculate the average trend
@@ -410,6 +413,12 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         # use only state for dynamics_class selection; this way we can get dynamics_class before calculating action
         a = torch.zeros((1, self.nu), device=self.d, dtype=x.dtype)
         self.dynamics_class = self.gating.sample_class(x.view(1, -1), a).item()
+
+        if len(self.x_history) > 1:
+            x_index = len(self.x_history) - 1
+            last_step_dist = self._avg_displacement(x_index - 1, x_index)
+            # also hold the x index to reduce implicit bookkeeping
+            self.single_step_move_dist.append((x_index, last_step_dist))
 
         # in non-nominal dynamics
         if self._in_non_nominal_dynamics():
