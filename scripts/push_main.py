@@ -131,6 +131,7 @@ def get_controller_options(env):
         'device': d,
         'terminal_cost_multiplier': 50,
         'trap_cost_per_dim': 10.,
+        'abs_unrecognized_threshold': 10,
         'adjust_model_pred_with_prev_error': False,
         'use_orientation_terminal_cost': False,
     }
@@ -2054,11 +2055,12 @@ if __name__ == "__main__":
                    "auto_recover__GP_KERNEL__NONE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST"]
 
 
-    Visualize.task_res_dist(filter_func, series_name_map={
-        'auto_recover__GP_KERNEL__NONE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': 'adaptive baseline++',
-        'auto_recover__GP_KERNEL__NONE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': 'adaptive baseline++'})
+    # Visualize.task_res_dist(filter_func, series_name_map={
+    #     'auto_recover__GP_KERNEL__NONE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': 'adaptive baseline++',
+    #     'auto_recover__GP_KERNEL__NONE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': 'adaptive baseline++'})
 
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
+    # use independent output
     # EvaluateTask.closest_distance_to_goal_whole_set(
     #     'auto_recover__GP_KERNEL__NONE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST', suffix="500.mat")
     # EvaluateTask.closest_distance_to_goal_whole_set(
@@ -2090,16 +2092,28 @@ if __name__ == "__main__":
     #     test_autonomous_recovery(seed=0, level=0, adaptive_control_baseline=True, num_frames=250)
 
     # autonomous recovery
-    # for seed in range(0, 2):
-    #     test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              reuse_escape_as_demonstration=False, use_trap_cost=False,
-    #                              assume_all_nonnominal_dynamics_are_traps=False, num_frames=250,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    for seed in range(0, 7):
+        test_autonomous_recovery(seed=seed, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                                 reuse_escape_as_demonstration=False, use_trap_cost=True,
+                                 assume_all_nonnominal_dynamics_are_traps=False, num_frames=250,
+                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
+    # baseline non-adaptive
+    # for level in [1, 3]:
+    #     for seed in range(10):
+    #         test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
+    #                                  nominal_adapt=OnlineAdapt.NONE,
+    #                                  gating=AlwaysSelectNominal(),
+    #                                  num_frames=500,
+    #                                  reuse_escape_as_demonstration=False, use_trap_cost=False,
+    #                                  assume_all_nonnominal_dynamics_are_traps=False,
+    #                                  autonomous_recovery=online_controller.AutonomousRecovery.NONE)
     # baseline ++
     # for level in [1, 3]:
     #     for seed in range(10):
-    #         test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
+    #         test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
+    #                                  nominal_adapt=OnlineAdapt.GP_KERNEL,
+    #                                  gating=AlwaysSelectNominal(),
     #                                  num_frames=500,
     #                                  reuse_escape_as_demonstration=False, use_trap_cost=False,
     #                                  assume_all_nonnominal_dynamics_are_traps=False,
