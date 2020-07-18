@@ -378,7 +378,7 @@ class PushAgainstWallEnv(PybulletEnv):
             c = (t + 1) / (T + 1)
             self._dd.draw_2d_pose('rx{}'.format(t), pose, (0, c, c))
         # clear previous rollout buffer
-        self._dd.clear_2d_poses_after('rx', T)
+        self._dd.clear_visualization_after('rx', T)
 
     def visualize_goal_set(self, states):
         if states is None:
@@ -388,7 +388,7 @@ class PushAgainstWallEnv(PybulletEnv):
             pose = self.get_block_pose(states[t])
             c = (t + 1) / (T + 1)
             self._dd.draw_2d_pose('gs{}'.format(t), pose, (c, c, c))
-        self._dd.clear_2d_poses_after('gs', T)
+        self._dd.clear_visualization_after('gs', T)
 
     def visualize_trap_set(self, trap_set):
         if trap_set is None:
@@ -400,7 +400,8 @@ class PushAgainstWallEnv(PybulletEnv):
             c = (t + 1) / (T + 1)
             self._dd.draw_2d_pose('ts{}'.format(t), pose, (1, 0, c))
             self._draw_action(action.cpu().numpy(), old_state=state.cpu().numpy(), debug=t + 1)
-        self._dd.clear_2d_poses_after('ts', T)
+        self._dd.clear_visualization_after('ts', T)
+        self._dd.clear_visualization_after('u', T + 1)
 
     def visualize_prediction_error(self, predicted_state):
         """In GUI mode, show the difference between the predicted state and the current actual state"""
