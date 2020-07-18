@@ -37,10 +37,9 @@ class OnlineDynamicsModel(model.DynamicsBase):
             x, u, y = self._make_2d_tensor(px, pu, y)
             xu = torch.cat((x, u), dim=1)
             xu, y, _ = self.ds.preprocessor.tsf.transform(xu, y)
-            px = xu[:, :self.nx].view(-1)
-            pu = xu[:, self.nx:].view(-1)
-            y = y.view(-1)
-        self._update(px, pu, y)
+            px = xu[:, :self.nx]
+            pu = xu[:, self.nx:]
+        self._update(px.view(-1), pu.view(-1), y.view(-1))
 
     @abc.abstractmethod
     def _update(self, px, pu, y):
