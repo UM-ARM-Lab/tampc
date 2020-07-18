@@ -257,7 +257,7 @@ class MPC(ControllerWithModelPrediction):
             state = state[:, -1, :]
         elif len(state.shape) is 4:
             state = state[:, :, -1, :]
-        state_loss = self.terminal_cost_multiplier * self.cost(state, action, terminal=True)
+        state_loss = self.terminal_cost_multiplier * self.cost(state, terminal=True)
         total_loss = state_loss
         # TODO specific to block pushing (want final pose to point towards goal) - should push to inherited class
         if self.use_orientation_terminal_cost:
