@@ -10,6 +10,7 @@ from arm_pytorch_utilities import rand, load_data, math_utils
 from arm_pytorch_utilities import preprocess
 
 from meta_contact.controller import online_controller
+from meta_contact.controller import ilqr
 from meta_contact.dynamics import online_model, model, prior
 from meta_contact import cfg
 from arm_pytorch_utilities.model import make
@@ -70,13 +71,13 @@ def compare_to_goal(state, goal):
     return dtheta.reshape(-1, 1), dtheta_dt.reshape(-1, 1)
 
 
-def compare_to_goal_np(state, goal):
+def compare_to_goal_np_in_transformed_space(state, goal):
     if len(goal.shape) == 1:
         goal = goal.reshape(1, -1)
-    dtheta = math_utils.angular_diff_batch(state[:, 0], goal[:, 0])
-    dtheta_dt = state[:, 1] - goal[:, 1]
-    diff = np.column_stack((dtheta.reshape(-1, 1), dtheta_dt.reshape(-1, 1)))
-    return diff
+    # dtheta = math_utils.angular_diff_batch(state[:, 0], goal[:, 0])
+    # dtheta_dt = state[:, 1] - goal[:, 1]
+    # diff = np.column_stack((dtheta.reshape(-1, 1), dtheta_dt.reshape(-1, 1)))
+    return state - goal
 
 
 def run(ctrl, env, retrain_dynamics, config, retrain_after_iter=50, iter=1000, render=True):
@@ -105,6 +106,7 @@ def run(ctrl, env, retrain_dynamics, config, retrain_after_iter=50, iter=1000, r
 
 
 if __name__ == "__main__":
+    USE_ILQR = False
     ENV_NAME = "Pendulum-v0"
     TIMESTEPS = 15  # T
     N_SAMPLES = 100  # K
@@ -115,6 +117,7 @@ if __name__ == "__main__":
     num_frames = 500
 
     d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    d = torch.device("cpu")
     dtype = torch.double
 
     seed = 6
@@ -175,8 +178,10 @@ if __name__ == "__main__":
 
     fill_dataset(new_data)
     logger.info("bootstrapping finished")
+
+    # TODO directly making the change in state into angular representation is wrong
     preprocessor = preprocess.PytorchTransformer(preprocess.AngleToCosSinRepresentation(0),
-                                                 preprocess.NullSingleTransformer())
+                                                 preprocess.AngleToCosSinRepresentation(0))
     untransformed_config = ds.update_preprocessor(preprocessor)
 
     # pm = prior.GMMPrior.from_data(ds)
@@ -242,21 +247,29 @@ if __name__ == "__main__":
         return state
 
 
-    # ctrl = online_controller.OnlineLQR(pm, ds, max_timestep=num_frames, Q=Q, R=R, horizon=20, lqr_iter=3,
-    #                                    u_noise=0.1,
-    #                                    init_gamma=0.1, u_max=ACTION_HIGH, compare_to_goal=compare_to_goal_np)
-    mppi_opts = {'num_samples': N_SAMPLES, 'horizon': TIMESTEPS, 'lambda_': 1,
-                 'noise_sigma': torch.eye(nu, dtype=dtype, device=d) * 1}
-    ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(),
-                                        gating=gating_function.AlwaysSelectNominal(),
-                                        Q=Q, R=R, u_max=ACTION_HIGH, u_min=ACTION_LOW,
-                                        compare_to_goal=compare_to_goal,
-                                        device=d,
-                                        use_trap_cost=False,
-                                        autonomous_recovery=online_controller.AutonomousRecovery.NONE,
-                                        constrain_state=constrain_state, mpc_opts=mppi_opts)
-
-    ctrl.set_goal(np.array([0, 0]))
+    if USE_ILQR:
+        # iLQR requires more than just samples from the dynamics model but also its derivatives
+        # so we have to do control directly in the transformed space
+        ctrl = ilqr.OnlineLQR(online_dynamics, ds, max_timestep=num_frames, Q=np.diag([1, 1, 0.1]),
+                              R=R, horizon=20,
+                              lqr_iter=3,
+                              u_noise=0.1, u_max=ACTION_HIGH, compare_to_goal=compare_to_goal_np_in_transformed_space,
+                              device=d)
+        goal = torch.tensor([0, 0, 0], dtype=torch.double, device=d)
+        goal = preprocessor.transform_x(goal.view(1, -1))
+        ctrl.set_goal(goal[0, :ds.config.nx].cpu().numpy())
+    else:
+        mppi_opts = {'num_samples': N_SAMPLES, 'horizon': TIMESTEPS, 'lambda_': 1,
+                     'noise_sigma': torch.eye(nu, dtype=dtype, device=d) * 1}
+        ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(),
+                                            gating=gating_function.AlwaysSelectNominal(),
+                                            Q=Q, R=R, u_max=ACTION_HIGH, u_min=ACTION_LOW,
+                                            compare_to_goal=compare_to_goal,
+                                            device=d,
+                                            use_trap_cost=False,
+                                            autonomous_recovery=online_controller.AutonomousRecovery.NONE,
+                                            constrain_state=constrain_state, mpc_opts=mppi_opts)
+        ctrl.set_goal(np.array([0, 0]))
 
 
     def update_model():
@@ -301,7 +314,7 @@ if __name__ == "__main__":
     env.reset()
     if downward_start:
         env.env.state = [np.pi, 1]
-    total_reward, data = run(ctrl, env, train, untransformed_config, iter=num_frames)
+    total_reward, data = run(ctrl, env, train, ds.original_config(), iter=num_frames)
     logger.info("Total reward %f", total_reward)
     # save data (on successful trials could be used as prior for the next)
     if SAVE_TRIAL_DATA:

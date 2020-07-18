@@ -19,11 +19,13 @@ class OnlineController(Controller):
     External API is in numpy ndarrays, but internally keeps tensors, and interacts with any models using tensors
     """
 
-    def __init__(self, online_dynamics: online_model.OnlineLinearizeMixing, config, u_min=None, u_max=None, Q=1, R=1,
+    def __init__(self, online_dynamics: online_model.OnlineLinearizeMixing, ds, u_min=None, u_max=None, Q=1, R=1,
                  device='cpu', dtype=torch.double, **kwargs):
         super().__init__(**kwargs)
-        self.nx = config.nx
-        self.nu = config.nu
+        self.ds = ds
+        # note that we're going to be doing all of control in the transformed space
+        self.nx = ds.config.nx
+        self.nu = ds.config.nu
         self.d = device
         self.dtype = dtype
         self.u_min, self.u_max = math_utils.get_bounds(u_min, u_max)
@@ -59,9 +61,17 @@ class OnlineController(Controller):
                                  torch.from_numpy(self.prevu).to(device=self.d, dtype=self.dtype),
                                  torch.from_numpy(obs).to(device=self.d, dtype=self.dtype))
 
-        self.update_policy(t, obs)
+        x = obs
+        if self.ds.preprocessor:
+            x = torch.from_numpy(x).to(device=self.d).view(1, -1)
+            u = torch.zeros((1, self.ds.original_config().nu), dtype=x.dtype)
 
-        u = self.compute_action(obs)
+            xu = torch.cat((x, u), dim=1)
+            xu = self.ds.preprocessor.tsf.transform_x(xu)
+            x = xu[0, :self.nx].cpu().numpy()
+
+        self.update_policy(t, x)
+        u = self.compute_action(x)
         if self.u_max is not None:
             u = np.clip(u, self.u_min, self.u_max)
 
@@ -167,10 +177,22 @@ class OnlineLQR(OnlineController):
         horizon = min(self.H, self.maxT - t)
         reg_mu = self.min_mu
         reg_del = self.del0
+
+        prevx = self.prevx
+        prevu = self.prevu
+        if self.ds.preprocessor:
+            xx = torch.from_numpy(prevx).to(device=self.d).view(1, -1)
+            u = torch.from_numpy(prevu).to(device=self.d).view(1, -1)
+
+            xu = torch.cat((xx, u), dim=1)
+            xu = self.ds.preprocessor.tsf.transform_x(xu)
+            prevx = xu[0, :self.nx].cpu().numpy()
+            prevu = xu[0, self.nx:].cpu().numpy()
+
         for _ in range(self.lqr_iter):
             # This is plain LQR
             lgpolicy, reg_mu, reg_del = trajectory.lqr(self.cost, prev_policy, self.dynamics,
-                                                       horizon, t, x, self.prevx, self.prevu,
+                                                       horizon, t, x, prevx, prevu,
                                                        reg_mu, reg_del, self.del0, self.min_mu, self.lqr_discount,
                                                        jacobian=jacobian,
                                                        max_time_varying_horizon=20)
