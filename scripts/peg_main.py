@@ -398,6 +398,28 @@ def tune_trap_set_cost(*args, num_frames=100, **kwargs):
     run_controller('tune_trap_cost', setup, *args, num_frames=num_frames, **kwargs)
 
 
+def tune_recovery_policy(*args, num_frames=100, **kwargs):
+    def setup(env, ctrl: online_controller.OnlineMPPI):
+        # setup initial conditions where we are close to a trap and have items in our trap set
+        ctrl.nominal_avg_velocity = 0.012
+
+        z = env.initGripperPos[2]
+        hole = [0, 0.2]
+        x = [hole[0], hole[1] - 0.2, z, 0, 0]
+        env.set_task_config(hole=hole, init_peg=x[:2])
+        goal = np.r_[env.hole, z, 0, 0]
+        ctrl.set_goal(goal)
+
+        ctrl.trap_set.append((torch.tensor([env.hole[0], env.hole[1] - 0.1, z, 0, 0], device=ctrl.d, dtype=ctrl.dtype),
+                              torch.tensor([0, -1], device=ctrl.d, dtype=ctrl.dtype)))
+        ctrl.nominal_dynamic_states = [
+            [torch.tensor([hole[0], hole[1] - 0.5, z, 0, 0], device=ctrl.d, dtype=ctrl.dtype)]]
+
+        ctrl._start_recovery_mode()
+
+    run_controller('tune_recovery', setup, *args, num_frames=num_frames, use_trap_cost=False, **kwargs)
+
+
 class EvaluateTask:
     class Graph:
         def __init__(self):
@@ -727,9 +749,12 @@ if __name__ == "__main__":
     #
     # Visualize.task_res_dist()
 
-    tune_trap_set_cost(seed=0, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                       use_trap_cost=True,
-                       autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    # tune_trap_set_cost(seed=0, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                    use_trap_cost=True,
+    #                    autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+
+    tune_recovery_policy(seed=0, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                         autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # for seed in range(0, 5):
     #     test_autonomous_recovery(seed=seed, level=6, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
