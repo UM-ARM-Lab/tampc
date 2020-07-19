@@ -359,7 +359,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.MAB]:
             # change mpc cost
             # return to last set of nominal states
-            nominal_dynamics_set = torch.stack(self.nominal_dynamic_states[-1])
+            nominal_dynamics_set = torch.stack(self.nominal_dynamic_states[-1][-5:])
             nominal_return_cost = cost.CostQRSet(nominal_dynamics_set, self.Q_recovery, self.R, self.compare_to_goal)
 
             if self.autonomous_recovery is AutonomousRecovery.RETURN_STATE:
