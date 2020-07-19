@@ -119,11 +119,13 @@ def get_controller_options(env):
     u_init = [0, 0.5, 0]
     # tune this so that we figure out to make u-turns
     sigma = torch.tensor(sigma, dtype=torch.double, device=d)
+    trap_cost_per_dim = 10
     common_wrapper_opts = {
         'Q': Q,
         'R': R,
         'R_env': env.control_cost(),
         'Q_recovery': Q_recovery,
+        'Q_trap': [trap_cost_per_dim, trap_cost_per_dim, trap_cost_per_dim, 0, 0],
         'u_min': u_min,
         'u_max': u_max,
         'compare_to_goal': env.state_difference,
@@ -131,7 +133,6 @@ def get_controller_options(env):
         'u_similarity': env.control_similarity,
         'device': d,
         'terminal_cost_multiplier': 50,
-        'trap_cost_per_dim': 10.,
         'abs_unrecognized_threshold': 10,
         'adjust_model_pred_with_prev_error': False,
         'use_orientation_terminal_cost': False,
