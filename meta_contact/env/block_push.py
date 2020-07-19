@@ -23,7 +23,6 @@ class BlockFace:
     BOT = 3
 
 
-# TODO This is specific to this pusher and block; how to generalize this?
 _MAX_ALONG = 0.3 / 2  # half length of block
 _BLOCK_HEIGHT = 0.05
 _PUSHER_MID = 0.10
@@ -331,6 +330,11 @@ class PushAgainstWallEnv(PybulletEnv):
             self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.55, -0.25, wall_z],
                                          p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
                                          globalScaling=0.8))
+        elif self.level == 2:
+            translation = 10
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.55 + 10, -0.25 + 10, wall_z],
+                                         p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
+                                         globalScaling=0.8))
         elif self.level == 3:
             self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.3, 0.25, wall_z],
                                          p.getQuaternionFromEuler([0, 0, -math.pi / 4]), useFixedBase=True,
@@ -355,7 +359,11 @@ class PushAgainstWallEnv(PybulletEnv):
             self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [1.5, 0.5, wall_z],
                                          p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
 
-        self.set_camera_position([0, 0])
+        if self.level == 2:
+            self.set_camera_position([10, 10])
+        else:
+            self.set_camera_position([0, 0])
+
         self._draw_goal()
         self.state = self._obs()
         self._draw_state()
@@ -667,8 +675,8 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
 
     @staticmethod
     def state_distance(state_difference):
-        # TODO try including theta normalized to radius of gyration
-        return state_difference[:, :2].norm(dim=1)
+        state_difference[:, 2] *= _RADIUS_GYRATION
+        return state_difference[:, :3].norm(dim=1)
 
     @classmethod
     def state_cost(cls):
