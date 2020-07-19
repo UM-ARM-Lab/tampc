@@ -35,7 +35,6 @@ class CostQROnlineTorch(Cost):
     def __call__(self, X, U=None, terminal=False):
         return qr_cost(self.compare_to_goal, X, self.goal, self.Q, self.R, U=U, U_goal=None, terminal=terminal)
 
-
     def eval(self, X, U, t, jac=None):
         """
         Get cost and up to its second order derivatives wrt X and U (to approximate a quadratic cost)
@@ -67,27 +66,44 @@ def min_cost(costs):
     return costs.min(dim=0).values
 
 
+def default_similarity(U, goal_u):
+    return torch.cosine_similarity(U, goal_u, dim=-1).clamp(0, 1)
+
+
+def identity(cost):
+    return cost
+
+
 class CostQRSet(Cost):
     """If cost is not dependent on a single target but a set of targets"""
 
-    def __init__(self, goal_set, Q, R, compare_to_goal, reduce=min_cost, goal_weights=None):
+    def __init__(self, goal_set, Q, R, compare_to_goal, u_similarity=None, reduce=min_cost,
+                 process_cost=identity, goal_weights=None):
         self.Q = Q
         self.R = R
         self.goal_set = goal_set
         self.goal_weights = goal_weights
         self.compare_to_goal = compare_to_goal
         self.reduce = reduce
+        self.u_similarity = u_similarity if u_similarity else default_similarity
+        self.process_cost = process_cost
 
         logger.debug("state set\n%s", goal_set)
 
     @tensor_utils.handle_batch_input
     def __call__(self, X, U=None, terminal=False):
         costs = []
+        if U is not None:
+            assert X.shape[:-1] == U.shape[:-1]
 
         for i, goal in enumerate(self.goal_set):
             if type(goal) is tuple:
+                # have to have both high cost in x and u (multiplicative rather than additive)
                 goal_x, goal_u = goal
-                c = qr_cost(self.compare_to_goal, X, goal_x, self.Q, self.R, U=U, U_goal=goal_u, terminal=terminal)
+                c_x = qr_cost(self.compare_to_goal, X, goal_x, self.Q, None, terminal=terminal)
+                c_x = self.process_cost(c_x)
+                c_u = 1 if U is None else self.u_similarity(U, goal_u)
+                c = c_x * c_u
             else:
                 c = qr_cost(self.compare_to_goal, X, goal, self.Q, self.R, U=U, terminal=terminal)
             if self.goal_weights is not None:

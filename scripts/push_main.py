@@ -128,6 +128,7 @@ def get_controller_options(env):
         'u_max': u_max,
         'compare_to_goal': env.state_difference,
         'state_dist': env.state_distance,
+        'u_similarity': env.control_similarity,
         'device': d,
         'terminal_cost_multiplier': 50,
         'trap_cost_per_dim': 10.,

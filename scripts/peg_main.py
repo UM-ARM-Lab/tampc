@@ -191,9 +191,10 @@ def get_controller_options(env):
         'u_max': u_max,
         'compare_to_goal': env.state_difference,
         'state_dist': env.state_distance,
+        'u_similarity': env.control_similarity,
         'device': d,
         'terminal_cost_multiplier': 50,
-        'trap_cost_per_dim': 10,
+        'trap_cost_per_dim': 100,
         'trap_cost_annealing_rate': 0.9,
         'abs_unrecognized_threshold': 30,
         'adjust_model_pred_with_prev_error': False,
@@ -359,7 +360,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, recover_a
 
     env.draw_user_text(run_name, 14, left_offset=-1.5)
 
-    pre_run_setup(env, ctrl)
+    pre_run_setup(env, ctrl, ds)
 
     sim.run(seed, run_name)
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
@@ -370,36 +371,64 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, recover_a
 
 
 def test_autonomous_recovery(*args, **kwargs):
-    def default_setup(env, ctrl):
+    def default_setup(env, ctrl, ds):
         return
 
     run_controller('auto_recover', default_setup, *args, **kwargs)
 
 
 def tune_trap_set_cost(*args, num_frames=100, **kwargs):
-    def setup(env, ctrl):
+    def setup(env, ctrl, ds):
         z = env.initGripperPos[2]
-        hole = [0, 0.2]
-        x = [hole[0], hole[1] - 0.3, z, 0, 0]
-        env.set_task_config(hole=hole, init_peg=x[:2])
-        x = torch.tensor(x, device=ctrl.d, dtype=ctrl.dtype)
-        goal = np.r_[env.hole, z, 0, 0]
-        ctrl.set_goal(goal)
 
-        # setup initial conditions where we are close to a trap and have items in our trap set
-        ctrl.trap_set.append((torch.tensor([env.hole[0], env.hole[1] - 0.1, z, 0, 0], device=ctrl.d, dtype=ctrl.dtype),
-                              torch.tensor([0, -1], device=ctrl.d, dtype=ctrl.dtype)))
-        # ctrl.trap_set.append(
-        #     (torch.tensor([env.hole[0] - 0.1, env.hole[1] - 0.2, z, 0, 0], device=ctrl.d, dtype=ctrl.dtype),
-        #      torch.tensor([0, -1], device=ctrl.d, dtype=ctrl.dtype)))
+        level = kwargs['level']
+        if level is 0:
+            hole = [0, 0.2]
+            x = [hole[0], hole[1] - 0.3, z, 0, 0]
+            env.set_task_config(hole=hole, init_peg=x[:2])
+            x = torch.tensor(x, device=ctrl.d, dtype=ctrl.dtype)
+            goal = np.r_[env.hole, z, 0, 0]
+            ctrl.set_goal(goal)
 
-        ctrl.normalize_trapset_cost_to_state(x)
+            # setup initial conditions where we are close to a trap and have items in our trap set
+            trap_x = torch.tensor([env.hole[0], env.hole[1] - 0.2, z, 0, 0], device=ctrl.d, dtype=ctrl.dtype)
+            trap_u = torch.tensor([0, -1], device=ctrl.d, dtype=ctrl.dtype)
+            ctrl.trap_set.append((trap_x, trap_u))
+
+            # ctrl.trap_set.append(
+            #     (torch.tensor([env.hole[0] - 0.1, env.hole[1] - 0.2, z, 0, 0], device=ctrl.d, dtype=ctrl.dtype),
+            #      torch.tensor([0, -1], device=ctrl.d, dtype=ctrl.dtype)))
+
+            ctrl.normalize_trapset_cost_to_state(x)
+            a = ctrl.trap_cost(trap_x, trap_u)
+            shifted_x = trap_x.clone()
+            shifted_x[1] += 0.2
+            b = ctrl.trap_cost(shifted_x, torch.tensor([0, 1], device=ctrl.d, dtype=ctrl.dtype))
+            c = ctrl.trap_cost(shifted_x, torch.tensor([1, 1], device=ctrl.d, dtype=ctrl.dtype))
+            d = ctrl.trap_cost(shifted_x, torch.tensor([1, 0.5], device=ctrl.d, dtype=ctrl.dtype))
+            logger.debug("cost at trap %f with opposite action %f other action %f other action %f", a, b, c, d)
+        elif level is 5:
+            ctrl.trap_set.extend([(torch.tensor([-3.5530e-03, 1.4122e-01, 1.9547e-01, 7.1541e-01, -1.0235e+01],
+                                           device='cuda:0', dtype=torch.float64),
+                              torch.tensor([0.3596, 0.2701], device='cuda:0', dtype=torch.float64)),
+                             (torch.tensor([-0.0775, 0.1415, 0.1956, -9.7136, -10.1923], device='cuda:0',
+                                           dtype=torch.float64),
+                              torch.tensor([0.2633, 0.3216], device='cuda:0', dtype=torch.float64)),
+                             (torch.tensor([0.1663, 0.1417, 0.1956, 4.4845, -10.2436], device='cuda:0',
+                                           dtype=torch.float64),
+                              torch.tensor([1.0000, 0.8479], device='cuda:0', dtype=torch.float64)),
+                             (torch.tensor([0.0384, 0.1412, 0.1955, 4.6210, -10.4069], device='cuda:0',
+                                           dtype=torch.float64),
+                              torch.tensor([0.3978, 0.6424], device='cuda:0', dtype=torch.float64))])
+            ctrl.trap_set_weight = torch.tensor([0.0035], device='cuda:0', dtype=torch.float64)
+            x = [-3.35635743e-03,  3.24323310e-01,  1.95463138e-01,  5.71478642e+00, -4.01359529e+00]
+            env.set_task_config(init_peg=x[:2])
 
     run_controller('tune_trap_cost', setup, *args, num_frames=num_frames, **kwargs)
 
 
 def tune_recovery_policy(*args, num_frames=100, **kwargs):
-    def setup(env, ctrl: online_controller.OnlineMPPI):
+    def setup(env, ctrl: online_controller.OnlineMPPI, ds):
         # setup initial conditions where we are close to a trap and have items in our trap set
         ctrl.nominal_avg_velocity = 0.012
 
@@ -418,6 +447,40 @@ def tune_recovery_policy(*args, num_frames=100, **kwargs):
         ctrl._start_recovery_mode()
 
     run_controller('tune_recovery', setup, *args, num_frames=num_frames, use_trap_cost=False, **kwargs)
+
+
+def evaluate_after_rollout(rollout_file, rollout_stop_index, *args, num_frames=100, **kwargs):
+    def setup(env, ctrl: online_controller.OnlineMPPI, ds):
+        ds_eval, _ = get_ds(env, rollout_file, validation_ratio=0.)
+        ds_eval.update_preprocessor(ds.preprocessor)
+
+        # evaluate on a non-recovery dataset to see if rolling out the actions from the recovery set is helpful
+        XU, Y, info = ds_eval.training_set(original=True)
+        X, U = torch.split(XU, env.nx, dim=1)
+
+        # put the state right before the evaluated action
+        x = X[rollout_stop_index].cpu().numpy()
+        logger.info(np.array2string(x, separator=', '))
+        # only need to do rollouts; don't need control samples
+        T = ctrl.mpc.T
+        ctrl.original_horizon = 1
+        for i in range(rollout_stop_index):
+            env.draw_user_text(str(i), 1)
+            env.set_state(X[i].cpu().numpy(), U[i].cpu().numpy())
+            ctrl.mpc.change_horizon(1)
+            ctrl.command(X[i].cpu().numpy())
+
+        ctrl.original_horizon = T
+        ctrl.mpc.change_horizon(T)
+
+        # manually evaluate cost near goal when we're not taking actions downwards
+
+        # setup initial conditions where we are close to a trap and have items in our trap set
+        z = env.initGripperPos[2]
+        x = torch.tensor([env.hole[0], env.hole[1] + 0.1, z, 0, 0], device=ctrl.d, dtype=ctrl.dtype)
+        c = ctrl.trap_cost(x, torch.tensor([0, -1], device=ctrl.d, dtype=ctrl.dtype))
+
+    run_controller('evaluate_after_rollout', setup, *args, num_frames=num_frames, **kwargs)
 
 
 class EvaluateTask:
@@ -749,15 +812,22 @@ if __name__ == "__main__":
     #
     # Visualize.task_res_dist()
 
-    # tune_trap_set_cost(seed=0, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                    use_trap_cost=True,
-    #                    autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    for seed in range(10):
+        tune_trap_set_cost(seed=seed, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                           use_trap_cost=True,
+                           autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
-    tune_recovery_policy(seed=0, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                         autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    # tune_recovery_policy(seed=0, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
-    # for seed in range(0, 5):
-    #     test_autonomous_recovery(seed=seed, level=6, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    # evaluate_after_rollout(
+    #     'peg/auto_recover__NONE__RETURN_STATE__5__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__3__200.mat',
+    #     184, seed=3, level=5, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #     use_trap_cost=True,
+    #     autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+
+    # for seed in range(3, 4):
+    #     test_autonomous_recovery(seed=seed, level=5, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                              reuse_escape_as_demonstration=False, use_trap_cost=True,
     #                              assume_all_nonnominal_dynamics_are_traps=False,
     #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
