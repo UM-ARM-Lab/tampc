@@ -97,7 +97,8 @@ class AutonomousRecovery(enum.IntEnum):
     NONE = 0
     RANDOM = 1
     RETURN_STATE = 2
-    MAB = 3
+    RETURN_FASTEST = 3
+    MAB = 4
 
 
 def default_state_dist(state_difference):
@@ -142,7 +143,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.nominal_avg_velocity = None
 
         # avoid these number of actions before entering a trap (inclusive of the transition into the trap)
-        self.steps_before_entering_trap_to_avoid = 1
+        # self.steps_before_entering_trap_to_avoid = 1
 
         self.autonomous_recovery_mode = False
         self.autonomous_recovery_start_index = -1
@@ -155,6 +156,9 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.autonomous_recovery = autonomous_recovery
         self.original_horizon = self.mpc.T
         self.reuse_escape_as_demonstration = reuse_escape_as_demonstration
+
+        # return fastest properties
+        self.fastest_to_choose = 4
 
         # MAB specific properties
         # these are all normalized to be relative to 1
@@ -254,7 +258,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         if cur_index - self.autonomous_recovery_start_index < self.nonnominal_dynamics_trend_len:
             return False
 
-        if self.autonomous_recovery is AutonomousRecovery.RETURN_STATE:
+        if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.RETURN_FASTEST]:
             # can also leave if we are as close as we can get to previous states
             before_trend = torch.cat(self.mpc_cost_history[self.autonomous_recovery_start_index:
                                                            self.autonomous_recovery_start_index + self.nonnominal_dynamics_trend_len])
@@ -274,7 +278,8 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             before = self._avg_displacement(
                 max(0, self.nonnominal_dynamics_start_index - self.nonnominal_dynamics_trend_len),
                 self.nonnominal_dynamics_start_index)
-            current = self._avg_displacement(max(-len(self.x_history), -self.nonnominal_dynamics_trend_len - 1), -1)
+            cur_index = len(self.x_history) - 1
+            current = self._avg_displacement(max(0, cur_index - self.nonnominal_dynamics_trend_len), cur_index)
             # TODO parameterize the ratio of reluctance to leave recovery mode relative to tolerance of entering it
             left_trap = current > before * self.nonnominal_dynamics_penalty_tolerance * 3
             logger.debug("before velocity %f current velocity %f left trap? %d", before, current, left_trap)
@@ -356,22 +361,32 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             logger.debug("trap set updated to be\n%s", temp)
 
         # different strategies for recovery mode
-        if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.MAB]:
+        if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.RETURN_FASTEST,
+                                        AutonomousRecovery.MAB]:
             # change mpc cost
             # return to last set of nominal states
             nominal_dynamics_set = torch.stack(self.nominal_dynamic_states[-1][-5:])
             nominal_return_cost = cost.CostQRSet(nominal_dynamics_set, self.Q_recovery, self.R, self.compare_to_goal)
 
+            # return to last set of states that allowed the greatest single step movement
+            last_states_to_consider = self.single_step_move_dist[self.nonnominal_dynamics_start_index:]
+            last_states_to_consider = sorted(last_states_to_consider, key=lambda x: x[1], reverse=True)
+            fastest_movement_set = [self.x_history[i] for i, moved, expected in
+                                    last_states_to_consider[:self.fastest_to_choose]]
+            fastest_movement_set = torch.stack(fastest_movement_set)
+            fastest_return_cost = cost.CostQRSet(fastest_movement_set, self.Q_recovery, self.R, self.compare_to_goal)
+
             if self.autonomous_recovery is AutonomousRecovery.RETURN_STATE:
                 self.recovery_cost = nominal_return_cost
+            elif self.autonomous_recovery is AutonomousRecovery.RETURN_FASTEST:
+                self.recovery_cost = fastest_return_cost
             elif self.autonomous_recovery is AutonomousRecovery.MAB:
+                costs = [nominal_return_cost, fastest_return_cost]
+                assert len(costs) == self.num_costs
                 self.last_arm_pulled = None
-                local_dynamics_set = torch.stack(self.x_history[-5:-1])
-                local_return_cost = cost.CostQRSet(local_dynamics_set, self.Q_recovery, self.R, self.compare_to_goal)
                 # linear combination of costs over the different cost functions
                 # TODO normalize costs by their value at the current state? (to get on the same magnitude)
-                self.recovery_cost = cost.ComposeCost([nominal_return_cost, local_return_cost],
-                                                      weights=self.recovery_cost_weight)
+                self.recovery_cost = cost.ComposeCost(costs, weights=self.recovery_cost_weight)
             else:
                 raise RuntimeError("Unhandled recovery strategy")
 
@@ -405,7 +420,8 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         #     self.gating = self.dynamics.get_gating()
         #     self.recovery_traj_seeder.update_data(self.dynamics.dss)
 
-        if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.MAB]:
+        if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.RETURN_FASTEST,
+                                        AutonomousRecovery.MAB]:
             # restore cost functions
             self.mpc.running_cost = self._running_cost
             self.mpc.terminal_state_cost = self._terminal_cost
