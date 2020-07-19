@@ -331,10 +331,29 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.autonomous_recovery_start_index = len(self.x_history)
 
         # avoid these points in the future
-        for i in range(min(len(self.u_history), self.steps_before_entering_trap_to_avoid)):
-            self.trap_set.append((self.x_history[-i - 2], self.u_history[-i - 1]))
-        temp = torch.stack([torch.cat((x, u)) for x, u in self.trap_set])
-        logger.debug("trap set updated to be\n%s", temp)
+        # look at state-action pairs since entering local dynamics / last finishing recovery
+        # for i in range(min(len(self.u_history), self.steps_before_entering_trap_to_avoid)):
+        #     self.trap_set.append((self.x_history[-i - 2], self.u_history[-i - 1]))
+
+        min_index = -1
+        min_ratio = 1
+        start = max(self.nonnominal_dynamics_start_index, self.autonomous_recovery_end_index - 1)
+        for i in range(start, len(self.x_history) - 1):
+            ii, moved, expected = self.single_step_move_dist[i]
+            if moved / expected < min_ratio:
+                min_ratio = moved / expected
+                min_index = i
+        self.trap_set.append((self.x_history[min_index], self.u_history[min_index]))
+
+        # start = max(self.nonnominal_dynamics_start_index, self.autonomous_recovery_end_index - 1)
+        # for i in range(start, len(self.x_history) - 1):
+        #     ii, moved, expected = self.single_step_move_dist[i]
+        #     if moved < 0.1 * expected:
+        #         self.trap_set.append((self.x_history[i], self.u_history[i]))
+
+        if len(self.trap_set):
+            temp = torch.stack([torch.cat((x, u)) for x, u in self.trap_set])
+            logger.debug("trap set updated to be\n%s", temp)
 
         # different strategies for recovery mode
         if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.MAB]:
@@ -415,10 +434,14 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.dynamics_class = self.gating.sample_class(x.view(1, -1), a).item()
 
         if len(self.x_history) > 1:
-            x_index = len(self.x_history) - 1
-            last_step_dist = self._avg_displacement(x_index - 1, x_index)
+            x_index = len(self.x_history) - 2
+            last_step_dist = self._avg_displacement(x_index, x_index + 1)
             # also hold the x index to reduce implicit bookkeeping
-            self.single_step_move_dist.append((x_index, last_step_dist))
+            # note that these x index is 1 greater than the u index/time index
+            predicted_diff = self.compare_to_goal(self.x_history[x_index],
+                                                  torch.from_numpy(self.predicted_next_state).to(device=self.d))
+            predicted_step_dist = self.state_dist(predicted_diff)[0]
+            self.single_step_move_dist.append((x_index, last_step_dist, predicted_step_dist))
 
         # in non-nominal dynamics
         if self._in_non_nominal_dynamics():
@@ -445,13 +468,14 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
         if self._left_trap():
             self._end_recovery_mode()
-            if self.trap_cost is not None and self.auto_init_trap_cost:
-                normalized_weights = [self.normalize_trapset_cost_to_state(prev_state) for prev_state in
-                                      self.nominal_dynamic_states[-1][-6:]]
-                self.trap_set_weight = statistics.median(normalized_weights)
-            else:
-                self.trap_set_weight *= (1 / self.trap_cost_annealing_rate) * 5
-            logger.debug("tune trap cost weight %f", self.trap_set_weight)
+            if self.trap_cost is not None and len(self.trap_set):
+                if self.auto_init_trap_cost:
+                    normalized_weights = [self.normalize_trapset_cost_to_state(prev_state) for prev_state in
+                                          self.nominal_dynamic_states[-1][-6:]]
+                    self.trap_set_weight = statistics.median(normalized_weights)
+                else:
+                    self.trap_set_weight *= (1 / self.trap_cost_annealing_rate) * 5
+                logger.debug("tune trap cost weight %f", self.trap_set_weight)
 
         if self._left_local_model():
             self._end_local_model()
