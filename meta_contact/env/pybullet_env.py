@@ -135,6 +135,11 @@ class PybulletEnv:
         """Get lower and upper bounds for control"""
         return np.array([]), np.array([])
 
+    @staticmethod
+    @abc.abstractmethod
+    def control_similarity(u1, u2):
+        """Get similarity between 0 - 1 of two controls"""
+
     @classmethod
     @abc.abstractmethod
     def state_cost(cls):
@@ -274,10 +279,11 @@ def handle_data_format_for_state_diff(state_diff):
         if len(other_state.shape) == 1:
             other_state = other_state.reshape(1, -1)
         diff = state_diff(state, other_state)
-        if torch.is_tensor(state):
-            diff = torch.cat(diff, dim=1)
-        else:
-            diff = np.column_stack(diff)
+        if type(diff) is tuple:
+            if torch.is_tensor(state):
+                diff = torch.cat(diff, dim=1)
+            else:
+                diff = np.column_stack(diff)
         return diff
 
     return data_format_handler

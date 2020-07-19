@@ -4,6 +4,7 @@ import os
 import pybullet as p
 import time
 import enum
+import torch
 
 import numpy as np
 from meta_contact import cfg
@@ -111,6 +112,12 @@ class PegInHoleEnv(PybulletEnv):
         u_min = np.array([-1, -1])
         u_max = np.array([1, 1])
         return u_min, u_max
+
+    @staticmethod
+    @handle_data_format_for_state_diff
+    def control_similarity(u1, u2):
+        # TODO should probably keep the API numpy only
+        return torch.cosine_similarity(u1, u2, dim=-1).clamp(0, 1)
 
     @classmethod
     def control_cost(cls):

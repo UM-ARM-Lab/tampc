@@ -3,6 +3,7 @@ import math
 import os
 import pybullet as p
 import time
+import torch
 
 import numpy as np
 from arm_pytorch_utilities import math_utils
@@ -977,6 +978,14 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         u_min = np.array([-1, 0, -1])
         u_max = np.array([1, 1, 1])
         return u_min, u_max
+
+    @staticmethod
+    @handle_data_format_for_state_diff
+    def control_similarity(u1, u2):
+        # TODO should probably keep the API numpy only
+        u1 = torch.stack((u1[:, 0], u1[:, 2]), dim=1)
+        u2 = torch.stack((u2[:, 0], u2[:, 2]), dim=1)
+        return torch.cosine_similarity(u1, u2, dim=-1).clamp(0, 1)
 
     def _set_goal(self, goal_pos):
         self.goal = np.array(tuple(goal_pos) + (0,) + (0, 0))
