@@ -398,6 +398,8 @@ def tune_trap_set_cost(*args, num_frames=100, **kwargs):
             # ctrl.trap_set.append(
             #     (torch.tensor([env.hole[0] - 0.1, env.hole[1] - 0.2, z, 0, 0], device=ctrl.d, dtype=ctrl.dtype),
             #      torch.tensor([0, -1], device=ctrl.d, dtype=ctrl.dtype)))
+            # test with explicit seeding on nominal trajectory
+            ctrl.mpc.U = torch.tensor([0, 0.5], device=ctrl.d, dtype=ctrl.dtype).repeat(ctrl.original_horizon, 1)
 
             ctrl.normalize_trapset_cost_to_state(x)
             a = ctrl.trap_cost(trap_x, trap_u)
@@ -409,19 +411,19 @@ def tune_trap_set_cost(*args, num_frames=100, **kwargs):
             logger.debug("cost at trap %f with opposite action %f other action %f other action %f", a, b, c, d)
         elif level is 5:
             ctrl.trap_set.extend([(torch.tensor([-3.5530e-03, 1.4122e-01, 1.9547e-01, 7.1541e-01, -1.0235e+01],
-                                           device='cuda:0', dtype=torch.float64),
-                              torch.tensor([0.3596, 0.2701], device='cuda:0', dtype=torch.float64)),
-                             (torch.tensor([-0.0775, 0.1415, 0.1956, -9.7136, -10.1923], device='cuda:0',
-                                           dtype=torch.float64),
-                              torch.tensor([0.2633, 0.3216], device='cuda:0', dtype=torch.float64)),
-                             (torch.tensor([0.1663, 0.1417, 0.1956, 4.4845, -10.2436], device='cuda:0',
-                                           dtype=torch.float64),
-                              torch.tensor([1.0000, 0.8479], device='cuda:0', dtype=torch.float64)),
-                             (torch.tensor([0.0384, 0.1412, 0.1955, 4.6210, -10.4069], device='cuda:0',
-                                           dtype=torch.float64),
-                              torch.tensor([0.3978, 0.6424], device='cuda:0', dtype=torch.float64))])
+                                                device='cuda:0', dtype=torch.float64),
+                                   torch.tensor([0.3596, 0.2701], device='cuda:0', dtype=torch.float64)),
+                                  (torch.tensor([-0.0775, 0.1415, 0.1956, -9.7136, -10.1923], device='cuda:0',
+                                                dtype=torch.float64),
+                                   torch.tensor([0.2633, 0.3216], device='cuda:0', dtype=torch.float64)),
+                                  (torch.tensor([0.1663, 0.1417, 0.1956, 4.4845, -10.2436], device='cuda:0',
+                                                dtype=torch.float64),
+                                   torch.tensor([1.0000, 0.8479], device='cuda:0', dtype=torch.float64)),
+                                  (torch.tensor([0.0384, 0.1412, 0.1955, 4.6210, -10.4069], device='cuda:0',
+                                                dtype=torch.float64),
+                                   torch.tensor([0.3978, 0.6424], device='cuda:0', dtype=torch.float64))])
             ctrl.trap_set_weight = torch.tensor([0.0035], device='cuda:0', dtype=torch.float64)
-            x = [-3.35635743e-03,  3.24323310e-01,  1.95463138e-01,  5.71478642e+00, -4.01359529e+00]
+            x = [-3.35635743e-03, 3.24323310e-01, 1.95463138e-01, 5.71478642e+00, -4.01359529e+00]
             env.set_task_config(init_peg=x[:2])
 
     run_controller('tune_trap_cost', setup, *args, num_frames=num_frames, **kwargs)
