@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 _PEG_MID = 0.075
 _BOARD_TOP = 0.05
+_EE_PEG_Z_DIFF = 0.12
 
 _DIR = "peg"
 
@@ -220,7 +221,7 @@ class PegInHoleEnv(PybulletEnv):
             p.stepSimulation()
 
         pegPos = p.getBasePositionAndOrientation(self.pegId)[0]
-        self._ee_z = pegPos[2] + 0.12
+        self._ee_z = pegPos[2] + _EE_PEG_Z_DIFF
         # reset joint states to nominal pose
         self._calculate_init_joints_to_hold_peg()
 
@@ -448,11 +449,6 @@ class PegInHoleEnv(PybulletEnv):
             raise RuntimeError("Can't use same location index (0) as cost")
         self._dd.draw_text('user{}'.format(location_index), text, location_index, left_offset)
 
-    # --- set current state
-    def set_state(self, state, action=None, block_id=None):
-        # TODO implement
-        pass
-
     # --- observing state from simulation
     def _obs(self):
         """Observe current state from simulator"""
@@ -662,6 +658,17 @@ class PegFloatingGripperEnv(PegInHoleEnv):
     MAX_PUSH_DIST = 0.03
     OPEN_ANGLE = 0.025
     CLOSE_ANGLE = 0.01
+
+    # --- set current state
+    def set_state(self, state, action=None):
+        p.resetBasePositionAndOrientation(self.pegId, (state[0], state[1], self._ee_z - _EE_PEG_Z_DIFF),
+                                          [0, 0, 0, 1])
+        p.resetBasePositionAndOrientation(self.gripperId, (state[0], state[1], self._ee_z),
+                                          self.endEffectorOrientation)
+        self.state = state
+        self._draw_state()
+        if action is not None:
+            self._draw_action(action, old_state=state)
 
     def _observe_ee(self):
         gripperPose = p.getBasePositionAndOrientation(self.gripperId)
