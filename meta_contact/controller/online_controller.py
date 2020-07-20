@@ -108,7 +108,7 @@ def default_state_dist(state_difference):
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def __init__(self, *args, state_dist=default_state_dist, abs_unrecognized_threshold=10,
                  trap_cost_annealing_rate=0.97, manual_init_trap_weight=None,
-                 assume_all_nonnominal_dynamics_are_traps=True, nonnominal_dynamics_penalty_tolerance=0.6,
+                 assume_all_nonnominal_dynamics_are_traps=False, nonnominal_dynamics_penalty_tolerance=0.6,
                  Q_recovery=None, R_env=None,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
@@ -221,6 +221,9 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             # enter a trap or not since the recovery policy isn't expected to decrease goal cost)
             cur_index = len(self.x_history) - 1
             if cur_index - self.autonomous_recovery_end_index < (self.nonnominal_dynamics_trend_len - 1):
+                return False
+
+            if cur_index - self.nonnominal_dynamics_start_index < self.nonnominal_dynamics_trend_len:
                 return False
 
             # look at displacement
