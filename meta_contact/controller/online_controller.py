@@ -162,7 +162,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
         # MAB specific properties
         # these are all normalized to be relative to 1
-        self.obs_noise = torch.ones(1, device=self.d) * 1
+        self.obs_noise = torch.ones(1, device=self.d) * 0.3
         self.process_noise_scaling = 0.1
         self.last_arm_pulled = None
         self.pull_arm_every_n_steps = 3
@@ -175,7 +175,8 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         # give special meaning to the first few arms (they are 1-hot)
         self.cost_weights[:self.num_costs, :self.num_costs] = torch.eye(self.num_costs, device=self.d)
         # TODO include a more informed prior (from previous iterations)
-        self.mab = KFMANDB(torch.zeros(self.num_arms, device=self.d), torch.eye(self.num_arms, device=self.d))
+        self.mab = KFMANDB(torch.ones(self.num_arms, device=self.d) * 0.1,
+                           torch.eye(self.num_arms, device=self.d) * 0.1)
 
     def create_recovery_traj_seeder(self, *args, **kwargs):
         # deprecated
@@ -273,15 +274,22 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             return left_trap
         elif self.autonomous_recovery is AutonomousRecovery.MAB:
             # reward for MAB (shared across arms) is displacement
+            # leave if we converged / as close to targets as possible because we're not moving anymore
             # look at displacement
-            # TODO consider displacement from where trap started to avoid rewarding oscillation
-            before = self._avg_displacement(
-                max(0, self.nonnominal_dynamics_start_index - self.nonnominal_dynamics_trend_len),
-                self.nonnominal_dynamics_start_index)
+            before = self.nominal_avg_velocity
             cur_index = len(self.x_history) - 1
             current = self._avg_displacement(max(0, cur_index - self.nonnominal_dynamics_trend_len), cur_index)
             # TODO parameterize the ratio of reluctance to leave recovery mode relative to tolerance of entering it
-            left_trap = current > before * self.nonnominal_dynamics_penalty_tolerance * 3
+            converged = current < before * self.nonnominal_dynamics_penalty_tolerance * 0.05
+
+            # and moved sufficiently far from when we recognized the trap
+            moved_from_trap = self.state_dist(
+                self.compare_to_goal(self.x_history[cur_index],
+                                     self.x_history[self.autonomous_recovery_start_index - 1]))
+            moved_suffiently_far = moved_from_trap > 1 * self.nominal_avg_velocity  # number of steps at full speed away
+
+            left_trap = moved_suffiently_far and converged
+
             logger.debug("before velocity %f current velocity %f left trap? %d", before, current, left_trap)
             return left_trap
         else:
@@ -536,12 +544,9 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         return goal_cost_at_state / trap_cost_at_state
 
     def _update_mab_arm(self, arm):
-        # TODO replace this with the fixed expected nominal velocity
-        nominal = self._avg_displacement(
-            max(0, self.nonnominal_dynamics_start_index - self.nonnominal_dynamics_trend_len),
-            self.nonnominal_dynamics_start_index)
-
-        reward = self._avg_displacement(-self.pull_arm_every_n_steps - 1, -1)
+        nominal = self.nominal_avg_velocity
+        cur_index = len(self.x_history) - 1
+        reward = self._avg_displacement(cur_index - self.pull_arm_every_n_steps, cur_index)
         # normalize reward with respect to displacement in nominal environment so that a reward of 1
         # means equivalent to it
         reward /= nominal
