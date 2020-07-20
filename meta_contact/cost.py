@@ -97,15 +97,43 @@ class CostQRSet(Cost):
             assert X.shape[:-1] == U.shape[:-1]
 
         for i, goal in enumerate(self.goal_set):
-            if type(goal) is tuple:
-                # have to have both high cost in x and u (multiplicative rather than additive)
-                goal_x, goal_u = goal
-                c_x = qr_cost(self.compare_to_goal, X, goal_x, self.Q, None, terminal=terminal)
-                c_x = self.process_cost(c_x)
-                c_u = 1 if U is None else self.u_similarity(U, goal_u)
-                c = c_x * c_u
-            else:
-                c = qr_cost(self.compare_to_goal, X, goal, self.Q, self.R, U=U, terminal=terminal)
+            c = qr_cost(self.compare_to_goal, X, goal, self.Q, self.R, U=U, terminal=terminal)
+            if self.goal_weights is not None:
+                c *= self.goal_weights[i]
+            costs.append(c)
+
+        if len(costs):
+            costs = torch.stack(costs, dim=0)
+            costs = self.reduce(costs)
+        else:
+            costs = torch.zeros(X.shape[0], dtype=X.dtype, device=X.device)
+
+        return costs
+
+
+class GoalSetCost(Cost):
+    """If cost is not dependent on a single target but a set of targets"""
+
+    def __init__(self, goal_set, compare_to_goal, state_dist, reduce, scale=1, goal_weights=None):
+        self.goal_set = goal_set
+        self.goal_weights = goal_weights
+        self.compare_to_goal = compare_to_goal
+        self.state_dist = state_dist
+        self.reduce = reduce
+        self.scale = scale
+
+        logger.debug("state set\n%s", goal_set)
+
+    @tensor_utils.handle_batch_input
+    def __call__(self, X, U=None, terminal=False):
+        costs = []
+        if U is not None:
+            assert X.shape[:-1] == U.shape[:-1]
+
+        for i, goal in enumerate(self.goal_set):
+            c = self.compare_to_goal(X, goal)
+            c = self.state_dist(c).square() * self.scale
+
             if self.goal_weights is not None:
                 c *= self.goal_weights[i]
             costs.append(c)

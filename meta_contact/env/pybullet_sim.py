@@ -98,7 +98,8 @@ class PybulletSim(simulation.Simulation):
                 mode_text = "recovery" if self.ctrl.autonomous_recovery_mode else (
                     "local" if self.ctrl.using_local_model_for_nonnominal_dynamics else "")
                 self.env.draw_user_text(mode_text, 3)
-                if self.ctrl.recovery_cost and isinstance(self.ctrl.recovery_cost, control_cost.CostQRSet):
+                if self.ctrl.recovery_cost and isinstance(self.ctrl.recovery_cost,
+                                                          (control_cost.GoalSetCost, control_cost.CostQRSet)):
                     # plot goal set
                     self.env.visualize_goal_set(self.ctrl.recovery_cost.goal_set)
 

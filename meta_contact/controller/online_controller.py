@@ -105,12 +105,13 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def __init__(self, *args, abs_unrecognized_threshold=10,
                  trap_cost_annealing_rate=0.97, manual_init_trap_weight=None,
                  assume_all_nonnominal_dynamics_are_traps=False, nonnominal_dynamics_penalty_tolerance=0.6,
-                 Q_recovery=None, R_env=None,
+                 Q_recovery=None, recovery_scale=1, R_env=None,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
         self.abs_unrecognized_threshold = abs_unrecognized_threshold
 
         self.Q_recovery = Q_recovery.to(device=self.d) if Q_recovery is not None else self.Q
+        self.recovery_scale = recovery_scale
         self.R_env = tensor_utils.ensure_diagonal(R_env, self.nu).to(device=self.d,
                                                                      dtype=self.dtype) if R_env is not None else self.R
 
@@ -353,10 +354,12 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         start = max(self.nonnominal_dynamics_start_index, self.autonomous_recovery_end_index - 1)
         for i in range(start, len(self.x_history) - 1):
             ii, moved, expected = self.single_step_move_dist[i]
-            if moved / expected < min_ratio:
-                min_ratio = moved / expected
-                min_index = i
-        self.trap_set.append((self.x_history[min_index], self.u_history[min_index]))
+            if self._control_effort(self.u_history[ii]) > 0:
+                if moved / expected < min_ratio:
+                    min_ratio = moved / expected
+                    min_index = i
+        if min_index > 0:
+            self.trap_set.append((self.x_history[min_index], self.u_history[min_index]))
 
         # start = max(self.nonnominal_dynamics_start_index, self.autonomous_recovery_end_index - 1)
         # for i in range(start, len(self.x_history) - 1):
@@ -374,15 +377,20 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             # change mpc cost
             # return to last set of nominal states
             nominal_dynamics_set = torch.stack(self.nominal_dynamic_states[-1][-5:])
-            nominal_return_cost = cost.CostQRSet(nominal_dynamics_set, self.Q_recovery, self.R, self.compare_to_goal)
+            # nominal_return_cost = cost.CostQRSet(nominal_dynamics_set, self.Q_recovery, self.R, self.compare_to_goal)
+            nominal_return_cost = cost.GoalSetCost(nominal_dynamics_set, self.compare_to_goal, self.state_dist,
+                                                   reduce=cost.min_cost, scale=self.recovery_scale)
 
             # return to last set of states that allowed the greatest single step movement
             last_states_to_consider = self.single_step_move_dist[self.nonnominal_dynamics_start_index:]
             last_states_to_consider = sorted(last_states_to_consider, key=lambda x: x[1], reverse=True)
             fastest_movement_set = [self.x_history[i] for i, moved, expected in
                                     last_states_to_consider[:self.fastest_to_choose]]
-            fastest_movement_set = torch.stack(fastest_movement_set)
-            fastest_return_cost = cost.CostQRSet(fastest_movement_set, self.Q_recovery, self.R, self.compare_to_goal)
+            if len(fastest_movement_set):
+                fastest_movement_set = torch.stack(fastest_movement_set)
+            # fastest_return_cost = cost.CostQRSet(fastest_movement_set, self.Q_recovery, self.R, self.compare_to_goal)
+            fastest_return_cost = cost.GoalSetCost(fastest_movement_set, self.compare_to_goal, self.state_dist,
+                                                   reduce=cost.min_cost, scale=self.recovery_scale)
 
             if self.autonomous_recovery is AutonomousRecovery.RETURN_STATE:
                 self.recovery_cost = nominal_return_cost

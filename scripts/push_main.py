@@ -117,7 +117,8 @@ def get_controller_options(env):
     # R = torch.tensor(env.control_cost(), dtype=torch.double)
     # care about theta when recovering
     Q_recovery = Q.clone()
-    Q_recovery[0, 0] = Q_recovery[1, 1] = Q_recovery[2, 2] = 1
+    Q_recovery[0, 0] = Q_recovery[1, 1] = 1
+    Q_recovery[2, 2] = 1
     R = 0.01
     sigma = [0.2, 0.4, 0.7]
     noise_mu = [0, 0.1, 0]
@@ -129,6 +130,7 @@ def get_controller_options(env):
         'R': R,
         'R_env': env.control_cost(),
         'Q_recovery': Q_recovery,
+        'recovery_scale': 1,
         'u_min': u_min,
         'u_max': u_max,
         'compare_to_goal': env.state_difference,
@@ -2031,7 +2033,7 @@ class EvaluateTask:
 
 if __name__ == "__main__":
     level = 0
-    ut = UseTsf.SEP_DEC
+    ut = UseTsf.COORD
 
 
     # neg_test_file = "pushing/test_sufficiency_3_failed_test_140891.mat"
@@ -2101,8 +2103,8 @@ if __name__ == "__main__":
 
     # autonomous recovery
     for ut in [UseTsf.REX_EXTRACT]:
-        for level in [2]:
-            for seed in range(1, 2):
+        for level in [3]:
+            for seed in range(3, 5):
                 test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
                                          reuse_escape_as_demonstration=False, use_trap_cost=True,
                                          assume_all_nonnominal_dynamics_are_traps=False, num_frames=300,
