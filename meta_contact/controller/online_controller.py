@@ -101,18 +101,13 @@ class AutonomousRecovery(enum.IntEnum):
     MAB = 4
 
 
-def default_state_dist(state_difference):
-    return state_difference[:, :2].norm(dim=1)
-
-
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
-    def __init__(self, *args, state_dist=default_state_dist, abs_unrecognized_threshold=10,
+    def __init__(self, *args, abs_unrecognized_threshold=10,
                  trap_cost_annealing_rate=0.97, manual_init_trap_weight=None,
                  assume_all_nonnominal_dynamics_are_traps=False, nonnominal_dynamics_penalty_tolerance=0.6,
                  Q_recovery=None, R_env=None,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
-        self.state_dist = state_dist
         self.abs_unrecognized_threshold = abs_unrecognized_threshold
 
         self.Q_recovery = Q_recovery.to(device=self.d) if Q_recovery is not None else self.Q
@@ -291,9 +286,11 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                                      self.x_history[self.autonomous_recovery_start_index - 1]))
             moved_suffiently_far = moved_from_trap > 1 * self.nominal_avg_velocity  # number of steps at full speed away
 
-            left_trap = moved_suffiently_far and converged
+            # left_trap = moved_suffiently_far
+            left_trap = (moved_suffiently_far and converged) or cur_index - self.autonomous_recovery_start_index > 20
 
-            logger.debug("before velocity %f current velocity %f left trap? %d", before, current, left_trap)
+            logger.debug("moved from trap %f left trap? %d", moved_from_trap, left_trap)
+            # logger.debug("before velocity %f current velocity %f left trap? %d", before, current, left_trap)
             return left_trap
         else:
             return False

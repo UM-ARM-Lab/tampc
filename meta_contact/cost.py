@@ -119,6 +119,49 @@ class CostQRSet(Cost):
         return costs
 
 
+# not really important, just has to be high enough to avoid saturating everywhere
+TRAP_MAX_COST = 100000
+
+
+class TrapSetCost(Cost):
+    """Avoid re-entering traps"""
+
+    def __init__(self, goal_set, compare_to_goal, state_dist, u_similarity, reduce, spread=1, goal_weights=None):
+        self.goal_set = goal_set
+        self.goal_weights = goal_weights
+        self.compare_to_goal = compare_to_goal
+        self.state_dist = state_dist
+        self.reduce = reduce
+        self.u_similarity = u_similarity
+        self.spread = spread
+
+    @tensor_utils.handle_batch_input
+    def __call__(self, X, U=None, terminal=False):
+        costs = []
+        if U is not None:
+            assert X.shape[:-1] == U.shape[:-1]
+
+        for i, goal in enumerate(self.goal_set):
+            # have to have both high cost in x and u (multiplicative rather than additive)
+            goal_x, goal_u = goal
+            c_x = self.compare_to_goal(X, goal_x)
+            c_x = self.state_dist(c_x).square()
+            c_x = torch.clamp((self.spread / c_x), 0, TRAP_MAX_COST)
+            c_u = 1 if U is None else self.u_similarity(U, goal_u)
+            c = c_x * c_u
+            if self.goal_weights is not None:
+                c *= self.goal_weights[i]
+            costs.append(c)
+
+        if len(costs):
+            costs = torch.stack(costs, dim=0)
+            costs = self.reduce(costs)
+        else:
+            costs = torch.zeros(X.shape[0], dtype=X.dtype, device=X.device)
+
+        return costs
+
+
 class CostLeaveState(Cost):
     """Reward for distance away from current state"""
 

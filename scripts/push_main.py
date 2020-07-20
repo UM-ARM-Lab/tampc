@@ -62,7 +62,7 @@ def get_env(mode=p.GUI, level=0, log_video=False):
     init_block_pos = [-0.8, 0.12 - 0.025]
     init_block_yaw = 0
     init_pusher = 0
-    goal_pos = [0.5, 0.2]
+    goal_pos = [0.1, 0.5]
     if level is 1:
         init_block_pos = [-0.8, 0.23]
         init_block_yaw = -math.pi / 5
@@ -124,13 +124,11 @@ def get_controller_options(env):
     u_init = [0, 0.5, 0]
     # tune this so that we figure out to make u-turns
     sigma = torch.tensor(sigma, dtype=torch.double, device=d)
-    trap_cost_per_dim = 10
     common_wrapper_opts = {
         'Q': Q,
         'R': R,
         'R_env': env.control_cost(),
         'Q_recovery': Q_recovery,
-        'Q_trap': [trap_cost_per_dim, trap_cost_per_dim, trap_cost_per_dim, 0, 0],
         'u_min': u_min,
         'u_max': u_max,
         'compare_to_goal': env.state_difference,
@@ -138,6 +136,7 @@ def get_controller_options(env):
         'u_similarity': env.control_similarity,
         'device': d,
         'terminal_cost_multiplier': 50,
+        'trap_spread': 0.1,
         'abs_unrecognized_threshold': 10,
         'adjust_model_pred_with_prev_error': False,
         'use_orientation_terminal_cost': False,
@@ -252,7 +251,7 @@ def get_transform(env, ds, use_tsf):
     elif use_tsf is UseTsf.DX_TO_V:
         return LearnedTransform.DxToV(ds, d, name="_s0")
     elif use_tsf is UseTsf.SEP_DEC:
-        return LearnedTransform.SeparateDecoder(ds, d, name="ablation_s1")
+        return LearnedTransform.SeparateDecoder(ds, d, name="refine_s0")
     elif use_tsf is UseTsf.EXTRACT:
         return LearnedTransform.ExtractState(ds, d, name="more_percent_s1")
     elif use_tsf is UseTsf.REX_EXTRACT:
@@ -681,15 +680,14 @@ def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTsf.COORD, relearn_dy
         return
 
     common_wrapper_opts, mpc_opts = get_controller_options(env)
-    if online_adapt is not OnlineAdapt.NONE:
-        dynamics = hybrid_model.HybridDynamicsModel.get_local_model(env.state_difference, pm, d, ds, allow_update=True,
-                                                                    online_adapt=online_adapt)
-        # no local models (or no explicit nominal model since it's the mixed local model)
-        ctrl = online_controller.OnlineMPPI(ds, dynamics, untransformed_config, **common_wrapper_opts,
-                                            mpc_opts=mpc_opts)
-        ctrl.create_recovery_traj_seeder([ds])
-    else:
-        ctrl = controller.MPPI_MPC(pm.dyn_net, untransformed_config, **common_wrapper_opts, mpc_opts=mpc_opts)
+    nominal_kwargs = {"online_adapt": online_adapt, }
+    nominal_kwargs.update(kwargs)
+    hybrid_dynamics = hybrid_model.HybridDynamicsModel([ds], pm, env.state_difference, [use_tsf.name],
+                                                       device=d,
+                                                       preprocessor=no_tsf_preprocessor(),
+                                                       nominal_model_kwargs=nominal_kwargs)
+    ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, untransformed_config, **common_wrapper_opts,
+                                        mpc_opts=mpc_opts)
 
     name = get_full_controller_name(pm, ctrl, tsf_name)
 
@@ -1517,7 +1515,7 @@ class Learn:
         # tsf_name = "none_at_all"
 
         mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
-                           name="dynamics_{}{}_{}".format(tsf_name, name, seed))
+                           name="dynamics_{}{}".format(tsf_name, name))
         mw.learn_model(train_epochs, batch_N=batch_N)
 
 
@@ -2033,9 +2031,10 @@ class EvaluateTask:
 
 if __name__ == "__main__":
     level = 0
-    ut = UseTsf.REX_EXTRACT
-    neg_test_file = "pushing/test_sufficiency_3_failed_test_140891.mat"
+    ut = UseTsf.SEP_DEC
 
+
+    # neg_test_file = "pushing/test_sufficiency_3_failed_test_140891.mat"
 
     # OfflineDataCollection.freespace(trials=200, trial_length=50)
     # OfflineDataCollection.push_against_wall_recovery()
@@ -2098,18 +2097,28 @@ if __name__ == "__main__":
     # with modified_environ(USE_CPU='1'):
     #     test_autonomous_recovery(seed=0, level=0, adaptive_control_baseline=True, num_frames=250)
 
+    # evaluate_freespace_control(use_tsf=UseTsf.SEP_DEC, plot_model_error=False)
+
     # autonomous recovery
-    for ut in [UseTsf.NO_TRANSFORM, UseTsf.REX_EXTRACT]:
+    for ut in [UseTsf.REX_EXTRACT]:
         for level in [2]:
-            for seed in range(1,3):
+            for seed in range(1, 2):
                 test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
                                          reuse_escape_as_demonstration=False, use_trap_cost=True,
-                                         assume_all_nonnominal_dynamics_are_traps=False, num_frames=200,
+                                         assume_all_nonnominal_dynamics_are_traps=False, num_frames=300,
                                          autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+
+    # for ut in [UseTsf.REX_EXTRACT, UseTsf.NO_TRANSFORM]:
+    #     for level in [2, 3]:
+    #         for seed in range(5):
+    #             test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                                      reuse_escape_as_demonstration=False, use_trap_cost=True,
+    #                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
+    #                                      autonomous_recovery=online_controller.AutonomousRecovery.MAB)
 
     # baseline non-adaptive
     # for level in [2]:
-    #     for seed in range(5):
+    #     for seed in range(10):
     #         test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
     #                                  nominal_adapt=OnlineAdapt.NONE,
     #                                  gating=AlwaysSelectNominal(),
@@ -2119,7 +2128,7 @@ if __name__ == "__main__":
     #                                  autonomous_recovery=online_controller.AutonomousRecovery.NONE)
     # baseline ++
     # for level in [2]:
-    #     for seed in range(5):
+    #     for seed in range(10):
     #         test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
     #                                  nominal_adapt=OnlineAdapt.GP_KERNEL_INDEP_OUT,
     #                                  gating=AlwaysSelectNominal(),

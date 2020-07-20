@@ -181,9 +181,13 @@ def trap_state_cost_process(costs):
     return torch.clamp((1 / costs), 0, TRAP_MAX_COST)
 
 
+def default_state_dist(state_difference):
+    return state_difference[:, :2].norm(dim=1)
+
+
 class MPC(ControllerWithModelPrediction):
     def __init__(self, ds, dynamics, config, Q=1, R=1, compare_to_goal=torch.sub, u_min=None, u_max=None,
-                 device='cpu', u_similarity=None, Q_trap=None,
+                 device='cpu', u_similarity=None, state_dist=default_state_dist, trap_spread=1,
                  terminal_cost_multiplier=0., adjust_model_pred_with_prev_error=False, use_trap_cost=True,
                  use_orientation_terminal_cost=False):
         super().__init__(compare_to_goal)
@@ -199,6 +203,7 @@ class MPC(ControllerWithModelPrediction):
         self.dynamics = dynamics
         self.adjust_model_pred_with_prev_error = adjust_model_pred_with_prev_error
         self.use_orientation_terminal_cost = use_orientation_terminal_cost
+        self.state_dist = state_dist
 
         # get error per dimension to scale our expectations of accuracy
         XU, Y, _ = ds.training_set(original=True)
@@ -219,10 +224,8 @@ class MPC(ControllerWithModelPrediction):
 
         self.trap_set_weight = 1
         if use_trap_cost:
-            trap_q = tensor_utils.ensure_diagonal(Q_trap, self.nx).to(device=self.d, dtype=self.dtype)
-            self.trap_cost = cost.CostQRSet(self.trap_set, trap_q, self.R, self.compare_to_goal,
-                                            u_similarity=u_similarity,
-                                            process_cost=trap_state_cost_process, reduce=self._trap_cost_reduce)
+            self.trap_cost = cost.TrapSetCost(self.trap_set, self.compare_to_goal, self.state_dist, u_similarity,
+                                              self._trap_cost_reduce, spread=trap_spread)
             self.cost = cost.ComposeCost([self.goal_cost, self.trap_cost])
         else:
             self.trap_cost = None

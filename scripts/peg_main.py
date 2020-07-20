@@ -195,7 +195,7 @@ def get_controller_options(env):
         'u_similarity': env.control_similarity,
         'device': d,
         'terminal_cost_multiplier': 50,
-        'Q_trap': [trap_cost_per_dim, trap_cost_per_dim, 0, 0, 0],
+        'trap_spread': 0.1,
         'trap_cost_annealing_rate': 0.9,
         'abs_unrecognized_threshold': 30,
         'adjust_model_pred_with_prev_error': False,
@@ -393,7 +393,7 @@ def tune_trap_set_cost(*args, num_frames=100, **kwargs):
 
             # setup initial conditions where we are close to a trap and have items in our trap set
             trap_x = torch.tensor([env.hole[0], env.hole[1] - 0.2, z, 0, 0], device=ctrl.d, dtype=ctrl.dtype)
-            trap_u = torch.tensor([0, -1], device=ctrl.d, dtype=ctrl.dtype)
+            trap_u = torch.tensor([0, 1], device=ctrl.d, dtype=ctrl.dtype)
             ctrl.trap_set.append((trap_x, trap_u))
 
             # ctrl.trap_set.append(
@@ -815,10 +815,10 @@ if __name__ == "__main__":
     #
     # Visualize.task_res_dist()
 
-    # for seed in range(10):
-    #     tune_trap_set_cost(seed=seed, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                        use_trap_cost=True,
-    #                        autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    for seed in range(1):
+        tune_trap_set_cost(seed=seed, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                           use_trap_cost=True,
+                           autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # tune_recovery_policy(seed=0, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
@@ -829,11 +829,11 @@ if __name__ == "__main__":
     #     use_trap_cost=True,
     #     autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
-    for seed in range(0, 5):
-        test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                 reuse_escape_as_demonstration=False, use_trap_cost=True,
-                                 assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
-                                 autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    # for seed in range(0, 5):
+    #     test_autonomous_recovery(seed=seed, level=6, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                              reuse_escape_as_demonstration=False, use_trap_cost=True,
+    #                              assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
+    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # for seed in range(0, 5):
     #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
