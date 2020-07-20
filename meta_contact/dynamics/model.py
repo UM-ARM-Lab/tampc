@@ -187,6 +187,9 @@ class DynamicsModel(DynamicsBase):
         xu = torch.cat((x, u), dim=1)
         return self.predict(xu)
 
+    def reset(self):
+        pass
+
 
 class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
     def __init__(self, model_user: ModelUser, ds, **kwargs):
