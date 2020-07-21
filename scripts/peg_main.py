@@ -3,6 +3,7 @@ import torch
 import pickle
 import re
 import time
+import math
 import pybullet as p
 import numpy as np
 import matplotlib.pyplot as plt
@@ -421,16 +422,37 @@ def tune_trap_set_cost(*args, num_frames=100, **kwargs):
             #     (torch.tensor([env.hole[0] - 0.1, env.hole[1] - 0.2, z, 0, 0], device=ctrl.d, dtype=ctrl.dtype),
             #      torch.tensor([0, -1], device=ctrl.d, dtype=ctrl.dtype)))
             # test with explicit seeding on nominal trajectory
-            ctrl.mpc.U = torch.tensor([0, 0.5], device=ctrl.d, dtype=ctrl.dtype).repeat(ctrl.original_horizon, 1)
+            # ctrl.mpc.U = torch.tensor([0, 0.5], device=ctrl.d, dtype=ctrl.dtype).repeat(ctrl.original_horizon, 1)
 
             ctrl.normalize_trapset_cost_to_state(x)
-            a = ctrl.trap_cost(trap_x, trap_u)
-            shifted_x = trap_x.clone()
-            shifted_x[1] += 0.2
-            b = ctrl.trap_cost(shifted_x, torch.tensor([0, 1], device=ctrl.d, dtype=ctrl.dtype))
-            c = ctrl.trap_cost(shifted_x, torch.tensor([1, 1], device=ctrl.d, dtype=ctrl.dtype))
-            d = ctrl.trap_cost(shifted_x, torch.tensor([1, 0.5], device=ctrl.d, dtype=ctrl.dtype))
-            logger.debug("cost at trap %f with opposite action %f other action %f other action %f", a, b, c, d)
+
+            perturbations = [[0.05, 0.], [0.1, 0.], [0.15, 0]]
+            for perturbation in perturbations:
+                shifted_x = trap_x.clone()
+                shifted_x[0] += perturbation[0]
+                shifted_x[1] += perturbation[1]
+
+                actions = []
+                costs = []
+                for angle in np.linspace(0, 2 * np.pi, 36):
+                    action = [math.cos(angle), math.sin(angle)]
+                    actions.append(action)
+                    costs.append(
+                        ctrl.trap_cost(shifted_x, torch.tensor(action, device=ctrl.d, dtype=ctrl.dtype)).item())
+
+                costs = np.array(costs)
+                logger.debug(costs)
+                env.draw_user_text("{:.5f}".format(np.max(costs)), 3)
+                costs = costs / np.max(costs)
+
+                env.visualize_trap_set(ctrl.trap_set)
+                for i in range(len(actions)):
+                    normalization = costs[i]
+                    u = [a * normalization for a in actions[i]]
+                    env._draw_action(u, old_state=shifted_x.cpu().numpy(), debug=i + 2)
+
+                time.sleep(2)
+
         elif level is 5:
             ctrl.trap_set.extend([(torch.tensor([-3.5530e-03, 1.4122e-01, 1.9547e-01, 7.1541e-01, -1.0235e+01],
                                                 device='cuda:0', dtype=torch.float64),
