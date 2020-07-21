@@ -1,5 +1,4 @@
 import enum
-import math
 import torch
 import pickle
 import re
@@ -25,9 +24,8 @@ from meta_contact.transform import invariant
 from meta_contact.dynamics import online_model, model, prior, hybrid_model
 
 from arm_pytorch_utilities.model import make
-from meta_contact.controller.online_controller import NominalTrajFrom
 
-from meta_contact.dynamics.hybrid_model import OnlineAdapt, get_gating
+from meta_contact.dynamics.hybrid_model import OnlineAdapt
 from meta_contact.controller import online_controller
 from meta_contact.controller.gating_function import AlwaysSelectNominal
 
@@ -352,8 +350,6 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, recover_a
     goal = np.r_[env.hole, z, 0, 0]
     ctrl.set_goal(goal)
     # env._dd.draw_point('hole', env.hole, color=(0, 0.5, 0.8))
-    ctrl.create_recovery_traj_seeder(dss,
-                                     nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS if recover_adjust else NominalTrajFrom.NO_ADJUSTMENT)
 
     env.draw_user_text(gating.name, 13, left_offset=-1.5)
     env.draw_user_text("run seed {}".format(seed), 12, left_offset=-1.5)

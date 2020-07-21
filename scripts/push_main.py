@@ -19,7 +19,6 @@ from arm_pytorch_utilities import preprocess
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.model import make
 from arm_pytorch_utilities.optim import get_device
-from meta_contact.controller.online_controller import NominalTrajFrom
 from meta_contact.transform.block_push import CoordTransform, LearnedTransform, \
     translation_generator
 from tensorboardX import SummaryWriter
@@ -920,8 +919,6 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
     ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
     ctrl.set_goal(env.goal)
-    ctrl.create_recovery_traj_seeder(dss,
-                                     nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS if recover_adjust else NominalTrajFrom.NO_ADJUSTMENT)
 
     name = get_full_controller_name(pm, ctrl, use_tsf.name)
 
@@ -1003,8 +1000,6 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, recover_a
                                             **common_wrapper_opts, **ctrl_opts, constrain_state=constrain_state,
                                             mpc_opts=mpc_opts)
         ctrl.set_goal(env.goal)
-        ctrl.create_recovery_traj_seeder(dss,
-                                         nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS if recover_adjust else NominalTrajFrom.NO_ADJUSTMENT)
         env.draw_user_text(gating.name, 13, left_offset=-1.5)
         env.draw_user_text("run seed {}".format(seed), 12, left_offset=-1.5)
         env.draw_user_text("recovery {}".format(autonomous_recovery.name), 11, left_offset=-1.6)
@@ -1381,7 +1376,6 @@ def evaluate_ctrl_sampler(eval_file, eval_i, seed=1, use_tsf=UseTsf.COORD,
                                         assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
     ctrl.set_goal(env.goal)
-    ctrl.create_recovery_traj_seeder(dss, nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS)
 
     ds_eval, _ = get_ds(env, eval_file, validation_ratio=0.)
     ds_eval.update_preprocessor(ds.preprocessor)
@@ -2053,27 +2047,27 @@ if __name__ == "__main__":
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")
 
-    Visualize.task_res_dist({
-        'auto_recover__GP_KERNEL__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            'name': 'adaptive baseline++', 'color': 'red'},
-        # 'auto_recover__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-        #     'name': 'MAB', 'color': 'green'},
-        'auto_recover__NONE__RETURN_STATE__1__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            'name': 'return state', 'color': 'blue'},
-        'auto_recover__NONE__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            'name': 'non-adapative', 'color': 'purple'},
-    }, 'push_task_res.pkl', expected_data_len=499)
+    # Visualize.task_res_dist({
+    #     'auto_recover__GP_KERNEL__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+    #         'name': 'adaptive baseline++', 'color': 'red'},
+    #     # 'auto_recover__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #     #     'name': 'MAB', 'color': 'green'},
+    #     'auto_recover__NONE__RETURN_STATE__1__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #         'name': 'return state', 'color': 'blue'},
+    #     'auto_recover__NONE__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+    #         'name': 'non-adapative', 'color': 'purple'},
+    # }, 'push_task_res.pkl', expected_data_len=499)
 
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
     # use independent output
-    EvaluateTask.closest_distance_to_goal_whole_set(
-        'auto_recover__NONE__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST', suffix="500.mat")
-    EvaluateTask.closest_distance_to_goal_whole_set(
-        'auto_recover__GP_KERNEL__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST', suffix="500.mat")
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__NONE__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST', suffix="500.mat")
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__GP_KERNEL__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST', suffix="500.mat")
     # EvaluateTask.closest_distance_to_goal_whole_set(
     #     'auto_recover__NONE__MAB__1__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST', suffix="500.mat")
-    EvaluateTask.closest_distance_to_goal_whole_set(
-        'auto_recover__NONE__RETURN_STATE__1__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST', suffix="500.mat")
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__NONE__RETURN_STATE__1__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST', suffix="500.mat")
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_gating_function(use_tsf=ut, test_file=neg_test_file)
@@ -2084,9 +2078,9 @@ if __name__ == "__main__":
     # evaluate_ctrl_sampler('pushing/see_saw.mat', 150, seed=0, rollout_prev_xu=True)
     # evaluate_ctrl_sampler('pushing/trap_set_suitable_test.mat', 199, seed=0, rollout_prev_xu=True)
 
-    # tune_trap_set_cost(seed=0, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                    use_trap_cost=True,
-    #                    autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    tune_trap_set_cost(seed=0, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                       use_trap_cost=True,
+                       autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # tune_recovery_policy(seed=0, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)

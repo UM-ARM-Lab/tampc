@@ -176,11 +176,6 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.mab = KFMANDB(torch.ones(self.num_arms, device=self.d) * 0.1,
                            torch.eye(self.num_arms, device=self.d) * 0.1)
 
-    def create_recovery_traj_seeder(self, *args, **kwargs):
-        # deprecated
-        # self.recovery_traj_seeder = RecoveryTrajectorySeeder(self, *args, **kwargs)
-        pass
-
     def _mpc_command(self, obs):
         return OnlineMPC._mpc_command(self, obs)
 
@@ -421,23 +416,6 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.autonomous_recovery_mode = False
         self.autonomous_recovery_end_index = len(self.x_history)
 
-        # deprecated
-        # if we're sure that we've left an unrecognized class, save as recovery
-        # if self.reuse_escape_as_demonstration:
-        #     x_recovery = []
-        #     u_recovery = []
-        #     for i in range(self.autonomous_recovery_start_index, len(self.u_history)):
-        #         if self._control_effort(self.u_history[i]) > 0:
-        #             x_recovery.append(self.x_history[i])
-        #             u_recovery.append(self.u_history[i])
-        #     x_recovery = torch.stack(x_recovery)
-        #     u_recovery = torch.stack(u_recovery)
-        #     logger.info("Using data from index %d with len %d for local model",
-        #                 self.autonomous_recovery_start_index, x_recovery.shape[0])
-        #     self.dynamics.create_local_model(x_recovery, u_recovery)
-        #     self.gating = self.dynamics.get_gating()
-        #     self.recovery_traj_seeder.update_data(self.dynamics.dss)
-
         if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.RETURN_FASTEST,
                                         AutonomousRecovery.MAB]:
             # restore cost functions
@@ -484,17 +462,9 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             if not self.using_local_model_for_nonnominal_dynamics:
                 self._start_local_model(x)
 
-        # deprecated
-        # if not self.autonomous_recovery_mode:
-        #     self.recovery_traj_seeder.update_nominal_trajectory(self.dynamics_class, x)
-
         self.dynamics_class_history.append(self.dynamics_class)
 
         if not self.using_local_model_for_nonnominal_dynamics:
-            # current_trend = torch.cat(self.orig_cost_history[-self.nonnominal_dynamics_trend_len:])
-            # current_progress_rate = (current_trend[1:] - current_trend[:-1]).mean()
-            # # only decrease trap set weight if we're not making progress towards goal
-            # if current_progress_rate >= 0:
             self.trap_set_weight *= self.trap_cost_annealing_rate
 
         if self._entering_trap():
@@ -573,88 +543,3 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                 sim = torch.cosine_similarity(self.cost_weights[i], self.cost_weights[j], dim=0)
                 P[i, j] = P[j, i] = sim
         return P
-
-
-class NominalTrajFrom(enum.IntEnum):
-    RANDOM = 0
-    ROLLOUT_FROM_RECOVERY_STATES = 1
-    RECOVERY_ACTIONS = 2
-    NO_ADJUSTMENT = 3
-
-
-class RecoveryTrajectorySeeder:
-    def __init__(self, ctrl: OnlineMPPI, dss, fixed_recovery_nominal_traj=True, lookup_traj_start=True,
-                 nom_traj_from=NominalTrajFrom.RECOVERY_ACTIONS):
-        """
-        :param ctrl:
-        :param dss:
-        :param fixed_recovery_nominal_traj: if false, only set nominal traj when entering dynamics_class, otherwise set every step
-        """
-        self.ctrl = ctrl
-        self.fixed_recovery_nominal_traj = fixed_recovery_nominal_traj
-        self.last_class = 0
-        self.nom_traj_from = nom_traj_from
-        self.lookup_traj_start = lookup_traj_start
-        self.ds_nominal = dss[0]
-
-        # local trajectories
-        self.train_i = {}
-        self.Z_train = {}
-        self.U_train = {}
-        self.update_data(dss)
-
-    def update_data(self, dss):
-        self.train_i = {}
-        self.Z_train = {}
-        self.U_train = {}
-        for dyn_cls, ds_local in enumerate(dss):
-            if dyn_cls == gating_function.DynamicsClass.NOMINAL:
-                continue
-
-            max_rollout_steps = 10
-            XU, Y, info = ds_local.training_set(original=True)
-            X_train, self.U_train[dyn_cls] = torch.split(XU, self.ds_nominal.original_config().nx, dim=1)
-            self.train_i[dyn_cls] = len(X_train) - 1
-
-            if self.nom_traj_from is NominalTrajFrom.ROLLOUT_FROM_RECOVERY_STATES:
-                for ii in range(max(0, self.train_i[dyn_cls] - max_rollout_steps), self.train_i[dyn_cls]):
-                    self.ctrl.command(X_train[ii].cpu().numpy())
-                self.U_train[dyn_cls] = self.ctrl.mpc.U.clone()
-            U_zero = torch.zeros_like(self.U_train[dyn_cls])
-            self.Z_train[dyn_cls] = self.ds_nominal.preprocessor.transform_x(torch.cat((X_train, U_zero), dim=1))
-
-    def update_nominal_trajectory(self, dyn_cls, state):
-        if dyn_cls == gating_function.DynamicsClass.NOMINAL or self.nom_traj_from is NominalTrajFrom.NO_ADJUSTMENT:
-            return False
-        adjusted_trajectory = False
-        # start with random noise
-        U = self.ctrl.mpc.noise_dist.sample((self.ctrl.mpc.T,))
-        if self.nom_traj_from is NominalTrajFrom.RANDOM:
-            adjusted_trajectory = True
-        else:
-            if dyn_cls not in self.U_train:
-                raise RuntimeError(
-                    "Unrecgonized dynamics class {} (known {})".format(dyn_cls, list(self.U_train.keys())))
-
-            # if we're not using the fixed recovery nom, then we set it if we're entering from another dynamics_class
-            if self.fixed_recovery_nominal_traj or self.last_class != dyn_cls:
-                adjusted_trajectory = True
-
-                train_i = self.train_i[dyn_cls]
-                # option to select where to start in training automatically from data
-                if self.lookup_traj_start:
-                    xu = torch.cat(
-                        (state.view(1, -1), torch.zeros((1, self.ctrl.nu), device=state.device, dtype=state.dtype)),
-                        dim=1)
-                    z = self.ds_nominal.preprocessor.transform_x(xu)
-                    dists = (self.Z_train[dyn_cls] - z).norm(dim=1)
-                    # TODO prioritize points closer to the escape?
-                    train_i = dists.argmin()
-
-                ctrl_rollout_steps = min(len(self.U_train[dyn_cls]) - train_i, self.ctrl.mpc.T - 1)
-                U[1:1 + ctrl_rollout_steps] = self.U_train[dyn_cls][train_i:train_i + ctrl_rollout_steps]
-
-        if adjusted_trajectory:
-            self.ctrl.mpc.U = U
-        self.last_class = dyn_cls
-        return adjusted_trajectory
