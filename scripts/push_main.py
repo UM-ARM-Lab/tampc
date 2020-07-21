@@ -1680,8 +1680,9 @@ class Visualize:
         input('do visualization')
 
     @staticmethod
-    def task_res_dist(filter_function=None, plot_cumulative_distribution=True, plot_min_distribution=False,
-                      series_name_map=None):
+    def task_res_dist(series_to_plot, res_file, plot_cumulative_distribution=True, max_t=500,
+                      expected_data_len=498,
+                      plot_min_distribution=False):
         def name_to_tokens(name):
             tk = {'name': name}
             tokens = name.split('__')
@@ -1720,7 +1721,7 @@ class Visualize:
 
             return tk
 
-        fullname = os.path.join(cfg.DATA_DIR, 'push_task_res.pkl')
+        fullname = os.path.join(cfg.DATA_DIR, res_file)
         if os.path.exists(fullname):
             with open(fullname, 'rb') as f:
                 runs = pickle.load(f)
@@ -1749,7 +1750,7 @@ class Visualize:
 
             for series_name, dists in res_list.items():
                 tokens = name_to_tokens(series_name)
-                if filter_function is None or filter_function(tokens):
+                if series_name in series_to_plot:
                     # remove any non-list elements (historical)
                     dists = [dlist for dlist in dists if type(dlist) is list]
                     # process the dists so they are all valid (replace nones)
@@ -1761,6 +1762,9 @@ class Visualize:
                             else:
                                 min_dist_up_to_now = min(min_dist_up_to_now, d)
                                 dhistory[i] = min(min_dist_up_to_now, d)
+
+                        # if list is shorter than expected that means it finished so should have 0 dist
+                        dhistory.extend([0] * (expected_data_len - len(dhistory)))
                         min_dist = min(min(dhistory), min_dist)
                         max_dist = max(max(dhistory), max_dist)
 
@@ -1785,22 +1789,18 @@ class Visualize:
                 f, ax = plt.subplots(1, figsize=(8, 9))
                 f.suptitle("task {}".format(level))
 
-                colors = ['blue', 'yellow', 'red', 'green']
-                max_t = 0
-
                 for i, data in enumerate(series):
                     series_name, tk, dists = data
-                    if series_name_map is not None and series_name in series_name_map:
-                        series_name = series_name_map[series_name]
+                    plot_info = series_to_plot[series_name]
 
-                    max_t = max(max_t, dists.shape[1] + 1)
                     t = np.arange(dists.shape[1])
                     m = np.median(dists, axis=0)
                     lower = np.percentile(dists, 10, axis=0)
                     upper = np.percentile(dists, 90, axis=0)
 
-                    ax.plot(t, m, color=colors[i], label=series_name)
-                    plt.fill_between(t, lower, upper, facecolor=colors[i], alpha=0.3)
+                    c = plot_info['color']
+                    ax.plot(t, m, color=c, label=plot_info['name'])
+                    plt.fill_between(t, lower, upper, facecolor=c, alpha=0.3)
 
                 ax.legend()
                 ax.set_xlim(0, max_t)
@@ -2035,7 +2035,6 @@ if __name__ == "__main__":
     level = 0
     ut = UseTsf.COORD
 
-
     # neg_test_file = "pushing/test_sufficiency_3_failed_test_140891.mat"
 
     # OfflineDataCollection.freespace(trials=200, trial_length=50)
@@ -2054,25 +2053,27 @@ if __name__ == "__main__":
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")
 
-    def filter_func(tk):
-        logger.info(tk)
-        # return ['reuse'] == "NOREUSE"
-        return tk['level'] is 1 and tk['name'] in [
-            "auto_recover__GP_KERNEL__NONE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST"] or \
-               tk['level'] is 3 and tk['name'] in [
-                   "auto_recover__GP_KERNEL__NONE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST"]
-
-
-    # Visualize.task_res_dist(filter_func, series_name_map={
-    #     'auto_recover__GP_KERNEL__NONE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': 'adaptive baseline++',
-    #     'auto_recover__GP_KERNEL__NONE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': 'adaptive baseline++'})
+    Visualize.task_res_dist({
+        'auto_recover__GP_KERNEL__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+            'name': 'adaptive baseline++', 'color': 'red'},
+        # 'auto_recover__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+        #     'name': 'MAB', 'color': 'green'},
+        'auto_recover__NONE__RETURN_STATE__1__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            'name': 'return state', 'color': 'blue'},
+        'auto_recover__NONE__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+            'name': 'non-adapative', 'color': 'purple'},
+    }, 'push_task_res.pkl', expected_data_len=499)
 
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
     # use independent output
+    EvaluateTask.closest_distance_to_goal_whole_set(
+        'auto_recover__NONE__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST', suffix="500.mat")
+    EvaluateTask.closest_distance_to_goal_whole_set(
+        'auto_recover__GP_KERNEL__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST', suffix="500.mat")
     # EvaluateTask.closest_distance_to_goal_whole_set(
-    #     'auto_recover__GP_KERNEL__NONE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST', suffix="500.mat")
-    # EvaluateTask.closest_distance_to_goal_whole_set(
-    #     'auto_recover__GP_KERNEL__NONE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST', suffix="500.mat")
+    #     'auto_recover__NONE__MAB__1__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST', suffix="500.mat")
+    EvaluateTask.closest_distance_to_goal_whole_set(
+        'auto_recover__NONE__RETURN_STATE__1__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST', suffix="500.mat")
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_gating_function(use_tsf=ut, test_file=neg_test_file)
@@ -2102,14 +2103,14 @@ if __name__ == "__main__":
     # evaluate_freespace_control(use_tsf=UseTsf.SEP_DEC, plot_model_error=False)
 
     # autonomous recovery
-    for ut in [UseTsf.NO_TRANSFORM]:
-        for level in [3]:
-            for seed in range(0, 5):
-                test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
-                                         nominal_adapt=OnlineAdapt.GP_KERNEL_INDEP_OUT,
-                                         reuse_escape_as_demonstration=False, use_trap_cost=True,
-                                         assume_all_nonnominal_dynamics_are_traps=False, num_frames=300,
-                                         autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    # for ut in [UseTsf.REX_EXTRACT]:
+    #     for level in [3]:
+    #         for seed in range(0, 5):
+    #             test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
+    #                                      nominal_adapt=OnlineAdapt.NONE,
+    #                                      reuse_escape_as_demonstration=False, use_trap_cost=True,
+    #                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=300,
+    #                                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # for ut in [UseTsf.REX_EXTRACT, UseTsf.NO_TRANSFORM]:
     #     for level in [2, 3]:

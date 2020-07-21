@@ -330,6 +330,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, recover_a
         dss.append(ds_local)
 
     hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, [use_tsf.name],
+                                                       device=get_device(),
                                                        preprocessor=no_tsf_preprocessor(),
                                                        nominal_model_kwargs={'online_adapt': nominal_adapt},
                                                        local_model_kwargs=kwargs)
@@ -558,7 +559,7 @@ class EvaluateTask:
         return visited, path
 
     @staticmethod
-    def _closest_distance_to_goal(file, level, visualize=True, nodes_per_side=100):
+    def _closest_distance_to_goal(file, level, visualize=True, nodes_per_side=150):
         from sklearn.preprocessing import MinMaxScaler
         env = get_env(p.GUI if visualize else p.DIRECT, level=level)
         ds, _ = get_ds(env, file, validation_ratio=0.)
@@ -569,8 +570,14 @@ class EvaluateTask:
             min_pos = [-0.3, -0.3]
             max_pos = [0.5, 0.5]
         elif level is 3:
+            min_pos = [-0.2, -0.1]
+            max_pos = [0.2, 0.35]
+        elif level is 5:
+            min_pos = [-0.4, -0.1]
+            max_pos = [0.4, 0.4]
+        elif level is 6:
             min_pos = [-0.3, -0.1]
-            max_pos = [0.3, 0.5]
+            max_pos = [0.3, 0.3]
         else:
             raise RuntimeError("Unspecified range for level {}".format(level))
 
@@ -606,12 +613,12 @@ class EvaluateTask:
         p.addUserDebugLine([min_pos[0], max_pos[1], z], [min_pos[0], min_pos[1], z], rgb)
 
         # draw previous trajectory
-        rgb = [0, 0, 1]
-        start = reached_states[0, 0], reached_states[0, 1], z
-        for i in range(1, len(reached_states)):
-            next = reached_states[i, 0], reached_states[i, 1], z
-            p.addUserDebugLine(start, next, rgb)
-            start = next
+        # rgb = [0, 0, 1]
+        # start = reached_states[0, 0], reached_states[0, 1], z
+        # for i in range(1, len(reached_states)):
+        #     next = reached_states[i, 0], reached_states[i, 1], z
+        #     p.addUserDebugLine(start, next, rgb)
+        #     start = next
 
         # try to load it if possible
         fullname = os.path.join(cfg.DATA_DIR, 'ok_peg{}_{}.pkl'.format(level, nodes_per_side))
@@ -666,15 +673,23 @@ class EvaluateTask:
                         g.add_edge(u, v, dist)
 
         goal_node = pos_to_node(goal_pos)
+        if ok_nodes[goal_node[0]][goal_node[1]] is None:
+            goal_node = (goal_node[0], goal_node[1] + 1)
         visited, path = EvaluateTask.dijsktra(g, goal_node)
         # find min across visited states
         min_dist = 100
         min_node = None
+        dists = []
         for xy in reached_states:
             n = pos_to_node(xy)
-            if n in visited and visited[n] < min_dist:
-                min_dist = visited[n]
-                min_node = n
+            if n not in visited:
+                logger.warning("reached state %s node %s not visited", xy, n)
+                dists.append(None)
+            else:
+                dists.append(visited[n])
+                if visited[n] < min_dist:
+                    min_dist = visited[n]
+                    min_node = n
 
         if min_node is None:
             print('min node outside search region, return lower bound')
@@ -693,10 +708,10 @@ class EvaluateTask:
 
         print('min dist: {} lower bound: {}'.format(min_dist, lower_bound_dist))
         env.close()
-        return min_dist
+        return dists
 
     @staticmethod
-    def closest_distance_to_goal_whole_set(prefix, **kwargs):
+    def closest_distance_to_goal_whole_set(prefix, suffix=".mat", **kwargs):
         m = re.search(r"\d+", prefix)
         if m is not None:
             level = int(m.group())
@@ -715,12 +730,12 @@ class EvaluateTask:
             runs[prefix] = {}
 
         trials = [filename for filename in os.listdir(os.path.join(cfg.DATA_DIR, "peg")) if
-                  filename.startswith(prefix)]
+                  filename.startswith(prefix) and filename.endswith(suffix)]
         dists = []
         for i, trial in enumerate(trials):
             d = EvaluateTask._closest_distance_to_goal("peg/{}".format(trial), visualize=i == 0, level=level,
                                                        **kwargs)
-            dists.append(d)
+            dists.append(min([dd for dd in d if dd is not None]))
             runs[prefix][trial] = d
 
         logger.info(dists)
@@ -733,7 +748,9 @@ class EvaluateTask:
 
 class Visualize:
     @staticmethod
-    def task_res_dist(filter_function=None):
+    def task_res_dist(series_to_plot, res_file, plot_cumulative_distribution=True, max_t=500,
+                      expected_data_len=498,
+                      plot_min_distribution=False):
         def name_to_tokens(name):
             tk = {'name': name}
             tokens = name.split('__')
@@ -772,7 +789,7 @@ class Visualize:
 
             return tk
 
-        fullname = os.path.join(cfg.DATA_DIR, 'peg_task_res.pkl')
+        fullname = os.path.join(cfg.DATA_DIR, res_file)
         if os.path.exists(fullname):
             with open(fullname, 'rb') as f:
                 runs = pickle.load(f)
@@ -781,7 +798,7 @@ class Visualize:
             raise RuntimeError("missing cached task results file {}".format(fullname))
 
         tasks = {}
-        for prefix, dists in sorted(runs.items()):
+        for prefix, dists in runs.items():
             m = re.search(r"\d+", prefix)
             if m is not None:
                 level = int(m.group())
@@ -797,51 +814,119 @@ class Visualize:
             max_dist = 0
 
             res_list = {k: list(v.values()) for k, v in res.items()}
-            for dists in res_list.values():
-                min_dist = min(min(dists), min_dist)
-                max_dist = max(max(dists), max_dist)
-
             series = []
-            for i, (series_name, dists) in enumerate(res_list.items()):
+
+            for series_name, dists in res_list.items():
                 tokens = name_to_tokens(series_name)
-                if filter_function is None or filter_function(tokens):
-                    series.append((series_name, tokens, dists))
+                if series_name in series_to_plot:
+                    # remove any non-list elements (historical)
+                    dists = [dlist for dlist in dists if type(dlist) is list]
+                    # process the dists so they are all valid (replace nones)
+                    for dhistory in dists:
+                        min_dist_up_to_now = 100
+                        for i, d in enumerate(dhistory):
+                            if d is None:
+                                dhistory[i] = min_dist_up_to_now
+                            else:
+                                min_dist_up_to_now = min(min_dist_up_to_now, d)
+                                dhistory[i] = min(min_dist_up_to_now, d)
 
-            f, ax = plt.subplots(len(series), 1, figsize=(8, 9))
-            f.suptitle("task {}".format(level))
+                        # if list is shorter than expected that means it finished so should have 0 dist
+                        dhistory.extend([0] * (expected_data_len - len(dhistory)))
+                        min_dist = min(min(dhistory), min_dist)
+                        max_dist = max(max(dhistory), max_dist)
 
-            for i, data in enumerate(series):
-                series_name, tk, dists = data
-                logger.info("%s with %d runs mean {:.2f} ({:.2f})".format(np.mean(dists) * 10, np.std(dists) * 10),
-                            series_name, len(dists))
-                sns.distplot(dists, ax=ax[i], hist=True, kde=False, bins=np.linspace(min_dist, max_dist, 20))
-                ax[i].set_title((tk['adaptation'], tk['recovery'], tk['optimism']))
-                ax[i].set_xlim(min_dist, max_dist)
-                ax[i].set_ylim(0, int(0.6 * len(dists)))
-            ax[-1].set_xlabel('closest dist to goal [m]')
-            f.tight_layout(rect=[0, 0.03, 1, 0.95])
+                    series.append((series_name, tokens, np.stack(dists)))
+
+            if plot_min_distribution:
+                f, ax = plt.subplots(len(series), 1, figsize=(8, 9))
+                f.suptitle("task {}".format(level))
+
+                for i, data in enumerate(series):
+                    series_name, tk, dists = data
+                    dists = np.min(dists, axis=1)
+                    logger.info("%s with %d runs mean {:.2f} ({:.2f})".format(np.mean(dists) * 10, np.std(dists) * 10),
+                                series_name, len(dists))
+                    sns.distplot(dists, ax=ax[i], hist=True, kde=False, bins=np.linspace(min_dist, max_dist, 20))
+                    ax[i].set_title((tk['adaptation'], tk['recovery'], tk['optimism']))
+                    ax[i].set_xlim(min_dist, max_dist)
+                    ax[i].set_ylim(0, int(0.6 * len(dists)))
+                ax[-1].set_xlabel('closest dist to goal [m]')
+                f.tight_layout(rect=[0, 0.03, 1, 0.95])
+            if plot_cumulative_distribution:
+                f, ax = plt.subplots(1, figsize=(8, 9))
+                f.suptitle("task {}".format(level))
+
+                for i, data in enumerate(series):
+                    series_name, tk, dists = data
+                    plot_info = series_to_plot[series_name]
+
+                    t = np.arange(dists.shape[1])
+                    m = np.median(dists, axis=0)
+                    lower = np.percentile(dists, 10, axis=0)
+                    upper = np.percentile(dists, 90, axis=0)
+
+                    c = plot_info['color']
+                    ax.plot(t, m, color=c, label=plot_info['name'])
+                    plt.fill_between(t, lower, upper, facecolor=c, alpha=0.3)
+
+                ax.legend()
+                ax.set_xlim(0, max_t)
+                ax.set_ylim(0, max_dist * 1.05)
+                ax.set_ylabel('closest dist to goal')
+                ax.set_xlabel('control step')
+                f.tight_layout(rect=[0, 0.03, 1, 0.95])
 
         plt.show()
 
 
 if __name__ == "__main__":
     level = 0
-    ut = UseTsf.REX_EXTRACT
+    ut = UseTsf.COORD
 
     # OfflineDataCollection.freespace(trials=200, trial_length=50, mode=p.DIRECT)
 
-    for seed in range(1):
-        Learn.invariant(ut, seed=seed, name="peg", MAX_EPOCH=6000, BATCH_SIZE=500)
-    for seed in range(1):
-        Learn.model(ut, seed=seed, name="")
+    # for seed in range(1):
+    #     Learn.invariant(ut, seed=seed, name="peg", MAX_EPOCH=6000, BATCH_SIZE=500)
+    # for seed in range(1):
+    #     Learn.model(ut, seed=seed, name="")
 
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__MAB__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__GP_KERNEL__NONE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RANDOM__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST')
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RANDOM__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
-    #
-    # Visualize.task_res_dist()
+    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__GP_KERNEL_INDEP_OUT__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST', suffix='500.mat')
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
+    #     suffix='500.mat', nodes_per_side=150)
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
+    #     suffix='500.mat')
+
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__NONE__RETURN_STATE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
+    #     suffix='500.mat')
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__NONE__RETURN_STATE__5__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
+    #     suffix='500.mat')
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__NONE__RETURN_STATE__6__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
+    #     suffix='500.mat')
+
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__NONE__MAB__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
+    #     suffix='500.mat')
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__NONE__MAB__5__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
+    #     suffix='500.mat')
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__NONE__MAB__6__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
+    #     suffix='500.mat')
+
+    Visualize.task_res_dist({
+        'auto_recover__NONE__MAB__6__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            'name': 'MAB', 'color': 'green'},
+        'auto_recover__NONE__RETURN_STATE__6__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            'name': 'return state', 'color': 'blue'},
+        'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+            'name': 'adaptive baseline++', 'color': 'red'},
+    }, 'peg_task_res.pkl')
 
     # for seed in range(1):
     #     tune_trap_set_cost(seed=seed, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
@@ -857,26 +942,38 @@ if __name__ == "__main__":
     #     use_trap_cost=True,
     #     autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
-    # for seed in range(0, 5):
-    #     test_autonomous_recovery(seed=seed, level=6, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              reuse_escape_as_demonstration=False, use_trap_cost=True,
-    #                              assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-
-    # for seed in range(0, 5):
-    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              reuse_escape_as_demonstration=False, use_trap_cost=False,
-    #                              assume_all_nonnominal_dynamics_are_traps=False,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
+    # for level in [3, 5, 6]:
+    #     for seed in range(0, 10):
+    #         test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                                  reuse_escape_as_demonstration=False, use_trap_cost=True,
+    #                                  assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
+    #                                  autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
     #
-    # for seed in range(0, 5):
-    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                              reuse_escape_as_demonstration=False, use_trap_cost=True,
-    #                              assume_all_nonnominal_dynamics_are_traps=False,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
-
-    # for seed in range(0, 5):
-    #     test_autonomous_recovery(seed=seed, level=3, use_tsf=ut, nominal_adapt=OnlineAdapt.GP_KERNEL,
-    #                              reuse_escape_as_demonstration=False, use_trap_cost=False,
-    #                              assume_all_nonnominal_dynamics_are_traps=False,
-    #                              autonomous_recovery=online_controller.AutonomousRecovery.NONE)
+    # for level in [3, 5, 6]:
+    #     for seed in range(0, 10):
+    #         test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                                  reuse_escape_as_demonstration=False, use_trap_cost=True,
+    #                                  assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
+    #                                  autonomous_recovery=online_controller.AutonomousRecovery.MAB)
+    #
+    # # baseline ++
+    # for level in [3, 5, 6]:
+    #     for seed in range(10):
+    #         test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
+    #                                  nominal_adapt=OnlineAdapt.GP_KERNEL_INDEP_OUT,
+    #                                  gating=AlwaysSelectNominal(),
+    #                                  num_frames=500,
+    #                                  reuse_escape_as_demonstration=False, use_trap_cost=False,
+    #                                  assume_all_nonnominal_dynamics_are_traps=False,
+    #                                  autonomous_recovery=online_controller.AutonomousRecovery.NONE)
+    #
+    # # baseline non-adaptive
+    # for level in [3, 5, 6]:
+    #     for seed in range(10):
+    #         test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
+    #                                  nominal_adapt=OnlineAdapt.NONE,
+    #                                  gating=AlwaysSelectNominal(),
+    #                                  num_frames=500,
+    #                                  reuse_escape_as_demonstration=False, use_trap_cost=False,
+    #                                  assume_all_nonnominal_dynamics_are_traps=False,
+    #                                  autonomous_recovery=online_controller.AutonomousRecovery.NONE)
