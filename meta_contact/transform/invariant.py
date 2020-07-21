@@ -279,9 +279,8 @@ class RexTraining(InvariantTransform):
 
         save_checkpoint_every_n_epochs = max(max_epoch // 20, 5)
 
-        # TODO generalize the get_info_cols to other data sources to remove this check
-        from meta_contact.env.block_push import PushDataSource
-        assert isinstance(self.ds, PushDataSource)
+        from meta_contact.env.pybullet_env import PybulletEnvDataSource
+        assert isinstance(self.ds, PybulletEnvDataSource)
 
         for epoch in range(max_epoch):
             logger.debug("Start epoch %d", epoch)

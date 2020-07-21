@@ -20,6 +20,7 @@ from meta_contact import cfg
 from meta_contact.env import peg_in_hole
 from meta_contact.controller import controller
 from meta_contact.transform.peg_in_hole import CoordTransform, translation_generator
+from meta_contact.transform.block_push import LearnedTransform
 from meta_contact.transform import invariant
 from meta_contact.dynamics import online_model, model, prior, hybrid_model
 
@@ -116,6 +117,10 @@ def get_transform(env, ds, use_tsf):
         return None
     elif use_tsf is UseTsf.COORD:
         return CoordTransform.factory(env, ds)
+    elif use_tsf is UseTsf.SEP_DEC:
+        return LearnedTransform.SeparateDecoder(ds, d, nz=5, nv=5, name="peg_s0")
+    elif use_tsf is UseTsf.REX_EXTRACT:
+        return LearnedTransform.RexExtract(ds, d, nz=5, nv=5, name="peg_s0")
     else:
         raise RuntimeError("Unrecgonized transform {}".format(use_tsf))
 
@@ -266,7 +271,28 @@ class PegNetwork(model.NetworkModelWrapper):
                                        self.step)
 
 
+def get_pre_invariant_tsf_preprocessor(use_tsf):
+    if use_tsf is UseTsf.COORD:
+        return preprocess.PytorchTransformer(preprocess.NullSingleTransformer())
+    else:
+        return preprocess.PytorchTransformer(preprocess.NullSingleTransformer(),
+                                             preprocess.RobustMinMaxScaler())
+
+
 class Learn:
+    @staticmethod
+    def invariant(use_tsf=UseTsf.REX_EXTRACT, seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, resume=False,
+                  **kwargs):
+        d, env, config, ds = get_free_space_env_init(seed)
+
+        ds.update_preprocessor(get_pre_invariant_tsf_preprocessor(use_tsf))
+        invariant_cls = get_transform(env, ds, use_tsf).__class__
+        common_opts = {'name': "{}_s{}".format(name, seed)}
+        invariant_tsf = invariant_cls(ds, d, **common_opts, **kwargs)
+        if resume:
+            invariant_tsf.load(invariant_tsf.get_last_checkpoint())
+        invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
+
     @staticmethod
     def model(use_tsf, seed=1, name="", train_epochs=600, batch_N=500):
         d, env, config, ds = get_free_space_env_init(seed)
@@ -393,7 +419,7 @@ def tune_trap_set_cost(*args, num_frames=100, **kwargs):
 
             # setup initial conditions where we are close to a trap and have items in our trap set
             trap_x = torch.tensor([env.hole[0], env.hole[1] - 0.2, z, 0, 0], device=ctrl.d, dtype=ctrl.dtype)
-            trap_u = torch.tensor([0, 1], device=ctrl.d, dtype=ctrl.dtype)
+            trap_u = torch.tensor([0, -1], device=ctrl.d, dtype=ctrl.dtype)
             ctrl.trap_set.append((trap_x, trap_u))
 
             # ctrl.trap_set.append(
@@ -800,12 +826,14 @@ class Visualize:
 
 if __name__ == "__main__":
     level = 0
-    ut = UseTsf.COORD
+    ut = UseTsf.REX_EXTRACT
 
     # OfflineDataCollection.freespace(trials=200, trial_length=50, mode=p.DIRECT)
 
-    # for seed in range(1):
-    #     Learn.model(ut, seed=seed, name="")
+    for seed in range(1):
+        Learn.invariant(ut, seed=seed, name="peg", MAX_EPOCH=6000, BATCH_SIZE=500)
+    for seed in range(1):
+        Learn.model(ut, seed=seed, name="")
 
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__MAB__3__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
@@ -815,10 +843,10 @@ if __name__ == "__main__":
     #
     # Visualize.task_res_dist()
 
-    for seed in range(1):
-        tune_trap_set_cost(seed=seed, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                           use_trap_cost=True,
-                           autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    # for seed in range(1):
+    #     tune_trap_set_cost(seed=seed, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                        use_trap_cost=True,
+    #                        autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # tune_recovery_policy(seed=0, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
