@@ -377,9 +377,9 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             # change mpc cost
             # return to last set of nominal states
             nominal_dynamics_set = torch.stack(self.nominal_dynamic_states[-1][-5:])
-            # nominal_return_cost = cost.CostQRSet(nominal_dynamics_set, self.Q_recovery, self.R, self.compare_to_goal)
-            nominal_return_cost = cost.GoalSetCost(nominal_dynamics_set, self.compare_to_goal, self.state_dist,
-                                                   reduce=cost.min_cost, scale=self.recovery_scale)
+            nominal_return_cost = cost.CostQRSet(nominal_dynamics_set, self.Q_recovery, self.R, self.compare_to_goal)
+            # nominal_return_cost = cost.GoalSetCost(nominal_dynamics_set, self.compare_to_goal, self.state_dist,
+            #                                        reduce=cost.min_cost, scale=self.recovery_scale)
 
             # return to last set of states that allowed the greatest single step movement
             last_states_to_consider = self.single_step_move_dist[self.nonnominal_dynamics_start_index:]
@@ -388,9 +388,9 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                                     last_states_to_consider[:self.fastest_to_choose]]
             if len(fastest_movement_set):
                 fastest_movement_set = torch.stack(fastest_movement_set)
-            # fastest_return_cost = cost.CostQRSet(fastest_movement_set, self.Q_recovery, self.R, self.compare_to_goal)
-            fastest_return_cost = cost.GoalSetCost(fastest_movement_set, self.compare_to_goal, self.state_dist,
-                                                   reduce=cost.min_cost, scale=self.recovery_scale)
+            fastest_return_cost = cost.CostQRSet(fastest_movement_set, self.Q_recovery, self.R, self.compare_to_goal)
+            # fastest_return_cost = cost.GoalSetCost(fastest_movement_set, self.compare_to_goal, self.state_dist,
+            #                                        reduce=cost.min_cost, scale=self.recovery_scale)
 
             if self.autonomous_recovery is AutonomousRecovery.RETURN_STATE:
                 self.recovery_cost = nominal_return_cost

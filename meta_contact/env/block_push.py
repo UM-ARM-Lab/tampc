@@ -26,7 +26,7 @@ class BlockFace:
 _MAX_ALONG = 0.3 / 2  # half length of block
 _BLOCK_HEIGHT = 0.05
 _PUSHER_MID = 0.10
-_RADIUS_GYRATION = math.sqrt(((2 * _MAX_ALONG) ** 2 + (2 * _MAX_ALONG) ** 2) / 12) * 5
+_RADIUS_GYRATION = math.sqrt(((2 * _MAX_ALONG) ** 2 + (2 * _MAX_ALONG) ** 2) / 12)
 DIST_FOR_JUST_TOUCHING = _MAX_ALONG + 0.021 - 0.00001
 
 

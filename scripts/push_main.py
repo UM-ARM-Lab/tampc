@@ -130,7 +130,7 @@ def get_controller_options(env):
         'R': R,
         'R_env': env.control_cost(),
         'Q_recovery': Q_recovery,
-        'recovery_scale': 1,
+        'recovery_scale': 10,
         'u_min': u_min,
         'u_max': u_max,
         'compare_to_goal': env.state_difference,
@@ -2102,10 +2102,11 @@ if __name__ == "__main__":
     # evaluate_freespace_control(use_tsf=UseTsf.SEP_DEC, plot_model_error=False)
 
     # autonomous recovery
-    for ut in [UseTsf.REX_EXTRACT]:
+    for ut in [UseTsf.NO_TRANSFORM]:
         for level in [3]:
-            for seed in range(3, 5):
-                test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+            for seed in range(0, 5):
+                test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
+                                         nominal_adapt=OnlineAdapt.GP_KERNEL_INDEP_OUT,
                                          reuse_escape_as_demonstration=False, use_trap_cost=True,
                                          assume_all_nonnominal_dynamics_are_traps=False, num_frames=300,
                                          autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
