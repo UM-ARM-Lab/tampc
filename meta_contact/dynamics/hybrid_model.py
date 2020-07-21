@@ -188,11 +188,10 @@ class HybridDynamicsModel(abc.ABC):
 
     def use_temp_local_nominal_model(self):
         if self._uses_local_model_api(self.nominal_model):
-            pass
             # start local model here with no previous data points
-            # self.nominal_model.init_xu = self.nominal_model.init_xu[slice(0, 0)]
-            # self.nominal_model.init_y = self.nominal_model.init_y[slice(0, 0)]
-            # self.nominal_model.reset()
+            self.nominal_model.init_xu = self.nominal_model.init_xu[slice(0, 0)]
+            self.nominal_model.init_y = self.nominal_model.init_y[slice(0, 0)]
+            self.nominal_model.reset()
         else:
             self.nominal_model = HybridDynamicsModel.get_local_model(self.state_diff, self.pm,
                                                                      self.nominal_model.device(), self.ds_nominal,
