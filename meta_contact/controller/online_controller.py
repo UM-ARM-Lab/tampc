@@ -48,6 +48,8 @@ class OnlineMPC(controller.MPC):
         # we'll temporarily ensure usage of the original nominal model for predicting the next state
         current_model = self.dynamics.nominal_model
         self.dynamics.nominal_model = self.dynamics._original_nominal_model
+        if self.dynamics._uses_local_model_api(self.dynamics.nominal_model):
+            self.dynamics.nominal_model = self.dynamics.nominal_model.prior.dyn_net
 
         next_state = self.dynamics(state.view(1, -1), control.view(1, -1),
                                    torch.tensor(gating_function.DynamicsClass.NOMINAL).view(-1)).cpu().numpy()
