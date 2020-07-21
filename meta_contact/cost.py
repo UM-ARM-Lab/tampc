@@ -175,7 +175,7 @@ class TrapSetCost(Cost):
             c_x = self.compare_to_goal(X, goal_x)
             c_x = self.state_dist(c_x).square()
             c_x = torch.clamp((self.spread / c_x), 0, TRAP_MAX_COST)
-            c_u = 1 if U is None else self.u_similarity(U, goal_u)
+            c_u = 0 if terminal else (1 if U is None else self.u_similarity(U, goal_u))
             c = c_x * c_u
             if self.goal_weights is not None:
                 c *= self.goal_weights[i]
