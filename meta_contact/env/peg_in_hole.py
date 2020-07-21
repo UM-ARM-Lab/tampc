@@ -442,6 +442,7 @@ class PegInHoleEnv(PybulletEnv):
         if old_state is None:
             old_state = self._obs()
         start = old_state[:3]
+        start[2] = _PEG_MID
         pointer = np.concatenate((action, (0,)))
         if debug:
             self._dd.draw_2d_line('u{}'.format(debug), start, pointer, (1, debug / 30, debug / 10), scale=0.2)

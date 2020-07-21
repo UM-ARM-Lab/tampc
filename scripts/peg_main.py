@@ -187,9 +187,7 @@ def get_controller_options(env):
     sigma = [0.2, 0.2]
     noise_mu = [0, 0]
     u_init = [0, 0]
-    # tune this so that we figure out to make u-turns
     sigma = torch.tensor(sigma, dtype=torch.double, device=d)
-    trap_cost_per_dim = 10
     common_wrapper_opts = {
         'Q': Q,
         'R': R,
@@ -919,19 +917,19 @@ if __name__ == "__main__":
     #     'auto_recover__NONE__MAB__6__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
     #     suffix='500.mat')
 
-    Visualize.task_res_dist({
-        'auto_recover__NONE__MAB__6__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            'name': 'MAB', 'color': 'green'},
-        'auto_recover__NONE__RETURN_STATE__6__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            'name': 'return state', 'color': 'blue'},
-        'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            'name': 'adaptive baseline++', 'color': 'red'},
-    }, 'peg_task_res.pkl')
+    # Visualize.task_res_dist({
+    #     'auto_recover__NONE__MAB__6__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #         'name': 'MAB', 'color': 'green'},
+    #     'auto_recover__NONE__RETURN_STATE__6__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #         'name': 'return state', 'color': 'blue'},
+    #     'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+    #         'name': 'adaptive baseline++', 'color': 'red'},
+    # }, 'peg_task_res.pkl')
 
-    # for seed in range(1):
-    #     tune_trap_set_cost(seed=seed, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                        use_trap_cost=True,
-    #                        autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    for seed in range(1):
+        tune_trap_set_cost(seed=seed, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                           use_trap_cost=True,
+                           autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # tune_recovery_policy(seed=0, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)

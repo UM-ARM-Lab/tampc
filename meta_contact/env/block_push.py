@@ -785,6 +785,7 @@ class PushWithForceDirectlyEnv(PushAgainstWallStickyEnv):
         d_along, f_mag, f_dir = self._unpack_action(action)
         f_dir_world = f_dir + old_state[2]
         start = self._observe_pusher()
+        start[2] = _BLOCK_HEIGHT
         pointer = math_utils.rotate_wrt_origin((f_mag / self.MAX_FORCE, 0), f_dir_world)
         if debug:
             self._dd.draw_2d_line('u{}'.format(debug), start, pointer, (1, debug / 10, debug / 10), scale=0.4)
@@ -1013,7 +1014,7 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         push_along, push_dist, push_dir = self._unpack_action(action)
         start = pusher_pos_for_touching(old_state[:2], old_state[2], from_center=DIST_FOR_JUST_TOUCHING, face=self.face,
                                         along_face=push_along)
-        start = np.concatenate((start, (self.initPusherPos[2],)))
+        start = np.concatenate((start, (_BLOCK_HEIGHT,)))
         pointer = math_utils.rotate_wrt_origin((push_dist, 0), push_dir + old_state[2])
         if debug:
             self._dd.draw_2d_line('u{}'.format(debug), start, pointer, (1, debug / 30, debug / 10), scale=5)
