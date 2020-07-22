@@ -106,6 +106,7 @@ class AutonomousRecovery(enum.IntEnum):
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def __init__(self, *args, abs_unrecognized_threshold=10,
                  trap_cost_annealing_rate=0.97, manual_init_trap_weight=None,
+                 nominal_max_velocity=0,
                  assume_all_nonnominal_dynamics_are_traps=False, nonnominal_dynamics_penalty_tolerance=0.6,
                  Q_recovery=None, recovery_scale=1, recovery_horizon=5, R_env=None,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
@@ -137,8 +138,8 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.nonnominal_dynamics_penalty_tolerance = nonnominal_dynamics_penalty_tolerance
 
         # heuristic for determining if we're a trap or not, first set when we enter local dynamics
-        # assumes we don't start in a trap
-        self.nominal_avg_velocity = None
+        # if given as 0, we assume we don't start in a trap otherwise everything looks like a trap
+        self.nominal_max_velocity = nominal_max_velocity
 
         # avoid these number of actions before entering a trap (inclusive of the transition into the trap)
         # self.steps_before_entering_trap_to_avoid = 1
@@ -221,7 +222,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                 return False
 
             # look at displacement
-            before = self.nominal_avg_velocity
+            before = self.nominal_max_velocity
 
             start = max(self.nonnominal_dynamics_start_index, self.autonomous_recovery_end_index - 1)
             lowest_current = 1e6
@@ -274,7 +275,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             # reward for MAB (shared across arms) is displacement
             # leave if we converged / as close to targets as possible because we're not moving anymore
             # look at displacement
-            before = self.nominal_avg_velocity
+            before = self.nominal_max_velocity
             cur_index = len(self.x_history) - 1
             current = self._avg_displacement(max(0, cur_index - self.nonnominal_dynamics_trend_len), cur_index)
             # TODO parameterize the ratio of reluctance to leave recovery mode relative to tolerance of entering it
@@ -284,7 +285,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             moved_from_trap = self.state_dist(
                 self.compare_to_goal(self.x_history[cur_index],
                                      self.x_history[self.autonomous_recovery_start_index - 1]))
-            moved_suffiently_far = moved_from_trap > 1 * self.nominal_avg_velocity  # number of steps at full speed away
+            moved_suffiently_far = moved_from_trap > 1 * self.nominal_max_velocity  # number of steps at full speed away
 
             # left_trap = moved_suffiently_far
             left_trap = (moved_suffiently_far and converged) or cur_index - self.autonomous_recovery_start_index > 20
@@ -324,10 +325,6 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def _start_local_model(self, x):
         logger.debug("Entering non nominal dynamics")
         logger.debug(self.diff_predicted.norm())
-
-        if self.nominal_avg_velocity is None:
-            self.nominal_avg_velocity = self._avg_displacement(0, len(self.x_history) - 1)
-            logger.debug("determined nominal avg velocity to be %f", self.nominal_avg_velocity)
 
         self.using_local_model_for_nonnominal_dynamics = True
         # includes the current observation
@@ -505,8 +502,18 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         if self.trap_cost is not None:
             logger.debug("trap set weight %f", self.trap_set_weight)
 
+        # in nominal dynamics
         if not self.using_local_model_for_nonnominal_dynamics:
             self.nominal_dynamic_states[-1].append(x)
+            num_states = len(self.nominal_dynamic_states[-1])
+            # update our estimate of max state velocity in nominal dynamics
+            if num_states >= 2:
+                cur_index = len(self.x_history) - 1
+                start = cur_index - min(num_states, self.nonnominal_dynamics_trend_len) + 1
+                vel = self._avg_displacement(start, cur_index)
+                if vel > self.nominal_max_velocity:
+                    self.nominal_max_velocity = vel
+                    logger.debug("nominal max state velocity updated to be %f", self.nominal_max_velocity)
 
         return u
 
@@ -526,7 +533,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         return goal_cost_at_state / trap_cost_at_state
 
     def _update_mab_arm(self, arm):
-        nominal = self.nominal_avg_velocity
+        nominal = self.nominal_max_velocity
         cur_index = len(self.x_history) - 1
         reward = self._avg_displacement(cur_index - self.pull_arm_every_n_steps, cur_index)
         # normalize reward with respect to displacement in nominal environment so that a reward of 1

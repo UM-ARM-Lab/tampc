@@ -476,7 +476,7 @@ def tune_trap_set_cost(*args, num_frames=100, **kwargs):
 def tune_recovery_policy(*args, num_frames=100, **kwargs):
     def setup(env, ctrl: online_controller.OnlineMPPI, ds):
         # setup initial conditions where we are close to a trap and have items in our trap set
-        ctrl.nominal_avg_velocity = 0.012
+        ctrl.nominal_max_velocity = 0.012
 
         z = env.initGripperPos[2]
         hole = [0, 0.2]
@@ -944,10 +944,10 @@ if __name__ == "__main__":
     #         'name': 'adaptive baseline++', 'color': 'red'},
     # }, 'peg_task_res.pkl')
 
-    for seed in range(1):
-        tune_trap_set_cost(seed=seed, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                           use_trap_cost=True,
-                           autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    # for seed in range(1):
+    #     tune_trap_set_cost(seed=seed, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                        use_trap_cost=True,
+    #                        autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # tune_recovery_policy(seed=0, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
@@ -965,12 +965,12 @@ if __name__ == "__main__":
     #                                  assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
     #                                  autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
     #
-    # for level in [3, 5, 6]:
-    #     for seed in range(0, 10):
-    #         test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                                  reuse_escape_as_demonstration=False, use_trap_cost=True,
-    #                                  assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
-    #                                  autonomous_recovery=online_controller.AutonomousRecovery.MAB)
+    for level in [3, 5, 6]:
+        for seed in range(0, 2):
+            test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                                     reuse_escape_as_demonstration=False, use_trap_cost=True,
+                                     assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
+                                     autonomous_recovery=online_controller.AutonomousRecovery.MAB)
     #
     # # baseline ++
     # for level in [3, 5, 6]:

@@ -129,7 +129,7 @@ def get_controller_options(env):
         'R': R,
         'R_env': env.control_cost(),
         'Q_recovery': Q_recovery,
-        'recovery_scale': 10,
+        'recovery_scale': 2000,
         'u_min': u_min,
         'u_max': u_max,
         'compare_to_goal': env.state_difference,
@@ -1070,7 +1070,7 @@ def tune_trap_set_cost(*args, num_frames=100, **kwargs):
 def tune_recovery_policy(*args, num_frames=100, **kwargs):
     def setup(env, ctrl: online_controller.OnlineMPPI):
         # setup initial conditions where we are close to a trap and have items in our trap set
-        ctrl.nominal_avg_velocity = 0.012
+        ctrl.nominal_max_velocity = 0.012
         ctrl.trap_set.append((torch.tensor([0.6147, 0.1381, -1.2658, 6.9630, 14.9701], device=ctrl.d, dtype=ctrl.dtype),
                               torch.tensor([-0.5439, 0.6192, -0.5857], device=ctrl.d, dtype=ctrl.dtype)))
 
@@ -2078,9 +2078,9 @@ if __name__ == "__main__":
     # evaluate_ctrl_sampler('pushing/see_saw.mat', 150, seed=0, rollout_prev_xu=True)
     # evaluate_ctrl_sampler('pushing/trap_set_suitable_test.mat', 199, seed=0, rollout_prev_xu=True)
 
-    tune_trap_set_cost(seed=0, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                       use_trap_cost=True,
-                       autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    # tune_trap_set_cost(seed=0, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                    use_trap_cost=True,
+    #                    autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
     # tune_recovery_policy(seed=0, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
@@ -2097,14 +2097,14 @@ if __name__ == "__main__":
     # evaluate_freespace_control(use_tsf=UseTsf.SEP_DEC, plot_model_error=False)
 
     # autonomous recovery
-    # for ut in [UseTsf.REX_EXTRACT]:
-    #     for level in [3]:
-    #         for seed in range(0, 5):
-    #             test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
-    #                                      nominal_adapt=OnlineAdapt.NONE,
-    #                                      reuse_escape_as_demonstration=False, use_trap_cost=True,
-    #                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=300,
-    #                                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    for ut in [UseTsf.REX_EXTRACT]:
+        for level in [3]:
+            for seed in range(3):
+                test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
+                                         nominal_adapt=OnlineAdapt.NONE,
+                                         reuse_escape_as_demonstration=False, use_trap_cost=True,
+                                         assume_all_nonnominal_dynamics_are_traps=False, num_frames=300,
+                                         autonomous_recovery=online_controller.AutonomousRecovery.MAB)
 
     # for ut in [UseTsf.REX_EXTRACT, UseTsf.NO_TRANSFORM]:
     #     for level in [2, 3]:
