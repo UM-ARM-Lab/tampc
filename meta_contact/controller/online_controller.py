@@ -315,11 +315,6 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         # have to first pass the test of recognizing the dynamics
         dynamics_class_test = consecutive_recognized_dynamics_class >= self.leave_recovery_num_turns
 
-        # if not dynamics_class_test:
-        #     return False
-        # # we also have to move sufficiently compared to average nominal dynamics
-        # recent_movement = self._avg_displacement(len(self.x_history) + i, len(self.x_history) - 1)
-        # return recent_movement > self.nominal_avg_velocity * self.nonnominal_dynamics_penalty_tolerance
         return dynamics_class_test
 
     def _start_local_model(self, x):
@@ -339,11 +334,6 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.autonomous_recovery_mode = True
         # TODO also make autonomous recovery index include this observation
         self.autonomous_recovery_start_index = len(self.x_history)
-
-        # avoid these points in the future
-        # look at state-action pairs since entering local dynamics / last finishing recovery
-        # for i in range(min(len(self.u_history), self.steps_before_entering_trap_to_avoid)):
-        #     self.trap_set.append((self.x_history[-i - 2], self.u_history[-i - 1]))
 
         min_index = -1
         min_ratio = 1
