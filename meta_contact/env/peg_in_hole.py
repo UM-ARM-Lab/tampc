@@ -556,12 +556,11 @@ class PegInHoleEnv(PybulletEnv):
 
     # --- control helpers (rarely overridden)
     def evaluate_cost(self, state, action=None):
-        # whether we arrived at goal (no cost, or if are not in a hole 1)
-        # TODO evaluate correctness; note that we don't actually need state or action
         peg_pos = self._observe_peg()
         diff = peg_pos[:2] - self.hole
-        done = np.linalg.norm(diff) < self.dist_for_done
-        return 0 if done else 1, done
+        dist = np.linalg.norm(diff)
+        done = dist < self.dist_for_done
+        return (dist * 10) ** 2, done
 
     def _finish_action(self, old_state, action):
         """Evaluate action after finishing it; step should not modify state after calling this"""
