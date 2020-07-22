@@ -107,7 +107,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def __init__(self, *args, abs_unrecognized_threshold=10,
                  trap_cost_annealing_rate=0.97, manual_init_trap_weight=None,
                  assume_all_nonnominal_dynamics_are_traps=False, nonnominal_dynamics_penalty_tolerance=0.6,
-                 Q_recovery=None, recovery_scale=1, R_env=None,
+                 Q_recovery=None, recovery_scale=1, recovery_horizon=5, R_env=None,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
         self.abs_unrecognized_threshold = abs_unrecognized_threshold
@@ -132,7 +132,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.using_local_model_for_nonnominal_dynamics = False
         self.nonnominal_dynamics_start_index = -1
         # window of points we take to calculate the average trend
-        self.nonnominal_dynamics_trend_len = 4
+        self.nonnominal_dynamics_trend_len = 5
         # we have to be decreasing cost at this much compared to before nonnominal dynamics to not be in a trap
         self.nonnominal_dynamics_penalty_tolerance = nonnominal_dynamics_penalty_tolerance
 
@@ -149,6 +149,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
         # how many consecutive turns of thinking we are out of non-nominal dynamics for it to stick (avoid jitter)
         self.leave_recovery_num_turns = 3
+        self.recovery_horizon = recovery_horizon
 
         self.recovery_cost = None
         self.autonomous_recovery = autonomous_recovery
@@ -267,6 +268,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             left_trap = before_progress_rate * 0.1 < current_progress_rate
             logger.debug("before recovery rate %f current recovery rate %f left trap? %d", before_progress_rate.item(),
                          current_progress_rate.item(), left_trap)
+            left_trap = current_progress_rate > 0
             return left_trap
         elif self.autonomous_recovery is AutonomousRecovery.MAB:
             # reward for MAB (shared across arms) is displacement
@@ -374,9 +376,9 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             # change mpc cost
             # return to last set of nominal states
             nominal_dynamics_set = torch.stack(self.nominal_dynamic_states[-1][-5:])
-            nominal_return_cost = cost.CostQRSet(nominal_dynamics_set, self.Q_recovery, self.R, self.compare_to_goal)
-            # nominal_return_cost = cost.GoalSetCost(nominal_dynamics_set, self.compare_to_goal, self.state_dist,
-            #                                        reduce=cost.min_cost, scale=self.recovery_scale)
+            # nominal_return_cost = cost.CostQRSet(nominal_dynamics_set, self.Q_recovery, self.R, self.compare_to_goal)
+            nominal_return_cost = cost.GoalSetCost(nominal_dynamics_set, self.compare_to_goal, self.state_dist,
+                                                   reduce=cost.min_cost, scale=self.recovery_scale)
 
             # return to last set of states that allowed the greatest single step movement
             last_states_to_consider = self.single_step_move_dist[self.nonnominal_dynamics_start_index:]
@@ -385,9 +387,9 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                                     last_states_to_consider[:self.fastest_to_choose]]
             if len(fastest_movement_set):
                 fastest_movement_set = torch.stack(fastest_movement_set)
-            fastest_return_cost = cost.CostQRSet(fastest_movement_set, self.Q_recovery, self.R, self.compare_to_goal)
-            # fastest_return_cost = cost.GoalSetCost(fastest_movement_set, self.compare_to_goal, self.state_dist,
-            #                                        reduce=cost.min_cost, scale=self.recovery_scale)
+            # fastest_return_cost = cost.CostQRSet(fastest_movement_set, self.Q_recovery, self.R, self.compare_to_goal)
+            fastest_return_cost = cost.GoalSetCost(fastest_movement_set, self.compare_to_goal, self.state_dist,
+                                                   reduce=cost.min_cost, scale=self.recovery_scale)
 
             if self.autonomous_recovery is AutonomousRecovery.RETURN_STATE:
                 self.recovery_cost = nominal_return_cost
@@ -405,7 +407,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
             self.mpc.running_cost = self._recovery_running_cost
             self.mpc.terminal_state_cost = None
-            self.mpc.change_horizon(10)
+            self.mpc.change_horizon(self.recovery_horizon)
 
     def recovery_cost_weight(self):
         return self.cost_weights[self.last_arm_pulled]
