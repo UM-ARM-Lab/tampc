@@ -387,38 +387,21 @@ class OfflineDataCollection:
         env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw)
 
         u = []
-        if isinstance(env, block_push.PushWithForceDirectlyEnv):
-            seed = rand.seed(124512)
-            for _ in range(10):
-                u.append([0.7 + rn(0.2), 0.7 + rn(0.3), 0.6 + rn(0.4)])
-            for _ in range(8):
-                u.append([0.1 + rn(0.2), 0.7 + rn(0.3), 0.7 + rn(0.3)])
-            for _ in range(10):
-                u.append([-0.3 + rn(0.4), 0.6 + rn(0.4), 0.0 + rn(0.8)])
-            for _ in range(10):
-                u.append([-0.8 + rn(0.2), 0.2 + rn(0.1), -0.2 + rn(0.4)])
-            for _ in range(90):
-                u.append([-0.3 + rn(0.2), 0.8 + rn(0.1), -0.9 + rn(0.2)])
-            for _ in range(40):
-                u.append([0.1 + rn(0.2), 0.7 + rn(0.1), 0.1 + rn(0.3)])
-        elif isinstance(env, block_push.PushPhysicallyAnyAlongEnv):
-            seed = rand.seed(3)
-            # different friction between wall and block leads to very different behaviour
-            high_friction = True
-            if high_friction:
-                for _ in range(15):
-                    u.append([-1.0 + rn(0.1), 0.8 + rn(0.1), -1.0 + rn(0.2)])
-                for _ in range(13):
-                    u.append([-0.9 + rn(0.1), 0.8 + rn(0.1), -0.7 + rn(0.2)])
-            else:
-                for _ in range(20):
-                    u.append([0.8 + rn(0.2), 0.7 + rn(0.3), 0.7 + rn(0.4)])
-                for _ in range(25):
-                    u.append([-1.0 + rn(0.1), 0.8 + rn(0.1), -0.9 + rn(0.1)])
-                for _ in range(10):
-                    u.append([0.1 + rn(0.2), 0.7 + rn(0.1), 0.1 + rn(0.3)])
+        seed = rand.seed(3)
+        # different friction between wall and block leads to very different behaviour
+        high_friction = False
+        if high_friction:
+            for _ in range(15):
+                u.append([-1.0 + rn(0.1), 0.8 + rn(0.1), -1.0 + rn(0.2)])
+            for _ in range(13):
+                u.append([-0.9 + rn(0.1), 0.8 + rn(0.1), -0.7 + rn(0.2)])
         else:
-            raise RuntimeError("Unrecognized environment")
+            for _ in range(15):
+                u.append([0.8 + rn(0.2), 0.7 + rn(0.3), 0.7 + rn(0.4)])
+            for _ in range(30):
+                u.append([-1.0 + rn(0.1), 0.8 + rn(0.1), -0.9 + rn(0.1)])
+            for _ in range(10):
+                u.append([0.1 + rn(0.2), 0.7 + rn(0.1), 0.1 + rn(0.3)])
 
         ctrl = controller.PreDeterminedController(np.array(u), *env.get_control_bounds())
         sim = block_push.InteractivePush(env, ctrl, num_frames=len(u), plot=False, save=True, stop_when_done=False)
@@ -2044,8 +2027,12 @@ if __name__ == "__main__":
     #                          restrict_slice=slice(0, 40), step=5)
 
     # test_online_model()
-    # for seed in range(0, 5):
-    #     Learn.invariant(ut, seed=seed, name="refine", MAX_EPOCH=6000, BATCH_SIZE=500)
+    for seed in range(10):
+        Learn.invariant(UseTsf.FEEDFORWARD_PART, seed=seed, name="corl", MAX_EPOCH=3000, BATCH_SIZE=500)
+    for seed in range(10):
+        Learn.invariant(UseTsf.SEP_DEC, seed=seed, name="corl", MAX_EPOCH=3000, BATCH_SIZE=500)
+    for seed in range(10):
+        Learn.invariant(UseTsf.REX_EXTRACT, seed=seed, name="corl", MAX_EPOCH=3000, BATCH_SIZE=2048)
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")
 
@@ -2110,25 +2097,6 @@ if __name__ == "__main__":
     #     test_autonomous_recovery(seed=0, level=0, adaptive_control_baseline=True, num_frames=250)
 
     # evaluate_freespace_control(use_tsf=UseTsf.SEP_DEC, plot_model_error=False)
-
-    # autonomous recovery
-    for ut in [UseTsf.REX_EXTRACT]:
-        for level in [5]:
-            for seed in range(5):
-                test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
-                                         nominal_adapt=OnlineAdapt.NONE,
-                                         reuse_escape_as_demonstration=False, use_trap_cost=True,
-                                         assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
-                                         autonomous_recovery=online_controller.AutonomousRecovery.MAB)
-
-    # for ut in [UseTsf.REX_EXTRACT]:
-    #     for level in [4]:
-    #         for seed in range(5, 10):
-    #             test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                                      reuse_escape_as_demonstration=False, use_trap_cost=True,
-    #                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
-    #                                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-    #
     # baseline non-adaptive
     # for level in [5]:
     #     for seed in range(10):
@@ -2139,8 +2107,8 @@ if __name__ == "__main__":
     #                                  reuse_escape_as_demonstration=False, use_trap_cost=False,
     #                                  assume_all_nonnominal_dynamics_are_traps=False,
     #                                  autonomous_recovery=online_controller.AutonomousRecovery.NONE)
-    # baseline ++
-    # for level in [2]:
+    # # baseline ++
+    # for level in [5]:
     #     for seed in range(10):
     #         test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
     #                                  nominal_adapt=OnlineAdapt.GP_KERNEL_INDEP_OUT,
@@ -2149,6 +2117,34 @@ if __name__ == "__main__":
     #                                  reuse_escape_as_demonstration=False, use_trap_cost=False,
     #                                  assume_all_nonnominal_dynamics_are_traps=False,
     #                                  autonomous_recovery=online_controller.AutonomousRecovery.NONE)
+    # autonomous recovery
+    # for ut in [UseTsf.REX_EXTRACT, UseTsf.NO_TRANSFORM]:
+    #     for level in [5]:
+    #         for seed in range(5, 10):
+    #             test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
+    #                                      nominal_adapt=OnlineAdapt.NONE,
+    #                                      reuse_escape_as_demonstration=False, use_trap_cost=True,
+    #                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
+    #                                      autonomous_recovery=online_controller.AutonomousRecovery.MAB)
+    #
+    # for ut in [UseTsf.REX_EXTRACT]:
+    #     for level in [5]:
+    #         for seed in range(10):
+    #             test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
+    #                                      nominal_adapt=OnlineAdapt.NONE,
+    #                                      reuse_escape_as_demonstration=False, use_trap_cost=True,
+    #                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
+    #                                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+
+    # for ut in [UseTsf.REX_EXTRACT]:
+    #     for level in [4]:
+    #         for seed in range(5, 10):
+    #             test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                                      reuse_escape_as_demonstration=False, use_trap_cost=True,
+    #                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
+    #                                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    #
+
 
     # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.GP_KERNEL,
     #                            override=True, full_evaluation=True, plot_model_error=False, relearn_dynamics=False)

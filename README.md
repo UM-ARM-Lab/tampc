@@ -20,7 +20,7 @@ training model, and testing trained models on novel environments.
 
 (Also install `tensorboard`) To start the tensorboard server, 
 
-`tensorboard --logdir simulation/runs`
+`tensorboard --logdir scripts/runs`
 
 ## Remove empty runs
 `python clean_empty_runs.py`
