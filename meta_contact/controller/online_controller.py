@@ -105,7 +105,7 @@ class AutonomousRecovery(enum.IntEnum):
 
 class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def __init__(self, *args, abs_unrecognized_threshold=10,
-                 trap_cost_annealing_rate=0.97, manual_init_trap_weight=None,
+                 trap_cost_annealing_rate=0.97, trap_cost_init_normalization=1, manual_init_trap_weight=None,
                  nominal_max_velocity=0,
                  assume_all_nonnominal_dynamics_are_traps=False, nonnominal_dynamics_penalty_tolerance=0.6,
                  Q_recovery=None, recovery_scale=1, recovery_horizon=5, R_env=None,
@@ -120,6 +120,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
         self.assume_all_nonnominal_dynamics_are_traps = assume_all_nonnominal_dynamics_are_traps
         self.trap_cost_annealing_rate = trap_cost_annealing_rate
+        self.trap_cost_init_normalization = trap_cost_init_normalization
         self.auto_init_trap_cost = manual_init_trap_weight is None
         if manual_init_trap_weight is not None:
             self.trap_set_weight = manual_init_trap_weight
@@ -140,9 +141,6 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         # heuristic for determining if we're a trap or not, first set when we enter local dynamics
         # if given as 0, we assume we don't start in a trap otherwise everything looks like a trap
         self.nominal_max_velocity = nominal_max_velocity
-
-        # avoid these number of actions before entering a trap (inclusive of the transition into the trap)
-        # self.steps_before_entering_trap_to_avoid = 1
 
         self.autonomous_recovery_mode = False
         self.autonomous_recovery_start_index = -1
@@ -174,7 +172,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.cost_weights /= self.cost_weights.sum(dim=1).view(self.num_arms, 1)
         # give special meaning to the first few arms (they are 1-hot)
         self.cost_weights[:self.num_costs, :self.num_costs] = torch.eye(self.num_costs, device=self.d)
-        # TODO include a more informed prior (from previous iterations)
+        # TODO include a more informed prior (from previous iterations); doesn't seem to be too important
         self.mab = KFMANDB(torch.ones(self.num_arms, device=self.d) * 0.1,
                            torch.eye(self.num_arms, device=self.d) * 0.1)
 
@@ -465,7 +463,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                 if self.auto_init_trap_cost:
                     normalized_weights = [self.normalize_trapset_cost_to_state(prev_state) for prev_state in
                                           self.nominal_dynamic_states[-1][-6:]]
-                    self.trap_set_weight = statistics.median(normalized_weights)
+                    self.trap_set_weight = statistics.median(normalized_weights) * self.trap_cost_init_normalization
                 else:
                     self.trap_set_weight *= (1 / self.trap_cost_annealing_rate) * 5
                 logger.debug("tune trap cost weight %f", self.trap_set_weight)
