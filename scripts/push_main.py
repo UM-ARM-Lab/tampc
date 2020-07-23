@@ -136,7 +136,6 @@ def get_controller_options(env):
         'u_similarity': env.control_similarity,
         'device': d,
         'terminal_cost_multiplier': 50,
-        'trap_spread': 0.1,
         'abs_unrecognized_threshold': 10,
         # 'nominal_max_velocity':  0.02,
         'adjust_model_pred_with_prev_error': False,

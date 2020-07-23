@@ -187,7 +187,7 @@ def default_state_dist(state_difference):
 
 class MPC(ControllerWithModelPrediction):
     def __init__(self, ds, dynamics, config, Q=1, R=1, compare_to_goal=torch.sub, u_min=None, u_max=None,
-                 device='cpu', u_similarity=None, state_dist=default_state_dist, trap_spread=1,
+                 device='cpu', u_similarity=None, state_dist=default_state_dist,
                  terminal_cost_multiplier=0., adjust_model_pred_with_prev_error=False, use_trap_cost=True,
                  use_orientation_terminal_cost=False):
         super().__init__(compare_to_goal)
@@ -225,7 +225,7 @@ class MPC(ControllerWithModelPrediction):
         self.trap_set_weight = 1
         if use_trap_cost:
             self.trap_cost = cost.TrapSetCost(self.trap_set, self.compare_to_goal, self.state_dist, u_similarity,
-                                              self._trap_cost_reduce, spread=trap_spread)
+                                              self._trap_cost_reduce)
             self.cost = cost.ComposeCost([self.goal_cost, self.trap_cost])
         else:
             self.trap_cost = None
