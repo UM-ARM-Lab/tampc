@@ -80,10 +80,9 @@ def get_env(mode=p.GUI, level=0, log_video=False):
         init_block_yaw = -math.pi / 5
         goal_pos = [0.25, -0.65]
     elif level is 5:
-        init_block_pos = [0.3, 0.6]
-        init_block_yaw = -3 * math.pi / 4
-        goal_pos = [0.7, -0.35]
-
+        init_block_pos = [-0.4, 0.23]
+        init_block_yaw = -math.pi / 5.2
+        goal_pos = [0.55, -0.65]
     env_opts = {
         'mode': mode,
         'goal': goal_pos,
@@ -139,6 +138,7 @@ def get_controller_options(env):
         'terminal_cost_multiplier': 50,
         'trap_spread': 0.1,
         'abs_unrecognized_threshold': 10,
+        # 'nominal_max_velocity':  0.02,
         'adjust_model_pred_with_prev_error': False,
         'use_orientation_terminal_cost': False,
     }
@@ -2050,24 +2050,24 @@ if __name__ == "__main__":
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")
 
-    Visualize.task_res_dist({
-        # 'auto_recover__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-        #     'name': 'MAB', 'color': 'green'},
-        #
-        # 'auto_recover__GP_KERNEL__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-        #     'name': 'adaptive baseline++', 'color': 'red'},
-        # 'auto_recover__NONE__RETURN_STATE__1__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-        #     'name': 'return state', 'color': 'blue'},
-        # 'auto_recover__NONE__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-        #     'name': 'non-adapative', 'color': 'purple'},
-
-        'auto_recover__NONE__MAB__4__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            'name': 'MAB', 'color': 'green'},
-        'auto_recover__NONE__RETURN_STATE__4__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            'name': 'return state', 'color': 'blue'},
-        'auto_recover__NONE__NONE__4__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            'name': 'non-adapative', 'color': 'purple'},
-    }, 'push_task_res.pkl', expected_data_len=499)
+    # Visualize.task_res_dist({
+    #     # 'auto_recover__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #     #     'name': 'MAB', 'color': 'green'},
+    #     #
+    #     # 'auto_recover__GP_KERNEL__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+    #     #     'name': 'adaptive baseline++', 'color': 'red'},
+    #     # 'auto_recover__NONE__RETURN_STATE__1__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #     #     'name': 'return state', 'color': 'blue'},
+    #     # 'auto_recover__NONE__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+    #     #     'name': 'non-adapative', 'color': 'purple'},
+    #
+    #     'auto_recover__NONE__MAB__4__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #         'name': 'MAB', 'color': 'green'},
+    #     'auto_recover__NONE__RETURN_STATE__4__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #         'name': 'return state', 'color': 'blue'},
+    #     'auto_recover__NONE__NONE__4__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+    #         'name': 'non-adapative', 'color': 'purple'},
+    # }, 'push_task_res.pkl', expected_data_len=499)
 
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
     # use independent output
@@ -2113,25 +2113,25 @@ if __name__ == "__main__":
     # evaluate_freespace_control(use_tsf=UseTsf.SEP_DEC, plot_model_error=False)
 
     # autonomous recovery
-    # for ut in [UseTsf.REX_EXTRACT]:
-    #     for level in [4]:
-    #         for seed in range(3):
-    #             test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
-    #                                      nominal_adapt=OnlineAdapt.NONE,
-    #                                      reuse_escape_as_demonstration=False, use_trap_cost=True,
-    #                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=300,
-    #                                      autonomous_recovery=online_controller.AutonomousRecovery.MAB)
+    for ut in [UseTsf.REX_EXTRACT]:
+        for level in [5]:
+            for seed in range(5):
+                test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
+                                         nominal_adapt=OnlineAdapt.NONE,
+                                         reuse_escape_as_demonstration=False, use_trap_cost=True,
+                                         assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
+                                         autonomous_recovery=online_controller.AutonomousRecovery.MAB)
 
     # for ut in [UseTsf.REX_EXTRACT]:
     #     for level in [4]:
-    #         for seed in range(5):
+    #         for seed in range(5, 10):
     #             test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                                      reuse_escape_as_demonstration=False, use_trap_cost=True,
     #                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
     #                                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-
+    #
     # baseline non-adaptive
-    # for level in [4]:
+    # for level in [5]:
     #     for seed in range(10):
     #         test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
     #                                  nominal_adapt=OnlineAdapt.NONE,

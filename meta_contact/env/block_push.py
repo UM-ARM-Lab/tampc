@@ -326,7 +326,7 @@ class PushAgainstWallEnv(PybulletEnv):
         wall_z = 0.05
         if self.level == 0:
             pass
-        elif self.level in [1, 4]:
+        elif self.level in [1, 4, 5]:
             self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.55, -0.25, wall_z],
                                          p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
                                          globalScaling=0.8))
@@ -340,22 +340,6 @@ class PushAgainstWallEnv(PybulletEnv):
             self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.3, 0.25, wall_z],
                                          p.getQuaternionFromEuler([0, 0, -math.pi / 4]), useFixedBase=True,
                                          globalScaling=0.8))
-        elif self.level == 5:
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.5, 0.25, wall_z],
-                                         p.getQuaternionFromEuler([0, 0, math.pi / 4]), useFixedBase=True,
-                                         globalScaling=0.8))
-        elif self.level == 6:
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-1, 0.5, wall_z],
-                                         p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0, -0.32, wall_z],
-                                         p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True))
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.75, 2, wall_z],
-                                         p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0, 2, wall_z],
-                                         p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True))
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [1.5, 0.5, wall_z],
-                                         p.getQuaternionFromEuler([0, 0, math.pi / 2]), useFixedBase=True))
-
         if self.level == 2:
             self.set_camera_position([10, 10])
         else:
@@ -425,7 +409,7 @@ class PushAgainstWallEnv(PybulletEnv):
         self._dd.clear_transitions()
 
     def _draw_goal(self):
-        self._dd.draw_2d_pose('goal', self.get_block_pose(self.goal))
+        self._dd.draw_point('goal', self.get_block_pose(self.goal)[:2])
 
     def _draw_state(self):
         self._dd.draw_2d_pose('state', self.get_block_pose(self.state))
