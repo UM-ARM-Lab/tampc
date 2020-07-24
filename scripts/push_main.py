@@ -83,6 +83,10 @@ def get_env(mode=p.GUI, level=0, log_video=False):
         init_block_pos = [-0.4, 0.23]
         init_block_yaw = -math.pi / 5.2
         goal_pos = [0.55, -0.65]
+    elif level is 6:
+        init_block_pos = [0., 0.6]
+        init_block_yaw = -math.pi / 2.2
+        goal_pos = [-0.2, -0.45]
     env_opts = {
         'mode': mode,
         'goal': goal_pos,
@@ -2027,12 +2031,15 @@ if __name__ == "__main__":
     #                          restrict_slice=slice(0, 40), step=5)
 
     # test_online_model()
-    for seed in range(10):
-        Learn.invariant(UseTsf.FEEDFORWARD_PART, seed=seed, name="corl", MAX_EPOCH=3000, BATCH_SIZE=500)
-    for seed in range(10):
-        Learn.invariant(UseTsf.SEP_DEC, seed=seed, name="corl", MAX_EPOCH=3000, BATCH_SIZE=500)
-    for seed in range(10):
-        Learn.invariant(UseTsf.REX_EXTRACT, seed=seed, name="corl", MAX_EPOCH=3000, BATCH_SIZE=2048)
+    # for seed in range(10):
+    #     Learn.invariant(UseTsf.FEEDFORWARD_PART, seed=seed, name="corl", MAX_EPOCH=3000, BATCH_SIZE=500)
+    # for seed in range(10):
+    #     Learn.invariant(UseTsf.SEP_DEC, seed=seed, name="corl", MAX_EPOCH=3000, BATCH_SIZE=500)
+    # for seed in range(10):
+    #     Learn.invariant(UseTsf.EXTRACT, seed=seed, name="corl", MAX_EPOCH=3000, BATCH_SIZE=500)
+    # for seed in range(10):
+    #     Learn.invariant(UseTsf.REX_EXTRACT, seed=seed, name="corl", MAX_EPOCH=3000, BATCH_SIZE=2048)
+
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")
 
@@ -2127,14 +2134,14 @@ if __name__ == "__main__":
     #                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
     #                                      autonomous_recovery=online_controller.AutonomousRecovery.MAB)
     #
-    # for ut in [UseTsf.REX_EXTRACT]:
-    #     for level in [5]:
-    #         for seed in range(10):
-    #             test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
-    #                                      nominal_adapt=OnlineAdapt.NONE,
-    #                                      reuse_escape_as_demonstration=False, use_trap_cost=True,
-    #                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
-    #                                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    for ut in [UseTsf.REX_EXTRACT]:
+        for level in [6]:
+            for seed in range(3,6):
+                test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
+                                         nominal_adapt=OnlineAdapt.NONE,
+                                         reuse_escape_as_demonstration=False, use_trap_cost=True,
+                                         assume_all_nonnominal_dynamics_are_traps=False, num_frames=100,
+                                         autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
 
     # for ut in [UseTsf.REX_EXTRACT]:
     #     for level in [4]:
@@ -2144,7 +2151,6 @@ if __name__ == "__main__":
     #                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
     #                                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
     #
-
 
     # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.GP_KERNEL,
     #                            override=True, full_evaluation=True, plot_model_error=False, relearn_dynamics=False)
