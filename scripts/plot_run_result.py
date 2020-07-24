@@ -18,20 +18,15 @@ MAX_POINTS = 3000
 MAX_EPOCH = 6000
 name_prefix = 'armconjunction'
 largest_epoch_encountered = 0
+name_contains = 'corl'
+ignore_cache = False
 
 # scalar name combinations
 series = {'sep_dec': {'name': 'w/o $h_\omega$'}, 'extract': {'name': 'w/o REx', },
-          'rex_extract': {'name': 'full'}, }
+          'rex_extract': {'name': 'full'}, 'feedforward': {'name': 'feedforward'}}
 losses = {'percent_match': {'name': 'match', 'pos': 0}, 'percent_reconstruction': {'name': 'reconstruction', 'pos': 1}}
-# TODO for translation, look at all translated datasets rather than just 50,50?
 datasets = {'validation': {'name': 'validation', 'pos': 0},
-            'validation_50_50': {'name': 'validation (50,50)', 'pos': 1}, 'test0': {'name': 'test0', 'pos': 2}}
-
-# loss_names = ['percent_match', 'percent_reconstruction']
-# dataset_names = ['validation', 'validation_50_50', 'test0']
-#
-# loss_positions = {'match': 0, 'reconstruction': 1}
-# dataset_positions = {'validation': 0, 'validation (50,50)': 1, 'test0': 2}
+            'validation_10_10': {'name': 'validation (10,10)', 'pos': 1}, 'test0': {'name': 'test0', 'pos': 2}}
 
 runs = os.listdir(runs_basedir)
 
@@ -39,6 +34,10 @@ for r in runs:
     run_dir = os.path.join(runs_basedir, r)
     run = os.path.join(run_dir, os.listdir(run_dir)[0])
     name = r[r.index(name_prefix) + len(name_prefix):]
+
+    if name_contains is not None and name_contains not in name:
+        print("Ignoring {} since it does not contain {}".format(name, name_contains))
+        continue
 
     run_series = None
     for s in series.keys():
@@ -52,7 +51,7 @@ for r in runs:
     print(name)
     cache = os.path.join(cfg.DATA_DIR, 'run_cache', name + '.pkl')
     # load from cache if possible since it could take a while
-    if os.path.isfile(cache):
+    if not ignore_cache and os.path.isfile(cache):
         with open(cache, 'rb') as f:
             to_add = pickle.load(f)
             print('loaded cache for {}'.format(name))
@@ -71,15 +70,19 @@ for r in runs:
         for loss in losses:
             for dataset in datasets:
                 t = (loss, dataset)
-                data = ea.Scalars('{}/{}'.format(*t))
+                try:
+                    data = ea.Scalars('{}/{}'.format(*t))
 
-                steps = np.array([d.step for d in data])
-                max_epoch = steps[-1] * batch_size(run) // POINTS_PER_EPOCH
+                    steps = np.array([d.step for d in data])
+                    max_epoch = steps[-1] * batch_size(run) // POINTS_PER_EPOCH
 
-                values = np.array([d.value for d in data])
-                steps_per_epoch = steps[-1] / max_epoch
-                epochs = steps / steps_per_epoch
-                # TODO filter out points beyond max epoch
+                    values = np.array([d.value for d in data])
+                    steps_per_epoch = steps[-1] / max_epoch
+                    epochs = steps / steps_per_epoch
+                except KeyError as e:
+                    print("-1 padding for missing key: {}".format(e))
+                    epochs = np.linspace(0, MAX_EPOCH, MAX_EPOCH)
+                    values = np.ones_like(epochs) * -1
                 to_add.append((t, epochs, values))
 
         # save to cache
