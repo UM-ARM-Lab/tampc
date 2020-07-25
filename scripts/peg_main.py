@@ -69,6 +69,9 @@ def get_env(mode=p.GUI, level=0, log_video=False):
     if level is 6:
         init_peg = [0.15, 0.07]
 
+    if level is 7:
+        init_peg = [0.15 + 10, 0.07 + 10]
+
     if level is 10:
         init_peg = [0., 0.05]
         hole_pos = [0, 0.2]
@@ -199,7 +202,7 @@ def get_controller_options(env):
         'device': d,
         'terminal_cost_multiplier': 50,
         'trap_cost_annealing_rate': 0.9,
-        'abs_unrecognized_threshold': 30,
+        'abs_unrecognized_threshold': 15,
         'adjust_model_pred_with_prev_error': False,
         'use_orientation_terminal_cost': False,
     }
@@ -960,12 +963,18 @@ if __name__ == "__main__":
     #     use_trap_cost=True,
     #     autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
-    for level in [6]:
-        for seed in range(0, 3):
-            test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                                     reuse_escape_as_demonstration=False, use_trap_cost=True,
-                                     assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
-                                     autonomous_recovery=online_controller.AutonomousRecovery.MAB)
+    # for level in [6]:
+    #     for seed in range(3, 10):
+    #         test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                                  reuse_escape_as_demonstration=False, use_trap_cost=True,
+    #                                  assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
+    #                                  autonomous_recovery=online_controller.AutonomousRecovery.MAB)
+    # for level in [7]:
+    #     for seed in range(5, 10):
+    #         test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                                  reuse_escape_as_demonstration=False, use_trap_cost=True,
+    #                                  assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
+    #                                  autonomous_recovery=online_controller.AutonomousRecovery.MAB)
 
     # for level in [3, 5, 6]:
     #     for seed in range(0, 2):
@@ -975,23 +984,23 @@ if __name__ == "__main__":
     #                                  autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
     #
     # # baseline ++
-    # for level in [3, 5, 6]:
-    #     for seed in range(10):
-    #         test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
-    #                                  nominal_adapt=OnlineAdapt.GP_KERNEL_INDEP_OUT,
-    #                                  gating=AlwaysSelectNominal(),
-    #                                  num_frames=500,
-    #                                  reuse_escape_as_demonstration=False, use_trap_cost=False,
-    #                                  assume_all_nonnominal_dynamics_are_traps=False,
-    #                                  autonomous_recovery=online_controller.AutonomousRecovery.NONE)
-    #
+    for level in [7]:
+        for seed in range(10):
+            test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
+                                     nominal_adapt=OnlineAdapt.GP_KERNEL_INDEP_OUT,
+                                     gating=AlwaysSelectNominal(),
+                                     num_frames=500,
+                                     reuse_escape_as_demonstration=False, use_trap_cost=False,
+                                     assume_all_nonnominal_dynamics_are_traps=False,
+                                     autonomous_recovery=online_controller.AutonomousRecovery.NONE)
+
     # # baseline non-adaptive
-    # for level in [5, 6]:
-    #     for seed in range(10):
-    #         test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
-    #                                  nominal_adapt=OnlineAdapt.NONE,
-    #                                  gating=AlwaysSelectNominal(),
-    #                                  num_frames=500,
-    #                                  reuse_escape_as_demonstration=False, use_trap_cost=False,
-    #                                  assume_all_nonnominal_dynamics_are_traps=False,
-    #                                  autonomous_recovery=online_controller.AutonomousRecovery.NONE)
+    for level in [7]:
+        for seed in range(10):
+            test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
+                                     nominal_adapt=OnlineAdapt.NONE,
+                                     gating=AlwaysSelectNominal(),
+                                     num_frames=500,
+                                     reuse_escape_as_demonstration=False, use_trap_cost=False,
+                                     assume_all_nonnominal_dynamics_are_traps=False,
+                                     autonomous_recovery=online_controller.AutonomousRecovery.NONE)

@@ -306,10 +306,10 @@ class PegInHoleEnv(PybulletEnv):
             self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.12, 0.17, wall_z],
                                          p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
                                          globalScaling=0.06))
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.2, 0.17, wall_z],
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.17, 0.17, wall_z],
                                          p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
                                          globalScaling=0.06))
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.2, 0.17, wall_z],
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.17, 0.17, wall_z],
                                          p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
                                          globalScaling=0.06))
 
@@ -327,7 +327,21 @@ class PegInHoleEnv(PybulletEnv):
             self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0, 0.075, wall_z],
                                          p.getQuaternionFromEuler([0, 0, np.pi / 2]), useFixedBase=True,
                                          globalScaling=0.06))
-
+        elif self.level is 7:
+            translation = 10
+            self._set_hole([-0.04 + translation, 0.125 + translation])
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0. + translation, 0.17 + translation, wall_z],
+                                         p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
+                                         globalScaling=0.06))
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.15 + translation, 0.17 + translation, wall_z],
+                                         p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
+                                         globalScaling=0.06))
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.15 + translation, 0.17 + translation, wall_z],
+                                         p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
+                                         globalScaling=0.06))
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0 + translation, 0.075 + translation, wall_z],
+                                         p.getQuaternionFromEuler([0, 0, np.pi / 2]), useFixedBase=True,
+                                         globalScaling=0.06))
         elif self.level == 10:
             self._set_hole([0, 0.2])
             # a "well" around the hole
@@ -344,7 +358,10 @@ class PegInHoleEnv(PybulletEnv):
         for wallId in self.walls:
             p.changeVisualShape(wallId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])
 
-        self.set_camera_position([0, 0])
+        if self.level == 7:
+            self.set_camera_position([10, 10])
+        else:
+            self.set_camera_position([0, 0])
         self.state = self._obs()
         self._draw_state()
 
