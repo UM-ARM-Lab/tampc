@@ -142,7 +142,8 @@ def update_ds_with_transform(env, ds, use_tsf, evaluate_transform=True):
 
         # wrap the transform as a data preprocessor
         preprocessor = preprocess.Compose(
-            [invariant.InvariantTransformer(invariant_tsf),
+            [get_pre_invariant_tsf_preprocessor(use_tsf),
+             invariant.InvariantTransformer(invariant_tsf),
              preprocess.PytorchTransformer(preprocess.RobustMinMaxScaler())])
     else:
         preprocessor = no_tsf_preprocessor()
@@ -897,12 +898,14 @@ class Visualize:
 
 if __name__ == "__main__":
     level = 0
-    ut = UseTsf.COORD
+    ut = UseTsf.REX_EXTRACT
 
     # OfflineDataCollection.freespace(trials=200, trial_length=50, mode=p.DIRECT)
 
     # for seed in range(1):
-    #     Learn.invariant(ut, seed=seed, name="peg", MAX_EPOCH=6000, BATCH_SIZE=500)
+    #     Learn.invariant(UseTsf.SEP_DEC, seed=seed, name="peg", MAX_EPOCH=1000, BATCH_SIZE=500)
+    # for seed in range(5):
+    #     Learn.invariant(UseTsf.REX_EXTRACT, seed=seed, name="peg", MAX_EPOCH=1000, BATCH_SIZE=2048)
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")
 
@@ -957,7 +960,7 @@ if __name__ == "__main__":
     #     use_trap_cost=True,
     #     autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
-    for level in [5]:
+    for level in [6]:
         for seed in range(0, 3):
             test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
                                      reuse_escape_as_demonstration=False, use_trap_cost=True,
@@ -969,7 +972,7 @@ if __name__ == "__main__":
     #         test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
     #                                  reuse_escape_as_demonstration=False, use_trap_cost=True,
     #                                  assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
-    #                                  autonomous_recovery=online_controller.AutonomousRecovery.MAB)
+    #                                  autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
     #
     # # baseline ++
     # for level in [3, 5, 6]:
@@ -983,7 +986,7 @@ if __name__ == "__main__":
     #                                  autonomous_recovery=online_controller.AutonomousRecovery.NONE)
     #
     # # baseline non-adaptive
-    # for level in [3, 5, 6]:
+    # for level in [5, 6]:
     #     for seed in range(10):
     #         test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
     #                                  nominal_adapt=OnlineAdapt.NONE,
