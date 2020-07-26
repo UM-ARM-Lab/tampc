@@ -23,7 +23,7 @@ ignore_cache = False
 
 # scalar name combinations
 series = {'sep_dec': {'name': 'w/o $h_\omega$'}, 'extract': {'name': 'w/o REx', },
-          'rex_extract': {'name': 'full'}, 'feedforward': {'name': 'feedforward'}}
+          'rex_extract': {'name': 'full'}}
 losses = {'percent_match': {'name': 'match', 'pos': 0}, 'percent_reconstruction': {'name': 'reconstruction', 'pos': 1}}
 datasets = {'validation': {'name': 'validation', 'pos': 0},
             'validation_10_10': {'name': 'validation (10,10)', 'pos': 1}, 'test0': {'name': 'test0', 'pos': 2}}
