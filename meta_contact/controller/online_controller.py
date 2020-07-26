@@ -107,7 +107,9 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def __init__(self, *args, abs_unrecognized_threshold=10,
                  trap_cost_annealing_rate=0.97, trap_cost_init_normalization=1, manual_init_trap_weight=None,
                  nominal_max_velocity=0,
-                 assume_all_nonnominal_dynamics_are_traps=False, nonnominal_dynamics_penalty_tolerance=0.6,
+                 nonnominal_dynamics_penalty_tolerance=0.6,
+                 dynamics_minimum_window=5,
+                 assume_all_nonnominal_dynamics_are_traps=False,
                  Q_recovery=None, recovery_scale=1, recovery_horizon=5, R_env=None,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
@@ -134,7 +136,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.using_local_model_for_nonnominal_dynamics = False
         self.nonnominal_dynamics_start_index = -1
         # window of points we take to calculate the average trend
-        self.nonnominal_dynamics_trend_len = 5
+        self.nonnominal_dynamics_trend_len = dynamics_minimum_window
         # we have to be decreasing cost at this much compared to before nonnominal dynamics to not be in a trap
         self.nonnominal_dynamics_penalty_tolerance = nonnominal_dynamics_penalty_tolerance
 
