@@ -807,7 +807,7 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
         num_plots = len(to_plot_y_dims) + 2  # additional reaction force magnitude and dynamics_class selector
         if not use_gp:
             num_plots += 1  # weights for local model (marginalized likelihood of data)
-        f, axes = plt.subplots(num_plots, 1, sharex=True)
+        f, axes = plt.subplots(num_plots, 1, sharex='all')
         for i, dim in enumerate(to_plot_y_dims):
             axes[i].scatter(t, Y[:, dim], label='truth', alpha=0.4)
             axes[i].plot(t, Yhat_freespace[:, dim], label='nominal', alpha=0.4, linewidth=3)
@@ -1325,7 +1325,7 @@ def evaluate_gating_function(use_tsf=UseTsf.COORD, test_file="pushing/model_sele
     if plot_definite_negatives:
         from arm_pytorch_utilities import draw
         names = env.state_names()
-        f, ax = plt.subplots(len(names) + 1, 1, sharex=True)
+        f, ax = plt.subplots(len(names) + 1, 1, sharex='all')
         N = me.shape[0]
         for i, name in enumerate(names):
             ax[i].set_ylabel('error {}'.format(name))
@@ -1651,7 +1651,7 @@ class Visualize:
         next_x = dynamics_gp.predict(None, None, x.repeat(N, 1).cpu().numpy(), u_sample)
         var = dynamics_gp.last_prediction.variance.detach().cpu().numpy()
 
-        f, axes = plt.subplots(env.nx, 1, sharex=True)
+        f, axes = plt.subplots(env.nx, 1, sharex='all')
         for j, name in enumerate(env.state_names()):
             axes[j].scatter(u_dist, var[:, j], alpha=0.3)
             axes[j].set_ylabel('var d{}'.format(name))
@@ -1661,50 +1661,6 @@ class Visualize:
 
 
 class EvaluateTask:
-    class Graph:
-        def __init__(self):
-            from collections import defaultdict
-            self.nodes = set()
-            self.edges = defaultdict(list)
-            self.distances = {}
-
-        def add_node(self, value):
-            self.nodes.add(value)
-
-        def add_edge(self, from_node, to_node, distance):
-            self.edges[from_node].append(to_node)
-            self.distances[(from_node, to_node)] = distance
-
-    @staticmethod
-    def dijsktra(graph, initial):
-        visited = {initial: 0}
-        path = {}
-
-        nodes = set(graph.nodes)
-
-        while nodes:
-            min_node = None
-            for node in nodes:
-                if node in visited:
-                    if min_node is None:
-                        min_node = node
-                    elif visited[node] < visited[min_node]:
-                        min_node = node
-
-            if min_node is None:
-                break
-
-            nodes.remove(min_node)
-            current_weight = visited[min_node]
-
-            for edge in graph.edges[min_node]:
-                weight = current_weight + graph.distances[(min_node, edge)]
-                if edge not in visited or weight < visited[edge]:
-                    visited[edge] = weight
-                    path[edge] = min_node
-
-        return visited, path
-
     @staticmethod
     def _closest_distance_to_goal(file, level, visualize=True, nodes_per_side=150):
         from sklearn.preprocessing import MinMaxScaler
@@ -1792,7 +1748,7 @@ class EvaluateTask:
         neighbours = [[-1, 0], [0, 1], [1, 0], [0, -1]]
         distances = [dxx, dyy, dxx, dyy]
         # create graph and do search on it based on environment obstacles
-        g = EvaluateTask.Graph()
+        g = util.Graph()
         for i in range(nodes_per_side):
             for j in range(nodes_per_side):
                 u = ok_nodes[i][j]
@@ -1811,7 +1767,7 @@ class EvaluateTask:
                         g.add_edge(u, v, dist)
 
         goal_node = pos_to_node(goal_pos)
-        visited, path = EvaluateTask.dijsktra(g, goal_node)
+        visited, path = util.dijsktra(g, goal_node)
         # find min across visited states
         min_dist = 100
         min_node = None
