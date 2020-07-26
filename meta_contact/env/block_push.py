@@ -260,7 +260,7 @@ class PushAgainstWallEnv(PybulletEnv):
 
         self._debug_visualizations = {
             DebugVisualization.FRICTION: False,
-            DebugVisualization.REACTION_ON_PUSHER: True,
+            DebugVisualization.REACTION_ON_PUSHER: False,
             DebugVisualization.WALL_ON_BLOCK: False,
             DebugVisualization.ACTION: True,
             DebugVisualization.BLOCK_ON_PUSHER: False,

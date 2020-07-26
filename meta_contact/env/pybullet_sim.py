@@ -11,8 +11,10 @@ from meta_contact.env.pybullet_env import PybulletEnv, logger
 
 class PybulletSim(simulation.Simulation):
     def __init__(self, env: PybulletEnv, ctrl: controller.Controller, num_frames=1000, save_dir="base",
-                 terminal_cost_multiplier=1, stop_when_done=True, visualize_rollouts=True,
+                 terminal_cost_multiplier=1, stop_when_done=True,
+                 visualize_rollouts=False,
                  visualize_action_sample=False,
+                 visualize_prediction_error=False,
                  **kwargs):
 
         super().__init__(save_dir=save_dir, num_frames=num_frames, config=cfg, **kwargs)
@@ -21,6 +23,7 @@ class PybulletSim(simulation.Simulation):
         self.stop_when_done = stop_when_done
         self.visualize_rollouts = visualize_rollouts
         self.visualize_action_sample = visualize_action_sample
+        self.visualize_prediction_error = visualize_prediction_error
 
         self.env = env
         self.ctrl = ctrl
@@ -143,7 +146,8 @@ class PybulletSim(simulation.Simulation):
                 self.pred_traj[simTime + 1, :] = self.ctrl.predicted_next_state
                 # model error from the previous prediction step (can only evaluate it at the current step)
                 self.model_error[simTime, :] = self.ctrl.prediction_error(obs)
-                self.env.visualize_prediction_error(self.ctrl.predicted_next_state.reshape(-1))
+                if self.visualize_prediction_error:
+                    self.env.visualize_prediction_error(self.ctrl.predicted_next_state.reshape(-1))
 
             if done and self.stop_when_done:
                 logger.debug("done and stopping at step %d", simTime)
