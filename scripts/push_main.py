@@ -1660,8 +1660,12 @@ class Visualize:
         input('do visualization')
 
     @staticmethod
-    def task_res_dist(series_to_plot, res_file, plot_cumulative_distribution=True, max_t=500,
+    def task_res_dist(series_to_plot, res_file,
+                      task_type='block',
+                      max_t=500,
                       expected_data_len=498,
+                      figsize=(8, 9),
+                      plot_cumulative_distribution=True,
                       plot_min_distribution=False):
         def name_to_tokens(name):
             tk = {'name': name}
@@ -1721,16 +1725,18 @@ class Visualize:
             if prefix not in tasks[level]:
                 tasks[level][prefix] = dists
 
+        all_series = {}
+        mmdist = {}
         for level, res in tasks.items():
-            min_dist = 100
-            max_dist = 0
+            mmdist[level] = [100, 0]
 
             res_list = {k: list(v.values()) for k, v in res.items()}
             series = []
 
-            for series_name, dists in res_list.items():
-                tokens = name_to_tokens(series_name)
-                if series_name in series_to_plot:
+            for series_name in series_to_plot:
+                if series_name in res_list:
+                    tokens = name_to_tokens(series_name)
+                    dists = res_list[series_name]
                     # remove any non-list elements (historical)
                     dists = [dlist for dlist in dists if type(dlist) is list]
                     # process the dists so they are all valid (replace nones)
@@ -1745,49 +1751,54 @@ class Visualize:
 
                         # if list is shorter than expected that means it finished so should have 0 dist
                         dhistory.extend([0] * (expected_data_len - len(dhistory)))
-                        min_dist = min(min(dhistory), min_dist)
-                        max_dist = max(max(dhistory), max_dist)
+                        mmdist[level][0] = min(min(dhistory), mmdist[level][0])
+                        mmdist[level][1] = max(max(dhistory), mmdist[level][1])
 
                     series.append((series_name, tokens, np.stack(dists)))
+                    all_series[level] = series
 
-            if plot_min_distribution:
-                f, ax = plt.subplots(len(series), 1, figsize=(8, 9))
-                f.suptitle("task {}".format(level))
+        if plot_min_distribution:
+            for level, series in all_series.items():
+                f, ax = plt.subplots(len(series), 1, figsize=figsize)
+                f.suptitle("{} task {}".format(task_type, level))
 
                 for i, data in enumerate(series):
                     series_name, tk, dists = data
                     dists = np.min(dists, axis=1)
                     logger.info("%s with %d runs mean {:.2f} ({:.2f})".format(np.mean(dists) * 10, np.std(dists) * 10),
                                 series_name, len(dists))
-                    sns.distplot(dists, ax=ax[i], hist=True, kde=False, bins=np.linspace(min_dist, max_dist, 20))
+                    sns.distplot(dists, ax=ax[i], hist=True, kde=False,
+                                 bins=np.linspace(mmdist[level][0], mmdist[level][1], 20))
                     ax[i].set_title((tk['adaptation'], tk['recovery'], tk['optimism']))
-                    ax[i].set_xlim(min_dist, max_dist)
+                    ax[i].set_xlim(*mmdist[level])
                     ax[i].set_ylim(0, int(0.6 * len(dists)))
                 ax[-1].set_xlabel('closest dist to goal [m]')
                 f.tight_layout(rect=[0, 0.03, 1, 0.95])
-            if plot_cumulative_distribution:
-                f, ax = plt.subplots(1, figsize=(8, 9))
-                f.suptitle("task {}".format(level))
-
+        if plot_cumulative_distribution:
+            f, ax = plt.subplots(len(all_series), figsize=figsize)
+            if type(ax) is plt.Axes:
+                ax = [ax]
+            for j, (level, series) in enumerate(all_series.items()):
+                ax[j].set_title("{} task {}".format(task_type, level))
                 for i, data in enumerate(series):
                     series_name, tk, dists = data
                     plot_info = series_to_plot[series_name]
 
                     t = np.arange(dists.shape[1])
                     m = np.median(dists, axis=0)
-                    lower = np.percentile(dists, 10, axis=0)
-                    upper = np.percentile(dists, 90, axis=0)
+                    lower = np.percentile(dists, 20, axis=0)
+                    upper = np.percentile(dists, 80, axis=0)
 
                     c = plot_info['color']
-                    ax.plot(t, m, color=c, label=plot_info['name'])
-                    plt.fill_between(t, lower, upper, facecolor=c, alpha=0.3)
+                    ax[j].plot(t, m, color=c, label=plot_info['name'])
+                    ax[j].fill_between(t, lower, upper, facecolor=c, alpha=0.3)
 
-                ax.legend()
-                ax.set_xlim(0, max_t)
-                ax.set_ylim(0, max_dist * 1.05)
-                ax.set_ylabel('closest dist to goal')
-                ax.set_xlabel('control step')
-                f.tight_layout(rect=[0, 0.03, 1, 0.95])
+                ax[j].legend()
+                ax[j].set_xlim(0, max_t)
+                ax[j].set_ylim(0, mmdist[level][1] * 1.05)
+                ax[j].set_ylabel('closest dist to goal')
+                ax[j].set_xlabel('control step')
+            f.tight_layout(rect=[0, 0.03, 1, 0.95])
 
         plt.show()
 
@@ -1848,10 +1859,10 @@ class EvaluateTask:
         if level is 1:
             min_pos = [-0.9, -0.8]
             max_pos = [1.3, 0.5]
-        elif level is 3:
+        elif level in [3, 6]:
             min_pos = [-0.5, -1.1]
             max_pos = [1.3, 0.9]
-        elif level is 4:
+        elif level in [4, 5]:
             min_pos = [-0.7, -0.9]
             max_pos = [1.3, 0.4]
         else:
@@ -2043,24 +2054,29 @@ if __name__ == "__main__":
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")
 
-    # Visualize.task_res_dist({
-    #     # 'auto_recover__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-    #     #     'name': 'MAB', 'color': 'green'},
-    #     #
-    #     # 'auto_recover__GP_KERNEL__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-    #     #     'name': 'adaptive baseline++', 'color': 'red'},
-    #     # 'auto_recover__NONE__RETURN_STATE__1__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-    #     #     'name': 'return state', 'color': 'blue'},
-    #     # 'auto_recover__NONE__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-    #     #     'name': 'non-adapative', 'color': 'purple'},
-    #
-    #     'auto_recover__NONE__MAB__4__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-    #         'name': 'MAB', 'color': 'green'},
-    #     'auto_recover__NONE__RETURN_STATE__4__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-    #         'name': 'return state', 'color': 'blue'},
-    #     'auto_recover__NONE__NONE__4__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-    #         'name': 'non-adapative', 'color': 'purple'},
-    # }, 'push_task_res.pkl', expected_data_len=499)
+    Visualize.task_res_dist({
+        'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            'name': 'TAMPC', 'color': 'green'},
+        # 'auto_recover__NONE__RETURN_STATE__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+        #     'name': 'TAMPC return state', 'color': 'blue'},
+        'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            'name': 'TAMPC random', 'color': 'orange'},
+        'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+            'name': 'non-adapative', 'color': 'purple'},
+        'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+            'name': 'adaptive baseline++', 'color': 'red'},
+
+        'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            'name': 'TAMPC', 'color': 'green'},
+        # 'auto_recover__NONE__RETURN_STATE__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+        #     'name': 'TAMPC return state', 'color': 'blue'},
+        'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            'name': 'TAMPC random', 'color': 'orange'},
+        'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+            'name': 'non-adapative', 'color': 'purple'},
+        'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+            'name': 'adaptive baseline++', 'color': 'red'},
+    }, 'push_task_res.pkl', expected_data_len=499, figsize=(5, 7))
 
     # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
     # use independent output
@@ -2077,6 +2093,38 @@ if __name__ == "__main__":
     #     'auto_recover__NONE__RETURN_STATE__4__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST', suffix="500.mat")
     # EvaluateTask.closest_distance_to_goal_whole_set(
     #     'auto_recover__NONE__NONE__4__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST', suffix="500.mat")
+
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST', suffix="500.mat")
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__NONE__RETURN_STATE__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
+    #     suffix="500.mat")
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
+    #     suffix="500.mat")
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
+    #     suffix="500.mat")
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
+    #     suffix="500.mat")
+    # EvaluateTask.closest_distance_to_goal_whole_set('sac_5')
+
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST', suffix="500.mat")
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__NONE__RETURN_STATE__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
+    #     suffix="500.mat")
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
+    #     suffix="500.mat")
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
+    #     suffix="500.mat")
+    # EvaluateTask.closest_distance_to_goal_whole_set(
+    #     'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
+    #     suffix="500.mat")
+    # EvaluateTask.closest_distance_to_goal_whole_set('sac_6')
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_gating_function(use_tsf=ut, test_file=neg_test_file)
@@ -2105,7 +2153,7 @@ if __name__ == "__main__":
 
     # evaluate_freespace_control(use_tsf=UseTsf.SEP_DEC, plot_model_error=False)
     # baseline non-adaptive
-    # for level in [5]:
+    # for level in [6]:
     #     for seed in range(10):
     #         test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
     #                                  nominal_adapt=OnlineAdapt.NONE,
@@ -2114,8 +2162,34 @@ if __name__ == "__main__":
     #                                  reuse_escape_as_demonstration=False, use_trap_cost=False,
     #                                  assume_all_nonnominal_dynamics_are_traps=False,
     #                                  autonomous_recovery=online_controller.AutonomousRecovery.NONE)
-    # # baseline ++
-    # for level in [5]:
+    # autonomous recovery
+    # for ut in [UseTsf.REX_EXTRACT]:
+    #     for level in [6]:
+    #         for seed in range(10):
+    #             test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
+    #                                      nominal_adapt=OnlineAdapt.NONE,
+    #                                      reuse_escape_as_demonstration=False, use_trap_cost=True,
+    #                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
+    #                                      autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
+
+    # for ut in [UseTsf.REX_EXTRACT]:
+    #     for level in [6]:
+    #         for seed in range(10):
+    #             test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
+    #                                      nominal_adapt=OnlineAdapt.NONE,
+    #                                      reuse_escape_as_demonstration=False, use_trap_cost=True,
+    #                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
+    #                                      autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
+
+    # for ut in [UseTsf.REX_EXTRACT]:
+    #     for level in [6]:
+    #         for seed in range(10):
+    #             test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+    #                                      reuse_escape_as_demonstration=False, use_trap_cost=True,
+    #                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
+    #                                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+    # baseline ++
+    # for level in [6]:
     #     for seed in range(10):
     #         test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
     #                                  nominal_adapt=OnlineAdapt.GP_KERNEL_INDEP_OUT,
@@ -2124,33 +2198,6 @@ if __name__ == "__main__":
     #                                  reuse_escape_as_demonstration=False, use_trap_cost=False,
     #                                  assume_all_nonnominal_dynamics_are_traps=False,
     #                                  autonomous_recovery=online_controller.AutonomousRecovery.NONE)
-    # autonomous recovery
-    # for ut in [UseTsf.REX_EXTRACT, UseTsf.NO_TRANSFORM]:
-    #     for level in [5]:
-    #         for seed in range(5, 10):
-    #             test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
-    #                                      nominal_adapt=OnlineAdapt.NONE,
-    #                                      reuse_escape_as_demonstration=False, use_trap_cost=True,
-    #                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
-    #                                      autonomous_recovery=online_controller.AutonomousRecovery.MAB)
-    #
-    for ut in [UseTsf.REX_EXTRACT]:
-        for level in [6]:
-            for seed in range(3,6):
-                test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
-                                         nominal_adapt=OnlineAdapt.NONE,
-                                         reuse_escape_as_demonstration=False, use_trap_cost=True,
-                                         assume_all_nonnominal_dynamics_are_traps=False, num_frames=100,
-                                         autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
-
-    # for ut in [UseTsf.REX_EXTRACT]:
-    #     for level in [4]:
-    #         for seed in range(5, 10):
-    #             test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                                      reuse_escape_as_demonstration=False, use_trap_cost=True,
-    #                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
-    #                                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-    #
 
     # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.GP_KERNEL,
     #                            override=True, full_evaluation=True, plot_model_error=False, relearn_dynamics=False)
