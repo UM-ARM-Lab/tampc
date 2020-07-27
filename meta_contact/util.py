@@ -10,6 +10,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import pickle
 import re
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,9 @@ def name_to_tokens(name):
     tk = {'name': name}
     tokens = name.split('__')
     # legacy fallback
-    if len(tokens) < 5:
+    if len(tokens) < 3:
+        pass
+    elif len(tokens) < 5:
         tokens = name.split('_')
         # skip prefix
         tokens = tokens[2:]
@@ -72,12 +75,18 @@ def name_to_tokens(name):
         tokens.pop(0)
         tk['adaptation'] = tokens[0]
         tk['recovery'] = tokens[1]
-        tk['level'] = int(tokens[2])
-        tk['tsf'] = tokens[3]
-        tk['optimism'] = tokens[4]
-        tk['reuse'] = tokens[5]
+        i = 2
+        while True:
+            try:
+                tk['level'] = int(tokens[i])
+                break
+            except ValueError:
+                i += 1
+        tk['tsf'] = tokens[i + 1]
+        tk['optimism'] = tokens[i + 2]
+        tk['reuse'] = tokens[i + 3]
         if len(tokens) > 7:
-            tk['trap_use'] = tokens[7]
+            tk['trap_use'] = tokens[i + 4]
         else:
             tk['trap_use'] = "NOTRAPCOST"
 
@@ -89,6 +98,7 @@ def plot_task_res_dist(series_to_plot, res_file,
                        max_t=500,
                        expected_data_len=498,
                        figsize=(8, 9),
+                       set_y_label=True,
                        plot_cumulative_distribution=True,
                        plot_min_distribution=False):
     fullname = os.path.join(cfg.DATA_DIR, res_file)
@@ -101,11 +111,15 @@ def plot_task_res_dist(series_to_plot, res_file,
 
     tasks = {}
     for prefix, dists in runs.items():
-        m = re.search(r"\d+", prefix)
+        m = re.search(r"__\d+", prefix)
         if m is not None:
-            level = int(m.group())
+            level = int(m.group()[2:])
         else:
-            raise RuntimeError("Prefix has no level information in it")
+            m = re.search(r"_\d+", prefix)
+            if m is not None:
+                level = int(m.group()[1:])
+            else:
+                raise RuntimeError("Prefix has no level information in it")
         if level not in tasks:
             tasks[level] = {}
         if prefix not in tasks[level]:
@@ -162,7 +176,7 @@ def plot_task_res_dist(series_to_plot, res_file,
             f.tight_layout(rect=[0, 0.03, 1, 0.95])
     if plot_cumulative_distribution:
         f, ax = plt.subplots(len(all_series), figsize=figsize)
-        if type(ax) is plt.Axes:
+        if isinstance(ax, plt.Axes):
             ax = [ax]
         for j, (level, series) in enumerate(all_series.items()):
             ax[j].set_title("{} task {}".format(task_type, level))
@@ -176,14 +190,15 @@ def plot_task_res_dist(series_to_plot, res_file,
                 upper = np.percentile(dists, 80, axis=0)
 
                 c = plot_info['color']
-                ax[j].plot(t, m, color=c, label=plot_info['name'])
+                ax[j].plot(t, m, color=c, label=plot_info['name'] if 'label' in plot_info else '_nolegend_')
                 ax[j].fill_between(t, lower, upper, facecolor=c, alpha=0.3)
 
             ax[j].legend()
             ax[j].set_xlim(0, max_t)
             ax[j].set_ylim(0, mmdist[level][1] * 1.05)
-            ax[j].set_ylabel('closest dist to goal')
-            ax[j].set_xlabel('control step')
+            if set_y_label:
+                ax[j].set_ylabel('closest dist to goal')
+        ax[-1].set_xlabel('control step')
         f.tight_layout(rect=[0, 0.03, 1, 0.95])
 
     plt.show()
@@ -232,6 +247,40 @@ def dijsktra(graph, initial):
                 path[edge] = min_node
 
     return visited, path
+
+
+def closest_distance_to_goal_whole_set(distance_runner, prefix, suffix=".mat", task_type='pushing', **kwargs):
+    m = re.search(r"__\d+", prefix)
+    if m is not None:
+        level = int(m.group()[2:])
+    else:
+        raise RuntimeError("Prefix has no level information in it")
+
+    fullname = os.path.join(cfg.DATA_DIR, '{}_task_res.pkl'.format(task_type))
+    if os.path.exists(fullname):
+        with open(fullname, 'rb') as f:
+            runs = pickle.load(f)
+            logger.info("loaded runs from %s", fullname)
+    else:
+        runs = {}
+
+    if prefix not in runs:
+        runs[prefix] = {}
+
+    trials = [filename for filename in os.listdir(os.path.join(cfg.DATA_DIR, task_type)) if
+              filename.startswith(prefix) and filename.endswith(suffix)]
+    dists = []
+    for i, trial in enumerate(trials):
+        d = distance_runner("{}/{}".format(task_type, trial), visualize=i == 0, level=level, **kwargs)
+        dists.append(min([dd for dd in d if dd is not None]))
+        runs[prefix][trial] = d
+
+    logger.info(dists)
+    logger.info("mean {:.2f} std {:.2f} cm".format(np.mean(dists) * 10, np.std(dists) * 10))
+    with open(fullname, 'wb') as f:
+        pickle.dump(runs, f)
+        logger.info("saved runs to %s", fullname)
+    time.sleep(0.5)
 
 
 plotter_map = {model.MDNUser: draw.plot_mdn_prediction, model.DeterministicUser: draw.plot_prediction}

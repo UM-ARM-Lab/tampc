@@ -1662,7 +1662,7 @@ class Visualize:
 
 class EvaluateTask:
     @staticmethod
-    def _closest_distance_to_goal(file, level, visualize=True, nodes_per_side=150):
+    def closest_distance_to_goal(file, level, visualize=True, nodes_per_side=150):
         from sklearn.preprocessing import MinMaxScaler
         env = get_env(p.GUI if visualize else p.DIRECT, level=level)
         ds, _ = get_ds(env, file, validation_ratio=0., loader_args={'ignore_masks': True})
@@ -1802,41 +1802,6 @@ class EvaluateTask:
         env.close()
         return dists
 
-    @staticmethod
-    def closest_distance_to_goal_whole_set(prefix, suffix=".mat", **kwargs):
-        m = re.search(r"\d+", prefix)
-        if m is not None:
-            level = int(m.group())
-        else:
-            raise RuntimeError("Prefix has no level information in it")
-
-        fullname = os.path.join(cfg.DATA_DIR, 'push_task_res.pkl')
-        if os.path.exists(fullname):
-            with open(fullname, 'rb') as f:
-                runs = pickle.load(f)
-                logger.info("loaded runs from %s", fullname)
-        else:
-            runs = {}
-
-        if prefix not in runs:
-            runs[prefix] = {}
-
-        trials = [filename for filename in os.listdir(os.path.join(cfg.DATA_DIR, "pushing")) if
-                  filename.startswith(prefix) and filename.endswith(suffix)]
-        dists = []
-        for i, trial in enumerate(trials):
-            d = EvaluateTask._closest_distance_to_goal("pushing/{}".format(trial), visualize=i == 0, level=level,
-                                                       **kwargs)
-            dists.append(min([dd for dd in d if dd is not None]))
-            runs[prefix][trial] = d
-
-        logger.info(dists)
-        logger.info("mean {:.2f} std {:.2f} cm".format(np.mean(dists) * 10, np.std(dists) * 10))
-        with open(fullname, 'wb') as f:
-            pickle.dump(runs, f)
-            logger.info("saved runs to %s", fullname)
-        time.sleep(0.5)
-
 
 if __name__ == "__main__":
     level = 0
@@ -1869,75 +1834,39 @@ if __name__ == "__main__":
 
     util.plot_task_res_dist({
         'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            'name': 'TAMPC', 'color': 'green'},
-        # 'auto_recover__NONE__RETURN_STATE__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-        #     'name': 'TAMPC return state', 'color': 'blue'},
+            'name': 'TAMPC', 'color': 'green', 'label': True},
         'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            'name': 'TAMPC random', 'color': 'orange'},
+            'name': 'TAMPC random', 'color': 'orange', 'label': True},
         'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            'name': 'non-adapative', 'color': 'purple'},
+            'name': 'non-adapative', 'color': 'purple', 'label': True},
         'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            'name': 'adaptive baseline++', 'color': 'red'},
+            'name': 'adaptive baseline++', 'color': 'red', 'label': True},
 
         'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
             'name': 'TAMPC', 'color': 'green'},
-        # 'auto_recover__NONE__RETURN_STATE__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-        #     'name': 'TAMPC return state', 'color': 'blue'},
         'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
             'name': 'TAMPC random', 'color': 'orange'},
         'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
             'name': 'non-adapative', 'color': 'purple'},
         'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
             'name': 'adaptive baseline++', 'color': 'red'},
-    }, 'push_task_res.pkl', expected_data_len=499, figsize=(5, 7))
+    }, 'pushing_task_res.pkl', expected_data_len=499, figsize=(5, 7))
 
-    # EvaluateTask.closest_distance_to_goal_whole_set('auto_recover__NONE__RETURN_STATE__1__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST')
-    # use independent output
-    # EvaluateTask.closest_distance_to_goal_whole_set(
-    #     'auto_recover__NONE__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST', suffix="500.mat")
-    # EvaluateTask.closest_distance_to_goal_whole_set(
-    #     'auto_recover__GP_KERNEL__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST', suffix="500.mat")
-    # EvaluateTask.closest_distance_to_goal_whole_set(
-    #     'auto_recover__NONE__MAB__1__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST', suffix="500.mat")
-
-    # EvaluateTask.closest_distance_to_goal_whole_set(
-    #     'auto_recover__NONE__MAB__4__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST', suffix="500.mat")
-    # EvaluateTask.closest_distance_to_goal_whole_set(
-    #     'auto_recover__NONE__RETURN_STATE__4__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST', suffix="500.mat")
-    # EvaluateTask.closest_distance_to_goal_whole_set(
-    #     'auto_recover__NONE__NONE__4__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST', suffix="500.mat")
-
-    # EvaluateTask.closest_distance_to_goal_whole_set(
-    #     'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST', suffix="500.mat")
-    # EvaluateTask.closest_distance_to_goal_whole_set(
-    #     'auto_recover__NONE__RETURN_STATE__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
-    #     suffix="500.mat")
-    # EvaluateTask.closest_distance_to_goal_whole_set(
-    #     'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
-    #     suffix="500.mat")
-    # EvaluateTask.closest_distance_to_goal_whole_set(
-    #     'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
-    #     suffix="500.mat")
-    # EvaluateTask.closest_distance_to_goal_whole_set(
-    #     'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
-    #     suffix="500.mat")
-    # EvaluateTask.closest_distance_to_goal_whole_set('sac_5')
-
-    # EvaluateTask.closest_distance_to_goal_whole_set(
+    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
     #     'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST', suffix="500.mat")
-    # EvaluateTask.closest_distance_to_goal_whole_set(
+    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
     #     'auto_recover__NONE__RETURN_STATE__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
     #     suffix="500.mat")
-    # EvaluateTask.closest_distance_to_goal_whole_set(
+    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
     #     'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
     #     suffix="500.mat")
-    # EvaluateTask.closest_distance_to_goal_whole_set(
+    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
     #     'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
     #     suffix="500.mat")
-    # EvaluateTask.closest_distance_to_goal_whole_set(
+    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
     #     'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
     #     suffix="500.mat")
-    # EvaluateTask.closest_distance_to_goal_whole_set('sac_6')
+    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal, 'sac_6')
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_gating_function(use_tsf=ut, test_file=neg_test_file)
