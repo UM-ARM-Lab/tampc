@@ -1850,7 +1850,7 @@ if __name__ == "__main__":
             'name': 'non-adapative', 'color': 'purple'},
         'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
             'name': 'adaptive baseline++', 'color': 'red'},
-    }, 'pushing_task_res.pkl', expected_data_len=499, figsize=(5, 7))
+    }, 'pushing_task_res.pkl', expected_data_len=499, figsize=(5, 7), task_names={5: 'Block-H', 6: 'Block-D'})
 
     # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
     #     'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST', suffix="500.mat")

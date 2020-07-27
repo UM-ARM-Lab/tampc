@@ -95,6 +95,7 @@ def name_to_tokens(name):
 
 def plot_task_res_dist(series_to_plot, res_file,
                        task_type='block',
+                       task_names=None,
                        max_t=500,
                        expected_data_len=498,
                        figsize=(8, 9),
@@ -179,7 +180,10 @@ def plot_task_res_dist(series_to_plot, res_file,
         if isinstance(ax, plt.Axes):
             ax = [ax]
         for j, (level, series) in enumerate(all_series.items()):
-            ax[j].set_title("{} task {}".format(task_type, level))
+            task_name = "{} task {}".format(task_type, level)
+            if task_names is not None:
+                task_name = task_names[level]
+            ax[j].set_title(task_name)
             for i, data in enumerate(series):
                 series_name, tk, dists = data
                 plot_info = series_to_plot[series_name]
@@ -191,7 +195,7 @@ def plot_task_res_dist(series_to_plot, res_file,
 
                 c = plot_info['color']
                 ax[j].plot(t, m, color=c, label=plot_info['name'] if 'label' in plot_info else '_nolegend_')
-                ax[j].fill_between(t, lower, upper, facecolor=c, alpha=0.3)
+                ax[j].fill_between(t, lower, upper, facecolor=c, alpha=0.25)
 
             ax[j].legend()
             ax[j].set_xlim(0, max_t)

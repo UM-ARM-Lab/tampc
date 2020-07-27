@@ -724,9 +724,9 @@ if __name__ == "__main__":
     # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
     #                                         'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
     #                                         suffix="500.mat", task_type='peg')
-    # # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    # #                                         'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
-    # #                                         suffix="500.mat", task_type='peg')
+    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
+    #                                         'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
+    #                                         suffix="500.mat", task_type='peg')
     # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
     #                                         'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
     #                                         suffix="500.mat", task_type='peg')
@@ -741,9 +741,9 @@ if __name__ == "__main__":
     # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
     #                                         'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
     #                                         suffix="500.mat", task_type='peg')
-    # # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    # #                                         'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
-    # #                                         suffix="500.mat", task_type='peg')
+    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
+    #                                         'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
+    #                                         suffix="500.mat", task_type='peg')
     # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
     #                                         'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
     #                                         suffix="500.mat", task_type='peg')
@@ -758,9 +758,9 @@ if __name__ == "__main__":
     # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
     #                                         'auto_recover__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
     #                                         suffix="500.mat", task_type='peg')
-    # # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    # #                                         'auto_recover__NONE__RANDOM__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
-    # #                                         suffix="500.mat", task_type='peg')
+    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
+    #                                         'auto_recover__NONE__RANDOM__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
+    #                                         suffix="500.mat", task_type='peg')
     # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
     #                                         'auto_recover__NONE__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
     #                                         suffix="500.mat", task_type='peg')
@@ -769,45 +769,54 @@ if __name__ == "__main__":
     #                                         suffix="500.mat", task_type='peg')
     # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal, 'sac_7', task_type='peg')
 
-    util.plot_task_res_dist({
-        # 'auto_recover__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-        #     'name': 'TAMPC', 'color': 'green'},
-        # 'auto_recover__horizon_15_more_tolerance_larger_min_window__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-        #     'name': 'TAMPC tuned', 'color': 'blue', 'label': True},
-        # 'auto_recover__NONE__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-        #     'name': 'non-adapative', 'color': 'purple'},
-        # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-        #     'name': 'adaptive baseline++', 'color': 'red'},
-        # 'sac_3': {'name': 'SAC', 'color': 'cyan'},
-        #
-        #
-        # 'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-        #     'name': 'TAMPC', 'color': 'green'},
-        # 'auto_recover__h20_less_anneal__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-        #     'name': 'TAMPC tuned', 'color': 'blue', 'label': True},
-        # 'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-        #     'name': 'non-adapative', 'color': 'purple'},
-        # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-        #     'name': 'adaptive baseline++', 'color': 'red'},
-        # 'sac_5': {'name': 'SAC', 'color': 'cyan'},
-
-        'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            'name': 'TAMPC', 'color': 'green'},
-        'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            'name': 'non-adapative', 'color': 'purple'},
-        'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            'name': 'adaptive baseline++', 'color': 'red'},
-        'sac_6': {'name': 'SAC', 'color': 'cyan'},
-
-        'auto_recover__NONE__MAB__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            'name': 'TAMPC', 'color': 'green'},
-        'auto_recover__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            'name': 'TAMPC original space', 'color': 'olive', 'label': True},
-        'auto_recover__NONE__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            'name': 'non-adapative', 'color': 'purple'},
-        'auto_recover__GP_KERNEL_INDEP_OUT__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            'name': 'adaptive baseline++', 'color': 'red'},
-    }, 'peg_task_res.pkl', task_type='peg', figsize=(5, 7), set_y_label=False)
+    # util.plot_task_res_dist({
+    #     # 'auto_recover__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #     #     'name': 'TAMPC', 'color': 'green'},
+    #     # 'auto_recover__horizon_15_more_tolerance_larger_min_window__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #     #     'name': 'TAMPC tuned', 'color': 'blue', 'label': True},
+    #     # 'auto_recover__NONE__RANDOM__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #     #     'name': 'TAMPC random', 'color': 'orange'},
+    #     # 'auto_recover__NONE__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+    #     #     'name': 'non-adapative', 'color': 'purple'},
+    #     # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+    #     #     'name': 'adaptive baseline++', 'color': 'red'},
+    #     # 'sac_3': {'name': 'SAC', 'color': 'cyan'},
+    #     #
+    #     #
+    #     # 'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #     #     'name': 'TAMPC', 'color': 'green'},
+    #     # 'auto_recover__h20_less_anneal__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #     #     'name': 'TAMPC tuned', 'color': 'blue', 'label': True},
+    #     # 'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #     #     'name': 'TAMPC random', 'color': 'orange'},
+    #     # 'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+    #     #     'name': 'non-adapative', 'color': 'purple'},
+    #     # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+    #     #     'name': 'adaptive baseline++', 'color': 'red'},
+    #     # 'sac_5': {'name': 'SAC', 'color': 'cyan'},
+    #
+    #     'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #         'name': 'TAMPC', 'color': 'green'},
+    #     'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #         'name': 'TAMPC random', 'color': 'orange'},
+    #     'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+    #         'name': 'non-adapative', 'color': 'purple'},
+    #     'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+    #         'name': 'adaptive baseline++', 'color': 'red'},
+    #     'sac_6': {'name': 'SAC', 'color': 'cyan'},
+    #
+    #     'auto_recover__NONE__MAB__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #         'name': 'TAMPC', 'color': 'green'},
+    #     'auto_recover__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #         'name': 'TAMPC original space', 'color': 'olive', 'label': True},
+    #     'auto_recover__NONE__RANDOM__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #         'name': 'TAMPC random', 'color': 'orange'},
+    #     'auto_recover__NONE__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+    #         'name': 'non-adapative', 'color': 'purple'},
+    #     'auto_recover__GP_KERNEL_INDEP_OUT__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+    #         'name': 'adaptive baseline++', 'color': 'red'},
+    # }, 'peg_task_res.pkl', task_type='peg', figsize=(5, 7), set_y_label=False,
+    #     task_names={3: 'Peg-U', 5: 'Peg-I', 6: 'Peg-T', 7: 'Peg-T(T)'})
 
     # for seed in range(1):
     #     tune_trap_set_cost(seed=seed, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
@@ -849,13 +858,13 @@ if __name__ == "__main__":
     #                                  assume_all_nonnominal_dynamics_are_traps=False,
     #                                  autonomous_recovery=online_controller.AutonomousRecovery.NONE)
 
-    # # baseline non-adaptive
-    # for level in [7]:
-    #     for seed in range(3, 10):
-    #         test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
-    #                                  nominal_adapt=OnlineAdapt.NONE,
-    #                                  gating=AlwaysSelectNominal(),
-    #                                  num_frames=500,
-    #                                  reuse_escape_as_demonstration=False, use_trap_cost=False,
-    #                                  assume_all_nonnominal_dynamics_are_traps=False,
-    #                                  autonomous_recovery=online_controller.AutonomousRecovery.NONE)
+    # baseline non-adaptive
+    for level in [3,5,6,7]:
+        for seed in range(1):
+            test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
+                                     nominal_adapt=OnlineAdapt.NONE,
+                                     gating=AlwaysSelectNominal(),
+                                     num_frames=100,
+                                     reuse_escape_as_demonstration=False, use_trap_cost=False,
+                                     assume_all_nonnominal_dynamics_are_traps=False,
+                                     autonomous_recovery=online_controller.AutonomousRecovery.NONE)
