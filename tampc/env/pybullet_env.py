@@ -14,7 +14,7 @@ from datetime import datetime
 from arm_pytorch_utilities.make_data import datasource
 from arm_pytorch_utilities import load_data as load_utils, math_utils
 from arm_pytorch_utilities import array_utils
-from meta_contact import cfg
+from tampc import cfg
 
 import pybullet_data
 

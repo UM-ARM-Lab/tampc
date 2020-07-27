@@ -1,7 +1,7 @@
 import torch
 from arm_pytorch_utilities import tensor_utils
-from meta_contact.controller import gating_function
-from meta_contact.dynamics import online_model
+from tampc.controller import gating_function
+from tampc.dynamics import online_model
 from arm_pytorch_utilities.make_data import datasource
 import logging
 import abc

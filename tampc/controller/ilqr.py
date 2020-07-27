@@ -5,9 +5,9 @@ import numpy as np
 import torch
 from arm_pytorch_utilities import trajectory, math_utils, tensor_utils
 from arm_pytorch_utilities.policy.lin_gauss import LinearGaussianPolicy
-from meta_contact import cost
-from meta_contact.dynamics import online_model
-from meta_contact.controller.controller import Controller
+from tampc import cost
+from tampc.dynamics import online_model
+from tampc.controller.controller import Controller
 
 LOGGER = logging.getLogger(__name__)
 

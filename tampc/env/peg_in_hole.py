@@ -7,10 +7,10 @@ import enum
 import torch
 
 import numpy as np
-from meta_contact import cfg
-from meta_contact.env.pybullet_env import PybulletEnv, PybulletLoader, handle_data_format_for_state_diff, \
+from tampc import cfg
+from tampc.env.pybullet_env import PybulletEnv, PybulletLoader, handle_data_format_for_state_diff, \
     get_total_contact_force, ContactInfo, PybulletEnvDataSource
-from meta_contact.env.pybullet_sim import PybulletSim
+from tampc.env.pybullet_sim import PybulletSim
 
 logger = logging.getLogger(__name__)
 

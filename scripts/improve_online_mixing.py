@@ -5,7 +5,7 @@ from gym import logger as gym_log
 from arm_pytorch_utilities import rand, load_data
 import matplotlib.pyplot as plt
 
-from meta_contact.dynamics import online_model, model, prior
+from tampc.dynamics import online_model, model, prior
 from arm_pytorch_utilities.model import make
 from arm_pytorch_utilities.make_data import datasource
 

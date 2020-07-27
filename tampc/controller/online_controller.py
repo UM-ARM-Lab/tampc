@@ -3,12 +3,12 @@ import enum
 import statistics
 
 import torch
-from meta_contact.controller.multi_arm_bandit import KFMANDB
+from tampc.controller.multi_arm_bandit import KFMANDB
 
 from arm_pytorch_utilities import tensor_utils
-from meta_contact.dynamics import hybrid_model
-from meta_contact.controller import controller, gating_function
-from meta_contact import cost
+from tampc.dynamics import hybrid_model
+from tampc.controller import controller, gating_function
+from tampc import cost
 
 logger = logging.getLogger(__name__)
 

@@ -2,10 +2,10 @@ import torch.nn
 import torch
 from arm_pytorch_utilities import math_utils, load_data, linalg, tensor_utils
 from arm_pytorch_utilities.model import make
-from meta_contact.dynamics import model
-from meta_contact.env import peg_in_hole
-from meta_contact.transform import invariant
-from meta_contact.transform.invariant import TransformToUse
+from tampc.dynamics import model
+from tampc.env import peg_in_hole
+from tampc.transform import invariant
+from tampc.transform.invariant import TransformToUse
 import logging
 
 logger = logging.getLogger(__name__)

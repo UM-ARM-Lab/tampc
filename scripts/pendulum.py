@@ -9,15 +9,15 @@ from gym import wrappers, logger as gym_log
 from arm_pytorch_utilities import rand, load_data, math_utils
 from arm_pytorch_utilities import preprocess
 
-from meta_contact.controller import online_controller
-from meta_contact.controller import ilqr
-from meta_contact.dynamics import online_model, model, prior
-from meta_contact import cfg
+from tampc.controller import online_controller
+from tampc.controller import ilqr
+from tampc.dynamics import online_model, model, prior
+from tampc import cfg
 from arm_pytorch_utilities.model import make
 from arm_pytorch_utilities.make_data import datasource
-from meta_contact.controller import gating_function
-from meta_contact.dynamics import hybrid_model
-from meta_contact.env.pybullet_env import handle_data_format_for_state_diff
+from tampc.controller import gating_function
+from tampc.dynamics import hybrid_model
+from tampc.env.pybullet_env import handle_data_format_for_state_diff
 import time
 
 gym_log.set_level(gym_log.INFO)

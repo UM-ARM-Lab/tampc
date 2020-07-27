@@ -9,7 +9,7 @@ from arm_pytorch_utilities import tensor_utils
 from arm_pytorch_utilities.model.common import LearnableParameterizedModel
 from arm_pytorch_utilities.model.mdn import MixtureDensityNetwork
 from arm_pytorch_utilities.make_data import datasource
-from meta_contact import cfg
+from tampc import cfg
 from tensorboardX import SummaryWriter
 
 logger = logging.getLogger(__name__)

@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='meta_contact',
+    name='tampc',
     version='',
     packages=find_packages(),
     url='',

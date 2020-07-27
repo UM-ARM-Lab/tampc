@@ -8,7 +8,7 @@ from arm_pytorch_utilities import math_utils
 from arm_pytorch_utilities import tensor_utils
 from pytorch_mppi import mppi
 
-from meta_contact import cost
+from tampc import cost
 
 logger = logging.getLogger(__name__)
 

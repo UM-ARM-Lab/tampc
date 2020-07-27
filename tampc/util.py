@@ -1,6 +1,6 @@
 from arm_pytorch_utilities import draw
-from meta_contact.dynamics import model
-from meta_contact import cfg
+from tampc.dynamics import model
+from tampc import cfg
 
 import contextlib
 import os

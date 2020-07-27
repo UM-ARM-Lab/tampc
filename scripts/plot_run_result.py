@@ -1,7 +1,7 @@
 from tensorboard.backend.event_processing import event_accumulator
 import re
 import os
-from meta_contact import cfg
+from tampc import cfg
 import numpy as np
 import matplotlib.pyplot as plt
 import pickle

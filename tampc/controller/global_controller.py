@@ -4,8 +4,8 @@ import numpy as np
 from arm_pytorch_utilities import math_utils
 from arm_pytorch_utilities import tensor_utils
 from arm_pytorch_utilities.trajectory import dlqr
-from meta_contact.dynamics import model
-from meta_contact.controller.controller import Controller
+from tampc.dynamics import model
+from tampc.controller.controller import Controller
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class GlobalLQRController(Controller):
 
         # confirm in MATLAB
         # import os
-        # from meta_contact import cfg
+        # from tampc import cfg
         # scipy.io.savemat(os.path.join(cfg.DATA_DIR, 'sys.mat'), {'A': self.A, 'B': self.B})
 
         # self.Q = np.diag([1, 1])

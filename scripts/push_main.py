@@ -19,20 +19,20 @@ from arm_pytorch_utilities import preprocess
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.model import make
 from arm_pytorch_utilities.optim import get_device
-from meta_contact.transform.block_push import CoordTransform, LearnedTransform, \
+from tampc.transform.block_push import CoordTransform, LearnedTransform, \
     translation_generator
 from tensorboardX import SummaryWriter
 
-from meta_contact import cfg
-from meta_contact.transform import invariant
-from meta_contact.dynamics import online_model, model, prior, hybrid_model
-from meta_contact.dynamics.hybrid_model import OnlineAdapt, get_gating
-from meta_contact.controller import controller
-from meta_contact.controller import online_controller
-from meta_contact.controller import ilqr
-from meta_contact.controller.gating_function import AlwaysSelectNominal
-from meta_contact.env import block_push
-from meta_contact import util
+from tampc import cfg
+from tampc.transform import invariant
+from tampc.dynamics import online_model, model, prior, hybrid_model
+from tampc.dynamics.hybrid_model import OnlineAdapt, get_gating
+from tampc.controller import controller
+from tampc.controller import online_controller
+from tampc.controller import ilqr
+from tampc.controller.gating_function import AlwaysSelectNominal
+from tampc.env import block_push
+from tampc import util
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))

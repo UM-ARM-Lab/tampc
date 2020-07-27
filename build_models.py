@@ -1,6 +1,6 @@
 import subprocess
 import os
-from meta_contact import cfg
+from tampc import cfg
 import logging
 
 logger = logging.getLogger(__name__)

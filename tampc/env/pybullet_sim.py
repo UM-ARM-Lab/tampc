@@ -4,9 +4,9 @@ import torch
 import numpy as np
 from arm_pytorch_utilities import simulation
 from matplotlib import pyplot as plt
-from meta_contact import cfg, cost as control_cost
-from meta_contact.controller import controller, online_controller
-from meta_contact.env.pybullet_env import PybulletEnv, logger
+from tampc import cfg, cost as control_cost
+from tampc.controller import controller, online_controller
+from tampc.env.pybullet_env import PybulletEnv, logger
 
 
 class PybulletSim(simulation.Simulation):

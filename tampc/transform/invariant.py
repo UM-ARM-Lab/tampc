@@ -17,7 +17,7 @@ from arm_pytorch_utilities import preprocess
 from arm_pytorch_utilities import softknn
 from arm_pytorch_utilities.make_data import datasource
 from arm_pytorch_utilities.model.common import LearnableParameterizedModel
-from meta_contact import cfg
+from tampc import cfg
 from tensorboardX import SummaryWriter
 
 logger = logging.getLogger(__name__)
@@ -279,7 +279,7 @@ class RexTraining(InvariantTransform):
 
         save_checkpoint_every_n_epochs = max(max_epoch // 20, 5)
 
-        from meta_contact.env.pybullet_env import PybulletEnvDataSource
+        from tampc.env.pybullet_env import PybulletEnvDataSource
         assert isinstance(self.ds, PybulletEnvDataSource)
 
         for epoch in range(max_epoch):

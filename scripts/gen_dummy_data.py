@@ -1,5 +1,5 @@
 """Generate dummy data to test model training and preprocessing"""
-from meta_contact import cfg
+from tampc import cfg
 import os
 import numpy as np
 import scipy.io

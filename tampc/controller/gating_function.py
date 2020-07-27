@@ -10,7 +10,7 @@ from sklearn import mixture
 from arm_pytorch_utilities.model.common import LearnableParameterizedModel
 from arm_pytorch_utilities import load_data
 from arm_pytorch_utilities.model import make
-from meta_contact import cfg
+from tampc import cfg
 import enum
 
 logger = logging.getLogger(__name__)

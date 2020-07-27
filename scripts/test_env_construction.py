@@ -6,9 +6,9 @@ import time
 import numpy as np
 from arm_pytorch_utilities import rand
 from matplotlib import pyplot as plt
-from meta_contact.controller import controller
-from meta_contact.env import block_push
-from meta_contact.env import peg_in_hole
+from tampc.controller import controller
+from tampc.env import block_push
+from tampc.env import peg_in_hole
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.DEBUG,
@@ -66,7 +66,7 @@ def dx_to_dz(px, dx):
 
 def test_simulator_friction_isometry():
     import os
-    from meta_contact import cfg
+    from tampc import cfg
     import pybullet_data
 
     init_block_pos = [0.0, 0.0]

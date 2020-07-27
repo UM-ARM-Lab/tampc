@@ -1,7 +1,7 @@
 import torch
 import matplotlib.pyplot as plt
 from arm_pytorch_utilities.draw import cumulative_dist
-from meta_contact import cfg
+from tampc import cfg
 import pickle
 import logging
 import os

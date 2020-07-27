@@ -15,20 +15,20 @@ from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.optim import get_device
 from arm_pytorch_utilities import preprocess
 
-from meta_contact import cfg
-from meta_contact.env import peg_in_hole
-from meta_contact.controller import controller
-from meta_contact.transform.peg_in_hole import CoordTransform, translation_generator
-from meta_contact.transform.block_push import LearnedTransform
-from meta_contact.transform import invariant
-from meta_contact.dynamics import online_model, model, prior, hybrid_model
+from tampc import cfg
+from tampc.env import peg_in_hole
+from tampc.controller import controller
+from tampc.transform.peg_in_hole import CoordTransform, translation_generator
+from tampc.transform.block_push import LearnedTransform
+from tampc.transform import invariant
+from tampc.dynamics import online_model, model, prior, hybrid_model
 
 from arm_pytorch_utilities.model import make
 
-from meta_contact.dynamics.hybrid_model import OnlineAdapt
-from meta_contact.controller import online_controller
-from meta_contact.controller.gating_function import AlwaysSelectNominal
-from meta_contact import util
+from tampc.dynamics.hybrid_model import OnlineAdapt
+from tampc.controller import online_controller
+from tampc.controller.gating_function import AlwaysSelectNominal
+from tampc import util
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))

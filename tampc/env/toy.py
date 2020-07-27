@@ -7,8 +7,8 @@ import numpy as np
 from arm_pytorch_utilities import load_data as load_utils
 from arm_pytorch_utilities.make_data import datasource
 from hybrid_sysid import simulation
-from meta_contact import cfg
-from meta_contact.env import myenv
+from tampc import cfg
+from tampc.env import myenv
 from sklearn.preprocessing import PolynomialFeatures
 
 
