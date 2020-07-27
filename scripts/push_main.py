@@ -1832,25 +1832,27 @@ if __name__ == "__main__":
     # for seed in range(1):
     #     Learn.model(ut, seed=seed, name="")
 
-    util.plot_task_res_dist({
-        'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            'name': 'TAMPC', 'color': 'green', 'label': True},
-        'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            'name': 'TAMPC random', 'color': 'orange', 'label': True},
-        'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            'name': 'non-adapative', 'color': 'purple', 'label': True},
-        'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            'name': 'adaptive baseline++', 'color': 'red', 'label': True},
-
-        'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            'name': 'TAMPC', 'color': 'green'},
-        'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            'name': 'TAMPC random', 'color': 'orange'},
-        'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            'name': 'non-adapative', 'color': 'purple'},
-        'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            'name': 'adaptive baseline++', 'color': 'red'},
-    }, 'pushing_task_res.pkl', expected_data_len=499, figsize=(5, 7), task_names={5: 'Block-H', 6: 'Block-D'})
+    # util.plot_task_res_dist({
+    #     'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #         'name': 'TAMPC', 'color': 'green', 'label': True},
+    #     'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #         'name': 'TAMPC random', 'color': 'orange', 'label': True},
+    #     'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+    #         'name': 'non-adapative', 'color': 'purple', 'label': True},
+    #     'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+    #         'name': 'adaptive baseline++', 'color': 'red', 'label': True},
+    #     'sac__5': {'name': 'SAC', 'color': 'cyan', 'label': True},
+    #
+    #     'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #         'name': 'TAMPC', 'color': 'green'},
+    #     'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+    #         'name': 'TAMPC random', 'color': 'orange'},
+    #     'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+    #         'name': 'non-adapative', 'color': 'purple'},
+    #     'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+    #         'name': 'adaptive baseline++', 'color': 'red'},
+    #     'sac__6': {'name': 'SAC', 'color': 'cyan'},
+    # }, 'pushing_task_res.pkl', expected_data_len=499, figsize=(5, 7), task_names={5: 'Block-H', 6: 'Block-D'})
 
     # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
     #     'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST', suffix="500.mat")
@@ -1866,7 +1868,7 @@ if __name__ == "__main__":
     # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
     #     'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
     #     suffix="500.mat")
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal, 'sac_6')
+    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal, 'sac__6')
 
     # verify_coordinate_transform(UseTransform.COORD)
     # evaluate_gating_function(use_tsf=ut, test_file=neg_test_file)
@@ -1895,15 +1897,15 @@ if __name__ == "__main__":
 
     # evaluate_freespace_control(use_tsf=UseTsf.SEP_DEC, plot_model_error=False)
     # baseline non-adaptive
-    # for level in [6]:
-    #     for seed in range(10):
-    #         test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
-    #                                  nominal_adapt=OnlineAdapt.NONE,
-    #                                  gating=AlwaysSelectNominal(),
-    #                                  num_frames=500,
-    #                                  reuse_escape_as_demonstration=False, use_trap_cost=False,
-    #                                  assume_all_nonnominal_dynamics_are_traps=False,
-    #                                  autonomous_recovery=online_controller.AutonomousRecovery.NONE)
+    for level in [5,6]:
+        for seed in range(1):
+            test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
+                                     nominal_adapt=OnlineAdapt.NONE,
+                                     gating=AlwaysSelectNominal(),
+                                     num_frames=100,
+                                     reuse_escape_as_demonstration=False, use_trap_cost=False,
+                                     assume_all_nonnominal_dynamics_are_traps=False,
+                                     autonomous_recovery=online_controller.AutonomousRecovery.NONE)
     # autonomous recovery
     # for ut in [UseTsf.REX_EXTRACT]:
     #     for level in [6]:

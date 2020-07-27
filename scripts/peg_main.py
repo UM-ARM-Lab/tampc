@@ -767,7 +767,7 @@ if __name__ == "__main__":
     # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
     #                                         'auto_recover__GP_KERNEL_INDEP_OUT__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
     #                                         suffix="500.mat", task_type='peg')
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal, 'sac_7', task_type='peg')
+    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal, 'sac__7', task_type='peg')
 
     # util.plot_task_res_dist({
     #     # 'auto_recover__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
@@ -815,6 +815,7 @@ if __name__ == "__main__":
     #         'name': 'non-adapative', 'color': 'purple'},
     #     'auto_recover__GP_KERNEL_INDEP_OUT__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
     #         'name': 'adaptive baseline++', 'color': 'red'},
+    #     'sac__7': {'name': 'SAC', 'color': 'cyan'},
     # }, 'peg_task_res.pkl', task_type='peg', figsize=(5, 7), set_y_label=False,
     #     task_names={3: 'Peg-U', 5: 'Peg-I', 6: 'Peg-T', 7: 'Peg-T(T)'})
 
@@ -859,7 +860,7 @@ if __name__ == "__main__":
     #                                  autonomous_recovery=online_controller.AutonomousRecovery.NONE)
 
     # baseline non-adaptive
-    for level in [3,5,6,7]:
+    for level in [3,5,6]:
         for seed in range(1):
             test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
                                      nominal_adapt=OnlineAdapt.NONE,
