@@ -25,8 +25,8 @@ ignore_cache = False
 series = {'sep_dec': {'name': 'w/o $h_\omega$'}, 'extract': {'name': 'w/o REx', },
           'rex_extract': {'name': 'full'}}
 losses = {'percent_match': {'name': 'match', 'pos': 0}, 'percent_reconstruction': {'name': 'reconstruction', 'pos': 1}}
-datasets = {'validation': {'name': 'validation', 'pos': 0},
-            'validation_10_10': {'name': 'validation (10,10)', 'pos': 1}, 'test0': {'name': 'test0', 'pos': 2}}
+datasets = {'validation': {'name': '(a) validation', 'pos': 0},
+            'validation_10_10': {'name': '(b) validation (10,10)', 'pos': 1}, 'test0': {'name': '(c) test', 'pos': 2}}
 
 runs = os.listdir(runs_basedir)
 
