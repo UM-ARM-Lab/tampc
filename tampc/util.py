@@ -101,6 +101,7 @@ def plot_task_res_dist(series_to_plot, res_file,
                        figsize=(8, 9),
                        set_y_label=True,
                        plot_cumulative_distribution=True,
+                       success_min_dist=None,
                        plot_min_distribution=False):
     fullname = os.path.join(cfg.DATA_DIR, res_file)
     if os.path.exists(fullname):
@@ -138,6 +139,7 @@ def plot_task_res_dist(series_to_plot, res_file,
             if series_name in res_list:
                 tokens = name_to_tokens(series_name)
                 dists = res_list[series_name]
+                success = 0
                 # remove any non-list elements (historical)
                 dists = [dlist for dlist in dists if type(dlist) is list]
                 # process the dists so they are all valid (replace nones)
@@ -151,11 +153,15 @@ def plot_task_res_dist(series_to_plot, res_file,
                             dhistory[i] = min(min_dist_up_to_now, d)
 
                     # if list is shorter than expected that means it finished so should have 0 dist
-                    dhistory.extend([0] * (expected_data_len - len(dhistory)))
+                    if expected_data_len > len(dhistory):
+                        dhistory.extend([0] * (expected_data_len - len(dhistory)))
+                        success += 1
+                    elif success_min_dist is not None:
+                        success += min(dhistory) < success_min_dist
                     mmdist[level][0] = min(min(dhistory), mmdist[level][0])
                     mmdist[level][1] = max(max(dhistory), mmdist[level][1])
 
-                series.append((series_name, tokens, np.stack(dists)))
+                series.append((series_name, tokens, np.stack(dists), success / len(dists)))
                 all_series[level] = series
 
     if plot_min_distribution:
@@ -164,7 +170,7 @@ def plot_task_res_dist(series_to_plot, res_file,
             f.suptitle("{} task {}".format(task_type, level))
 
             for i, data in enumerate(series):
-                series_name, tk, dists = data
+                series_name, tk, dists, successes = data
                 dists = np.min(dists, axis=1)
                 logger.info("%s with %d runs mean {:.2f} ({:.2f})".format(np.mean(dists) * 10, np.std(dists) * 10),
                             series_name, len(dists))
@@ -185,8 +191,9 @@ def plot_task_res_dist(series_to_plot, res_file,
                 task_name = task_names[level]
             ax[j].set_title(task_name)
             for i, data in enumerate(series):
-                series_name, tk, dists = data
+                series_name, tk, dists, successes = data
                 plot_info = series_to_plot[series_name]
+                logger.info("%s\nsuccess percent %f%%", series_name, successes * 100)
 
                 t = np.arange(dists.shape[1])
                 m = np.median(dists, axis=0)
