@@ -322,7 +322,7 @@ class MPC(ControllerWithModelPrediction):
         if self.u_max is not None:
             u = math_utils.clip(u, self.u_min, self.u_max)
 
-        self.u_history.append(u)
+        self.u_history.append(u if len(u.shape) is 1 else u[0])
         self.predicted_next_state = self.predict_next_state(obs, u)
         return u.cpu().numpy()
 
