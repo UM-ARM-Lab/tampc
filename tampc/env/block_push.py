@@ -4,6 +4,7 @@ import os
 import pybullet as p
 import time
 import torch
+import enum
 
 import numpy as np
 from arm_pytorch_utilities import math_utils
@@ -16,7 +17,7 @@ from tampc.env.pybullet_sim import PybulletSim
 logger = logging.getLogger(__name__)
 
 
-class BlockFace:
+class BlockFace(enum.IntEnum):
     RIGHT = 0
     TOP = 1
     LEFT = 2
@@ -164,12 +165,13 @@ class PushLoaderPhysicalPusherWithReaction(PushLoaderRestricted):
         return xu, y, cc
 
 
-class DebugVisualization:
+class DebugVisualization(enum.IntEnum):
     FRICTION = 0
     WALL_ON_BLOCK = 1
     REACTION_ON_PUSHER = 2
     ACTION = 3
     BLOCK_ON_PUSHER = 4
+    REACTION_IN_STATE = 5
 
 
 class ReactionForceStrategy:
@@ -264,6 +266,7 @@ class PushAgainstWallEnv(PybulletEnv):
             DebugVisualization.WALL_ON_BLOCK: False,
             DebugVisualization.ACTION: True,
             DebugVisualization.BLOCK_ON_PUSHER: False,
+            DebugVisualization.REACTION_IN_STATE: False,
         }
         if debug_visualizations is not None:
             self._debug_visualizations.update(debug_visualizations)
@@ -908,12 +911,14 @@ class PushWithForceDirectlyReactionInStateEnv(PushWithForceDirectlyEnv):
 
     def visualize_prediction_error(self, predicted_state):
         super().visualize_prediction_error(predicted_state)
-        self._draw_reaction_force(predicted_state[4:6], 'pr', (0.5, 0, 0.5))
+        if self._debug_visualizations[DebugVisualization.REACTION_IN_STATE]:
+            self._draw_reaction_force(predicted_state[4:6], 'pr', (0.5, 0, 0.5))
 
     def _draw_state(self):
         super()._draw_state()
         # NOTE this is visualizing the reaction from the previous action, rather than the current action
-        self._draw_reaction_force(self.state[3:5], 'sr', (0, 0, 0))
+        if self._debug_visualizations[DebugVisualization.REACTION_IN_STATE]:
+            self._draw_reaction_force(self.state[3:5], 'sr', (0, 0, 0))
 
     def _obs(self):
         state = super()._obs()
@@ -982,12 +987,14 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
 
     def visualize_prediction_error(self, predicted_state):
         super().visualize_prediction_error(predicted_state)
-        self._draw_reaction_force(predicted_state[3:5], 'pr', (0.5, 0, 0.5))
+        if self._debug_visualizations[DebugVisualization.REACTION_IN_STATE]:
+            self._draw_reaction_force(predicted_state[3:5], 'pr', (0.5, 0, 0.5))
 
     def _draw_state(self):
         super()._draw_state()
         # NOTE this is visualizing the reaction from the previous action, rather than the instantaneous reaction
-        self._draw_reaction_force(self.state[3:5], 'sr', (0, 0, 0))
+        if self._debug_visualizations[DebugVisualization.REACTION_IN_STATE]:
+            self._draw_reaction_force(self.state[3:5], 'sr', (0, 0, 0))
 
     def _draw_action(self, action, old_state=None, debug=0):
         if old_state is None:

@@ -45,15 +45,16 @@ class PegLoader(PybulletLoader):
         return xu, y, cc
 
 
-class DebugVisualization:
+class DebugVisualization(enum.IntEnum):
     FRICTION = 0
     WALL_ON_BLOCK = 1
     REACTION_ON_PUSHER = 2
     ACTION = 3
     BLOCK_ON_PUSHER = 4
+    REACTION_IN_STATE = 5
 
 
-class ReactionForceStrategy:
+class ReactionForceStrategy(enum.IntEnum):
     MAX_OVER_CONTROL_STEP = 0
     MAX_OVER_MINI_STEPS = 1
     AVG_OVER_MINI_STEPS = 2
@@ -162,6 +163,7 @@ class PegInHoleEnv(PybulletEnv):
             DebugVisualization.WALL_ON_BLOCK: False,
             DebugVisualization.ACTION: True,
             DebugVisualization.BLOCK_ON_PUSHER: False,
+            DebugVisualization.REACTION_IN_STATE: False,
         }
         if debug_visualizations is not None:
             self._debug_visualizations.update(debug_visualizations)
@@ -330,18 +332,22 @@ class PegInHoleEnv(PybulletEnv):
         elif self.level is 7:
             translation = 10
             self._set_hole([-0.04 + translation, 0.125 + translation])
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0. + translation, 0.17 + translation, wall_z],
-                                         p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
-                                         globalScaling=0.06))
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.15 + translation, 0.17 + translation, wall_z],
-                                         p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
-                                         globalScaling=0.06))
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.15 + translation, 0.17 + translation, wall_z],
-                                         p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
-                                         globalScaling=0.06))
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0 + translation, 0.075 + translation, wall_z],
-                                         p.getQuaternionFromEuler([0, 0, np.pi / 2]), useFixedBase=True,
-                                         globalScaling=0.06))
+            self.walls.append(
+                p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0. + translation, 0.17 + translation, wall_z],
+                           p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
+                           globalScaling=0.06))
+            self.walls.append(
+                p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.15 + translation, 0.17 + translation, wall_z],
+                           p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
+                           globalScaling=0.06))
+            self.walls.append(
+                p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.15 + translation, 0.17 + translation, wall_z],
+                           p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
+                           globalScaling=0.06))
+            self.walls.append(
+                p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0 + translation, 0.075 + translation, wall_z],
+                           p.getQuaternionFromEuler([0, 0, np.pi / 2]), useFixedBase=True,
+                           globalScaling=0.06))
         elif self.level == 10:
             self._set_hole([0, 0.2])
             # a "well" around the hole
@@ -453,7 +459,8 @@ class PegInHoleEnv(PybulletEnv):
 
     def _draw_state(self):
         self._dd.draw_point('state', self.get_ee_pos(self.state))
-        self._draw_reaction_force(self.state[3:5], 'sr', (0, 0, 0))
+        if self._debug_visualizations[DebugVisualization.REACTION_IN_STATE]:
+            self._draw_reaction_force(self.state[3:5], 'sr', (0, 0, 0))
 
     def _draw_action(self, action, old_state=None, debug=0):
         if old_state is None:
