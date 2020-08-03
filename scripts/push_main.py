@@ -131,7 +131,6 @@ def get_controller_options(env):
         'Q': Q,
         'R': R,
         'R_env': env.control_cost(),
-        'Q_recovery': Q_recovery,
         'recovery_scale': 2000,
         'u_min': u_min,
         'u_max': u_max,
