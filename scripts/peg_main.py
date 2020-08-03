@@ -1,7 +1,6 @@
 import enum
 import torch
 import pickle
-import re
 import time
 import math
 import pybullet as p
@@ -9,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import logging
 import os
+import argparse
 from datetime import datetime
 
 from arm_pytorch_utilities import rand, load_data
@@ -112,7 +112,7 @@ class UseTsf(enum.Enum):
     REX_EXTRACT = 14
 
 
-def get_transform(env, ds, use_tsf):
+def get_transform(env, ds, use_tsf, override_name=None):
     # add in invariant transform here
     d = get_device()
     if use_tsf is UseTsf.NO_TRANSFORM:
@@ -120,15 +120,15 @@ def get_transform(env, ds, use_tsf):
     elif use_tsf is UseTsf.COORD:
         return CoordTransform.factory(env, ds)
     elif use_tsf is UseTsf.SEP_DEC:
-        return LearnedTransform.SeparateDecoder(ds, d, nz=5, nv=5, name="peg_s0")
+        return LearnedTransform.SeparateDecoder(ds, d, nz=5, nv=5, name=override_name or "peg_s0")
     elif use_tsf is UseTsf.REX_EXTRACT:
-        return LearnedTransform.RexExtract(ds, d, nz=5, nv=5, name="peg_s0")
+        return LearnedTransform.RexExtract(ds, d, nz=5, nv=5, name=override_name or "peg_s0")
     else:
         raise RuntimeError("Unrecgonized transform {}".format(use_tsf))
 
 
-def update_ds_with_transform(env, ds, use_tsf, evaluate_transform=True):
-    invariant_tsf = get_transform(env, ds, use_tsf)
+def update_ds_with_transform(env, ds, use_tsf, evaluate_transform=True, rep_name=None):
+    invariant_tsf = get_transform(env, ds, use_tsf, override_name=rep_name)
 
     if invariant_tsf:
         # load transform (only 1 function for learning transform reduces potential for different learning params)
@@ -175,9 +175,10 @@ def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics, seed=0):
     return pm
 
 
-def get_prior(env, use_tsf=UseTsf.COORD, prior_class=prior.NNPrior):
+def get_prior(env, use_tsf=UseTsf.COORD, prior_class=prior.NNPrior, rep_name=None):
     ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
-    untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
+    untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False,
+                                                                            rep_name=rep_name)
     pm = get_loaded_prior(prior_class, ds, tsf_name, False)
     return ds, pm
 
@@ -231,15 +232,15 @@ class OfflineDataCollection:
         return hole, init_peg
 
     @staticmethod
-    def freespace(trials=200, trial_length=50, mode=p.DIRECT):
-        env = get_env(mode, 0)
+    def freespace(seed=4, trials=200, trial_length=50, force_gui=False):
+        env = get_env(p.GUI if force_gui else p.DIRECT, 0)
         u_min, u_max = env.get_control_bounds()
         ctrl = controller.FullRandomController(env.nu, u_min, u_max)
         # use mode p.GUI to see what the trials look like
-        save_dir = '{}{}'.format(env_dir, level)
+        save_dir = '{}{}'.format(env_dir, 0)
         sim = peg_in_hole.PegInHole(env, ctrl, num_frames=trial_length, plot=False, save=True,
                                     stop_when_done=False, save_dir=save_dir)
-        rand.seed(4)
+        rand.seed(seed)
         # randomly distribute data
         for _ in range(trials):
             seed = rand.seed()
@@ -283,7 +284,7 @@ def get_pre_invariant_tsf_preprocessor(use_tsf):
 
 class Learn:
     @staticmethod
-    def invariant(use_tsf=UseTsf.REX_EXTRACT, seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, resume=False,
+    def invariant(use_tsf=UseTsf.REX_EXTRACT, seed=1, name="", MAX_EPOCH=1000, BATCH_SIZE=500, resume=False,
                   **kwargs):
         d, env, config, ds = get_free_space_env_init(seed)
 
@@ -296,10 +297,10 @@ class Learn:
         invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
     @staticmethod
-    def model(use_tsf, seed=1, name="", train_epochs=600, batch_N=500):
+    def model(use_tsf, seed=1, name="", train_epochs=500, batch_N=500, rep_name=None):
         d, env, config, ds = get_free_space_env_init(seed)
 
-        _, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf)
+        _, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf, rep_name=rep_name)
         # tsf_name = "none_at_all"
 
         mw = PegNetwork(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
@@ -307,7 +308,7 @@ class Learn:
         mw.learn_model(train_epochs, batch_N=batch_N)
 
 
-def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, recover_adjust=True, gating=None,
+def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=None,
                    use_tsf=UseTsf.COORD, nominal_adapt=OnlineAdapt.NONE,
                    autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE,
                    use_demo=False,
@@ -316,6 +317,8 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, recover_a
                    run_prefix=None, run_name=None,
                    assume_all_nonnominal_dynamics_are_traps=False,
                    ctrl_opts=None,
+                   rep_name=None,
+                   visualize_rollout=False,
                    **kwargs):
     if ctrl_opts is None:
         ctrl_opts = {}
@@ -323,7 +326,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, recover_a
     env = get_env(p.GUI, level=level, log_video=True)
     logger.info("initial random seed %d", rand.seed(seed))
 
-    ds, pm = get_prior(env, use_tsf)
+    ds, pm = get_prior(env, use_tsf, rep_name=rep_name)
 
     dss = [ds]
     demo_trajs = []
@@ -366,7 +369,8 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, recover_a
     if use_trap_cost:
         env.draw_user_text("trap set cost".format(autonomous_recovery.name), 9, left_offset=-1.6)
 
-    sim = peg_in_hole.PegInHole(env, ctrl, num_frames=num_frames, plot=False, save=True, stop_when_done=True)
+    sim = peg_in_hole.PegInHole(env, ctrl, num_frames=num_frames, plot=False, save=True, stop_when_done=True,
+                                visualize_rollouts=visualize_rollout)
     seed = rand.seed(seed)
 
     if run_name is None:
@@ -688,184 +692,148 @@ class EvaluateTask:
         return dists
 
 
+task_map = {'freespace': 0, 'Peg-U': 3, 'Peg-I': 5, 'Peg-T': 6, 'Peg-T(T)': 7}
+
+parser = argparse.ArgumentParser(description='Experiments on the peg-in-hole environment')
+parser.add_argument('command',
+                    choices=['collect', 'learn_representation', 'fine_tune_dynamics', 'run', 'evaluate', 'visualize1',
+                             'visualize2', 'debug'],
+                    help='which part of the experiment to run')
+parser.add_argument('--seed', metavar='N', type=int, nargs='+',
+                    default=[0],
+                    help='random seed(s) to run')
+parser.add_argument('--representation', default='none',
+                    choices=['none', 'coordinate_transform', 'learned_rex', 'rex_ablation', 'extractor_ablation'],
+                    help='representation to use for nominal dynamics')
+parser.add_argument('--rep_name', default=None, type=str,
+                    help='name and seed of a learned representation to use')
+parser.add_argument('--gui', action='store_true', help='force GUI for some commands that default to not having GUI')
+# learning parameters
+parser.add_argument('--batch', metavar='N', type=int, default=500,
+                    help='learning parameter: batch size')
+# run parameters
+parser.add_argument('--task', default=list(task_map.keys())[0], choices=task_map.keys(),
+                    help='run parameter: what task to run')
+parser.add_argument('--run_prefix', default=None, type=str,
+                    help='run parameter: prefix to save the run under')
+parser.add_argument('--num_frames', metavar='N', type=int, default=500,
+                    help='run parameter: number of simulation frames to run')
+parser.add_argument('--no_trap_cost', action='store_true', help='run parameter: turn off trap set cost')
+parser.add_argument('--nonadaptive_baseline', action='store_true',
+                    help='run parameter: use non-adaptive baseline options')
+parser.add_argument('--adaptive_baseline', action='store_true', help='run parameter: use adaptive baseline options')
+parser.add_argument('--random_ablation', action='store_true', help='run parameter: use random recovery policy options')
+parser.add_argument('--visualize_rollout', action='store_true',
+                    help='run parameter: visualize MPC rollouts (slows down running)')
+# controller parameters
+# evaluate parameters
+parser.add_argument('--eval_run_prefix', default=None, type=str,
+                    help='evaluate parameter: prefix of saved runs to evaluate performance on')
+
+args = parser.parse_args()
+
 if __name__ == "__main__":
-    level = 0
-    ut = UseTsf.REX_EXTRACT
+    tsf_map = {'none': UseTsf.NO_TRANSFORM, 'coordinate_transform': UseTsf.COORD, 'learned_rex': UseTsf.REX_EXTRACT,
+               'rex_ablation': UseTsf.EXTRACT, 'extractor_ablation': UseTsf.SEP_DEC}
+    ut = tsf_map[args.representation]
+    level = task_map[args.task]
+    task_names = {v: k for k, v in task_map.items()}
 
-    # OfflineDataCollection.freespace(trials=200, trial_length=50, mode=p.DIRECT)
+    if args.command == 'collect':
+        OfflineDataCollection.freespace(seed=args.seed[0], trials=200, trial_length=50, force_gui=args.gui)
+    elif args.command == 'learn_representation':
+        for seed in args.seed:
+            Learn.invariant(ut, seed=seed, name="peg", MAX_EPOCH=1000, BATCH_SIZE=args.batch)
+    elif args.command == 'fine_tune_dynamics':
+        Learn.model(ut, seed=args.seed[0], name="", rep_name=args.rep_name)
+    elif args.command == 'run':
+        nominal_adapt = OnlineAdapt.NONE
+        autonomous_recovery = online_controller.AutonomousRecovery.MAB
+        use_trap_cost = not args.no_trap_cost
 
-    # for seed in range(1):
-    #     Learn.invariant(UseTsf.SEP_DEC, seed=seed, name="peg", MAX_EPOCH=1000, BATCH_SIZE=500)
-    # for seed in range(5):
-    #     Learn.invariant(UseTsf.REX_EXTRACT, seed=seed, name="peg", MAX_EPOCH=1000, BATCH_SIZE=2048)
-    # for seed in range(1):
-    #     Learn.model(ut, seed=seed, name="")
+        if args.adaptive_baseline:
+            nominal_adapt = OnlineAdapt.GP_KERNEL_INDEP_OUT
+            autonomous_recovery = online_controller.AutonomousRecovery.NONE
+            use_trap_cost = False
+            ut = UseTsf.NO_TRANSFORM
+        elif args.random_ablation:
+            autonomous_recovery = online_controller.AutonomousRecovery.RANDOM
+        elif args.nonadaptive_baseline:
+            autonomous_recovery = online_controller.AutonomousRecovery.NONE
+            use_trap_cost = False
+            ut = UseTsf.NO_TRANSFORM
 
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #                                         'auto_recover__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
-    #                                         suffix="500.mat", task_type='peg')
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #                                         'auto_recover__NONE__RETURN_STATE__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
-    #                                         suffix="500.mat", task_type='peg')
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #                                         'auto_recover__NONE__RANDOM__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
-    #                                         suffix="500.mat", task_type='peg')
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #                                         'auto_recover__NONE__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
-    #                                         suffix="500.mat", task_type='peg')
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #                                         'auto_recover__GP_KERNEL_INDEP_OUT__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
-    #                                         suffix="500.mat", task_type='peg')
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #                                         'auto_recover__horizon_15_more_tolerance_larger_min_window__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
-    #                                         suffix="500.mat", task_type='peg')
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal, 'sac_3', task_type='peg')
+        for seed in args.seed:
+            test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
+                                     nominal_adapt=nominal_adapt, rep_name=args.rep_name,
+                                     reuse_escape_as_demonstration=False, use_trap_cost=use_trap_cost,
+                                     assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
+                                     visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
+                                     autonomous_recovery=autonomous_recovery)
+    elif args.command == 'evaluate':
+        util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
+                                                args.eval_run_prefix, suffix="{}.mat".format(args.num_frames),
+                                                task_type='peg')
+    elif args.command == 'visualize1':
+        util.plot_task_res_dist({
+            'auto_recover__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC', 'color': 'green'},
+            # 'auto_recover__horizon_15_more_tolerance_larger_min_window__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'TAMPC tuned', 'color': 'blue', 'label': True},
+            'auto_recover__NONE__RANDOM__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC random', 'color': 'orange'},
+            'auto_recover__NONE__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'non-adapative', 'color': 'purple'},
+            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'adaptive baseline++', 'color': 'red'},
+            # 'sac__3': {'name': 'SAC', 'color': 'cyan'},
 
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #                                         'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
-    #                                         suffix="500.mat", task_type='peg')
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #                                         'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
-    #                                         suffix="500.mat", task_type='peg')
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #                                         'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
-    #                                         suffix="500.mat", task_type='peg')
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #                                         'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
-    #                                         suffix="500.mat", task_type='peg')
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #                                         'auto_recover__h20_less_anneal__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
-    #                                         suffix="500.mat", task_type='peg')
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal, 'sac_5', task_type='peg')
+            'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC', 'color': 'green'},
+            # 'auto_recover__h20_less_anneal__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'TAMPC tuned', 'color': 'blue', 'label': True},
+            'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC random', 'color': 'orange'},
+            'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'non-adapative', 'color': 'purple'},
+            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'adaptive baseline++', 'color': 'red'},
+            # 'sac__5': {'name': 'SAC', 'color': 'cyan'},
+        }, 'peg_task_res.pkl', task_type='peg', figsize=(5, 7), set_y_label=False,
+            task_names=task_names)
 
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #                                         'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
-    #                                         suffix="500.mat", task_type='peg')
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #                                         'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
-    #                                         suffix="500.mat", task_type='peg')
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #                                         'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
-    #                                         suffix="500.mat", task_type='peg')
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #                                         'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
-    #                                         suffix="500.mat", task_type='peg')
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal, 'sac_6', task_type='peg')
+    elif args.command == 'visualize2':
+        util.plot_task_res_dist({
+            'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC', 'color': 'green'},
+            'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC random', 'color': 'orange'},
+            'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'non-adapative', 'color': 'purple'},
+            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'adaptive baseline++', 'color': 'red'},
+            # 'sac__6': {'name': 'SAC', 'color': 'cyan'},
 
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #                                         'auto_recover__NONE__MAB__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
-    #                                         suffix="500.mat", task_type='peg')
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #                                         'auto_recover__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
-    #                                         suffix="500.mat", task_type='peg')
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #                                         'auto_recover__NONE__RANDOM__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
-    #                                         suffix="500.mat", task_type='peg')
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #                                         'auto_recover__NONE__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
-    #                                         suffix="500.mat", task_type='peg')
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #                                         'auto_recover__GP_KERNEL_INDEP_OUT__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
-    #                                         suffix="500.mat", task_type='peg')
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal, 'sac__7', task_type='peg')
+            'auto_recover__NONE__MAB__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC', 'color': 'green'},
+            'auto_recover__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC original space', 'color': 'olive', 'label': True},
+            'auto_recover__NONE__RANDOM__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC random', 'color': 'orange'},
+            'auto_recover__NONE__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'non-adapative', 'color': 'purple'},
+            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'adaptive baseline++', 'color': 'red'},
+            # 'sac__7': {'name': 'SAC', 'color': 'cyan'},
+        }, 'peg_task_res.pkl', task_type='peg', figsize=(5, 7), set_y_label=False,
+            task_names=task_names)
 
-    # util.plot_task_res_dist({
-    #     # 'auto_recover__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-    #     #     'name': 'TAMPC', 'color': 'green'},
-    #     # 'auto_recover__horizon_15_more_tolerance_larger_min_window__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-    #     #     'name': 'TAMPC tuned', 'color': 'blue', 'label': True},
-    #     # 'auto_recover__NONE__RANDOM__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-    #     #     'name': 'TAMPC random', 'color': 'orange'},
-    #     # 'auto_recover__NONE__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-    #     #     'name': 'non-adapative', 'color': 'purple'},
-    #     # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-    #     #     'name': 'adaptive baseline++', 'color': 'red'},
-    #     # 'sac_3': {'name': 'SAC', 'color': 'cyan'},
-    #     #
-    #     #
-    #     # 'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-    #     #     'name': 'TAMPC', 'color': 'green'},
-    #     # 'auto_recover__h20_less_anneal__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-    #     #     'name': 'TAMPC tuned', 'color': 'blue', 'label': True},
-    #     # 'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-    #     #     'name': 'TAMPC random', 'color': 'orange'},
-    #     # 'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-    #     #     'name': 'non-adapative', 'color': 'purple'},
-    #     # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-    #     #     'name': 'adaptive baseline++', 'color': 'red'},
-    #     # 'sac_5': {'name': 'SAC', 'color': 'cyan'},
-    #
-    #     'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-    #         'name': 'TAMPC', 'color': 'green'},
-    #     'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-    #         'name': 'TAMPC random', 'color': 'orange'},
-    #     'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-    #         'name': 'non-adapative', 'color': 'purple'},
-    #     'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-    #         'name': 'adaptive baseline++', 'color': 'red'},
-    #     'sac_6': {'name': 'SAC', 'color': 'cyan'},
-    #
-    #     'auto_recover__NONE__MAB__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-    #         'name': 'TAMPC', 'color': 'green'},
-    #     'auto_recover__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-    #         'name': 'TAMPC original space', 'color': 'olive', 'label': True},
-    #     'auto_recover__NONE__RANDOM__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-    #         'name': 'TAMPC random', 'color': 'orange'},
-    #     'auto_recover__NONE__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-    #         'name': 'non-adapative', 'color': 'purple'},
-    #     'auto_recover__GP_KERNEL_INDEP_OUT__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-    #         'name': 'adaptive baseline++', 'color': 'red'},
-    #     'sac__7': {'name': 'SAC', 'color': 'cyan'},
-    # }, 'peg_task_res.pkl', task_type='peg', figsize=(5, 7), set_y_label=False,
-    #     task_names={3: 'Peg-U', 5: 'Peg-I', 6: 'Peg-T', 7: 'Peg-T(T)'})
+    else:
+        pass
 
-    # for seed in range(1):
-    #     tune_trap_set_cost(seed=seed, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                        use_trap_cost=True,
-    #                        autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+        tune_trap_set_cost(seed=0, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                           use_trap_cost=True,
+                           autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
-    # tune_recovery_policy(seed=0, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-
-    # evaluate_after_rollout(
-    #     'peg/auto_recover__NONE__RETURN_STATE__5__COORD__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__3__200.mat',
-    #     184, seed=3, level=5, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #     use_trap_cost=True,
-    #     autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-
-    # for level in [3]:
-    #     for seed in range(10):
-    #         test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                                  reuse_escape_as_demonstration=False, use_trap_cost=True,
-    #                                  run_prefix='horizon_15_more_tolerance_larger_min_window',
-    #                                  assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
-    #                                  autonomous_recovery=online_controller.AutonomousRecovery.MAB)
-
-    # for level in [3, 5, 6, 7]:
-    #     for seed in range(10):
-    #         test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                                  reuse_escape_as_demonstration=False, use_trap_cost=True,
-    #                                  assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
-    #                                  autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
-
-    # # baseline ++
-    # for level in [7]:
-    #     for seed in range(10):
-    #         test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
-    #                                  nominal_adapt=OnlineAdapt.GP_KERNEL_INDEP_OUT,
-    #                                  gating=AlwaysSelectNominal(),
-    #                                  num_frames=500,
-    #                                  reuse_escape_as_demonstration=False, use_trap_cost=False,
-    #                                  assume_all_nonnominal_dynamics_are_traps=False,
-    #                                  autonomous_recovery=online_controller.AutonomousRecovery.NONE)
-
-    # baseline non-adaptive
-    for level in [3,5,6]:
-        for seed in range(1):
-            test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
-                                     nominal_adapt=OnlineAdapt.NONE,
-                                     gating=AlwaysSelectNominal(),
-                                     num_frames=100,
-                                     reuse_escape_as_demonstration=False, use_trap_cost=False,
-                                     assume_all_nonnominal_dynamics_are_traps=False,
-                                     autonomous_recovery=online_controller.AutonomousRecovery.NONE)
+        tune_recovery_policy(seed=0, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+                             autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
