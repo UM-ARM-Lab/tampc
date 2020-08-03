@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import pickle
 import re
 import time
+import argparse
 
 logger = logging.getLogger(__name__)
 
@@ -295,3 +296,15 @@ def closest_distance_to_goal_whole_set(distance_runner, prefix, suffix=".mat", t
 
 
 plotter_map = {model.MDNUser: draw.plot_mdn_prediction, model.DeterministicUser: draw.plot_prediction}
+
+
+def param_type(s):
+    try:
+        name, value = s.split('=')
+        if '.' in value:
+            value = float(value)
+        else:
+            value = int(value)
+        return {name: value}
+    except:
+        raise argparse.ArgumentTypeError("Parameters must be given as name=scalar space-separated pairs")

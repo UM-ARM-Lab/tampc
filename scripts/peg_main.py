@@ -10,6 +10,7 @@ import logging
 import os
 import argparse
 from datetime import datetime
+import pprint
 
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.optim import get_device
@@ -314,13 +315,11 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                    reuse_escape_as_demonstration=False, num_frames=200,
                    run_prefix=None, run_name=None,
                    assume_all_nonnominal_dynamics_are_traps=False,
-                   ctrl_opts=None,
                    rep_name=None,
                    visualize_rollout=False,
+                   override_tampc_params=None,
+                   override_mpc_params=None,
                    **kwargs):
-    if ctrl_opts is None:
-        ctrl_opts = {}
-
     env = get_env(p.GUI, level=level, log_video=True)
     logger.info("initial random seed %d", rand.seed(seed))
 
@@ -345,13 +344,21 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
     else:
         gating = hybrid_dynamics.get_gating() if gating is None else gating
 
-    common_wrapper_opts, mpc_opts = get_controller_options(env)
+    tampc_opts, mpc_opts = get_controller_options(env)
+    if override_tampc_params is not None:
+        tampc_opts.update(override_tampc_params)
+    if override_mpc_params is not None:
+        mpc_opts.update(override_mpc_params)
+
+    logger.debug("running with parameters\nhigh level controller: %s\nlow level MPC: %s",
+                 pprint.pformat(tampc_opts), pprint.pformat(mpc_opts))
+
     ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
                                         autonomous_recovery=autonomous_recovery,
                                         assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
                                         reuse_escape_as_demonstration=reuse_escape_as_demonstration,
                                         use_trap_cost=use_trap_cost,
-                                        **common_wrapper_opts, **ctrl_opts,
+                                        **tampc_opts,
                                         mpc_opts=mpc_opts)
 
     z = env.initGripperPos[2]
@@ -723,7 +730,13 @@ parser.add_argument('--adaptive_baseline', action='store_true', help='run parame
 parser.add_argument('--random_ablation', action='store_true', help='run parameter: use random recovery policy options')
 parser.add_argument('--visualize_rollout', action='store_true',
                     help='run parameter: visualize MPC rollouts (slows down running)')
+
 # controller parameters
+parser.add_argument('--tampc_param', nargs='*', type=util.param_type, default=[],
+                    help="run parameter: high level controller parameters")
+parser.add_argument('--mpc_param', nargs='*', type=util.param_type, default=[],
+                    help="run parameter: low level MPC parameters")
+
 # evaluate parameters
 parser.add_argument('--eval_run_prefix', default=None, type=str,
                     help='evaluate parameter: prefix of saved runs to evaluate performance on')
@@ -736,6 +749,12 @@ if __name__ == "__main__":
     ut = tsf_map[args.representation]
     level = task_map[args.task]
     task_names = {v: k for k, v in task_map.items()}
+    tampc_params = {}
+    for d in args.tampc_param:
+        tampc_params.update(d)
+    mpc_params = {}
+    for d in args.mpc_param:
+        mpc_params.update(d)
 
     if args.command == 'collect':
         OfflineDataCollection.freespace(seed=args.seed[0], trials=200, trial_length=50, force_gui=args.gui)
@@ -767,6 +786,7 @@ if __name__ == "__main__":
                                      reuse_escape_as_demonstration=False, use_trap_cost=use_trap_cost,
                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
                                      visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
+                                     override_tampc_params=tampc_params, override_mpc_params=mpc_params,
                                      autonomous_recovery=autonomous_recovery)
     elif args.command == 'evaluate':
         util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,

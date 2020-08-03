@@ -7,6 +7,7 @@ import pickle
 import enum
 from datetime import datetime
 import argparse
+import pprint
 
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -924,14 +925,13 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                    use_trap_cost=True,
                    reuse_escape_as_demonstration=False, num_frames=250, run_name=None,
                    assume_all_nonnominal_dynamics_are_traps=False,
-                   ctrl_opts=None,
                    rep_name=None,
                    visualize_rollout=False,
+                   override_tampc_params=None,
+                   override_mpc_params=None,
                    **kwargs):
     if adaptive_control_baseline:
         use_tsf = UseTsf.NO_TRANSFORM
-    if ctrl_opts is None:
-        ctrl_opts = {}
 
     env = get_env(p.GUI, level=level, log_video=True)
     logger.info("initial random seed %d", rand.seed(seed))
@@ -946,7 +946,14 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
         ds_local.update_preprocessor(ds.preprocessor)
         dss.append(ds_local)
 
-    common_wrapper_opts, mpc_opts = get_controller_options(env)
+    tampc_opts, mpc_opts = get_controller_options(env)
+    if override_tampc_params is not None:
+        tampc_opts.update(override_tampc_params)
+    if override_mpc_params is not None:
+        mpc_opts.update(override_mpc_params)
+
+    logger.debug("running with parameters\nhigh level controller: %s\nlow level MPC: %s",
+                 pprint.pformat(tampc_opts), pprint.pformat(mpc_opts))
 
     if adaptive_control_baseline:
         online_dynamics = online_model.OnlineLinearizeMixing(0.1, pm, ds,
@@ -954,8 +961,8 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                                                              local_mix_weight_scale=0,
                                                              const_local_mix_weight=True, sigreg=1e-10,
                                                              device=get_device())
-        ctrl = ilqr.OnlineLQR(online_dynamics, ds.original_config(), u_min=common_wrapper_opts['u_min'],
-                              u_max=common_wrapper_opts['u_max'], Q=np.diag([1, 1, 0, 0, 0]),
+        ctrl = ilqr.OnlineLQR(online_dynamics, ds.original_config(), u_min=tampc_opts['u_min'],
+                              u_max=tampc_opts['u_max'], Q=np.diag([1, 1, 0, 0, 0]),
                               R=np.diag([0.1, 0.2, 0.1]), device=get_device(), max_timestep=num_frames,
                               horizon=mpc_opts['horizon'])
         ctrl.set_goal(env.goal)
@@ -965,7 +972,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                                                            preprocessor=no_tsf_preprocessor(),
                                                            nominal_model_kwargs={'online_adapt': nominal_adapt},
                                                            local_model_kwargs=kwargs,
-                                                           device=common_wrapper_opts['device'])
+                                                           device=tampc_opts['device'])
 
         # we're always going to be in the nominal mode in this case; might as well speed up testing
         if not use_demo and not reuse_escape_as_demonstration:
@@ -978,7 +985,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                                             assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
                                             reuse_escape_as_demonstration=reuse_escape_as_demonstration,
                                             use_trap_cost=use_trap_cost,
-                                            **common_wrapper_opts, **ctrl_opts, constrain_state=constrain_state,
+                                            **tampc_opts, constrain_state=constrain_state,
                                             mpc_opts=mpc_opts)
         ctrl.set_goal(env.goal)
         env.draw_user_text(gating.name, 13, left_offset=-1.5)
@@ -1830,7 +1837,15 @@ parser.add_argument('--adaptive_baseline', action='store_true', help='run parame
 parser.add_argument('--random_ablation', action='store_true', help='run parameter: use random recovery policy options')
 parser.add_argument('--visualize_rollout', action='store_true',
                     help='run parameter: visualize MPC rollouts (slows down running)')
+
+
+
+
 # controller parameters
+parser.add_argument('--tampc_param', nargs='*', type=util.param_type, default=[],
+                    help="run parameter: high level controller parameters")
+parser.add_argument('--mpc_param', nargs='*', type=util.param_type, default=[],
+                    help="run parameter: low level MPC parameters")
 # evaluate parameters
 parser.add_argument('--eval_run_prefix', default=None, type=str,
                     help='evaluate parameter: prefix of saved runs to evaluate performance on')
@@ -1842,6 +1857,13 @@ if __name__ == "__main__":
                'rex_ablation': UseTsf.EXTRACT, 'extractor_ablation': UseTsf.SEP_DEC}
     ut = tsf_map[args.representation]
     level = task_map[args.task]
+
+    tampc_params = {}
+    for d in args.tampc_param:
+        tampc_params.update(d)
+    mpc_params = {}
+    for d in args.mpc_param:
+        mpc_params.update(d)
 
     if args.command == 'collect':
         OfflineDataCollection.freespace(seed=args.seed[0], trials=200, trial_length=50, force_gui=args.gui)
@@ -1874,6 +1896,7 @@ if __name__ == "__main__":
                                      reuse_escape_as_demonstration=False, use_trap_cost=use_trap_cost,
                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
                                      visualize_rollout=args.visualize_rollout,
+                                     override_tampc_params=tampc_params, override_mpc_params=mpc_params,
                                      autonomous_recovery=autonomous_recovery)
     elif args.command == 'evaluate':
         util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
