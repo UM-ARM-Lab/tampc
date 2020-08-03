@@ -123,8 +123,9 @@ class PybulletSim(simulation.Simulation):
 
             if self.visualize_action_sample and isinstance(self.ctrl, controller.MPPI_MPC):
                 self._plot_action_sample(self.ctrl.mpc.perturbed_action)
+            rollouts = self.ctrl.get_rollouts(obs)
             if self.visualize_rollouts:
-                self.env.visualize_rollouts(self.ctrl.get_rollouts(obs))
+                self.env.visualize_rollouts(rollouts)
 
             # sanitize action
             if torch.is_tensor(action):
