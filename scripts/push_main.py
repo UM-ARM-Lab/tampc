@@ -5,8 +5,8 @@ import os
 import time
 import pickle
 import enum
-import re
 from datetime import datetime
+import argparse
 
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -185,8 +185,8 @@ def get_pre_invariant_tsf_preprocessor(use_tsf):
                                              preprocess.RobustMinMaxScaler(feature_range=[[0, 0, 0], [3, 3, 1.5]]))
 
 
-def update_ds_with_transform(env, ds, use_tsf, evaluate_transform=True):
-    invariant_tsf = get_transform(env, ds, use_tsf)
+def update_ds_with_transform(env, ds, use_tsf, evaluate_transform=True, rep_name=None):
+    invariant_tsf = get_transform(env, ds, use_tsf, override_name=rep_name)
 
     if invariant_tsf:
         # load transform (only 1 function for learning transform reduces potential for different learning params)
@@ -235,7 +235,7 @@ class UseTsf(enum.Enum):
     REX_EXTRACT = 14
 
 
-def get_transform(env, ds, use_tsf):
+def get_transform(env, ds, use_tsf, override_name=None):
     # add in invariant transform here
     d = get_device()
     if use_tsf is UseTsf.NO_TRANSFORM:
@@ -243,30 +243,31 @@ def get_transform(env, ds, use_tsf):
     elif use_tsf is UseTsf.COORD:
         return CoordTransform.factory(env, ds)
     elif use_tsf is UseTsf.YAW_SELECT:
-        return LearnedTransform.ParameterizeYawSelect(ds, d, name="_s2")
+        return LearnedTransform.ParameterizeYawSelect(ds, d, name=override_name or "_s2")
     elif use_tsf is UseTsf.LINEAR_ENCODER:
-        return LearnedTransform.LinearComboLatentInput(ds, d, name="rand_start_s9")
+        return LearnedTransform.LinearComboLatentInput(ds, d, name=override_name or "rand_start_s9")
     elif use_tsf is UseTsf.DECODER:
-        return LearnedTransform.ParameterizeDecoder(ds, d, name="_s9")
+        return LearnedTransform.ParameterizeDecoder(ds, d, name=override_name or "_s9")
     elif use_tsf is UseTsf.DECODER_SINCOS:
-        return LearnedTransform.ParameterizeDecoder(ds, d, name="sincos_s2", use_sincos_angle=True)
+        return LearnedTransform.ParameterizeDecoder(ds, d, name=override_name or "sincos_s2", use_sincos_angle=True)
     elif use_tsf is UseTsf.FEEDFORWARD_PART:
-        return LearnedTransform.LearnedPartialPassthrough(ds, d, name="_s0")
+        return LearnedTransform.LearnedPartialPassthrough(ds, d, name=override_name or "_s0")
     elif use_tsf is UseTsf.DX_TO_V:
-        return LearnedTransform.DxToV(ds, d, name="_s0")
+        return LearnedTransform.DxToV(ds, d, name=override_name or "_s0")
     elif use_tsf is UseTsf.SEP_DEC:
-        return LearnedTransform.SeparateDecoder(ds, d, name="refine_s0")
+        return LearnedTransform.SeparateDecoder(ds, d, name=override_name or "corl_s1")
     elif use_tsf is UseTsf.EXTRACT:
-        return LearnedTransform.ExtractState(ds, d, name="more_percent_s1")
+        return LearnedTransform.ExtractState(ds, d, name=override_name or "corl_s1")
     elif use_tsf is UseTsf.REX_EXTRACT:
-        return LearnedTransform.RexExtract(ds, d, name="percentage_loss_s0")
+        return LearnedTransform.RexExtract(ds, d, name=override_name or "corl_s1")
     else:
         raise RuntimeError("Unrecgonized transform {}".format(use_tsf))
 
 
-def get_prior(env, use_tsf=UseTsf.COORD, prior_class=prior.NNPrior):
+def get_prior(env, use_tsf=UseTsf.COORD, prior_class=prior.NNPrior, rep_name=None):
     ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
-    untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
+    untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False,
+                                                                            rep_name=rep_name)
     pm = get_loaded_prior(prior_class, ds, tsf_name, False)
 
     return ds, pm
@@ -358,15 +359,15 @@ class OfflineDataCollection:
         return init_block_pos, init_block_yaw, init_pusher
 
     @staticmethod
-    def freespace(trials=20, trial_length=40):
-        env = get_env(p.DIRECT, 0)
+    def freespace(seed=4, trials=20, trial_length=40, force_gui=False):
+        env = get_env(p.GUI if force_gui else p.DIRECT, 0)
         u_min, u_max = env.get_control_bounds()
         ctrl = controller.FullRandomController(env.nu, u_min, u_max)
         # use mode p.GUI to see what the trials look like
-        save_dir = '{}{}'.format(env_dir, level)
+        save_dir = '{}{}'.format(env_dir, 0)
         sim = block_push.InteractivePush(env, ctrl, num_frames=trial_length, plot=False, save=True,
                                          stop_when_done=False, save_dir=save_dir)
-        rand.seed(4)
+        rand.seed(seed)
         # randomly distribute data
         for _ in range(trials):
             seed = rand.seed()
@@ -923,7 +924,7 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
     env.close()
 
 
-def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, recover_adjust=True, gating=None,
+def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=None,
                    use_tsf=UseTsf.COORD, nominal_adapt=OnlineAdapt.NONE,
                    autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE,
                    adaptive_control_baseline=False,
@@ -932,6 +933,8 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, recover_a
                    reuse_escape_as_demonstration=False, num_frames=250, run_name=None,
                    assume_all_nonnominal_dynamics_are_traps=False,
                    ctrl_opts=None,
+                   rep_name=None,
+                   visualize_rollout=False,
                    **kwargs):
     if adaptive_control_baseline:
         use_tsf = UseTsf.NO_TRANSFORM
@@ -941,7 +944,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, recover_a
     env = get_env(p.GUI, level=level, log_video=True)
     logger.info("initial random seed %d", rand.seed(seed))
 
-    ds, pm = get_prior(env, use_tsf)
+    ds, pm = get_prior(env, use_tsf, rep_name=rep_name)
     dss = [ds]
     demo_trajs = []
     if use_demo:
@@ -994,7 +997,8 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, recover_a
         if use_trap_cost:
             env.draw_user_text("trap set cost".format(autonomous_recovery.name), 9, left_offset=-1.6)
 
-    sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=False, save=True, stop_when_done=True)
+    sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=False, save=True, stop_when_done=True,
+                                     visualize_rollouts=visualize_rollout)
     seed = rand.seed(seed)
 
     if run_name is None:
@@ -1482,18 +1486,18 @@ class Learn:
         ds.update_preprocessor(get_pre_invariant_tsf_preprocessor(use_tsf))
         invariant_cls = get_transform(env, ds, use_tsf).__class__
         ds_test, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
-        ds_test_2, _ = get_ds(env, "pushing/test_sufficiency_3_failed_test_140891.mat", validation_ratio=0.)
-        common_opts = {'name': "{}_s{}".format(name, seed), 'ds_test': [ds_test, ds_test_2]}
+        # ds_test_2, _ = get_ds(env, "pushing/test_sufficiency_3_failed_test_140891.mat", validation_ratio=0.)
+        common_opts = {'name': "{}_s{}".format(name, seed), 'ds_test': [ds_test]}
         invariant_tsf = invariant_cls(ds, d, **common_opts, **kwargs)
         if resume:
             invariant_tsf.load(invariant_tsf.get_last_checkpoint())
         invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
     @staticmethod
-    def model(use_tsf, seed=1, name="", train_epochs=600, batch_N=500):
+    def model(use_tsf, seed=1, name="", train_epochs=500, batch_N=500, rep_name=None):
         d, env, config, ds = get_free_space_env_init(seed)
 
-        _, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf)
+        _, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf, rep_name=rep_name)
         # tsf_name = "none_at_all"
 
         mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
@@ -1803,145 +1807,115 @@ class EvaluateTask:
         return dists
 
 
+task_map = {'freespace': 0, 'Block-H': 5, 'Block-D': 6}
+
+parser = argparse.ArgumentParser(description='Experiments on the planar pushing environment')
+parser.add_argument('command',
+                    choices=['collect', 'learn_representation', 'fine_tune_dynamics', 'run', 'evaluate', 'visualize',
+                             'debug'],
+                    help='which part of the experiment to run')
+parser.add_argument('--seed', metavar='N', type=int, nargs='+',
+                    default=[0],
+                    help='random seed(s) to run')
+parser.add_argument('--representation', default='none',
+                    choices=['none', 'coordinate_transform', 'learned_rex', 'rex_ablation', 'extractor_ablation'],
+                    help='representation to use for nominal dynamics')
+parser.add_argument('--rep_name', default=None, type=str,
+                    help='name and seed of a learned representation to use')
+parser.add_argument('--gui', action='store_true', help='force GUI for some commands that default to not having GUI')
+# learning parameters
+parser.add_argument('--batch', metavar='N', type=int, default=500,
+                    help='learning parameter: batch size')
+# run parameters
+parser.add_argument('--task', default=list(task_map.keys())[0], choices=task_map.keys(),
+                    help='run parameter: what task to run')
+parser.add_argument('--num_frames', metavar='N', type=int, default=500,
+                    help='run parameter: number of simulation frames to run')
+parser.add_argument('--no_trap_cost', action='store_true', help='run parameter: turn off trap set cost')
+parser.add_argument('--nonadaptive_baseline', action='store_true',
+                    help='run parameter: use non-adaptive baseline options')
+parser.add_argument('--adaptive_baseline', action='store_true', help='run parameter: use adaptive baseline options')
+parser.add_argument('--random_ablation', action='store_true', help='run parameter: use random recovery policy options')
+parser.add_argument('--visualize_rollout', action='store_true',
+                    help='run parameter: visualize MPC rollouts (slows down running)')
+# controller parameters
+# evaluate parameters
+parser.add_argument('--eval_run_prefix', default=None, type=str,
+                    help='evaluate parameter: prefix of saved runs to evaluate performance on')
+
+args = parser.parse_args()
+
 if __name__ == "__main__":
-    level = 0
-    ut = UseTsf.COORD
+    tsf_map = {'none': UseTsf.NO_TRANSFORM, 'coordinate_transform': UseTsf.COORD, 'learned_rex': UseTsf.REX_EXTRACT,
+               'rex_ablation': UseTsf.EXTRACT, 'extractor_ablation': UseTsf.SEP_DEC}
+    ut = tsf_map[args.representation]
+    level = task_map[args.task]
 
-    # neg_test_file = "pushing/test_sufficiency_3_failed_test_140891.mat"
+    if args.command == 'collect':
+        OfflineDataCollection.freespace(seed=args.seed[0], trials=200, trial_length=50, force_gui=args.gui)
+        OfflineDataCollection.push_against_wall_recovery()
+    elif args.command == 'learn_representation':
+        for seed in args.seed:
+            Learn.invariant(ut, seed=seed, name="corl", MAX_EPOCH=3000, BATCH_SIZE=args.batch)
+    elif args.command == 'fine_tune_dynamics':
+        Learn.model(ut, seed=args.seed[0], name="", rep_name=args.rep_name)
+    elif args.command == 'run':
+        nominal_adapt = OnlineAdapt.NONE
+        autonomous_recovery = online_controller.AutonomousRecovery.MAB
+        use_trap_cost = not args.no_trap_cost
 
-    # OfflineDataCollection.freespace(trials=200, trial_length=50)
-    # OfflineDataCollection.push_against_wall_recovery()
-    # OfflineDataCollection.model_selector_evaluation()
-    # Visualize.dist_diff_nominal_and_bug_trap(ut, neg_test_file)
-    # Visualize.model_actions_at_given_state()
-    # Visualize.dynamics_stochasticity(use_tsf=UseTransform.NO_TRANSFORM)
-    # Visualize.state_sequence(1, "pushing/predetermined_bug_trap.mat", step=3)
-    # Visualize.state_sequence(4, "pushing/test_sufficiency_4_NO_TRANSFORM_AlwaysSelectNominal_0.mat",
-    #                          restrict_slice=slice(0, 40), step=5)
+        if args.adaptive_baseline:
+            nominal_adapt = OnlineAdapt.GP_KERNEL_INDEP_OUT
+            autonomous_recovery = online_controller.AutonomousRecovery.NONE
+            use_trap_cost = False
+            ut = UseTsf.NO_TRANSFORM
+        elif args.random_ablation:
+            autonomous_recovery = online_controller.AutonomousRecovery.RANDOM
+        elif args.nonadaptive_baseline:
+            autonomous_recovery = online_controller.AutonomousRecovery.NONE
+            use_trap_cost = False
+            ut = UseTsf.NO_TRANSFORM
 
-    # test_online_model()
-    # for seed in range(10):
-    #     Learn.invariant(UseTsf.FEEDFORWARD_PART, seed=seed, name="corl", MAX_EPOCH=3000, BATCH_SIZE=500)
-    # for seed in range(10):
-    #     Learn.invariant(UseTsf.SEP_DEC, seed=seed, name="corl", MAX_EPOCH=3000, BATCH_SIZE=500)
-    # for seed in range(10):
-    #     Learn.invariant(UseTsf.EXTRACT, seed=seed, name="corl", MAX_EPOCH=3000, BATCH_SIZE=500)
-    # for seed in range(10):
-    #     Learn.invariant(UseTsf.REX_EXTRACT, seed=seed, name="corl", MAX_EPOCH=3000, BATCH_SIZE=2048)
+        for seed in args.seed:
+            test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
+                                     nominal_adapt=nominal_adapt, rep_name=args.rep_name,
+                                     reuse_escape_as_demonstration=False, use_trap_cost=use_trap_cost,
+                                     assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
+                                     visualize_rollout=args.visualize_rollout,
+                                     autonomous_recovery=autonomous_recovery)
+    elif args.command == 'evaluate':
+        util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
+                                                args.eval_run_prefix, suffix="{}.mat".format(args.num_frames))
+    elif args.command == 'visualize':
+        task_names = {v: k for k, v in task_map.items()}
+        util.plot_task_res_dist({
+            'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC', 'color': 'green', 'label': True},
+            'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC random', 'color': 'orange', 'label': True},
+            'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'non-adapative', 'color': 'purple', 'label': True},
+            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'adaptive baseline++', 'color': 'red', 'label': True},
+            'sac__5': {'name': 'SAC', 'color': 'cyan', 'label': True},
 
-    # for seed in range(1):
-    #     Learn.model(ut, seed=seed, name="")
+            'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC', 'color': 'green'},
+            'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC random', 'color': 'orange'},
+            'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'non-adapative', 'color': 'purple'},
+            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'adaptive baseline++', 'color': 'red'},
+            'sac__6': {'name': 'SAC', 'color': 'cyan'},
+        }, 'pushing_task_res.pkl', expected_data_len=args.num_frames - 1, figsize=(5, 7), task_names=task_names,
+            success_min_dist=0.5)
 
-    # util.plot_task_res_dist({
-    #     'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-    #         'name': 'TAMPC', 'color': 'green', 'label': True},
-    #     'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-    #         'name': 'TAMPC random', 'color': 'orange', 'label': True},
-    #     'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-    #         'name': 'non-adapative', 'color': 'purple', 'label': True},
-    #     'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-    #         'name': 'adaptive baseline++', 'color': 'red', 'label': True},
-    #     'sac__5': {'name': 'SAC', 'color': 'cyan', 'label': True},
-    #
-    #     'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-    #         'name': 'TAMPC', 'color': 'green'},
-    #     'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-    #         'name': 'TAMPC random', 'color': 'orange'},
-    #     'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-    #         'name': 'non-adapative', 'color': 'purple'},
-    #     'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-    #         'name': 'adaptive baseline++', 'color': 'red'},
-    #     'sac__6': {'name': 'SAC', 'color': 'cyan'},
-    # }, 'pushing_task_res.pkl', expected_data_len=499, figsize=(5, 7), task_names={5: 'Block-H', 6: 'Block-D'})
+    else:
+        pass
+        # tune_trap_set_cost(seed=0, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+        #                    use_trap_cost=True,
+        #                    autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
 
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #     'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST', suffix="500.mat")
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #     'auto_recover__NONE__RETURN_STATE__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
-    #     suffix="500.mat")
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #     'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST',
-    #     suffix="500.mat")
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #     'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
-    #     suffix="500.mat")
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-    #     'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST',
-    #     suffix="500.mat")
-    # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal, 'sac__6')
-
-    # verify_coordinate_transform(UseTransform.COORD)
-    # evaluate_gating_function(use_tsf=ut, test_file=neg_test_file)
-    # evaluate_ctrl_sampler('pushing/auto_recover_NONE_RETURN_STATE_1_COORD_NOREUSE_DecisionTreeClassifier_1.mat', 27)
-    # evaluate_ctrl_sampler('pushing/with_domain_knowledge.mat', 25)
-    # evaluate_ctrl_sampler('pushing/local_model_in_state_space.mat', 23, seed=0, rollout_prev_xu=False)
-    # evaluate_ctrl_sampler('pushing/see_saw.mat', 10, seed=0, rollout_prev_xu=True)
-    # evaluate_ctrl_sampler('pushing/see_saw.mat', 150, seed=0, rollout_prev_xu=True)
-    # evaluate_ctrl_sampler('pushing/trap_set_suitable_test.mat', 199, seed=0, rollout_prev_xu=True)
-
-    # tune_trap_set_cost(seed=0, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                    use_trap_cost=True,
-    #                    autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-
-    # tune_recovery_policy(seed=0, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-
-    # test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_eval=True, plot_online_update=False,
-    #                                                use_gp=True, allow_update=False,
-    #                                                recover_adjust=False,
-    #                                                gating=AlwaysSelectNominal(),
-    #                                                use_tsf=ut, test_traj=None)
-
-    # with modified_environ(USE_CPU='1'):
-    #     test_autonomous_recovery(seed=0, level=0, adaptive_control_baseline=True, num_frames=250)
-
-    # evaluate_freespace_control(use_tsf=UseTsf.SEP_DEC, plot_model_error=False)
-    # baseline non-adaptive
-    for level in [5,6]:
-        for seed in range(1):
-            test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
-                                     nominal_adapt=OnlineAdapt.NONE,
-                                     gating=AlwaysSelectNominal(),
-                                     num_frames=100,
-                                     reuse_escape_as_demonstration=False, use_trap_cost=False,
-                                     assume_all_nonnominal_dynamics_are_traps=False,
-                                     autonomous_recovery=online_controller.AutonomousRecovery.NONE)
-    # autonomous recovery
-    # for ut in [UseTsf.REX_EXTRACT]:
-    #     for level in [6]:
-    #         for seed in range(10):
-    #             test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
-    #                                      nominal_adapt=OnlineAdapt.NONE,
-    #                                      reuse_escape_as_demonstration=False, use_trap_cost=True,
-    #                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
-    #                                      autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
-
-    # for ut in [UseTsf.REX_EXTRACT]:
-    #     for level in [6]:
-    #         for seed in range(10):
-    #             test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
-    #                                      nominal_adapt=OnlineAdapt.NONE,
-    #                                      reuse_escape_as_demonstration=False, use_trap_cost=True,
-    #                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
-    #                                      autonomous_recovery=online_controller.AutonomousRecovery.RANDOM)
-
-    # for ut in [UseTsf.REX_EXTRACT]:
-    #     for level in [6]:
-    #         for seed in range(10):
-    #             test_autonomous_recovery(seed=seed, level=level, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-    #                                      reuse_escape_as_demonstration=False, use_trap_cost=True,
-    #                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=500,
-    #                                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-    # baseline ++
-    # for level in [6]:
-    #     for seed in range(10):
-    #         test_autonomous_recovery(seed=seed, level=level, use_tsf=UseTsf.NO_TRANSFORM,
-    #                                  nominal_adapt=OnlineAdapt.GP_KERNEL_INDEP_OUT,
-    #                                  gating=AlwaysSelectNominal(),
-    #                                  num_frames=500,
-    #                                  reuse_escape_as_demonstration=False, use_trap_cost=False,
-    #                                  assume_all_nonnominal_dynamics_are_traps=False,
-    #                                  autonomous_recovery=online_controller.AutonomousRecovery.NONE)
-
-    # evaluate_freespace_control(level=level, use_tsf=ut, online_adapt=OnlineAdapt.GP_KERNEL,
-    #                            override=True, full_evaluation=True, plot_model_error=False, relearn_dynamics=False)
+        # tune_recovery_policy(seed=0, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
+        #                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
