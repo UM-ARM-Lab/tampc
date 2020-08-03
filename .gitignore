@@ -12,10 +12,13 @@ constraint.py
 temp.*
 runs
 old_runs
-checkpoints
 *.mat
 .env/
 .DS_Store
 env37
 MUJOCO_LOG.TXT
 logs/
+checkpoints/*
+backup_data
+!checkpoints/rex_extract_2_corl_saved_z5*
+!checkpoints/dynamics_REX_EXTRACT_i5_o5_s1_pd1_pa1_a0_e0_y0.9000*
