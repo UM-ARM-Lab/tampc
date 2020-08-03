@@ -294,8 +294,8 @@ def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics, seed=0):
                            name="dynamics_{}".format(tsf_name))
 
         train_epochs = 500
-        pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(),
-                                     train_epochs=train_epochs)
+        pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(
+            sort_by_time=False), train_epochs=train_epochs)
     elif prior_class is prior.NoPrior:
         pm = prior.NoPrior()
     else:
