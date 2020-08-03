@@ -116,11 +116,6 @@ def get_controller_options(env):
     d = get_device()
     u_min, u_max = env.get_control_bounds()
     Q = torch.tensor(env.state_cost(), dtype=torch.double)
-    # R = torch.tensor(env.control_cost(), dtype=torch.double)
-    # care about theta when recovering
-    Q_recovery = Q.clone()
-    Q_recovery[0, 0] = Q_recovery[1, 1] = 1
-    Q_recovery[2, 2] = 1
     R = 0.01
     sigma = [0.2, 0.4, 0.7]
     noise_mu = [0, 0.1, 0]
@@ -141,8 +136,6 @@ def get_controller_options(env):
         'terminal_cost_multiplier': 50,
         'abs_unrecognized_threshold': 10,
         # 'nominal_max_velocity':  0.02,
-        'adjust_model_pred_with_prev_error': False,
-        'use_orientation_terminal_cost': False,
     }
     mpc_opts = {
         'num_samples': 500,
@@ -154,7 +147,7 @@ def get_controller_options(env):
         'sample_null_action': False,
         'step_dependent_dynamics': True,
         'rollout_samples': 10,
-        'rollout_var_cost': 0,
+        'rollout_var_cost': 0,  # penalize variance of trajectory cost across samples
     }
     return common_wrapper_opts, mpc_opts
 

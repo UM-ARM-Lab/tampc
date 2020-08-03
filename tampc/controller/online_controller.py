@@ -73,7 +73,6 @@ class OnlineMPC(controller.MPC):
         # hybrid dynamics
         next_state = self.dynamics(x, u, cls)
 
-        next_state = self._adjust_next_state(next_state, u, t)
         next_state = self.constrain_state(next_state)
         next_state[bad_states] = state[bad_states]
 

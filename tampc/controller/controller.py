@@ -188,8 +188,7 @@ def default_state_dist(state_difference):
 class MPC(ControllerWithModelPrediction):
     def __init__(self, ds, dynamics, config, Q=1, R=1, compare_to_goal=torch.sub, u_min=None, u_max=None,
                  device='cpu', u_similarity=None, state_dist=default_state_dist,
-                 terminal_cost_multiplier=0., adjust_model_pred_with_prev_error=False, use_trap_cost=True,
-                 use_orientation_terminal_cost=False):
+                 terminal_cost_multiplier=0., use_trap_cost=True):
         super().__init__(compare_to_goal)
 
         self.ds = ds
@@ -201,8 +200,6 @@ class MPC(ControllerWithModelPrediction):
         if self.u_min is not None:
             self.u_min, self.u_max = tensor_utils.ensure_tensor(self.d, self.dtype, self.u_min, self.u_max)
         self.dynamics = dynamics
-        self.adjust_model_pred_with_prev_error = adjust_model_pred_with_prev_error
-        self.use_orientation_terminal_cost = use_orientation_terminal_cost
         self.state_dist = state_dist
 
         # get error per dimension to scale our expectations of accuracy
@@ -258,15 +255,6 @@ class MPC(ControllerWithModelPrediction):
             state = state[:, :, -1, :]
         state_loss = self.terminal_cost_multiplier * self.cost(state, terminal=True)
         total_loss = state_loss
-        # TODO specific to block pushing (want final pose to point towards goal) - should push to inherited class
-        if self.use_orientation_terminal_cost:
-            diff = self.compare_to_goal(state, self.goal)
-            angle_to_goal = torch.atan2(-diff[:, 1], -diff[:, 0])
-            # between 0 and 10
-            orientation_loss = math_utils.angular_diff_batch(angle_to_goal, state[:, 2]) ** 2
-            # decrease orientation loss if we're close to the goal
-            orientation_loss *= state_loss / 10
-            total_loss = state_loss + orientation_loss
         return total_loss
 
     @abc.abstractmethod
@@ -278,16 +266,7 @@ class MPC(ControllerWithModelPrediction):
         """
 
     def _apply_dynamics(self, state, u, t=0):
-        next_state = self.dynamics(state, u)
-        return self._adjust_next_state(next_state, u, t)
-
-    def _adjust_next_state(self, next_state, u, t):
-        # correct for next state with previous state's error
-        if self.adjust_model_pred_with_prev_error and t is not -1 and self.diff_predicted is not None:
-            # TODO generalize beyond addition (what about angles?)
-            # adjustment_vector = u @ self.prev_u
-            next_state += self.diff_predicted * (0.99 ** t)  # * adjustment_vector.view(-1, 1)
-        return next_state
+        return self.dynamics(state, u)
 
     def reset(self):
         super(MPC, self).reset()

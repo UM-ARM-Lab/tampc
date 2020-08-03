@@ -206,8 +206,6 @@ def get_controller_options(env):
         'abs_unrecognized_threshold': 15,
         # 'nonnominal_dynamics_penalty_tolerance': 0.1,
         # 'dynamics_minimum_window': 15,
-        'adjust_model_pred_with_prev_error': False,
-        'use_orientation_terminal_cost': False,
     }
     mpc_opts = {
         'num_samples': 500,
