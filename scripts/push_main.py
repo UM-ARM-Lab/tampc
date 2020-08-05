@@ -1912,7 +1912,7 @@ if __name__ == "__main__":
                 'name': 'non-adapative', 'color': 'purple', 'label': True},
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'adaptive baseline++', 'color': 'red', 'label': True},
-            # 'sac__5': {'name': 'SAC', 'color': 'cyan', 'label': True},
+            'sac__5': {'name': 'SAC', 'color': 'cyan', 'label': True},
 
             'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC', 'color': 'green'},
@@ -1922,7 +1922,7 @@ if __name__ == "__main__":
                 'name': 'non-adapative', 'color': 'purple'},
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'adaptive baseline++', 'color': 'red'},
-            # 'sac__6': {'name': 'SAC', 'color': 'cyan'},
+            'sac__6': {'name': 'SAC', 'color': 'cyan'},
         }, 'pushing_task_res.pkl', expected_data_len=args.num_frames - 1, figsize=(5, 7), task_names=task_names,
             success_min_dist=0.5)
 
