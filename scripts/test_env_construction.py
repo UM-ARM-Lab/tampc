@@ -365,6 +365,27 @@ def test_init(seed=0):
     plt.show()
 
 
+def sandbox():
+    init_block_pos = [0, 0.101]
+    init_block_yaw = -math.pi / 2
+    goal = [0, -0.7]
+    env = block_push.PushPhysicallyAnyAlongEnv(mode=p.GUI, init_block=init_block_pos, init_yaw=init_block_yaw,
+                                               goal=goal, log_video=True,
+                                               environment_level=5)
+    u = [(-1, 0, 0) for _ in range(100)]
+    # u.extend([(-1.0, 1.0, -0.95) for _ in range(18)])
+    # u.extend([(0, 1.0, 0) for _ in range(30)])
+    ctrl = controller.PreDeterminedController(u)
+    obs = env.reset()
+    while True:
+        # action = [0, 0, 0]
+        action = ctrl.command(obs)
+        obs, _, _, _ = env.step(action)
+        logger.info(obs)
+        env.clear_debug_trajectories()
+        time.sleep(0.1)
+
+
 if __name__ == "__main__":
     # test_pusher_placement_inverse()
     # test_env_control()
@@ -372,4 +393,5 @@ if __name__ == "__main__":
     # test_simulator_friction_isometry()
     # tune_direct_push()
     # run_direct_push()
-    test_init()
+    # test_init()
+    sandbox()
