@@ -226,6 +226,8 @@ class UseTsf(enum.Enum):
     SEP_DEC = 12
     EXTRACT = 13
     REX_EXTRACT = 14
+    SKIP = 15
+    REX_SKIP = 16
 
 
 def get_transform(env, ds, use_tsf, override_name=None):
@@ -253,6 +255,10 @@ def get_transform(env, ds, use_tsf, override_name=None):
         return LearnedTransform.ExtractState(ds, d, name=override_name or "corl_s1")
     elif use_tsf is UseTsf.REX_EXTRACT:
         return LearnedTransform.RexExtract(ds, d, name=override_name or "corl_s1")
+    elif use_tsf is UseTsf.SKIP:
+        return LearnedTransform.SkipLatentInput(ds, d, name=override_name or "ral_s1")
+    elif use_tsf is UseTsf.REX_SKIP:
+        return LearnedTransform.RexSkip(ds, d, name=override_name or "ral_s1")
     else:
         raise RuntimeError("Unrecgonized transform {}".format(use_tsf))
 
@@ -1479,8 +1485,7 @@ def evaluate_ctrl_sampler(eval_file, eval_i, seed=1, use_tsf=UseTsf.COORD,
 
 class Learn:
     @staticmethod
-    def invariant(use_tsf=UseTsf.DX_TO_V, seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10, resume=False,
-                  **kwargs):
+    def invariant(use_tsf=UseTsf.DX_TO_V, seed=1, name="", MAX_EPOCH=3000, BATCH_SIZE=500, resume=False, **kwargs):
         d, env, config, ds = get_free_space_env_init(seed)
         ds.update_preprocessor(get_pre_invariant_tsf_preprocessor(use_tsf))
         invariant_cls = get_transform(env, ds, use_tsf).__class__
@@ -1838,9 +1843,6 @@ parser.add_argument('--random_ablation', action='store_true', help='run paramete
 parser.add_argument('--visualize_rollout', action='store_true',
                     help='run parameter: visualize MPC rollouts (slows down running)')
 
-
-
-
 # controller parameters
 parser.add_argument('--tampc_param', nargs='*', type=util.param_type, default=[],
                     help="run parameter: high level controller parameters")
@@ -1927,6 +1929,10 @@ if __name__ == "__main__":
             success_min_dist=0.5)
 
     else:
+        for seed in range(10):
+            Learn.invariant(UseTsf.SKIP, seed=seed, name="RAL", MAX_EPOCH=3000, BATCH_SIZE=500)
+        for seed in range(10):
+            Learn.invariant(UseTsf.REX_SKIP, seed=seed, name="RAL", MAX_EPOCH=3000, BATCH_SIZE=2048)
         pass
         # tune_trap_set_cost(seed=0, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
         #                    use_trap_cost=True,

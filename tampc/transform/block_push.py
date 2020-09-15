@@ -305,6 +305,7 @@ class LearnedTransform:
             config = load_data.DataConfig()
             config.nx = self.reduced_decoder_input_dim
             config.ny = nv * ds.config.nx
+            # h_\rho
             self.extracted_linear_decoder = model.DeterministicUser(
                 make.make_sequential_network(config, **opts).to(device=device))
 
@@ -316,6 +317,7 @@ class LearnedTransform:
             config.ny = nv * ds.config.nx
             # outputs a linear transformation from v to dx (linear in v), that is dependent on state
             # v C(x) = dx --> v = C(x)^{-1} dx allows both ways
+            # h_\eta
             self.extracted_inverse_linear_decoder_producer = model.DeterministicUser(
                 make.make_sequential_network(config, **opts).to(device=device))
 
@@ -351,7 +353,7 @@ class LearnedTransform:
             return invariant.RexTraining.learn_model(self, *args, **kwargs)
 
     class ParameterizeYawSelect(invariant.LearnLinearDynamicsTransform, PusherTransform):
-        """Parameterize the coordinate transform such that it has to learn something"""
+        """DEPRECATED Parameterize the coordinate transform such that it has to learn something"""
 
         def __init__(self, ds, device, model_opts=None, nz=5, nv=5, **kwargs):
             if model_opts is None:
@@ -426,7 +428,7 @@ class LearnedTransform:
             return losses
 
     class LinearComboLatentInput(ParameterizeYawSelect):
-        """Relax parameterization structure to allow (each dimension of) z to be some linear combination of x,u"""
+        """DEPRECATED Relax parameterization structure to allow (each dimension of) z to be some linear combination of x,u"""
 
         def __init__(self, ds, device, nz=4, **kwargs):
             # input is x, output is z
@@ -458,7 +460,7 @@ class LearnedTransform:
             return z
 
     class ParameterizeDecoder(LinearComboLatentInput):
-        """Relax parameterization structure to allow decoder to be some state dependent transformation of v"""
+        """DEPRECATED Relax parameterization structure to allow decoder to be some state dependent transformation of v"""
 
         def __init__(self, ds, device, use_sincos_angle=False, nv=5, **kwargs):
             # replace angle with their sin and cos
@@ -497,7 +499,7 @@ class LearnedTransform:
             return dx
 
     class LearnedPartialPassthrough(ParameterizeDecoder):
-        """Don't pass through all of x to g; learn which parts to pass to g and which to h"""
+        """DEPRECATED Don't pass through all of x to g; learn which parts to pass to g and which to h"""
 
         def __init__(self, ds, device, *args, nz=5, nv=5, reduced_decoder_input_dim=2, **kwargs):
             self.reduced_decoder_input_dim = reduced_decoder_input_dim
@@ -550,3 +552,32 @@ class LearnedTransform:
             linear_tsf = self.partial_decoder.sample(extracted_from_x).view(B, nx, self.nv)
             dx = linalg.batch_batch_product(v, linear_tsf)
             return dx
+
+    class SkipLatentInput(ExtractState):
+        """Use a transform combining encoder to z and dynamics from z to v; equivalently, z=[x,u]"""
+
+        def __init__(self, ds, device, *args, dynamics_opts=None, **kwargs):
+            new_dyn_opts = {'h_units': (32, 32, 16)}
+            if dynamics_opts:
+                new_dyn_opts.update(dynamics_opts)
+            super().__init__(ds, device, *args, nz=ds.config.nx + ds.config.nu, dynamics_opts=new_dyn_opts,
+                             **kwargs)
+
+        def modules(self):
+            return {'extracted linear decoder': self.extracted_linear_decoder.model,
+                    'extracted inverse linear decoder': self.extracted_inverse_linear_decoder_producer.model,
+                    'extractor': self.x_extractor, 'encoder and dynamics': self.dynamics.model}
+
+        def _name_prefix(self):
+            return 'skipz_{}'.format(self.reduced_decoder_input_dim)
+
+        @tensor_utils.ensure_2d_input
+        def xu_to_z(self, state, action):
+            return torch.cat((state, action), dim=1)
+
+    class RexSkip(ExtractState, invariant.RexTraining):
+        def _name_prefix(self):
+            return 'rex_skip_{}'.format(self.reduced_decoder_input_dim)
+
+        def learn_model(self, *args, **kwargs):
+            return invariant.RexTraining.learn_model(self, *args, **kwargs)
