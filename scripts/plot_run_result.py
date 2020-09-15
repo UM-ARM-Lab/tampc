@@ -18,17 +18,23 @@ MAX_POINTS = 3000
 MAX_EPOCH = 6000
 name_prefix = 'armconjunction'
 largest_epoch_encountered = 0
-name_contains = 'corl'
+name_contains = None
 ignore_cache = False
 
 # scalar name combinations
-series = {'sep_dec': {'name': 'w/o $h_\omega$'}, 'extract': {'name': 'w/o REx', },
-          'rex_extract': {'name': 'full'}}
+series = {
+    'sep_dec': {'name': 'w/o $h_\omega$'},
+    'extract': {'name': 'w/o REx', },
+    'rex_extract': {'name': 'full'},
+    'skipz': {'name': 'skip z'},
+    'rex_skip': {'name': 'skip z + REx'},
+}
 losses = {'percent_match': {'name': 'match', 'pos': 0}, 'percent_reconstruction': {'name': 'reconstruction', 'pos': 1}}
 datasets = {'validation': {'name': '(a) validation', 'pos': 0},
             'validation_10_10': {'name': '(b) validation (10,10)', 'pos': 1}, 'test0': {'name': '(c) test', 'pos': 2}}
 
 runs = os.listdir(runs_basedir)
+runs_assignment = {s:[] for s in series.keys()}
 
 for r in runs:
     run_dir = os.path.join(runs_basedir, r)
@@ -43,6 +49,7 @@ for r in runs:
     for s in series.keys():
         if name.startswith(s):
             run_series = s
+            runs_assignment[s].append(name)
 
     if run_series is None:
         print("Ignoring {} since it's not a recognized series".format(name))
@@ -99,6 +106,12 @@ for r in runs:
 
 f, axes = plt.subplots(len(losses), len(datasets), figsize=(10, 4), constrained_layout=True)
 plt.pause(0.1)
+
+for s, run_names in runs_assignment.items():
+    print('---')
+    print(s)
+    for n in run_names:
+        print(n)
 
 for s in series:
     for t in series[s]:
