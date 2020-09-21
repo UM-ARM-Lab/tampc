@@ -191,6 +191,21 @@ class DynamicsModel(DynamicsBase):
         pass
 
 
+class SimultaneousLearnedLatentDynamics(DynamicsModel):
+    def __init__(self, ds):
+        super(SimultaneousLearnedLatentDynamics, self).__init__(ds)
+        assert(ds.preprocessor is not None)
+        # directly use the dynamics learned together with the invariant transform
+        self.dynamics = ds.preprocessor.tsf.transforms[-1].tsf.dynamics
+        self.dynamics.model.eval()
+
+    def _apply_model(self, xu):
+        return self.dynamics.sample(xu)
+
+    def device(self):
+        return next(self.dynamics.model.parameters()).device
+
+
 class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
     def __init__(self, model_user: ModelUser, ds, **kwargs):
         self.user = model_user

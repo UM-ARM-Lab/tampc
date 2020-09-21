@@ -90,6 +90,22 @@ class NoPrior(OnlineDynamicsPrior):
         return Phi, mu0, 0, 0
 
 
+class PassthroughLatentDynamicsPrior(OnlineDynamicsPrior):
+    @classmethod
+    def from_data(cls, *args, **kwargs):
+        pass
+
+    def get_batch_params(self, nx, nu, xu, pxu, xux):
+        pass
+
+    def __init__(self, ds):
+        self.dyn_net = model.SimultaneousLearnedLatentDynamics(ds)
+
+    def get_batch_predictions(self, xu, all_in_transformed_space=True):
+        return self.dyn_net.predict(xu, already_transformed=all_in_transformed_space,
+                                    return_in_orig_space=not all_in_transformed_space, get_next_state=False)
+
+
 class NNPrior(OnlineDynamicsPrior):
     @classmethod
     def from_data(cls, mw: model.NetworkModelWrapper, checkpoint=None, train_epochs=50, batch_N=500, **kwargs):
