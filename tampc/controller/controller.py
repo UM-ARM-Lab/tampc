@@ -361,8 +361,6 @@ class ExperimentalMPPI(mppi.MPPI):
             c = self.running_cost(state, u)
             cost_samples += c
             cost_var += c.var(dim=0) * (self.rollout_var_discount ** t)
-            if self.dynamics_variance is not None:
-                cost_total += self.running_cost_variance(self.dynamics_variance(state))
 
             # Save total states/actions
             states.append(state)
