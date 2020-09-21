@@ -194,11 +194,10 @@ def update_ds_with_transform(env, ds, use_tsf, evaluate_transform=True, rep_name
                              name, loss
                              in zip(invariant_tsf.loss_names(), losses)]))
 
-        # wrap the transform as a data preprocessor
-        preprocessor = preprocess.Compose(
-            [get_pre_invariant_tsf_preprocessor(use_tsf),
-             invariant.InvariantTransformer(invariant_tsf),
-             preprocess.PytorchTransformer(preprocess.RobustMinMaxScaler())])
+        components = [get_pre_invariant_tsf_preprocessor(use_tsf), invariant.InvariantTransformer(invariant_tsf)]
+        if use_tsf not in [UseTsf.SKIP, UseTsf.REX_SKIP]:
+            components.append(preprocess.PytorchTransformer(preprocess.RobustMinMaxScaler()))
+        preprocessor = preprocess.Compose(components)
     else:
         preprocessor = no_tsf_preprocessor()
     # update the datasource to use transformed data
@@ -264,6 +263,8 @@ def get_transform(env, ds, use_tsf, override_name=None):
 
 
 def get_prior(env, use_tsf=UseTsf.COORD, prior_class=prior.NNPrior, rep_name=None):
+    if use_tsf in [UseTsf.SKIP, UseTsf.REX_SKIP]:
+        prior_class = prior.PassthroughLatentDynamicsPrior
     ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
     untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False,
                                                                             rep_name=rep_name)
@@ -296,6 +297,8 @@ def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics, seed=0):
         train_epochs = 500
         pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(
             sort_by_time=False), train_epochs=train_epochs)
+    elif prior_class is prior.PassthroughLatentDynamicsPrior:
+        pm = prior.PassthroughLatentDynamicsPrior(ds)
     elif prior_class is prior.NoPrior:
         pm = prior.NoPrior()
     else:
@@ -1821,8 +1824,10 @@ parser.add_argument('command',
 parser.add_argument('--seed', metavar='N', type=int, nargs='+',
                     default=[0],
                     help='random seed(s) to run')
+tsf_map = {'none': UseTsf.NO_TRANSFORM, 'coordinate_transform': UseTsf.COORD, 'learned_rex': UseTsf.REX_EXTRACT,
+           'rex_ablation': UseTsf.EXTRACT, 'extractor_ablation': UseTsf.SEP_DEC, 'skip_z': UseTsf.SKIP}
 parser.add_argument('--representation', default='none',
-                    choices=['none', 'coordinate_transform', 'learned_rex', 'rex_ablation', 'extractor_ablation'],
+                    choices=tsf_map.keys(),
                     help='representation to use for nominal dynamics')
 parser.add_argument('--rep_name', default=None, type=str,
                     help='name and seed of a learned representation to use')
@@ -1855,8 +1860,6 @@ parser.add_argument('--eval_run_prefix', default=None, type=str,
 args = parser.parse_args()
 
 if __name__ == "__main__":
-    tsf_map = {'none': UseTsf.NO_TRANSFORM, 'coordinate_transform': UseTsf.COORD, 'learned_rex': UseTsf.REX_EXTRACT,
-               'rex_ablation': UseTsf.EXTRACT, 'extractor_ablation': UseTsf.SEP_DEC}
     ut = tsf_map[args.representation]
     level = task_map[args.task]
 
@@ -1929,10 +1932,10 @@ if __name__ == "__main__":
             success_min_dist=0.5)
 
     else:
+        # for seed in range(10):
+        #     Learn.invariant(UseTsf.SKIP, seed=seed, name="prenormalized", MAX_EPOCH=3000, BATCH_SIZE=500)
         for seed in range(10):
-            Learn.invariant(UseTsf.SKIP, seed=seed, name="RAL", MAX_EPOCH=3000, BATCH_SIZE=500)
-        for seed in range(10):
-            Learn.invariant(UseTsf.REX_SKIP, seed=seed, name="RAL", MAX_EPOCH=3000, BATCH_SIZE=2048)
+            Learn.invariant(UseTsf.REX_SKIP, seed=seed, name="prenormalized", MAX_EPOCH=3000, BATCH_SIZE=2048)
         pass
         # tune_trap_set_cost(seed=0, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
         #                    use_trap_cost=True,
