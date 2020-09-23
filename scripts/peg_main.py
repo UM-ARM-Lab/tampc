@@ -111,6 +111,8 @@ class UseTsf(enum.Enum):
     SEP_DEC = 12
     EXTRACT = 13
     REX_EXTRACT = 14
+    SKIP = 15
+    REX_SKIP = 16
 
 
 def get_transform(env, ds, use_tsf, override_name=None):
@@ -124,6 +126,10 @@ def get_transform(env, ds, use_tsf, override_name=None):
         return LearnedTransform.SeparateDecoder(ds, d, nz=5, nv=5, name=override_name or "peg_s0")
     elif use_tsf is UseTsf.REX_EXTRACT:
         return LearnedTransform.RexExtract(ds, d, nz=5, nv=5, name=override_name or "peg_s0")
+    elif use_tsf is UseTsf.SKIP:
+        return LearnedTransform.SkipLatentInput(ds, d, name=override_name or "peg_s0")
+    elif use_tsf is UseTsf.REX_SKIP:
+        return LearnedTransform.RexSkip(ds, d, name=override_name or "peg_s0")
     else:
         raise RuntimeError("Unrecgonized transform {}".format(use_tsf))
 
@@ -387,6 +393,14 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
             for token in args:
                 run_name += "__{}".format(token)
 
+        def get_rep_model_name(ds):
+            import re
+            tsf = ds.preprocessor.tsf.transforms[-1]
+            tsf_name = tsf.tsf.name
+            tsf_name = re.match(r".*?s\d+", tsf_name)[0]
+            # TODO also include model name
+            return tsf_name
+
         run_name = default_run_prefix
         if run_prefix is not None:
             affix_run_name(run_prefix)
@@ -398,6 +412,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
         affix_run_name("REUSE" if reuse_escape_as_demonstration else "NOREUSE")
         affix_run_name(gating.name)
         affix_run_name("TRAPCOST" if use_trap_cost else "NOTRAPCOST")
+        affix_run_name(get_rep_model_name(ds))
         affix_run_name(seed)
         affix_run_name(num_frames)
 
@@ -828,25 +843,29 @@ if __name__ == "__main__":
         util.plot_task_res_dist({
             'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC', 'color': 'green'},
-            'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC random', 'color': 'orange'},
-            'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-                'name': 'non-adapative', 'color': 'purple'},
-            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-                'name': 'adaptive baseline++', 'color': 'red'},
-            'sac__6': {'name': 'SAC', 'color': 'cyan'},
+            # 'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'TAMPC random', 'color': 'orange'},
+            'auto_recover__NONE__MAB__6__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal': {
+                'name': 'TAMPC skip z', 'color': 'black'},
+            # 'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+            #     'name': 'non-adapative', 'color': 'purple'},
+            # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+            #     'name': 'adaptive baseline++', 'color': 'red'},
+            # 'sac__6': {'name': 'SAC', 'color': 'cyan'},
 
             'auto_recover__NONE__MAB__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC', 'color': 'green'},
-            'auto_recover__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC original space', 'color': 'olive', 'label': True},
-            'auto_recover__NONE__RANDOM__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC random', 'color': 'orange'},
-            'auto_recover__NONE__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-                'name': 'non-adapative', 'color': 'purple'},
-            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-                'name': 'adaptive baseline++', 'color': 'red'},
-            'sac__7': {'name': 'SAC', 'color': 'cyan'},
+            'auto_recover__NONE__MAB__7__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal': {
+                'name': 'TAMPC skip z', 'color': 'black'},
+            # 'auto_recover__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'TAMPC original space', 'color': 'olive', 'label': True},
+            # 'auto_recover__NONE__RANDOM__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'TAMPC random', 'color': 'orange'},
+            # 'auto_recover__NONE__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+            #     'name': 'non-adapative', 'color': 'purple'},
+            # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+            #     'name': 'adaptive baseline++', 'color': 'red'},
+            # 'sac__7': {'name': 'SAC', 'color': 'cyan'},
         }, 'peg_task_res.pkl', task_type='peg', figsize=(5, 7), set_y_label=False,
             task_names=task_names)
 

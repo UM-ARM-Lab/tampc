@@ -1015,6 +1015,14 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
             for token in args:
                 run_name += "__{}".format(token)
 
+        def get_rep_model_name(ds):
+            import re
+            tsf = ds.preprocessor.tsf.transforms[-1]
+            tsf_name = tsf.tsf.name
+            tsf_name = re.match(r".*?s\d+", tsf_name)[0]
+            # TODO also include model name
+            return tsf_name
+
         run_name = default_run_prefix
         if adaptive_control_baseline:
             affix_run_name("ADAPTIVE_BASELINE")
@@ -1028,6 +1036,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
             affix_run_name("REUSE" if reuse_escape_as_demonstration else "NOREUSE")
             affix_run_name(gating.name)
             affix_run_name("TRAPCOST" if use_trap_cost else "NOTRAPCOST")
+        affix_run_name(get_rep_model_name(ds))
         affix_run_name(seed)
         affix_run_name(num_frames)
 
@@ -1913,29 +1922,31 @@ if __name__ == "__main__":
                 'name': 'TAMPC', 'color': 'green', 'label': True},
             'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC random', 'color': 'orange', 'label': True},
+            'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC skip z', 'color': 'black', 'label': True},
             'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'non-adapative', 'color': 'purple', 'label': True},
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'adaptive baseline++', 'color': 'red', 'label': True},
             'sac__5': {'name': 'SAC', 'color': 'cyan', 'label': True},
 
-            'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC', 'color': 'green'},
-            'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC random', 'color': 'orange'},
-            'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-                'name': 'non-adapative', 'color': 'purple'},
-            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-                'name': 'adaptive baseline++', 'color': 'red'},
-            'sac__6': {'name': 'SAC', 'color': 'cyan'},
+            # 'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'TAMPC', 'color': 'green'},
+            # 'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'TAMPC random', 'color': 'orange'},
+            # 'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+            #     'name': 'non-adapative', 'color': 'purple'},
+            # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+            #     'name': 'adaptive baseline++', 'color': 'red'},
+            # 'sac__6': {'name': 'SAC', 'color': 'cyan'},
         }, 'pushing_task_res.pkl', expected_data_len=args.num_frames - 1, figsize=(5, 7), task_names=task_names,
             success_min_dist=0.5)
 
     else:
-        # for seed in range(10):
-        #     Learn.invariant(UseTsf.SKIP, seed=seed, name="prenormalized", MAX_EPOCH=3000, BATCH_SIZE=500)
         for seed in range(10):
-            Learn.invariant(UseTsf.REX_SKIP, seed=seed, name="prenormalized", MAX_EPOCH=3000, BATCH_SIZE=2048)
+            Learn.invariant(UseTsf.SKIP, seed=seed, name="prenormalized", MAX_EPOCH=3000, BATCH_SIZE=500)
+        # for seed in range(10):
+        #     Learn.invariant(UseTsf.REX_SKIP, seed=seed, name="prenormalized", MAX_EPOCH=3000, BATCH_SIZE=2048)
         pass
         # tune_trap_set_cost(seed=0, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
         #                    use_trap_cost=True,
