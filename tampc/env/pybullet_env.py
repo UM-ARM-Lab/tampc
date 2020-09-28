@@ -21,6 +21,7 @@ import pybullet_data
 logger = logging.getLogger(__name__)
 
 
+# TODO generalize name and move to a more general module
 class PybulletLoader(load_utils.DataLoader):
     def __init__(self, *args, file_cfg=cfg, ignore_masks=False, **kwargs):
         self.info_desc = {}
