@@ -696,25 +696,35 @@ if __name__ == "__main__":
             task_names=task_names)
 
     else:
+        use_tsf = UseTsf.SKIP
+        rep_name = "pegr_s1"
         d, env, config, ds = get_free_space_env_init(0)
+
+        ds, pm = get_prior(env, use_tsf, rep_name=rep_name)
+
         # ds.update_preprocessor(get_pre_invariant_tsf_preprocessor(use_tsf=UseTsf.NO_TRANSFORM))
-        xu, y, trial = ds.training_set()
+        xu, y, trial = ds.validation_set(original=True)
+        yhat = pm.dyn_net.predict(xu, get_next_state=False, return_in_orig_space=True)
         u = xu[:, env.nx:]
         forces = y[:, 3:]
-        f, axes = plt.subplots(2, 1, figsize=(10, 6))
-        # axes[0].scatter(u[:, 0].cpu(), y[:, 0].cpu())
-        # axes[0].set_ylabel('dx')
-        # axes[0].set_xlabel('commanded dx')
-        #
-        # axes[1].scatter(u[:, 1].cpu(), y[:, 1].cpu())
-        # axes[1].set_ylabel('dy')
-        # axes[1].set_xlabel('commanded dy')
-
-        axes[0].scatter(u[:, 0].cpu(), forces[:, 0].cpu())
-        axes[0].set_ylabel('$dr_x$')
+        f, axes = plt.subplots(4, 1, figsize=(10, 9))
+        axes[0].scatter(u[:, 0].cpu(), yhat[:, 0].cpu(), color="red")
+        axes[0].scatter(u[:, 0].cpu(), y[:, 0].cpu())
+        axes[0].set_ylabel('dx')
         axes[0].set_xlabel('commanded dx')
 
-        axes[1].scatter(u[:, 1].cpu(), forces[:, 1].cpu())
-        axes[1].set_ylabel('$dr_y$')
+        axes[1].scatter(u[:, 1].cpu(), yhat[:, 1].cpu(), color="red")
+        axes[1].scatter(u[:, 1].cpu(), y[:, 1].cpu())
+        axes[1].set_ylabel('dy')
         axes[1].set_xlabel('commanded dy')
+
+        axes[2].scatter(u[:, 0].cpu(), forces[:, 0].cpu())
+        axes[2].scatter(u[:, 0].cpu(), yhat[:, 3].cpu(), color="red")
+        axes[2].set_ylabel('$dr_x$')
+        axes[2].set_xlabel('commanded dx')
+
+        axes[3].scatter(u[:, 1].cpu(), forces[:, 1].cpu())
+        axes[3].scatter(u[:, 1].cpu(), yhat[:, 4].cpu(), color="red")
+        axes[3].set_ylabel('$dr_y$')
+        axes[3].set_xlabel('commanded dy')
         plt.show()
