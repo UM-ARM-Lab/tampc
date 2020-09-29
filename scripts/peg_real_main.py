@@ -203,7 +203,7 @@ def get_controller_options(env):
 
 class OfflineDataCollection:
     @staticmethod
-    def freespace(seed=4, trials=200, trial_length=50, force_gui=False):
+    def freespace(seed_offset=0, trials=200, trial_length=50, force_gui=False):
         env = get_env(p.GUI if force_gui else p.DIRECT, 0)
         u_min, u_max = env.get_control_bounds()
         ctrl = controller.FullRandomController(env.nu, u_min, u_max)
@@ -211,15 +211,16 @@ class OfflineDataCollection:
         save_dir = '{}{}'.format(env_dir, 0)
         sim = peg_in_hole_real.ExperimentRunner(env, ctrl, num_frames=trial_length, plot=False, save=True,
                                                 stop_when_done=False, save_dir=save_dir)
-        rand.seed(seed)
         # randomly distribute data
-        for _ in range(trials):
-            seed = rand.seed()
+        for offset in range(trials):
+            seed = rand.seed(seed_offset + offset)
+            obs = env.state
+            run_name = "{}_{}_{}_{}".format(seed, obs[0].round(3), obs[1].round(3), obs[2].round(3))
             # start at fixed location
             # TODO jog to random starting position that's within the workspace
             ctrl = controller.FullRandomController(env.nu, u_min, u_max)
             sim.ctrl = ctrl
-            sim.run(seed)
+            sim.run(seed, run_name=run_name)
 
         if sim.save:
             load_data.merge_data_in_dir(cfg, save_dir, save_dir)
@@ -597,7 +598,7 @@ if __name__ == "__main__":
         mpc_params.update(d)
 
     if args.command == 'collect':
-        OfflineDataCollection.freespace(seed=args.seed[0], trials=200, trial_length=50, force_gui=args.gui)
+        OfflineDataCollection.freespace(seed_offset=args.seed[0], trials=10, trial_length=50, force_gui=args.gui)
     elif args.command == 'learn_representation':
         for seed in args.seed:
             Learn.invariant(ut, seed=seed, name="peg", MAX_EPOCH=1000, BATCH_SIZE=args.batch)
