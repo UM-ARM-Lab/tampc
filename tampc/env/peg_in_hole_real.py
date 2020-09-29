@@ -177,9 +177,13 @@ class RealPegEnv:
 
         return np.copy(self.state), -cost, done, info
 
-    def reset(self):
-        # TODO don't do anything on reset?
-        self.state, info = self._obs()
+    def reset(self, action=None):
+        if action is not None:
+            dx, dy = self._unpack_action(action)
+            action_resp = self.srv_action([dx, dy])
+            self.state, info = self._unpack_raw_obs(action_resp.obs)
+        else:
+            self.state, info = self._obs()
         return np.copy(self.state), info
 
 
@@ -260,7 +264,7 @@ class ExperimentRunner(simulation.Simulation):
             action = np.array(action).flatten()
             obs, rew, done, info = self.env.step(action)
             cost = -rew
-            logger.debug("%d cost %-5.2f took %.3fs done %d action %-12s obs %s", simTime, cost,
+            logger.info("%d cost %-5.2f took %.3fs done %d action %-12s obs %s", simTime, cost,
                          time.perf_counter() - start, done,
                          np.round(action, 2), np.round(obs, 3))
 

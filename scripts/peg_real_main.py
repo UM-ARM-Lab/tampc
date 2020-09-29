@@ -214,10 +214,13 @@ class OfflineDataCollection:
         # randomly distribute data
         for offset in range(trials):
             seed = rand.seed(seed_offset + offset)
+            move = input('specify dx and dy to move to')
+            dx, dy = [float(dim) for dim in move.split()]
+            env.reset([dx, dy])
             obs = env.state
+
             run_name = "{}_{}_{}_{}".format(seed, obs[0].round(3), obs[1].round(3), obs[2].round(3))
             # start at fixed location
-            # TODO jog to random starting position that's within the workspace
             ctrl = controller.FullRandomController(env.nu, u_min, u_max)
             sim.ctrl = ctrl
             sim.run(seed, run_name=run_name)
@@ -598,7 +601,7 @@ if __name__ == "__main__":
         mpc_params.update(d)
 
     if args.command == 'collect':
-        OfflineDataCollection.freespace(seed_offset=args.seed[0], trials=10, trial_length=50, force_gui=args.gui)
+        OfflineDataCollection.freespace(seed_offset=4, trials=2, trial_length=30, force_gui=args.gui)
     elif args.command == 'learn_representation':
         for seed in args.seed:
             Learn.invariant(ut, seed=seed, name="peg", MAX_EPOCH=1000, BATCH_SIZE=args.batch)
