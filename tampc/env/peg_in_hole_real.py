@@ -119,7 +119,7 @@ class RealPegEnv:
         # TODO wait for video service and take video
 
         self._setup_experiment()
-        self.state = self._obs()
+        self.state, _ = self._obs()
 
     def set_task_config(self, hole=None, init_peg=None):
         """Change task configuration; assumes only goal position is specified"""
@@ -133,21 +133,25 @@ class RealPegEnv:
         self.initPeg = self.get_ee_pos(self._obs())
 
     def _setup_experiment(self):
-        # TODO send calibration commands to get static force
+        # TODO send calibration commands to get static force?
         pass
 
     # --- observing state from simulation
     def _obs(self):
         """Observe current state from simulator"""
         state, info = self._unpack_raw_obs(self.srv_obs(self.obs_time).obs)
-        return state
+        return state, info
 
     # --- control helpers (rarely overridden)
     def evaluate_cost(self, state, action=None):
-        peg_pos = self.get_ee_pos(state)
-        diff = peg_pos[:2] - self.hole
-        dist = np.linalg.norm(diff)
-        done = dist < self.dist_for_done
+        if self.hole:
+            peg_pos = self.get_ee_pos(state)
+            diff = peg_pos[:2] - self.hole
+            dist = np.linalg.norm(diff)
+            done = dist < self.dist_for_done
+        else:
+            dist = 0
+            done = False
         return (dist * 10) ** 2, done
 
     # --- control (commonly overridden)
@@ -157,7 +161,6 @@ class RealPegEnv:
         return dx, dy
 
     def _unpack_raw_obs(self, raw_obs):
-        # TODO debug this dimension (is the input 1d?)
         state = np.array([raw_obs[i] for i in self.STATE_DIMS])
         # info is just everything
         return state, raw_obs
@@ -176,8 +179,8 @@ class RealPegEnv:
 
     def reset(self):
         # TODO don't do anything on reset?
-        self.state = self._obs()
-        return np.copy(self.state)
+        self.state, info = self._obs()
+        return np.copy(self.state), info
 
 
 class ExperimentRunner(simulation.Simulation):
@@ -222,10 +225,14 @@ class ExperimentRunner(simulation.Simulation):
 
     def _finalize_data(self):
         self.traj = np.stack(self.traj)
-        self.pred_traj = np.stack(self.pred_traj)
+        if len(self.pred_traj):
+            self.pred_traj = np.stack(self.pred_traj)
+        self.u.append(np.zeros(self.env.nu))
         self.u = np.stack(self.u)
+        # make same length as state trajectory by appending 0 action
         self.info = np.stack(self.info)
-        self.model_error = np.stack(self.model_error)
+        if len(self.model_error):
+            self.model_error = np.stack(self.model_error)
 
     def _predicts_state(self):
         return isinstance(self.ctrl, controller.ControllerWithModelPrediction)
@@ -238,12 +245,11 @@ class ExperimentRunner(simulation.Simulation):
 
     def _run_experiment(self):
         self.last_run_cost = []
-        obs = self._reset_sim()
-        info = None
+        obs, info = self._reset_sim()
+        self.traj = [obs]
+        self.info = [info]
 
         for simTime in range(self.num_frames - 1):
-            self.traj[simTime, :] = obs
-
             start = time.perf_counter()
 
             action = self.ctrl.command(obs, info)
@@ -261,6 +267,7 @@ class ExperimentRunner(simulation.Simulation):
             self.last_run_cost.append(cost)
             self.u.append(action)
             self.traj.append(obs)
+            self.info.append(info)
 
             if self._predicts_state():
                 self.pred_traj.append(self.ctrl.predicted_next_state)
