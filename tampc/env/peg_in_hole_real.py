@@ -93,7 +93,7 @@ class RealPegEnv:
     def control_cost(cls):
         return np.diag([1 for _ in range(cls.nu)])
 
-    def __init__(self, environment_level=0, dist_for_done=0.02, obs_time=1, log_video=False):
+    def __init__(self, environment_level=0, dist_for_done=0.02, obs_time=1, stub=True, log_video=False):
         self.level = environment_level
         self.dist_for_done = dist_for_done
 
@@ -103,23 +103,24 @@ class RealPegEnv:
         self.armId = None
         self.boardId = None
 
-        srv_name = robot_cfg.SRV_NAME_MAP[Action]
-        rospy.wait_for_service(srv_name)
-        self.srv_action = rospy.ServiceProxy(srv_name, Action)
-
-        srv_name = robot_cfg.SRV_NAME_MAP[CalibStaticWrench]
-        rospy.wait_for_service(srv_name)
-        self.srv_calib_wrench = rospy.ServiceProxy(srv_name, CalibStaticWrench)
         self.obs_time = obs_time
+        if not stub:
+            srv_name = robot_cfg.SRV_NAME_MAP[Action]
+            rospy.wait_for_service(srv_name)
+            self.srv_action = rospy.ServiceProxy(srv_name, Action)
 
-        srv_name = robot_cfg.SRV_NAME_MAP[Observe]
-        rospy.wait_for_service(srv_name)
-        self.srv_obs = rospy.ServiceProxy(srv_name, Observe)
+            srv_name = robot_cfg.SRV_NAME_MAP[CalibStaticWrench]
+            rospy.wait_for_service(srv_name)
+            self.srv_calib_wrench = rospy.ServiceProxy(srv_name, CalibStaticWrench)
 
-        # TODO wait for video service and take video
+            srv_name = robot_cfg.SRV_NAME_MAP[Observe]
+            rospy.wait_for_service(srv_name)
+            self.srv_obs = rospy.ServiceProxy(srv_name, Observe)
 
-        self._setup_experiment()
-        self.state, _ = self._obs()
+            # TODO wait for video service and take video
+
+            self._setup_experiment()
+            self.state, _ = self._obs()
 
     def set_task_config(self, hole=None, init_peg=None):
         """Change task configuration; assumes only goal position is specified"""
@@ -265,8 +266,8 @@ class ExperimentRunner(simulation.Simulation):
             obs, rew, done, info = self.env.step(action)
             cost = -rew
             logger.info("%d cost %-5.2f took %.3fs done %d action %-12s obs %s", simTime, cost,
-                         time.perf_counter() - start, done,
-                         np.round(action, 2), np.round(obs, 3))
+                        time.perf_counter() - start, done,
+                        np.round(action, 2), np.round(obs, 3))
 
             self.last_run_cost.append(cost)
             self.u.append(action)

@@ -50,9 +50,9 @@ def get_data_dir(level=0):
     return '{}{}.mat'.format(env_dir, level)
 
 
-def get_env(mode=p.GUI, level=0, log_video=False):
+def get_env(level=0, **kwargs):
     global env_dir
-    env = peg_in_hole_real.RealPegEnv(environment_level=level, log_video=log_video)
+    env = peg_in_hole_real.RealPegEnv(environment_level=level, **kwargs)
     env_dir = '{}/real'.format(peg_in_hole_real.DIR)
     return env
 
@@ -204,7 +204,7 @@ def get_controller_options(env):
 class OfflineDataCollection:
     @staticmethod
     def freespace(seed_offset=0, trials=200, trial_length=50, force_gui=False):
-        env = get_env(p.GUI if force_gui else p.DIRECT, 0)
+        env = get_env(level=0, stub=False)
         u_min, u_max = env.get_control_bounds()
         ctrl = controller.FullRandomController(env.nu, u_min, u_max)
         # use mode p.GUI to see what the trials look like
@@ -296,7 +296,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                    override_tampc_params=None,
                    override_mpc_params=None,
                    **kwargs):
-    env = get_env(p.GUI, level=level, log_video=True)
+    env = get_env(level=level, log_video=True, stub=False)
     logger.info("initial random seed %d", rand.seed(seed))
 
     ds, pm = get_prior(env, use_tsf, rep_name=rep_name)
@@ -604,7 +604,7 @@ if __name__ == "__main__":
         OfflineDataCollection.freespace(seed_offset=4, trials=2, trial_length=30, force_gui=args.gui)
     elif args.command == 'learn_representation':
         for seed in args.seed:
-            Learn.invariant(ut, seed=seed, name="peg", MAX_EPOCH=1000, BATCH_SIZE=args.batch)
+            Learn.invariant(ut, seed=seed, name="pegr", MAX_EPOCH=1000, BATCH_SIZE=args.batch)
     elif args.command == 'fine_tune_dynamics':
         Learn.model(ut, seed=args.seed[0], name="", rep_name=args.rep_name)
     elif args.command == 'run':
@@ -696,4 +696,25 @@ if __name__ == "__main__":
             task_names=task_names)
 
     else:
-        pass
+        d, env, config, ds = get_free_space_env_init(0)
+        # ds.update_preprocessor(get_pre_invariant_tsf_preprocessor(use_tsf=UseTsf.NO_TRANSFORM))
+        xu, y, trial = ds.training_set()
+        u = xu[:, env.nx:]
+        forces = y[:, 3:]
+        f, axes = plt.subplots(2, 1, figsize=(10, 6))
+        # axes[0].scatter(u[:, 0].cpu(), y[:, 0].cpu())
+        # axes[0].set_ylabel('dx')
+        # axes[0].set_xlabel('commanded dx')
+        #
+        # axes[1].scatter(u[:, 1].cpu(), y[:, 1].cpu())
+        # axes[1].set_ylabel('dy')
+        # axes[1].set_xlabel('commanded dy')
+
+        axes[0].scatter(u[:, 0].cpu(), forces[:, 0].cpu())
+        axes[0].set_ylabel('$dr_x$')
+        axes[0].set_xlabel('commanded dx')
+
+        axes[1].scatter(u[:, 1].cpu(), forces[:, 1].cpu())
+        axes[1].set_ylabel('$dr_y$')
+        axes[1].set_xlabel('commanded dy')
+        plt.show()
