@@ -53,6 +53,8 @@ def get_data_dir(level=0):
 def get_env(level=0, **kwargs):
     global env_dir
     env = peg_in_hole_real.RealPegEnv(environment_level=level, **kwargs)
+    if level is 6:
+        env.set_task_config(hole=[1.75184762, -0.02146999])
     env_dir = '{}/real'.format(peg_in_hole_real.DIR)
     return env
 
@@ -337,8 +339,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                                         **tampc_opts,
                                         mpc_opts=mpc_opts)
 
-    # TODO jog to goal to mark it as goal
-    z = 0
+    z = 0.98
     goal = np.r_[env.hole, z, 0, 0]
     ctrl.set_goal(goal)
 

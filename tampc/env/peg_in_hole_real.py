@@ -124,6 +124,7 @@ class RealPegEnv:
 
     def set_task_config(self, hole=None, init_peg=None):
         """Change task configuration; assumes only goal position is specified"""
+        self.hole = hole
         # TODO jog to goal to get goal state
         # if hole is not None:
         #     self._set_hole(hole)
