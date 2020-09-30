@@ -34,7 +34,7 @@ from tampc import util
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
 
-logging.basicConfig(level=logging.DEBUG,
+logging.basicConfig(level=logging.INFO,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
                     datefmt='%m-%d %H:%M:%S', handlers=[ch, fh])
 
@@ -206,7 +206,7 @@ def get_controller_options(env):
 class OfflineDataCollection:
     @staticmethod
     def freespace(seed_offset=0, trials=200, trial_length=50, force_gui=False):
-        env = get_env(level=0, stub=False)
+        env = get_env(level=0, stub=False, log_video=True)
         u_min, u_max = env.get_control_bounds()
         ctrl = controller.FullRandomController(env.nu, u_min, u_max)
         # use mode p.GUI to see what the trials look like
@@ -227,6 +227,7 @@ class OfflineDataCollection:
             sim.ctrl = ctrl
             sim.run(seed, run_name=run_name)
 
+        env.close()
         if sim.save:
             load_data.merge_data_in_dir(cfg, save_dir, save_dir)
         plt.ioff()
@@ -607,7 +608,7 @@ if __name__ == "__main__":
         mpc_params.update(d)
 
     if args.command == 'collect':
-        OfflineDataCollection.freespace(seed_offset=4, trials=2, trial_length=30, force_gui=args.gui)
+        OfflineDataCollection.freespace(seed_offset=0, trials=5, trial_length=30, force_gui=args.gui)
     elif args.command == 'learn_representation':
         for seed in args.seed:
             Learn.invariant(ut, seed=seed, name="pegr", MAX_EPOCH=1000, BATCH_SIZE=args.batch)

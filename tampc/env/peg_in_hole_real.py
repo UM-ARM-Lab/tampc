@@ -8,6 +8,7 @@ from tampc.env.pybullet_env import PybulletLoader, handle_data_format_for_state_
 
 from tampc_or import cfg as robot_cfg
 from tampc_or_msgs.srv import Calibrate, Action, Observe, CalibStaticWrench
+from arm_video_recorder.srv import TriggerVideoRecording
 
 # drawer imports
 from visualization_msgs.msg import Marker, MarkerArray
@@ -122,9 +123,13 @@ class RealPegEnv:
             rospy.wait_for_service(srv_name)
             self.srv_obs = rospy.ServiceProxy(srv_name, Observe)
 
-            # TODO wait for video service and take video
+            if log_video:
+                srv_name = "video_recorder"
+                rospy.wait_for_service(srv_name)
+                self.srv_video = rospy.ServiceProxy(srv_name, TriggerVideoRecording)
+            else:
+                self.srv_video = None
 
-            self._setup_experiment()
             self.state, _ = self._obs()
 
     def set_task_config(self, hole=None, init_peg=None):
@@ -139,9 +144,9 @@ class RealPegEnv:
     def _set_init_peg(self, init_peg):
         self.initPeg = self.get_ee_pos(self._obs())
 
-    def _setup_experiment(self):
-        # TODO send calibration commands to get static force?
-        pass
+    def setup_experiment(self):
+        if self.srv_video is not None:
+            self.srv_video('{}.mp4'.format(time.time()), True, 3600)
 
     # --- observing state from simulation
     def _obs(self):
@@ -192,6 +197,11 @@ class RealPegEnv:
         else:
             self.state, info = self._obs()
         return np.copy(self.state), info
+
+    def close(self):
+        # stop logging video
+        if self.srv_video is not None:
+            self.srv_video('{}.mp4'.format(time.time()), False, 3600)
 
 
 class ReplayEnv(RealPegEnv):
@@ -385,6 +395,7 @@ class ExperimentRunner(simulation.Simulation):
         return simulation.ReturnMeaning.SUCCESS
 
     def _setup_experiment(self):
+        self.env.setup_experiment()
         return simulation.ReturnMeaning.SUCCESS
 
     def _init_data(self):
