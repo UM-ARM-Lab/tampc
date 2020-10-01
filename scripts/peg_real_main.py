@@ -34,7 +34,7 @@ from tampc import util
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
 
-logging.basicConfig(level=logging.INFO,
+logging.basicConfig(level=logging.DEBUG,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
                     datefmt='%m-%d %H:%M:%S', handlers=[ch, fh])
 
@@ -53,8 +53,8 @@ def get_data_dir(level=0):
 def get_env(level=0, **kwargs):
     global env_dir
     env = peg_in_hole_real.RealPegEnv(environment_level=level, **kwargs)
-    if level is 6:
-        env.set_task_config(hole=[1.75184762, -0.02146999])
+    if level is task_map['Peg-T']:
+        env.set_task_config(hole=[1.74962708, -0.02913485], init_peg=[1.64363362, 0.05320179])
     env_dir = '{}/real'.format(peg_in_hole_real.DIR)
     return env
 

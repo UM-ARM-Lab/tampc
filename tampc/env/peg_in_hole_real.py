@@ -54,6 +54,7 @@ class RealPegEnv:
     STATE_DIMS = [0, 1, 2, 3, 4]
 
     MAX_PUSH_DIST = 0.02
+    RESET_RAISE_BY = 0.04
 
     @staticmethod
     def state_names():
@@ -135,14 +136,11 @@ class RealPegEnv:
     def set_task_config(self, hole=None, init_peg=None):
         """Change task configuration; assumes only goal position is specified"""
         self.hole = hole
-        # TODO jog to goal to get goal state
-        # if hole is not None:
-        #     self._set_hole(hole)
-        # if init_peg is not None:
-        #     self._set_init_peg(init_peg)
-
-    def _set_init_peg(self, init_peg):
-        self.initPeg = self.get_ee_pos(self._obs())
+        self.initPeg = init_peg
+        if hole is not None and len(hole) != 2:
+            raise RuntimeError("Expected hole to be (x, y), instead got {}".format(hole))
+        if init_peg is not None and len(init_peg) != 2:
+            raise RuntimeError("Expected peg to be (x, y), instead got {}".format(init_peg))
 
     def setup_experiment(self):
         if self.srv_video is not None:
@@ -196,6 +194,15 @@ class RealPegEnv:
             self.state, info = self._unpack_raw_obs(action_resp.obs)
         else:
             self.state, info = self._obs()
+            if self.initPeg is not None:
+                # navigate to init peg by first raising and then dropping
+                dx = self.initPeg[0] - self.state[0]
+                dy = self.initPeg[1] - self.state[1]
+                self.srv_action([0, 0, self.RESET_RAISE_BY])
+                self.srv_action([dx, dy, self.RESET_RAISE_BY])
+                action_resp = self.srv_action([0, 0])
+                self.state, info = self._unpack_raw_obs(action_resp.obs)
+
         return np.copy(self.state), info
 
     def close(self):
