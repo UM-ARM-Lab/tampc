@@ -14,8 +14,9 @@ class GlobalLQRController(Controller):
     def __init__(self, ds, Q=1, R=1, compare_to_goal=np.subtract, u_min=None, u_max=None):
         super().__init__(compare_to_goal)
         # load data and create LQR controller
-        self.nu = ds.config.nu
-        self.nx = ds.config.nx
+        config = ds.original_config()
+        self.nu = config.nu
+        self.nx = config.nx
         self.u_min, self.u_max = math_utils.get_bounds(u_min, u_max)
 
         self.Q = tensor_utils.ensure_diagonal(Q, self.nx).cpu().numpy()
@@ -49,7 +50,7 @@ class GlobalLQRController(Controller):
         # remove the goal from xb yb
         x = np.array(obs)
         x = self.compare_to_goal(x, self.goal)
-        u = -self.K @ x
+        u = -self.K @ x.reshape(-1)
 
         if self.u_max is not None:
             u = np.clip(u, self.u_min, self.u_max)

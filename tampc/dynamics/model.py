@@ -75,34 +75,35 @@ class DeterministicUser(ModelUser):
 
 
 def linear_model_from_ds(ds):
-    XU, Y, _ = ds.training_set()
-    XU = XU.numpy()
-    Y = Y.numpy()
+    XU, Y, _ = ds.training_set(original=True)
+    config = ds.original_config()
+    XU = XU.cpu().numpy()
+    Y = Y.cpu().numpy()
     # get dynamics
     params, res, rank, _ = np.linalg.lstsq(XU, Y)
-    if ds.config.predict_difference:
+    if config.predict_difference:
         # convert dyanmics to x' = Ax + Bu (note that our y is dx, so have to add diag(1))
-        state_offset = 0 if ds.config.predict_all_dims else ds.config.nu
+        state_offset = 0 if config.predict_all_dims else config.nu
         # A = np.eye(ds.config.nx)
-        A = np.zeros((ds.config.nx, ds.config.nx))
-        B = np.zeros((ds.config.nx, ds.config.nu))
-        A[state_offset:, :] += params[:ds.config.nx, :].T
-        if not ds.config.predict_all_dims:
+        A = np.zeros((config.nx, config.nx))
+        B = np.zeros((config.nx, config.nu))
+        A[state_offset:, :] += params[:config.nx, :].T
+        if not config.predict_all_dims:
             B[0, 0] = 1
             B[1, 1] = 1
-        B[state_offset:, :] += params[ds.config.nx:, :].T
+        B[state_offset:, :] += params[config.nx:, :].T
     else:
-        if ds.config.predict_all_dims:
+        if config.predict_all_dims:
             # predict dynamics rather than difference
-            A = params[:ds.config.nx, :].T
-            B = params[ds.config.nx:, :].T
+            A = params[:config.nx, :].T
+            B = params[config.nx:, :].T
         else:
-            A = np.eye(ds.config.nx)
-            B = np.zeros((ds.config.nx, ds.config.nu))
-            A[ds.config.nu:, :] = params[:ds.config.nx, :].T
+            A = np.eye(config.nx)
+            B = np.zeros((config.nx, config.nu))
+            A[config.nu:, :] = params[:config.nx, :].T
             B[0, 0] = 1
             B[1, 1] = 1
-            B[ds.config.nu:, :] = params[ds.config.nx:, :].T
+            B[config.nu:, :] = params[config.nx:, :].T
     return A, B
 
 
