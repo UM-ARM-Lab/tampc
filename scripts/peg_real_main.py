@@ -54,7 +54,10 @@ def get_env(level=0, **kwargs):
     global env_dir
     env = peg_in_hole_real.RealPegEnv(environment_level=level, **kwargs)
     if level is task_map['Peg-T']:
-        env.set_task_config(hole=[1.74962708, -0.02913485], init_peg=[1.64363362, 0.05320179])
+        x = 1.74962708 - 0.001
+        y = -0.02913485 + 0.011
+        # env.set_task_config(hole=[x, y], init_peg=[1.64363362, 0.05320179])
+        env.set_task_config(hole=[x, y], init_peg=[x + 0.03, y])
     env_dir = '{}/real'.format(peg_in_hole_real.DIR)
     return env
 

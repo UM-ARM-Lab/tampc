@@ -54,7 +54,7 @@ class RealPegEnv:
     STATE_DIMS = [0, 1, 2, 3, 4]
 
     MAX_PUSH_DIST = 0.02
-    RESET_RAISE_BY = 0.04
+    RESET_RAISE_BY = 0.025
 
     @staticmethod
     def state_names():
@@ -494,6 +494,21 @@ class ExperimentRunner(simulation.Simulation):
         self.last_run_cost.append(terminal_cost * self.terminal_cost_multiplier)
 
         assert len(self.last_run_cost) == self.u.shape[0]
+
+        # if we're done, use a simple local controller to get to the goal ignoring traps
+        if done and isinstance(self.ctrl, online_controller.OnlineMPC):
+            logger.info("done, using local controller to insert peg")
+            P_TERM = 20
+            cost = 100
+            while cost > 0.0001:
+                dxy = [self.ctrl.goal[0].item() - obs[0], self.ctrl.goal[1].item() - obs[1]]
+                action = np.array(dxy) * P_TERM
+                if np.linalg.norm(action) < 0.2:
+                    action *= 0.2 / np.linalg.norm(action)
+                obs, rew, done, info = self.env.step(action)
+                cost = -rew
+                logger.info("dxy %s cost %f", np.round(dxy, 3), cost)
+            self.env.srv_action([0, 0, -self.env.MAX_PUSH_DIST * 0.6])
 
         return simulation.ReturnMeaning.SUCCESS
 
