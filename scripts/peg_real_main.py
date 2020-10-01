@@ -255,9 +255,9 @@ def get_pre_invariant_tsf_preprocessor(use_tsf):
     if use_tsf is UseTsf.COORD:
         return preprocess.PytorchTransformer(preprocess.NullSingleTransformer())
     else:
-        # TODO normalize position and force dimensions separately using shared scales
-        return preprocess.PytorchTransformer(preprocess.NullSingleTransformer(),
-                                             preprocess.RobustMinMaxScaler())
+        # normalize position and force dimensions separately using shared scales
+        return preprocess.PytorchTransformer(preprocess.RobustMinMaxScaler(dims_share_scale=[[0, 1], [3, 4]]),
+                                             preprocess.RobustMinMaxScaler(dims_share_scale=[[0, 1], [3, 4]]))
 
 
 class Learn:
@@ -608,7 +608,7 @@ if __name__ == "__main__":
         mpc_params.update(d)
 
     if args.command == 'collect':
-        OfflineDataCollection.freespace(seed_offset=0, trials=5, trial_length=30, force_gui=args.gui)
+        OfflineDataCollection.freespace(seed_offset=15, trials=5, trial_length=30, force_gui=args.gui)
     elif args.command == 'learn_representation':
         for seed in args.seed:
             Learn.invariant(ut, seed=seed, name="pegr", MAX_EPOCH=1000, BATCH_SIZE=args.batch)
@@ -706,11 +706,9 @@ if __name__ == "__main__":
         use_tsf = UseTsf.SKIP
         rep_name = "pegr_s1"
         d, env, config, ds = get_free_space_env_init(0)
-
+        ds.update_preprocessor(get_pre_invariant_tsf_preprocessor(use_tsf=use_tsf))
+        xu, y, trial = ds.training_set(original=True)
         ds, pm = get_prior(env, use_tsf, rep_name=rep_name)
-
-        # ds.update_preprocessor(get_pre_invariant_tsf_preprocessor(use_tsf=UseTsf.NO_TRANSFORM))
-        xu, y, trial = ds.validation_set(original=True)
         yhat = pm.dyn_net.predict(xu, get_next_state=False, return_in_orig_space=True)
         u = xu[:, env.nx:]
         forces = y[:, 3:]

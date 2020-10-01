@@ -106,7 +106,7 @@ class InvariantTransform(LearnableParameterizedModel):
                 if log:
                     log_msg.append(" {} {}".format(name, value))
             if log:
-                logger.debug("".join(log_msg))
+                logger.info("".join(log_msg))
 
     def _record_latent_dist(self, X, U, Y):
         with torch.no_grad():
@@ -223,7 +223,7 @@ class InvariantTransform(LearnableParameterizedModel):
         save_checkpoint_every_n_epochs = max(max_epoch // 20, 5)
 
         for epoch in range(max_epoch):
-            logger.debug("Start epoch %d", epoch)
+            logger.info("Start epoch %d", epoch)
             # evaluate on validation at the start of epochs
             self.evaluate_validation(self.writer)
             if save_checkpoint_every_n_epochs and epoch % save_checkpoint_every_n_epochs == 0:
