@@ -221,7 +221,7 @@ class DebugRvizDrawer:
         self.max_nom_model_error = max_nominal_model_error
         # self.array_pub = rospy.Publisher("visualization_marker_array", MarkerArray, queue_size=0)
 
-    def _make_point_marker(self, scale=0.05, marker_type=Marker.POINTS):
+    def _make_point_marker(self, scale=0.01, marker_type=Marker.POINTS):
         marker = Marker()
         marker.header.frame_id = "victor_root"
         marker.type = marker_type
@@ -250,7 +250,7 @@ class DebugRvizDrawer:
         self.marker_pub.publish(marker)
 
     def draw_goal(self, goal):
-        marker = self._make_point_marker(scale=0.1)
+        marker = self._make_point_marker(scale=0.03)
         marker.ns = "goal"
         marker.id = 0
         p = Point()
@@ -292,7 +292,7 @@ class DebugRvizDrawer:
     def draw_trap_set(self, trap_set):
         if trap_set is None:
             return
-        state_marker = self._make_point_marker()
+        state_marker = self._make_point_marker(scale=0.02)
         state_marker.ns = "trap state"
         state_marker.id = 0
 
@@ -324,11 +324,6 @@ class DebugRvizDrawer:
             c.b = cc
             state_marker.colors.append(c)
             action_marker.colors.append(c)
-            c = ColorRGBA()
-            c.a = 1
-            c.r = 1
-            c.g = 1
-            c.b = cc
             action_marker.colors.append(c)
 
         self.marker_pub.publish(state_marker)
