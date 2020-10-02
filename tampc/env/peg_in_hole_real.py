@@ -359,25 +359,7 @@ class ExperimentRunner(simulation.Simulation):
         return simulation.ReturnMeaning.SUCCESS
 
     def _init_data(self):
-        self.traj = []
-        self.pred_traj = []
-        self.pred_cls = []
-        self.u = []
-        self.info = []
-        self.model_error = []
         return simulation.ReturnMeaning.SUCCESS
-
-    def _finalize_data(self):
-        self.traj = np.stack(self.traj)
-        if len(self.pred_traj):
-            self.pred_traj = np.stack(self.pred_traj)
-            self.pred_cls = np.stack(self.pred_cls)
-        self.u.append(np.zeros(self.env.nu))
-        self.u = np.stack(self.u)
-        # make same length as state trajectory by appending 0 action
-        self.info = np.stack(self.info)
-        if len(self.model_error):
-            self.model_error = np.stack(self.model_error)
 
     def _predicts_state(self):
         return isinstance(self.ctrl, controller.ControllerWithModelPrediction)
@@ -391,8 +373,12 @@ class ExperimentRunner(simulation.Simulation):
     def _run_experiment(self):
         self.last_run_cost = []
         obs, info = self._reset_sim()
-        self.traj = [obs]
-        self.info = [info]
+        traj = [obs]
+        u = []
+        infos = [info]
+        pred_cls = []
+        pred_traj = []
+        model_error = []
 
         for simTime in range(self.num_frames - 1):
             self.dd.draw_text("{}".format(simTime), 1)
@@ -402,7 +388,7 @@ class ExperimentRunner(simulation.Simulation):
 
             # visualization before taking action
             if isinstance(self.ctrl, online_controller.OnlineMPPI):
-                self.pred_cls.append(self.ctrl.dynamics_class)
+                pred_cls.append(self.ctrl.dynamics_class)
                 self.dd.draw_text("dyn cls {}".format(self.ctrl.dynamics_class), 2)
 
                 mode_text = "recovery" if self.ctrl.autonomous_recovery_mode else (
@@ -431,20 +417,29 @@ class ExperimentRunner(simulation.Simulation):
                         np.round(action, 2), np.round(obs, 3))
 
             self.last_run_cost.append(cost)
-            self.u.append(action)
-            self.traj.append(obs)
-            self.info.append(info)
+            u.append(action)
+            traj.append(obs)
+            infos.append(info)
 
             if self._predicts_state():
-                self.pred_traj.append(self.ctrl.predicted_next_state)
+                pred_traj.append(self.ctrl.predicted_next_state)
                 # model error from the previous prediction step (can only evaluate it at the current step)
-                self.model_error.append(self.ctrl.prediction_error(obs))
+                model_error.append(self.ctrl.prediction_error(obs))
 
             if done and self.stop_when_done:
                 logger.debug("done and stopping at step %d", simTime)
                 break
 
-        self._finalize_data()
+        self.traj = np.stack(traj)
+        if len(pred_traj):
+            self.pred_traj = np.stack(pred_traj)
+            self.pred_cls = np.stack(pred_cls)
+        u.append(np.zeros(self.env.nu))
+        self.u = np.stack(u)
+        # make same length as state trajectory by appending 0 action
+        self.info = np.stack(infos)
+        if len(model_error):
+            self.model_error = np.stack(model_error)
 
         terminal_cost, done = self.env.evaluate_cost(self.traj[-1])
         self.last_run_cost.append(terminal_cost * self.terminal_cost_multiplier)
