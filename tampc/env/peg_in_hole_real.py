@@ -221,7 +221,7 @@ class DebugRvizDrawer:
         self.max_nom_model_error = max_nominal_model_error
         # self.array_pub = rospy.Publisher("visualization_marker_array", MarkerArray, queue_size=0)
 
-    def _make_point_marker(self, scale=0.01, marker_type=Marker.POINTS):
+    def _make_marker(self, scale=0.01, marker_type=Marker.POINTS):
         marker = Marker()
         marker.header.frame_id = "victor_root"
         marker.type = marker_type
@@ -232,7 +232,7 @@ class DebugRvizDrawer:
         return marker
 
     def draw_state(self, state, time_step, nominal_model_error=0):
-        marker = self._make_point_marker()
+        marker = self._make_marker()
         marker.ns = "state_trajectory"
         marker.id = time_step
 
@@ -250,7 +250,7 @@ class DebugRvizDrawer:
         self.marker_pub.publish(marker)
 
     def draw_goal(self, goal):
-        marker = self._make_point_marker(scale=0.03)
+        marker = self._make_marker(scale=0.03)
         marker.ns = "goal"
         marker.id = 0
         p = Point()
@@ -269,7 +269,7 @@ class DebugRvizDrawer:
     def draw_rollouts(self, rollouts):
         if rollouts is None:
             return
-        marker = self._make_point_marker()
+        marker = self._make_marker()
         marker.ns = "rollouts"
         marker.id = 0
         # assume states is iterable, so could be a bunch of row vectors
@@ -292,11 +292,11 @@ class DebugRvizDrawer:
     def draw_trap_set(self, trap_set):
         if trap_set is None:
             return
-        state_marker = self._make_point_marker(scale=0.02)
+        state_marker = self._make_marker(scale=0.02)
         state_marker.ns = "trap state"
         state_marker.id = 0
 
-        action_marker = self._make_point_marker(marker_type=Marker.LINE_LIST)
+        action_marker = self._make_marker(marker_type=Marker.LINE_LIST)
         action_marker.ns = "trap action"
         action_marker.id = 0
 
@@ -330,14 +330,28 @@ class DebugRvizDrawer:
         self.marker_pub.publish(action_marker)
 
     def clear_visualization_after(self, ns, index):
-        marker = Marker()
+        marker = self._make_marker()
         marker.ns = ns
         marker.action = Marker.DELETEALL
         self.marker_pub.publish(marker)
 
-    def draw_text(self, text, offset, left_offset=0):
-        # TODO
-        pass
+    def draw_text(self, label, text, offset, left_offset=0):
+        marker = self._make_marker(marker_type=Marker.TEXT_VIEW_FACING, scale=0.1)
+        marker.ns = label
+        marker.id = 0
+        marker.text = text
+
+        marker.pose.position.x = 0.8 + offset * 0.11
+        marker.pose.position.y = 0.6 + left_offset * 0.8
+        marker.pose.position.z = 1
+        marker.pose.orientation.w = 1
+
+        marker.color.a = 1
+        marker.color.r = 0.8
+        marker.color.g = 0.3
+
+        self.marker_pub.publish(marker)
+
 
 
 class ExperimentRunner(simulation.Simulation):
@@ -388,6 +402,8 @@ class ExperimentRunner(simulation.Simulation):
     def _run_experiment(self):
         self.last_run_cost = []
         obs, info = self._reset_sim()
+        if self.ctrl.goal is not None:
+            self.dd.draw_goal(self.ctrl.goal)
         traj = [obs]
         u = []
         infos = [info]
@@ -396,7 +412,7 @@ class ExperimentRunner(simulation.Simulation):
         model_error = []
 
         for simTime in range(self.num_frames - 1):
-            self.dd.draw_text("{}".format(simTime), 1)
+            self.dd.draw_text("step", "{}".format(simTime), 1)
             start = time.perf_counter()
 
             action = self.ctrl.command(obs, info)
@@ -404,11 +420,11 @@ class ExperimentRunner(simulation.Simulation):
             # visualization before taking action
             if isinstance(self.ctrl, online_controller.OnlineMPPI):
                 pred_cls.append(self.ctrl.dynamics_class)
-                self.dd.draw_text("dyn cls {}".format(self.ctrl.dynamics_class), 2)
+                self.dd.draw_text("dynamics class", "dyn cls {}".format(self.ctrl.dynamics_class), 2)
 
                 mode_text = "recovery" if self.ctrl.autonomous_recovery_mode else (
-                    "local" if self.ctrl.using_local_model_for_nonnominal_dynamics else "")
-                self.dd.draw_text(mode_text, 3)
+                    "local" if self.ctrl.using_local_model_for_nonnominal_dynamics else "nominal")
+                self.dd.draw_text("control mode", mode_text, 3)
                 if self.ctrl.trap_set is not None:
                     self.dd.draw_trap_set(self.ctrl.trap_set)
 
