@@ -9,6 +9,11 @@ from tampc.env.pybullet_env import PybulletLoader, handle_data_format_for_state_
 from tampc_or import cfg as robot_cfg
 from tampc_or_msgs.srv import Calibrate, Action, Observe, CalibStaticWrench
 
+# drawer imports
+from visualization_msgs.msg import Marker, MarkerArray
+from geometry_msgs.msg import Point
+from std_msgs.msg import ColorRGBA
+
 # runner imports
 from arm_pytorch_utilities import simulation
 from tampc.controller import controller, online_controller
@@ -189,6 +194,137 @@ class RealPegEnv:
         return np.copy(self.state), info
 
 
+class DebugRvizDrawer:
+    def __init__(self, action_scale=0.1, max_nominal_model_error=20):
+        self.marker_pub = rospy.Publisher("visualization_marker", Marker, queue_size=0)
+        self.action_scale = action_scale
+        self.max_nom_model_error = max_nominal_model_error
+        # self.array_pub = rospy.Publisher("visualization_marker_array", MarkerArray, queue_size=0)
+
+    def _make_point_marker(self, scale=0.05, marker_type=Marker.POINTS):
+        marker = Marker()
+        marker.header.frame_id = "victor_root"
+        marker.type = marker_type
+        marker.action = Marker.ADD
+        marker.scale.x = scale
+        marker.scale.y = scale
+        marker.scale.z = scale
+        return marker
+
+    def draw_state(self, state, time_step, nominal_model_error=0):
+        marker = self._make_point_marker()
+        marker.ns = "state_trajectory"
+        marker.id = time_step
+
+        p = Point()
+        p.x = state[0]
+        p.y = state[1]
+        p.z = state[2]
+        c = ColorRGBA()
+        c.a = 1
+        c.r = 0
+        c.g = 1.0 * max(0, self.max_nom_model_error - nominal_model_error) / self.max_nom_model_error
+        c.b = 0
+        marker.colors.append(c)
+        marker.points.append(p)
+        self.marker_pub.publish(marker)
+
+    def draw_goal(self, goal):
+        marker = self._make_point_marker(scale=0.1)
+        marker.ns = "goal"
+        marker.id = 0
+        p = Point()
+        p.x = goal[0]
+        p.y = goal[1]
+        p.z = goal[2]
+        c = ColorRGBA()
+        c.a = 1
+        c.r = 1
+        c.g = 0.8
+        c.b = 0
+        marker.colors.append(c)
+        marker.points.append(p)
+        self.marker_pub.publish(marker)
+
+    def draw_rollouts(self, rollouts):
+        if rollouts is None:
+            return
+        marker = self._make_point_marker()
+        marker.ns = "rollouts"
+        marker.id = 0
+        # assume states is iterable, so could be a bunch of row vectors
+        T = len(rollouts)
+        for t in range(T):
+            cc = (t + 1) / (T + 1)
+            p = Point()
+            p.x = rollouts[t][0]
+            p.y = rollouts[t][1]
+            p.z = rollouts[t][2]
+            c = ColorRGBA()
+            c.a = 1
+            c.r = 0
+            c.g = cc
+            c.b = cc
+            marker.colors.append(c)
+            marker.points.append(p)
+        self.marker_pub.publish(marker)
+
+    def draw_trap_set(self, trap_set):
+        if trap_set is None:
+            return
+        state_marker = self._make_point_marker()
+        state_marker.ns = "trap state"
+        state_marker.id = 0
+
+        action_marker = self._make_point_marker(marker_type=Marker.LINE_LIST)
+        action_marker.ns = "trap action"
+        action_marker.id = 0
+
+        T = len(trap_set)
+        for t in range(T):
+            state, action = trap_set[t]
+
+            p = Point()
+            p.x = state[0]
+            p.y = state[1]
+            p.z = state[2]
+            state_marker.points.append(p)
+            action_marker.points.append(p)
+            p = Point()
+            p.x = state[0] + action[0] * self.action_scale
+            p.y = state[1] + action[1] * self.action_scale
+            p.z = state[2]
+            action_marker.points.append(p)
+
+            cc = (t + 1) / (T + 1)
+            c = ColorRGBA()
+            c.a = 1
+            c.r = 1
+            c.g = 0
+            c.b = cc
+            state_marker.colors.append(c)
+            action_marker.colors.append(c)
+            c = ColorRGBA()
+            c.a = 1
+            c.r = 1
+            c.g = 1
+            c.b = cc
+            action_marker.colors.append(c)
+
+        self.marker_pub.publish(state_marker)
+        self.marker_pub.publish(action_marker)
+
+    def clear_visualization_after(self, ns, index):
+        marker = Marker()
+        marker.ns = ns
+        marker.action = Marker.DELETEALL
+        self.marker_pub.publish(marker)
+
+    def draw_text(self, text, offset, left_offset=0):
+        # TODO
+        pass
+
+
 class ExperimentRunner(simulation.Simulation):
     def __init__(self, env: RealPegEnv, ctrl: controller.Controller, num_frames=500, save_dir=DIR,
                  terminal_cost_multiplier=1, stop_when_done=True,
@@ -199,6 +335,7 @@ class ExperimentRunner(simulation.Simulation):
 
         self.env = env
         self.ctrl = ctrl
+        self.dd = DebugRvizDrawer()
 
         # keep track of last run's rewards
         self.terminal_cost_multiplier = terminal_cost_multiplier
@@ -224,6 +361,7 @@ class ExperimentRunner(simulation.Simulation):
     def _init_data(self):
         self.traj = []
         self.pred_traj = []
+        self.pred_cls = []
         self.u = []
         self.info = []
         self.model_error = []
@@ -233,6 +371,7 @@ class ExperimentRunner(simulation.Simulation):
         self.traj = np.stack(self.traj)
         if len(self.pred_traj):
             self.pred_traj = np.stack(self.pred_traj)
+            self.pred_cls = np.stack(self.pred_cls)
         self.u.append(np.zeros(self.env.nu))
         self.u = np.stack(self.u)
         # make same length as state trajectory by appending 0 action
@@ -256,9 +395,30 @@ class ExperimentRunner(simulation.Simulation):
         self.info = [info]
 
         for simTime in range(self.num_frames - 1):
+            self.dd.draw_text("{}".format(simTime), 1)
             start = time.perf_counter()
 
             action = self.ctrl.command(obs, info)
+
+            # visualization before taking action
+            if isinstance(self.ctrl, online_controller.OnlineMPPI):
+                self.pred_cls.append(self.ctrl.dynamics_class)
+                self.dd.draw_text("dyn cls {}".format(self.ctrl.dynamics_class), 2)
+
+                mode_text = "recovery" if self.ctrl.autonomous_recovery_mode else (
+                    "local" if self.ctrl.using_local_model_for_nonnominal_dynamics else "")
+                self.dd.draw_text(mode_text, 3)
+                if self.ctrl.trap_set is not None:
+                    self.dd.draw_trap_set(self.ctrl.trap_set)
+
+                # print current state; the model prediction error is last time step's prediction about the current state
+                model_pred_error = 0
+                if self.ctrl.diff_predicted is not None:
+                    model_pred_error = self.ctrl.diff_predicted.norm()
+                self.dd.draw_state(obs, simTime, model_pred_error)
+
+                rollouts = self.ctrl.get_rollouts(obs)
+                self.dd.draw_rollouts(rollouts)
 
             # sanitize action
             if torch.is_tensor(action):
