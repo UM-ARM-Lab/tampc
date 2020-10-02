@@ -194,6 +194,26 @@ class RealPegEnv:
         return np.copy(self.state), info
 
 
+class ReplayEnv(RealPegEnv):
+    def __init__(self, ds, **kwargs):
+        self.ds = ds
+        self.xu, self.y, _ = ds.training_set(original=True)
+        self.x = self.xu[:, :self.nx].cpu().numpy()
+        self.t = 0
+        super(ReplayEnv, self).__init__(**kwargs)
+
+    def step(self, action):
+        if self.t < self.x.shape[0] - 1:
+            self.t += 1
+        self.state = self.x[self.t]
+        cost, done = self.evaluate_cost(self.state, action)
+        return np.copy(self.state), -cost, done, None
+
+    def reset(self, action=None):
+        self.t = 0
+        return np.copy(self.x[self.t]), None
+
+
 class DebugRvizDrawer:
     def __init__(self, action_scale=0.1, max_nominal_model_error=20):
         self.marker_pub = rospy.Publisher("visualization_marker", Marker, queue_size=0)
