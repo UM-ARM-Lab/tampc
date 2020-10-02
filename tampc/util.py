@@ -194,7 +194,7 @@ def plot_task_res_dist(series_to_plot, res_file,
             for i, data in enumerate(series):
                 series_name, tk, dists, successes = data
                 plot_info = series_to_plot[series_name]
-                logger.info("%s\nsuccess percent %f%%", series_name, successes * 100)
+                logger.info("%s\nsuccess percent %f%% %d trials", series_name, successes * 100, dists.shape[0])
 
                 t = np.arange(dists.shape[1])
                 m = np.median(dists, axis=0)
