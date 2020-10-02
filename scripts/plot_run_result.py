@@ -23,11 +23,13 @@ ignore_cache = False
 
 # scalar name combinations
 series = {
-    'sep_dec': {'name': 'w/o $h_\omega$'},
-    'extract': {'name': 'w/o REx', },
-    'rex_extract': {'name': 'full'},
-    'skipz': {'name': 'skip z'},
-    'rex_skip': {'name': 'skip z + REx'},
+    # 'sep_dec': {'name': 'w/o $h_\omega$'},
+    # 'extract': {'name': 'w/o REx', },
+    # 'rex_extract': {'name': 'full'},
+    'skipz_2_RAL': {'name': 'skip z'},
+    'skipz_2_prenormalized': {'name': 'prenorm skip z'},
+    # 'rex_skip_2_RAL': {'name': 'skip z + REx'},
+    # 'rex_skip_2_prenormalized': {'name': 'prenorm skip z + REx'},
 }
 losses = {'percent_match': {'name': 'match', 'pos': 0}, 'percent_reconstruction': {'name': 'reconstruction', 'pos': 1}}
 datasets = {'validation': {'name': '(a) validation', 'pos': 0},

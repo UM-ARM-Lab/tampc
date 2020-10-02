@@ -1920,15 +1920,27 @@ if __name__ == "__main__":
         util.plot_task_res_dist({
             'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC', 'color': 'green', 'label': True},
-            'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC random', 'color': 'orange', 'label': True},
-            'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC skip z', 'color': 'black', 'label': True},
-            'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-                'name': 'non-adapative', 'color': 'purple', 'label': True},
-            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-                'name': 'adaptive baseline++', 'color': 'red', 'label': True},
-            'sac__5': {'name': 'SAC', 'color': 'cyan', 'label': True},
+            # 'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'TAMPC random', 'color': 'orange', 'label': True},
+            # 'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2': {
+            #     'name': 'TAMPC skip z (aggregate)', 'color': 'black', 'label': True},
+            'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s2': {
+                'name': 'TAMPC skip z (seed 2)', 'color': 'black', 'label': True},
+            'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s3': {
+                'name': 'TAMPC skip z (seed 3)', 'color': 'red', 'label': True},
+            'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s4': {
+                'name': 'TAMPC skip z (seed 4)', 'color': 'blue', 'label': True},
+            'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s5': {
+                'name': 'TAMPC skip z (seed 5)', 'color': 'cyan', 'label': True},
+            'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s6': {
+                'name': 'TAMPC skip z (seed 6)', 'color': 'magenta', 'label': True},
+            'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s7': {
+                'name': 'TAMPC skip z (seed 7)', 'color': 'orange', 'label': True},
+            # 'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+            #     'name': 'non-adapative', 'color': 'purple', 'label': True},
+            # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+            #     'name': 'adaptive baseline++', 'color': 'red', 'label': True},
+            # 'sac__5': {'name': 'SAC', 'color': 'cyan', 'label': True},
 
             # 'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
             #     'name': 'TAMPC', 'color': 'green'},
