@@ -237,13 +237,15 @@ class ReplayEnv(RealPegEnv):
 
 
 class DebugRvizDrawer:
+    BASE_SCALE = 0.005
+
     def __init__(self, action_scale=0.1, max_nominal_model_error=20):
         self.marker_pub = rospy.Publisher("visualization_marker", Marker, queue_size=0)
         self.action_scale = action_scale
         self.max_nom_model_error = max_nominal_model_error
         # self.array_pub = rospy.Publisher("visualization_marker_array", MarkerArray, queue_size=0)
 
-    def _make_marker(self, scale=0.01, marker_type=Marker.POINTS):
+    def _make_marker(self, scale=BASE_SCALE, marker_type=Marker.POINTS):
         marker = Marker()
         marker.header.frame_id = "victor_root"
         marker.type = marker_type
@@ -272,7 +274,7 @@ class DebugRvizDrawer:
         self.marker_pub.publish(marker)
 
     def draw_goal(self, goal):
-        marker = self._make_marker(scale=0.03)
+        marker = self._make_marker(scale=self.BASE_SCALE * 2)
         marker.ns = "goal"
         marker.id = 0
         p = Point()
@@ -314,7 +316,7 @@ class DebugRvizDrawer:
     def draw_trap_set(self, trap_set):
         if trap_set is None:
             return
-        state_marker = self._make_marker(scale=0.02)
+        state_marker = self._make_marker(scale=self.BASE_SCALE * 2)
         state_marker.ns = "trap state"
         state_marker.id = 0
 
@@ -351,20 +353,20 @@ class DebugRvizDrawer:
         self.marker_pub.publish(state_marker)
         self.marker_pub.publish(action_marker)
 
-    def clear_visualization_after(self, ns, index):
+    def clear_markers(self, ns):
         marker = self._make_marker()
         marker.ns = ns
         marker.action = Marker.DELETEALL
         self.marker_pub.publish(marker)
 
     def draw_text(self, label, text, offset, left_offset=0):
-        marker = self._make_marker(marker_type=Marker.TEXT_VIEW_FACING, scale=0.1)
+        marker = self._make_marker(marker_type=Marker.TEXT_VIEW_FACING, scale=self.BASE_SCALE * 5)
         marker.ns = label
         marker.id = 0
         marker.text = text
 
-        marker.pose.position.x = 0.8 + offset * 0.11
-        marker.pose.position.y = 0.6 + left_offset * 0.8
+        marker.pose.position.x = 1.4 + offset * self.BASE_SCALE * 6
+        marker.pose.position.y = 0.4 + left_offset * 0.5
         marker.pose.position.z = 1
         marker.pose.orientation.w = 1
 
@@ -424,6 +426,7 @@ class ExperimentRunner(simulation.Simulation):
     def _run_experiment(self):
         self.last_run_cost = []
         obs, info = self._reset_sim()
+        self.dd.clear_markers("state_trajectory")
         if self.ctrl.goal is not None:
             self.dd.draw_goal(self.ctrl.goal)
         traj = [obs]
