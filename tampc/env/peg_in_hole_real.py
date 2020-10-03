@@ -20,6 +20,7 @@ from arm_pytorch_utilities import simulation
 from tampc.controller import controller, online_controller
 import matplotlib.pyplot as plt
 import time
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +145,7 @@ class RealPegEnv:
 
     def setup_experiment(self):
         if self.srv_video is not None:
-            self.srv_video('{}.mp4'.format(time.time()), True, 3600)
+            self.srv_video('{}.mp4'.format(datetime.now().strftime('%Y_%m_%d_%H_%M_%S')), True, 3600)
 
     # --- observing state from simulation
     def _obs(self):
