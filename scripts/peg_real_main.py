@@ -12,6 +12,15 @@ import argparse
 from datetime import datetime
 import pprint
 
+try:
+    import rospy
+    rospy.init_node("tampc_env")
+    # without this we get not logging from the library
+    import importlib
+    importlib.reload(logging)
+except:
+    print("Proceeding without ROS")
+
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.optim import get_device
 from arm_pytorch_utilities import preprocess
@@ -57,6 +66,7 @@ def get_env(level=0, **kwargs):
         x = 1.74962708 - 0.001
         y = -0.02913485 + 0.011
         # env.set_task_config(hole=[x, y], init_peg=[1.64363362, 0.05320179])
+        # for tuning close to goal behaviour (spiral exploration vs going straight to goal)
         env.set_task_config(hole=[x, y], init_peg=[x + 0.03, y])
     env_dir = '{}/real'.format(peg_in_hole_real.DIR)
     return env
