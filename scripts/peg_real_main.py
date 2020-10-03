@@ -14,9 +14,11 @@ import pprint
 
 try:
     import rospy
+
     rospy.init_node("tampc_env")
     # without this we get not logging from the library
     import importlib
+
     importlib.reload(logging)
 except:
     print("Proceeding without ROS")
@@ -219,7 +221,7 @@ def get_controller_options(env):
 class OfflineDataCollection:
     @staticmethod
     def freespace(seed_offset=0, trials=200, trial_length=50, force_gui=False):
-        env = get_env(level=0, stub=False, log_video=True)
+        env = get_env(level=0, stub=False)
         u_min, u_max = env.get_control_bounds()
         ctrl = controller.FullRandomController(env.nu, u_min, u_max)
         # use mode p.GUI to see what the trials look like
@@ -238,7 +240,8 @@ class OfflineDataCollection:
             # start at fixed location
             ctrl = controller.FullRandomController(env.nu, u_min, u_max)
             sim.ctrl = ctrl
-            sim.run(seed, run_name=run_name)
+            with peg_in_hole_real.VideoLogger():
+                sim.run(seed, run_name=run_name)
 
         env.close()
         if sim.save:
@@ -312,7 +315,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                    override_tampc_params=None,
                    override_mpc_params=None,
                    **kwargs):
-    env = get_env(level=level, log_video=True, stub=False)
+    env = get_env(level=level, stub=False)
     logger.info("initial random seed %d", rand.seed(seed))
 
     ds, pm = get_prior(env, use_tsf, rep_name=rep_name)
@@ -394,11 +397,13 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
         affix_run_name(seed)
         affix_run_name(num_frames)
 
-    sim.dd.draw_text("run name", run_name, 14, left_offset=-0.8)
-    pre_run_setup(env, ctrl, ds)
+    with peg_in_hole_real.VideoLogger():
+        sim.dd.draw_text("run name", run_name, 14, left_offset=-0.8)
+        pre_run_setup(env, ctrl, ds)
 
-    sim.run(seed, run_name)
-    logger.info("last run cost %f", np.sum(sim.last_run_cost))
+        sim.run(seed, run_name)
+        logger.info("last run cost %f", np.sum(sim.last_run_cost))
+        time.sleep(2)
     plt.ioff()
     plt.show()
 

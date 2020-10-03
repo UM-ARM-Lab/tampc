@@ -47,6 +47,20 @@ class PegRealLoader(PybulletLoader):
         return xu, y, cc
 
 
+class VideoLogger:
+    def __enter__(self):
+        srv_name = "video_recorder"
+        rospy.wait_for_service(srv_name)
+        self.srv_video = rospy.ServiceProxy(srv_name, TriggerVideoRecording)
+        self.srv_video('{}.mp4'.format(datetime.now().strftime('%Y_%m_%d_%H_%M_%S')), True, 3600)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # stop logging video
+        if self.srv_video is not None:
+            self.srv_video('{}.mp4'.format(time.time()), False, 3600)
+
+
 class RealPegEnv:
     """Interaction with robot via our ROS node; manages what dimensions of the returned observation
     is necessary for dynamics (passed back as state) and which are extra (passed back as info)"""
@@ -101,7 +115,7 @@ class RealPegEnv:
     def control_cost(cls):
         return np.diag([1 for _ in range(cls.nu)])
 
-    def __init__(self, environment_level=0, dist_for_done=0.02, obs_time=1, stub=True, log_video=False):
+    def __init__(self, environment_level=0, dist_for_done=0.02, obs_time=1, stub=True):
         self.level = environment_level
         self.dist_for_done = dist_for_done
 
@@ -125,13 +139,6 @@ class RealPegEnv:
             rospy.wait_for_service(srv_name)
             self.srv_obs = rospy.ServiceProxy(srv_name, Observe)
 
-            if log_video:
-                srv_name = "video_recorder"
-                rospy.wait_for_service(srv_name)
-                self.srv_video = rospy.ServiceProxy(srv_name, TriggerVideoRecording)
-            else:
-                self.srv_video = None
-
             self.state, _ = self._obs()
 
     def set_task_config(self, hole=None, init_peg=None):
@@ -144,8 +151,7 @@ class RealPegEnv:
             raise RuntimeError("Expected peg to be (x, y), instead got {}".format(init_peg))
 
     def setup_experiment(self):
-        if self.srv_video is not None:
-            self.srv_video('{}.mp4'.format(datetime.now().strftime('%Y_%m_%d_%H_%M_%S')), True, 3600)
+        pass
 
     # --- observing state from simulation
     def _obs(self):
@@ -207,9 +213,7 @@ class RealPegEnv:
         return np.copy(self.state), info
 
     def close(self):
-        # stop logging video
-        if self.srv_video is not None:
-            self.srv_video('{}.mp4'.format(time.time()), False, 3600)
+        pass
 
 
 class ReplayEnv(RealPegEnv):
@@ -369,7 +373,6 @@ class DebugRvizDrawer:
         marker.color.g = 0.3
 
         self.marker_pub.publish(marker)
-
 
 
 class ExperimentRunner(simulation.Simulation):
