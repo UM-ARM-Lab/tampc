@@ -255,7 +255,7 @@ class DebugRvizDrawer:
         marker.scale.z = scale
         return marker
 
-    def draw_state(self, state, time_step, nominal_model_error=0):
+    def draw_state(self, state, time_step, nominal_model_error=0, action=None):
         marker = self._make_marker()
         marker.ns = "state_trajectory"
         marker.id = time_step
@@ -272,6 +272,25 @@ class DebugRvizDrawer:
         marker.colors.append(c)
         marker.points.append(p)
         self.marker_pub.publish(marker)
+        if action is not None:
+            action_marker = self._make_marker(marker_type=Marker.LINE_LIST)
+            action_marker.ns = "action"
+            action_marker.id = 0
+            action_marker.points.append(p)
+            p = Point()
+            p.x = state[0] + action[0] * self.action_scale
+            p.y = state[1] + action[1] * self.action_scale
+            p.z = state[2]
+            action_marker.points.append(p)
+
+            c = ColorRGBA()
+            c.a = 1
+            c.r = 1
+            c.g = 0
+            c.b = 0
+            action_marker.colors.append(c)
+            action_marker.colors.append(c)
+            self.marker_pub.publish(action_marker)
 
     def draw_goal(self, goal):
         marker = self._make_marker(scale=self.BASE_SCALE * 2)
@@ -457,7 +476,7 @@ class ExperimentRunner(simulation.Simulation):
                 model_pred_error = 0
                 if self.ctrl.diff_predicted is not None:
                     model_pred_error = self.ctrl.diff_predicted.norm()
-                self.dd.draw_state(obs, simTime, model_pred_error)
+                self.dd.draw_state(obs, simTime, model_pred_error, action=action)
 
                 rollouts = self.ctrl.get_rollouts(obs)
                 self.dd.draw_rollouts(rollouts)
