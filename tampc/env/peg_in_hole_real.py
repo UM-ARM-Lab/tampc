@@ -8,7 +8,11 @@ from tampc.env.pybullet_env import PybulletLoader, handle_data_format_for_state_
 
 from tampc_or import cfg as robot_cfg
 from tampc_or_msgs.srv import Calibrate, Action, Observe, CalibStaticWrench
+
+# video recorder imports
 from arm_video_recorder.srv import TriggerVideoRecording
+from window_recorder.recorder import WindowRecorder
+import os.path
 
 # drawer imports
 from visualization_msgs.msg import Marker, MarkerArray
@@ -48,15 +52,24 @@ class PegRealLoader(PybulletLoader):
 
 
 class VideoLogger:
+    def __init__(self):
+        self.wr = WindowRecorder(window_names=("RViz*", "RViz"), name_suffix="rviz", frame_rate=30.0,
+                                 save_dir=cfg.VIDEO_DIR)
+
     def __enter__(self):
+        logger.info("Start recording videos")
         srv_name = "video_recorder"
         rospy.wait_for_service(srv_name)
         self.srv_video = rospy.ServiceProxy(srv_name, TriggerVideoRecording)
-        self.srv_video('{}.mp4'.format(datetime.now().strftime('%Y_%m_%d_%H_%M_%S')), True, 3600)
+        self.srv_video(os.path.join(cfg.VIDEO_DIR, '{}_robot.mp4'.format(datetime.now().strftime('%Y_%m_%d_%H_%M_%S'))),
+                       True, 3600)
+        self.wr.__enter__()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        logger.info("Stop recording videos")
         # stop logging video
+        self.wr.__exit__()
         if self.srv_video is not None:
             self.srv_video('{}.mp4'.format(time.time()), False, 3600)
 
@@ -446,6 +459,9 @@ class ExperimentRunner(simulation.Simulation):
         self.last_run_cost = []
         obs, info = self._reset_sim()
         self.dd.clear_markers("state_trajectory")
+        self.dd.clear_markers("trap state")
+        self.dd.clear_markers("trap action")
+        self.dd.clear_markers("action")
         if self.ctrl.goal is not None:
             self.dd.draw_goal(self.ctrl.goal)
         traj = [obs]

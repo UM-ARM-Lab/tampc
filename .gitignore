@@ -9,7 +9,7 @@ data/
 0_VRDemoSettings.txt
 constraint.py
 *~
-temp.*
+temp*
 runs
 old_runs
 *.mat
