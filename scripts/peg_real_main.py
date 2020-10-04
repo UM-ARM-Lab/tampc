@@ -67,9 +67,9 @@ def get_env(level=0, **kwargs):
     if level is task_map['Peg-T']:
         x = 1.74962708 - 0.001
         y = -0.02913485 + 0.011
-        # env.set_task_config(hole=[x, y], init_peg=[1.64363362, 0.05320179])
+        env.set_task_config(hole=[x, y], init_peg=[1.64363362, 0.05320179])
         # for tuning close to goal behaviour (spiral exploration vs going straight to goal)
-        env.set_task_config(hole=[x, y], init_peg=[x + 0.03, y])
+        # env.set_task_config(hole=[x, y], init_peg=[x + 0.03, y])
     env_dir = '{}/real'.format(peg_in_hole_real.DIR)
     return env
 
@@ -198,7 +198,7 @@ def get_controller_options(env):
         'u_similarity': env.control_similarity,
         'device': d,
         'terminal_cost_multiplier': 50,
-        'trap_cost_annealing_rate': 0.9,
+        'trap_cost_annealing_rate': 0.8,
         'abs_unrecognized_threshold': 15,
         # 'nonnominal_dynamics_penalty_tolerance': 0.1,
         # 'dynamics_minimum_window': 15,
