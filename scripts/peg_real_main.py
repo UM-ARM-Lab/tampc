@@ -69,7 +69,7 @@ def get_env(level=0, **kwargs):
         y = -0.02913485 + 0.011
         env.set_task_config(hole=[x, y], init_peg=[1.64363362, 0.05320179])
         # for tuning close to goal behaviour (spiral exploration vs going straight to goal)
-        # env.set_task_config(hole=[x, y], init_peg=[x + 0.03, y])
+        # env.set_task_config(hole=[x, y], init_peg=[x + 0.02, y])
     env_dir = '{}/real'.format(peg_in_hole_real.DIR)
     return env
 

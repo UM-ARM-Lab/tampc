@@ -25,6 +25,8 @@ from tampc.controller import controller, online_controller
 import matplotlib.pyplot as plt
 import time
 from datetime import datetime
+import copy
+from math import cos, sin
 
 logger = logging.getLogger(__name__)
 
@@ -195,12 +197,12 @@ class RealPegEnv:
         # info is just everything
         return state, raw_obs
 
-    def step(self, action):
+    def step(self, action, dz=0.):
         action = np.clip(action, *self.get_control_bounds())
         # normalize action such that the input can be within a fixed range
         dx, dy = self._unpack_action(action)
 
-        action_resp = self.srv_action([dx, dy])
+        action_resp = self.srv_action([dx, dy, dz])
         # separate obs into state and info
         self.state, info = self._unpack_raw_obs(action_resp.obs)
         cost, done = self.evaluate_cost(self.state, action)
@@ -411,7 +413,7 @@ class DebugRvizDrawer:
 
 class ExperimentRunner(simulation.Simulation):
     def __init__(self, env: RealPegEnv, ctrl: controller.Controller, num_frames=500, save_dir=DIR,
-                 terminal_cost_multiplier=1, stop_when_done=True,
+                 terminal_cost_multiplier=1, stop_when_done=True, spiral_explore=True,
                  **kwargs):
 
         super().__init__(save_dir=save_dir, num_frames=num_frames, config=cfg, **kwargs)
@@ -420,6 +422,9 @@ class ExperimentRunner(simulation.Simulation):
         self.env = env
         self.ctrl = ctrl
         self.dd = DebugRvizDrawer()
+
+        # behaviour when we near where we think the hole is
+        self.spiral_explore = spiral_explore
 
         # keep track of last run's rewards
         self.terminal_cost_multiplier = terminal_cost_multiplier
@@ -537,19 +542,33 @@ class ExperimentRunner(simulation.Simulation):
 
         assert len(self.last_run_cost) == self.u.shape[0]
 
-        # if we're done, use a simple local controller to get to the goal ignoring traps
+        # if we're done (close to goal), use some local techniques to find hole
         if done and isinstance(self.ctrl, online_controller.OnlineMPC):
             logger.info("done, using local controller to insert peg")
-            P_TERM = 20
-            cost = 100
-            while cost > 0.0001:
-                dxy = [self.ctrl.goal[0].item() - obs[0], self.ctrl.goal[1].item() - obs[1]]
-                action = np.array(dxy) * P_TERM
-                if np.linalg.norm(action) < 0.2:
-                    action *= 0.2 / np.linalg.norm(action)
-                obs, rew, done, info = self.env.step(action)
-                cost = -rew
-                logger.info("dxy %s cost %f", np.round(dxy, 3), cost)
+            if self.spiral_explore:
+                ctrl = SpiralController()
+                stable_z = [o[2] for o in self.traj[-20:]]
+                stable_z = np.stack(stable_z).mean()
+                while True:
+                    action = ctrl.command(obs)
+                    action = np.array(action)
+                    obs, rew, done, info = self.env.step(action, -self.env.MAX_PUSH_DIST * 0.1)
+                    logger.info("stable z %f z %f rz %f", np.round(stable_z, 3), np.round(obs[2], 3),
+                                np.round(info[5], 3))
+                    if abs(obs[2] - stable_z) > self.env.MAX_PUSH_DIST * 0.05:
+                        break
+            else:
+                P_TERM = 20
+                cost = 100
+                while cost > 0.0001:
+                    dxy = [self.ctrl.goal[0].item() - obs[0], self.ctrl.goal[1].item() - obs[1]]
+                    action = np.array(dxy) * P_TERM
+                    if np.linalg.norm(action) < 0.2:
+                        action *= 0.2 / np.linalg.norm(action)
+                    obs, rew, done, info = self.env.step(action)
+                    cost = -rew
+                    logger.info("dxy %s cost %f", np.round(dxy, 3), cost)
+
             self.env.srv_action([0, 0, -self.env.MAX_PUSH_DIST * 0.6])
 
         return simulation.ReturnMeaning.SUCCESS
@@ -639,6 +658,21 @@ class ExperimentRunner(simulation.Simulation):
 
     def _reset_sim(self):
         return self.env.reset()
+
+
+class SpiralController:
+    def __init__(self, start_t=1.5, scale=0.03, growth=4):
+        self.t = start_t
+        self.scale = scale
+        self.growth = np.pi / 20 * growth
+
+    def command(self, obs):
+        t = self.t
+        x = (self.scale * t) * cos(t)
+        y = (self.scale * t) * sin(t)
+
+        self.t += self.growth
+        return [x, y]
 
 
 class PegRealDataSource(PybulletEnvDataSource):
