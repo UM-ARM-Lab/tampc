@@ -260,7 +260,7 @@ class DebugRvizDrawer:
         self.max_nom_model_error = max_nominal_model_error
         # self.array_pub = rospy.Publisher("visualization_marker_array", MarkerArray, queue_size=0)
 
-    def _make_marker(self, scale=BASE_SCALE, marker_type=Marker.POINTS):
+    def make_marker(self, scale=BASE_SCALE, marker_type=Marker.POINTS):
         marker = Marker()
         marker.header.frame_id = "victor_root"
         marker.type = marker_type
@@ -271,7 +271,7 @@ class DebugRvizDrawer:
         return marker
 
     def draw_state(self, state, time_step, nominal_model_error=0, action=None):
-        marker = self._make_marker()
+        marker = self.make_marker()
         marker.ns = "state_trajectory"
         marker.id = time_step
 
@@ -288,7 +288,7 @@ class DebugRvizDrawer:
         marker.points.append(p)
         self.marker_pub.publish(marker)
         if action is not None:
-            action_marker = self._make_marker(marker_type=Marker.LINE_LIST)
+            action_marker = self.make_marker(marker_type=Marker.LINE_LIST)
             action_marker.ns = "action"
             action_marker.id = 0
             action_marker.points.append(p)
@@ -308,7 +308,7 @@ class DebugRvizDrawer:
             self.marker_pub.publish(action_marker)
 
     def draw_goal(self, goal):
-        marker = self._make_marker(scale=self.BASE_SCALE * 2)
+        marker = self.make_marker(scale=self.BASE_SCALE * 2)
         marker.ns = "goal"
         marker.id = 0
         p = Point()
@@ -327,7 +327,7 @@ class DebugRvizDrawer:
     def draw_rollouts(self, rollouts):
         if rollouts is None:
             return
-        marker = self._make_marker()
+        marker = self.make_marker()
         marker.ns = "rollouts"
         marker.id = 0
         # assume states is iterable, so could be a bunch of row vectors
@@ -350,11 +350,11 @@ class DebugRvizDrawer:
     def draw_trap_set(self, trap_set):
         if trap_set is None:
             return
-        state_marker = self._make_marker(scale=self.BASE_SCALE * 2)
+        state_marker = self.make_marker(scale=self.BASE_SCALE * 2)
         state_marker.ns = "trap_state"
         state_marker.id = 0
 
-        action_marker = self._make_marker(marker_type=Marker.LINE_LIST)
+        action_marker = self.make_marker(marker_type=Marker.LINE_LIST)
         action_marker.ns = "trap_action"
         action_marker.id = 0
 
@@ -388,13 +388,13 @@ class DebugRvizDrawer:
         self.marker_pub.publish(action_marker)
 
     def clear_markers(self, ns, delete_all=True):
-        marker = self._make_marker()
+        marker = self.make_marker()
         marker.ns = ns
         marker.action = Marker.DELETEALL if delete_all else Marker.DELETE
         self.marker_pub.publish(marker)
 
     def draw_text(self, label, text, offset, left_offset=0):
-        marker = self._make_marker(marker_type=Marker.TEXT_VIEW_FACING, scale=self.BASE_SCALE * 5)
+        marker = self.make_marker(marker_type=Marker.TEXT_VIEW_FACING, scale=self.BASE_SCALE * 5)
         marker.ns = label
         marker.id = 0
         marker.text = text
