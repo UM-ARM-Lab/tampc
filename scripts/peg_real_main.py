@@ -376,10 +376,13 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
         def get_rep_model_name(ds):
             import re
             tsf_name = ""
-            for tsf in ds.preprocessor.tsf.transforms:
-                if isinstance(tsf, invariant.InvariantTransformer):
-                    tsf_name = tsf.tsf.name
-                    tsf_name = re.match(r".*?s\d+", tsf_name)[0]
+            try:
+                for tsf in ds.preprocessor.tsf.transforms:
+                    if isinstance(tsf, invariant.InvariantTransformer):
+                        tsf_name = tsf.tsf.name
+                        tsf_name = re.match(r".*?s\d+", tsf_name)[0]
+            except AttributeError:
+                pass
             # TODO also include model name
             return tsf_name
 
@@ -425,30 +428,20 @@ def test_autonomous_recovery(*args, **kwargs):
 
 class EvaluateTask:
     @staticmethod
-    def closest_distance_to_goal(file, level, visualize=True, nodes_per_side=150):
+    def closest_distance_to_goal(file, level, just_get_ok_nodes=False, visualize=True, nodes_per_side=150):
         from sklearn.preprocessing import MinMaxScaler
-        env = get_env(p.GUI if visualize else p.DIRECT, level=level)
+        from visualization_msgs.msg import Marker
+        from geometry_msgs.msg import Point
+        from std_msgs.msg import ColorRGBA
+
+        env = get_env(level=level)
         ds, _ = get_ds(env, file, validation_ratio=0.)
         XU, _, _ = ds.training_set(original=True)
         X, U = torch.split(XU, ds.original_config().nx, dim=1)
 
-        # TODO consider making a simulation of the environment to allow visualization and validation
-        if level is 1:
-            min_pos = [-0.3, -0.3]
-            max_pos = [0.5, 0.5]
-        elif level is 3:
-            min_pos = [-0.2, -0.1]
-            max_pos = [0.2, 0.35]
-        elif level is 5:
-            min_pos = [-0.4, -0.1]
-            max_pos = [0.4, 0.4]
-        elif level is 6:
-            min_pos = [-0.3, -0.1]
-            max_pos = [0.3, 0.3]
-        elif level is 7:
-            translation = 10
-            min_pos = [-0.3 + translation, -0.1 + translation]
-            max_pos = [0.3 + translation, 0.3 + translation]
+        if level is task_map['Peg-T']:
+            min_pos = [1.5, -0.14]
+            max_pos = [1.85, 0.18]
         else:
             raise RuntimeError("Unspecified range for level {}".format(level))
 
@@ -468,49 +461,109 @@ class EvaluateTask:
             node = tuple(int(round(v)) for v in pair)
             return node
 
-        z = env.initPeg[2]
+        dd = peg_in_hole_real.DebugRvizDrawer()
+        z = X[0, 2].item()
         # draw search boundaries
-        rgb = [0, 0, 0]
-        p.addUserDebugLine([min_pos[0], min_pos[1], z], [max_pos[0], min_pos[1], z], rgb)
-        p.addUserDebugLine([max_pos[0], min_pos[1], z], [max_pos[0], max_pos[1], z], rgb)
-        p.addUserDebugLine([max_pos[0], max_pos[1], z], [min_pos[0], max_pos[1], z], rgb)
-        p.addUserDebugLine([min_pos[0], max_pos[1], z], [min_pos[0], min_pos[1], z], rgb)
+        marker = dd.make_marker(marker_type=Marker.LINE_STRIP)
+        marker.ns = "boundary"
+        marker.id = 0
+        marker.color.a = 1
+        marker.color.r = 0
+        marker.color.g = 0
+        marker.color.b = 0
+        marker.points = [Point(x=min_pos[0], y=min_pos[1], z=z), Point(x=max_pos[0], y=min_pos[1], z=z),
+                         Point(x=max_pos[0], y=max_pos[1], z=z), Point(x=min_pos[0], y=max_pos[1], z=z),
+                         Point(x=min_pos[0], y=min_pos[1], z=z)]
+        dd.marker_pub.publish(marker)
 
         # draw previous trajectory
-        rgb = [0, 0, 1]
-        start = reached_states[0, 0], reached_states[0, 1], z
-        for i in range(1, len(reached_states)):
-            next = reached_states[i, 0], reached_states[i, 1], z
-            p.addUserDebugLine(start, next, rgb)
-            start = next
+        marker = dd.make_marker(marker_type=Marker.POINTS)
+        marker.ns = "state_trajectory"
+        marker.id = 0
+        for i in range(len(X)):
+            p = reached_states[i]
+            marker.points.append(Point(x=p[0], y=p[1], z=z))
+        marker.color.a = 1
+        marker.color.b = 1
+        dd.marker_pub.publish(marker)
 
         # try to load it if possible
-        fullname = os.path.join(cfg.DATA_DIR, 'ok_peg{}_{}.pkl'.format(level, nodes_per_side))
+        fullname = os.path.join(cfg.DATA_DIR, 'ok_{}{}_{}.pkl'.format(peg_in_hole_real.DIR, level, nodes_per_side))
         if os.path.exists(fullname):
             with open(fullname, 'rb') as f:
                 ok_nodes = pickle.load(f)
                 logger.info("loaded ok nodes from %s", fullname)
         else:
             ok_nodes = [[None for _ in range(nodes_per_side)] for _ in range(nodes_per_side)]
-            orientation = p.getQuaternionFromEuler([0, 0, 0])
-            pointer = p.loadURDF(os.path.join(cfg.ROOT_DIR, "peg.urdf"), (0, 0, z))
             # discretize positions and show goal states
             xs = np.linspace(min_pos[0], max_pos[0], nodes_per_side)
             ys = np.linspace(min_pos[1], max_pos[1], nodes_per_side)
+            # publish to rviz
+            marker = dd.make_marker(scale=dd.BASE_SCALE * 0.3)
+            marker.ns = "nodes"
+            marker.id = 0
+            marker.color.a = 1
+            marker.color.g = 1
             for i, x in enumerate(xs):
                 for j, y in enumerate(ys):
-                    p.resetBasePositionAndOrientation(pointer, (x, y, z), orientation)
-                    for wall in env.walls:
-                        c = p.getClosestPoints(pointer, wall, 0.0)
-                        if c:
-                            break
+                    n = pos_to_node((x, y))
+                    ok_nodes[i][j] = n
+                    marker.points.append(Point(x=x, y=y, z=z))
+            dd.marker_pub.publish(marker)
+
+            range_id = 1
+            while True:
+                ij = input(
+                    "enter i_start-i_end [0,{}], j_start-j_end [0,{}] to toggle node or q to finish".format(len(xs) - 1,
+                                                                                                            len(
+                                                                                                                ys) - 1))
+                if ij.strip() == 'q':
+                    break
+                try:
+                    i, j = ij.split(',')
+                    # see if things can be broken down into interval
+                    if '-' in i:
+                        v_min, v_max = tuple(int(v) for v in i.split('-'))
+                        i_interval = range(v_min, v_max + 1)
+                        if v_min < 0 or v_min > v_max or v_max >= len(xs):
+                            raise RuntimeError()
                     else:
-                        n = pos_to_node((x, y))
-                        ok_nodes[i][j] = n
+                        i_interval = [int(i)]
+                    if '-' in j:
+                        v_min, v_max = tuple(int(v) for v in j.split('-'))
+                        j_interval = range(v_min, v_max + 1)
+                        if v_min < 0 or v_min > v_max or v_max >= len(ys):
+                            raise RuntimeError()
+                    else:
+                        j_interval = [int(j)]
+                except RuntimeError:
+                    print("did not enter in correct format, try again")
+                    continue
+
+                marker = dd.make_marker(scale=dd.BASE_SCALE * 0.3)
+                marker.ns = "nodes"
+                marker.id = range_id
+                range_id += 1
+
+                for i in i_interval:
+                    for j in j_interval:
+                        xy = node_to_pos((i, j))
+                        marker.points.append(Point(x=xy[0], y=xy[1], z=z + 0.0001))
+                        # toggle whether this node is OK or not
+                        if ok_nodes[i][j] is None:
+                            ok_nodes[i][j] = (i, j)
+                            marker.colors.append(ColorRGBA(r=0, g=1, b=0, a=1))
+                        else:
+                            ok_nodes[i][j] = None
+                            marker.colors.append(ColorRGBA(r=1, g=0, b=0, a=1))
+                dd.marker_pub.publish(marker)
 
         with open(fullname, 'wb') as f:
             pickle.dump(ok_nodes, f)
             logger.info("saved ok nodes to %s", fullname)
+
+        if just_get_ok_nodes:
+            return
 
         # distance 1 step along x
         dxx = (max_pos[0] - min_pos[0]) / nodes_per_side
@@ -559,16 +612,19 @@ class EvaluateTask:
             print('min node outside search region, return lower bound')
             return lower_bound_dist * 1.2
         # display minimum path to goal
-        rgb = [1, 0, 0]
         min_xy = node_to_pos(min_node)
-        start = min_xy[0], min_xy[1], z
+        marker = dd.make_marker(marker_type=Marker.LINE_STRIP)
+        marker.ns = "mindist"
+        marker.id = 0
+        marker.color.a = 1
+        marker.color.r = 1
+        marker.points = [Point(x=min_xy[0], y=min_xy[1], z=z)]
         while min_node != goal_node:
             next_node = path[min_node]
             next_xy = node_to_pos(next_node)
-            next = next_xy[0], next_xy[1], z
-            p.addUserDebugLine(start, next, rgb)
-            start = next
+            marker.points.append(Point(x=next_xy[0], y=next_xy[1], z=z))
             min_node = next_node
+        dd.marker_pub.publish(marker)
 
         print('min dist: {} lower bound: {}'.format(min_dist, lower_bound_dist))
         return dists
@@ -600,7 +656,7 @@ parser.add_argument('--task', default=list(task_map.keys())[0], choices=task_map
                     help='run parameter: what task to run')
 parser.add_argument('--run_prefix', default=None, type=str,
                     help='run parameter: prefix to save the run under')
-parser.add_argument('--num_frames', metavar='N', type=int, default=500,
+parser.add_argument('--num_frames', metavar='N', type=int, default=300,
                     help='run parameter: number of simulation frames to run')
 parser.add_argument('--no_trap_cost', action='store_true', help='run parameter: turn off trap set cost')
 parser.add_argument('--nonadaptive_baseline', action='store_true',
@@ -666,36 +722,42 @@ if __name__ == "__main__":
                                      override_tampc_params=tampc_params, override_mpc_params=mpc_params,
                                      autonomous_recovery=autonomous_recovery)
     elif args.command == 'evaluate':
+        task_type = peg_in_hole_real.DIR
+        trials = ["{}/{}".format(task_type, filename) for filename in os.listdir(os.path.join(cfg.DATA_DIR, task_type))
+                  if filename.startswith(args.eval_run_prefix)]
+        # get all the trials to visualize for choosing where the obstacles are
+        EvaluateTask.closest_distance_to_goal(trials, level=level, just_get_ok_nodes=True)
+
         util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-                                                args.eval_run_prefix, suffix="{}.mat".format(args.num_frames),
-                                                task_type='peg')
+                                                args.eval_run_prefix, task_type=task_type)
     elif args.command == 'visualize1':
         util.plot_task_res_dist({
-            'auto_recover__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC', 'color': 'green'},
-            'auto_recover__h15_larger_min_window__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC tuned', 'color': 'blue', 'label': True},
-            'auto_recover__NONE__RANDOM__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC random', 'color': 'orange'},
-            'auto_recover__NONE__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-                'name': 'non-adapative', 'color': 'purple'},
-            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-                'name': 'adaptive baseline++', 'color': 'red'},
-            'sac__3': {'name': 'SAC', 'color': 'cyan'},
-            'sac__9': {'name': 'SAC', 'color': 'cyan'},
-
-            'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC', 'color': 'green'},
-            'auto_recover__h20_less_anneal__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC tuned', 'color': 'blue', 'label': True},
-            'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC random', 'color': 'orange'},
-            'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-                'name': 'non-adapative', 'color': 'purple'},
-            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-                'name': 'adaptive baseline++', 'color': 'red'},
-            'sac__5': {'name': 'SAC', 'color': 'cyan'},
-        }, 'peg_task_res.pkl', task_type='peg', figsize=(5, 7), set_y_label=False,
+            'auto_recover__NONE__MAB__6__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_pegr_s1': {
+                'name': 'TAMPC', 'color': 'green', 'label': True},
+            # 'auto_recover__h15_larger_min_window__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'TAMPC tuned', 'color': 'blue', 'label': True},
+            # 'auto_recover__NONE__RANDOM__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'TAMPC random', 'color': 'orange'},
+            # 'auto_recover__NONE__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+            #     'name': 'non-adapative', 'color': 'purple'},
+            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'adaptive baseline++', 'color': 'red', 'label': True},
+            # 'sac__3': {'name': 'SAC', 'color': 'cyan'},
+            # 'sac__9': {'name': 'SAC', 'color': 'cyan'},
+            #
+            # 'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'TAMPC', 'color': 'green'},
+            # 'auto_recover__h20_less_anneal__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'TAMPC tuned', 'color': 'blue', 'label': True},
+            # 'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'TAMPC random', 'color': 'orange'},
+            # 'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+            #     'name': 'non-adapative', 'color': 'purple'},
+            # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+            #     'name': 'adaptive baseline++', 'color': 'red'},
+            # 'sac__5': {'name': 'SAC', 'color': 'cyan'},
+        }, '{}_task_res.pkl'.format(peg_in_hole_real.DIR), task_type=peg_in_hole_real.DIR, figsize=(5, 7),
+            set_y_label=True, max_t=300, expected_data_len=298,
             task_names=task_names)
 
     elif args.command == 'visualize2':
