@@ -2,6 +2,7 @@ import abc
 import copy
 import logging
 import os
+import math
 import pickle
 from abc import ABC
 from typing import Union
@@ -252,9 +253,12 @@ class InvariantTransform(LearnableParameterizedModel):
 class RexTraining(InvariantTransform):
     """Training method for out-of-distribution generalization https://arxiv.org/pdf/2003.00688.pdf"""
 
-    def __init__(self, *args, rex_anneal_step=5000, rex_penalty_weight=1000, **kwargs):
+    def __init__(self, *args, rex_anneal_ratio=0.5, rex_penalty_weight=1000, **kwargs):
+        """
+        :param rex_anneal_ratio: [0,1] How far into the training do we use a reduced rex penalty
+        """
         super().__init__(*args, **kwargs)
-        self.rex_anneal_step = rex_anneal_step
+        self.rex_anneal_ratio = rex_anneal_ratio
         self.rex_penalty_weight = rex_penalty_weight
         self.rex_default_weight = 1.
 
@@ -278,6 +282,8 @@ class RexTraining(InvariantTransform):
         train_loader = torch.utils.data.DataLoader(ds_train, batch_size=batch_N, shuffle=True)
 
         save_checkpoint_every_n_epochs = max(max_epoch // 5, 5)
+        max_step = max_epoch * math.ceil(len(ds_train) / batch_N)
+        rex_anneal_step = self.rex_anneal_ratio * max_step
 
         from tampc.env.pybullet_env import PybulletEnvDataSource
         assert isinstance(self.ds, PybulletEnvDataSource)
@@ -301,7 +307,7 @@ class RexTraining(InvariantTransform):
                 weighed_losses = self._weigh_losses(losses)
                 var_across_env = self._rex_variance_across_envs(weighed_losses, info)
 
-                if self.step > self.rex_anneal_step:
+                if self.step > rex_anneal_step:
                     reduced_loss = sum(l.mean() / self.rex_penalty_weight for l in weighed_losses)
                 else:
                     reduced_loss = sum(l.mean() for l in weighed_losses)
