@@ -69,7 +69,7 @@ def get_env(level=0, **kwargs):
         y = -0.02913485 + 0.011
         env.set_task_config(hole=[x, y], init_peg=[1.64363362, 0.05320179])
         # for tuning close to goal behaviour (spiral exploration vs going straight to goal)
-        # env.set_task_config(hole=[x, y], init_peg=[x + 0.02, y])
+        # env.set_task_config(hole=[x, y], init_peg=[x + 0.01, y + 0.01])
     env_dir = '{}/real'.format(peg_in_hole_real.DIR)
     return env
 
@@ -201,12 +201,13 @@ def get_controller_options(env):
         'trap_cost_annealing_rate': 0.8,
         'abs_unrecognized_threshold': 15,
         # 'nonnominal_dynamics_penalty_tolerance': 0.1,
-        'dynamics_minimum_window': 3,
+        'dynamics_minimum_window': 2,
         # 'trap_cost_init_normalization': 1.0,
-        'manual_init_trap_weight': 0.1,
+        # 'manual_init_trap_weight': 0.02,
+        'max_trap_weight': 0.01,
     }
     mpc_opts = {
-        'num_samples': 2000,
+        'num_samples': 1000,
         'noise_sigma': torch.diag(sigma),
         'noise_mu': torch.tensor(noise_mu, dtype=torch.double, device=d),
         'lambda_': 1e-2,
@@ -374,9 +375,11 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
 
         def get_rep_model_name(ds):
             import re
-            tsf = ds.preprocessor.tsf.transforms[-1]
-            tsf_name = tsf.tsf.name
-            tsf_name = re.match(r".*?s\d+", tsf_name)[0]
+            tsf_name = ""
+            for tsf in ds.preprocessor.tsf.transforms:
+                if isinstance(tsf, invariant.InvariantTransformer):
+                    tsf_name = tsf.tsf.name
+                    tsf_name = re.match(r".*?s\d+", tsf_name)[0]
             # TODO also include model name
             return tsf_name
 
@@ -395,12 +398,14 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
         affix_run_name(seed)
         affix_run_name(num_frames)
 
-    time.sleep(0.5)
-    sim.dd.draw_text("seed", "run seed {}".format(seed), 1, left_offset=-1.4)
-    sim.dd.draw_text("recovery method", "recovery {}".format(autonomous_recovery.name), 2, left_offset=-1.4)
+    time.sleep(1)
+    sim.clear_markers()
+    time.sleep(1)
+    sim.dd.draw_text("seed", "s{}".format(seed), 1, left_offset=-1.4)
+    sim.dd.draw_text("recovery_method", "recovery {}".format(autonomous_recovery.name), 2, left_offset=-1.4)
     if reuse_escape_as_demonstration:
         sim.dd.draw_text("resuse", "reuse escape", 3, left_offset=-1.4)
-    sim.dd.draw_text("run name", run_name, 18, left_offset=-0.8)
+    sim.dd.draw_text("run_name", run_name, 18, left_offset=-0.8)
     with peg_in_hole_real.VideoLogger():
         pre_run_setup(env, ctrl, ds)
 

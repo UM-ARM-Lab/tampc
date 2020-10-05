@@ -130,7 +130,7 @@ class RealPegEnv:
     def control_cost(cls):
         return np.diag([1 for _ in range(cls.nu)])
 
-    def __init__(self, environment_level=0, dist_for_done=0.02, obs_time=1, stub=True):
+    def __init__(self, environment_level=0, dist_for_done=0.015, obs_time=1, stub=True):
         self.level = environment_level
         self.dist_for_done = dist_for_done
 
@@ -351,11 +351,11 @@ class DebugRvizDrawer:
         if trap_set is None:
             return
         state_marker = self._make_marker(scale=self.BASE_SCALE * 2)
-        state_marker.ns = "trap state"
+        state_marker.ns = "trap_state"
         state_marker.id = 0
 
         action_marker = self._make_marker(marker_type=Marker.LINE_LIST)
-        action_marker.ns = "trap action"
+        action_marker.ns = "trap_action"
         action_marker.id = 0
 
         T = len(trap_set)
@@ -460,14 +460,16 @@ class ExperimentRunner(simulation.Simulation):
     def _has_recovery_policy(self):
         return isinstance(self.ctrl, online_controller.OnlineMPPI)
 
+    def clear_markers(self):
+        self.dd.clear_markers("state_trajectory", delete_all=True)
+        self.dd.clear_markers("trap_state", delete_all=False)
+        self.dd.clear_markers("trap_action", delete_all=False)
+        self.dd.clear_markers("action", delete_all=False)
+        self.dd.clear_markers("rollouts", delete_all=False)
+
     def _run_experiment(self):
         self.last_run_cost = []
         obs, info = self._reset_sim()
-        self.dd.clear_markers("state_trajectory", delete_all=True)
-        self.dd.clear_markers("trap state", delete_all=True)
-        self.dd.clear_markers("trap action", delete_all=False)
-        self.dd.clear_markers("action", delete_all=False)
-        self.dd.clear_markers("rollouts", delete_all=True)
         if self.ctrl.goal is not None:
             self.dd.draw_goal(self.ctrl.goal)
         traj = [obs]
@@ -552,16 +554,16 @@ class ExperimentRunner(simulation.Simulation):
                 stable_z = np.stack(stable_z).mean()
                 found_hole = False
                 while not found_hole:
-                    for _ in range(100):
+                    for i in range(75):
                         action = ctrl.command(obs)
                         # account for mechanical drift
                         action = np.array(action)
                         mag = np.linalg.norm(action)
-                        action[0] -= mag * 0.08
+                        action[0] -= mag * 0.05
                         obs, rew, done, info = self.env.step(action, -self.env.MAX_PUSH_DIST * 0.1)
                         simTime += 1
                         self.dd.draw_state(obs, simTime, 0, action=action)
-                        logger.info("stable z %f z %f rz %f", np.round(stable_z, 3), np.round(obs[2], 3),
+                        logger.info("%d stable z %f z %f rz %f", i, np.round(stable_z, 3), np.round(obs[2], 3),
                                     np.round(info[5], 3))
                         if abs(obs[2] - stable_z) > self.env.MAX_PUSH_DIST * 0.05:
                             found_hole = True
@@ -671,7 +673,7 @@ class ExperimentRunner(simulation.Simulation):
 
 
 class SpiralController:
-    def __init__(self, start_t=1.5, scale=0.02, growth=4):
+    def __init__(self, start_t=1.5, scale=0.018, growth=4):
         self.t = start_t
         self.scale = scale
         self.growth = np.pi / 20 * growth
