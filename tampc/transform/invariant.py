@@ -220,7 +220,7 @@ class InvariantTransform(LearnableParameterizedModel):
         ds_train = load_data.SimpleDataset(*self.ds.training_set())
         train_loader = torch.utils.data.DataLoader(ds_train, batch_size=batch_N, shuffle=True)
 
-        save_checkpoint_every_n_epochs = max(max_epoch // 20, 5)
+        save_checkpoint_every_n_epochs = max(max_epoch // 5, 5)
 
         for epoch in range(max_epoch):
             logger.info("Start epoch %d", epoch)
@@ -277,7 +277,7 @@ class RexTraining(InvariantTransform):
         ds_train = load_data.SimpleDataset(*self.ds.training_set())
         train_loader = torch.utils.data.DataLoader(ds_train, batch_size=batch_N, shuffle=True)
 
-        save_checkpoint_every_n_epochs = max(max_epoch // 20, 5)
+        save_checkpoint_every_n_epochs = max(max_epoch // 5, 5)
 
         from tampc.env.pybullet_env import PybulletEnvDataSource
         assert isinstance(self.ds, PybulletEnvDataSource)
