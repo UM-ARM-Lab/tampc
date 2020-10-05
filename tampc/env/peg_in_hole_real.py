@@ -387,10 +387,10 @@ class DebugRvizDrawer:
         self.marker_pub.publish(state_marker)
         self.marker_pub.publish(action_marker)
 
-    def clear_markers(self, ns):
+    def clear_markers(self, ns, delete_all=True):
         marker = self._make_marker()
         marker.ns = ns
-        marker.action = Marker.DELETEALL
+        marker.action = Marker.DELETEALL if delete_all else Marker.DELETE
         self.marker_pub.publish(marker)
 
     def draw_text(self, label, text, offset, left_offset=0):
@@ -463,10 +463,10 @@ class ExperimentRunner(simulation.Simulation):
     def _run_experiment(self):
         self.last_run_cost = []
         obs, info = self._reset_sim()
-        self.dd.clear_markers("state_trajectory")
-        self.dd.clear_markers("trap state")
-        self.dd.clear_markers("trap action")
-        self.dd.clear_markers("action")
+        self.dd.clear_markers("state_trajectory", delete_all=True)
+        self.dd.clear_markers("trap state", delete_all=True)
+        self.dd.clear_markers("trap action", delete_all=False)
+        self.dd.clear_markers("action", delete_all=False)
         if self.ctrl.goal is not None:
             self.dd.draw_goal(self.ctrl.goal)
         traj = [obs]
@@ -549,14 +549,22 @@ class ExperimentRunner(simulation.Simulation):
                 ctrl = SpiralController()
                 stable_z = [o[2] for o in self.traj[-20:]]
                 stable_z = np.stack(stable_z).mean()
-                while True:
-                    action = ctrl.command(obs)
-                    action = np.array(action)
-                    obs, rew, done, info = self.env.step(action, -self.env.MAX_PUSH_DIST * 0.1)
-                    logger.info("stable z %f z %f rz %f", np.round(stable_z, 3), np.round(obs[2], 3),
-                                np.round(info[5], 3))
-                    if abs(obs[2] - stable_z) > self.env.MAX_PUSH_DIST * 0.05:
-                        break
+                found_hole = False
+                while not found_hole:
+                    for _ in range(100):
+                        action = ctrl.command(obs)
+                        # account for mechanical drift
+                        action = np.array(action)
+                        action[0] -= 0.01
+                        obs, rew, done, info = self.env.step(action, -self.env.MAX_PUSH_DIST * 0.1)
+                        simTime += 1
+                        self.dd.draw_state(obs, simTime, 0, action=action)
+                        logger.info("stable z %f z %f rz %f", np.round(stable_z, 3), np.round(obs[2], 3),
+                                    np.round(info[5], 3))
+                        if abs(obs[2] - stable_z) > self.env.MAX_PUSH_DIST * 0.05:
+                            found_hole = True
+                            break
+                    ctrl.t = 0
             else:
                 P_TERM = 20
                 cost = 100
@@ -661,7 +669,7 @@ class ExperimentRunner(simulation.Simulation):
 
 
 class SpiralController:
-    def __init__(self, start_t=1.5, scale=0.03, growth=4):
+    def __init__(self, start_t=1.5, scale=0.02, growth=4):
         self.t = start_t
         self.scale = scale
         self.growth = np.pi / 20 * growth
