@@ -467,6 +467,7 @@ class ExperimentRunner(simulation.Simulation):
         self.dd.clear_markers("trap state", delete_all=True)
         self.dd.clear_markers("trap action", delete_all=False)
         self.dd.clear_markers("action", delete_all=False)
+        self.dd.clear_markers("rollouts", delete_all=True)
         if self.ctrl.goal is not None:
             self.dd.draw_goal(self.ctrl.goal)
         traj = [obs]
@@ -555,7 +556,8 @@ class ExperimentRunner(simulation.Simulation):
                         action = ctrl.command(obs)
                         # account for mechanical drift
                         action = np.array(action)
-                        action[0] -= 0.01
+                        mag = np.linalg.norm(action)
+                        action[0] -= mag * 0.08
                         obs, rew, done, info = self.env.step(action, -self.env.MAX_PUSH_DIST * 0.1)
                         simTime += 1
                         self.dd.draw_state(obs, simTime, 0, action=action)
