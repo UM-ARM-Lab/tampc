@@ -201,10 +201,12 @@ def get_controller_options(env):
         'trap_cost_annealing_rate': 0.8,
         'abs_unrecognized_threshold': 15,
         # 'nonnominal_dynamics_penalty_tolerance': 0.1,
-        # 'dynamics_minimum_window': 15,
+        'dynamics_minimum_window': 3,
+        # 'trap_cost_init_normalization': 1.0,
+        'manual_init_trap_weight': 0.1,
     }
     mpc_opts = {
-        'num_samples': 500,
+        'num_samples': 2000,
         'noise_sigma': torch.diag(sigma),
         'noise_mu': torch.tensor(noise_mu, dtype=torch.double, device=d),
         'lambda_': 1e-2,
@@ -363,10 +365,6 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
     sim = peg_in_hole_real.ExperimentRunner(env, ctrl, num_frames=num_frames, plot=False, save=True,
                                             stop_when_done=True)
     seed = rand.seed(seed)
-    sim.dd.draw_text("seed", "run seed {}".format(seed), 12, left_offset=-1.5)
-    sim.dd.draw_text("recovery method", "recovery {}".format(autonomous_recovery.name), 11, left_offset=-1.6)
-    if reuse_escape_as_demonstration:
-        sim.dd.draw_text("resuse", "reuse escape", 10, left_offset=-1.6)
 
     if run_name is None:
         def affix_run_name(*args):
@@ -397,8 +395,13 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
         affix_run_name(seed)
         affix_run_name(num_frames)
 
+    time.sleep(0.5)
+    sim.dd.draw_text("seed", "run seed {}".format(seed), 1, left_offset=-1.4)
+    sim.dd.draw_text("recovery method", "recovery {}".format(autonomous_recovery.name), 2, left_offset=-1.4)
+    if reuse_escape_as_demonstration:
+        sim.dd.draw_text("resuse", "reuse escape", 3, left_offset=-1.4)
+    sim.dd.draw_text("run name", run_name, 18, left_offset=-0.8)
     with peg_in_hole_real.VideoLogger():
-        sim.dd.draw_text("run name", run_name, 14, left_offset=-0.8)
         pre_run_setup(env, ctrl, ds)
 
         sim.run(seed, run_name)
