@@ -478,6 +478,7 @@ class ExperimentRunner(simulation.Simulation):
         pred_cls = []
         pred_traj = []
         model_error = []
+        model_error_normalized = []
 
         for simTime in range(self.num_frames - 1):
             self.dd.draw_text("step", "{}".format(simTime), 1)
@@ -499,8 +500,9 @@ class ExperimentRunner(simulation.Simulation):
                 # print current state; the model prediction error is last time step's prediction about the current state
                 model_pred_error = 0
                 if self.ctrl.diff_predicted is not None:
-                    model_pred_error = self.ctrl.diff_predicted.norm()
+                    model_pred_error = self.ctrl.diff_predicted.norm().item()
                 self.dd.draw_state(obs, simTime, model_pred_error, action=action)
+                model_error_normalized.append(model_pred_error)
 
                 rollouts = self.ctrl.get_rollouts(obs)
                 self.dd.draw_rollouts(rollouts)
@@ -539,6 +541,7 @@ class ExperimentRunner(simulation.Simulation):
         self.info = np.stack(infos)
         if len(model_error):
             self.model_error = np.stack(model_error)
+            self.model_error_normalized = np.stack(model_error_normalized)
 
         terminal_cost, done = self.env.evaluate_cost(self.traj[-1])
         self.last_run_cost.append(terminal_cost * self.terminal_cost_multiplier)
@@ -595,7 +598,7 @@ class ExperimentRunner(simulation.Simulation):
         mask[0] = 0
         mask[-1] = 0
         return {'X': X, 'U': self.u, 'X_pred': self.pred_traj, 'model error': self.model_error,
-                'mask': mask.reshape(-1, 1)}
+                'model error normalized': self.model_error_normalized, 'mask': mask.reshape(-1, 1)}
 
     def _start_plot_action_sample(self):
         self.fu_sample, self.au_sample = plt.subplots(self.env.nu, 1)
