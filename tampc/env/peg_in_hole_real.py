@@ -550,8 +550,8 @@ class ExperimentRunner(simulation.Simulation):
             logger.info("done, using local controller to insert peg")
             if self.spiral_explore:
                 ctrl = SpiralController()
-                stable_z = [o[2] for o in self.traj[-20:]]
-                stable_z = np.stack(stable_z).mean()
+                obs, rew, done, info = self.env.step([0, 0], -self.env.MAX_PUSH_DIST * 0.1)
+                stable_z = obs[2]
                 found_hole = False
                 while not found_hole:
                     for i in range(75):
