@@ -344,7 +344,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                 if moved / expected < min_ratio:
                     min_ratio = moved / expected
                     min_index = i
-        if min_index > 0:
+        if min_index >= 0:
             self.trap_set.append((self.x_history[min_index], self.u_history[min_index]))
 
         # start = max(self.nonnominal_dynamics_start_index, self.autonomous_recovery_end_index - 1)
