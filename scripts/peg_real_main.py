@@ -70,6 +70,13 @@ def get_env(level=0, **kwargs):
         env.set_task_config(hole=[x, y], init_peg=[1.64363362, 0.05320179])
         # for tuning close to goal behaviour (spiral exploration vs going straight to goal)
         # env.set_task_config(hole=[x, y], init_peg=[x + 0.01, y + 0.01])
+    elif level is task_map['Peg-U'] or level is task_map['Peg-U(N)']:
+        x = 1.6204533 - 0.000
+        y = 0.04154706 + 0.013
+        env.set_task_config(hole=[x, y], init_peg=[1.53700509,  0.08727498])
+        # for tuning close to goal behaviour (spiral exploration vs going straight to goal)
+        # env.set_task_config(hole=[x, y], init_peg=[x + 0.0, y + 0.0])
+
     env_dir = '{}/real'.format(peg_in_hole_real.DIR)
     return env
 
@@ -273,9 +280,12 @@ class PegNetwork(model.NetworkModelWrapper):
 def get_pre_invariant_tsf_preprocessor(use_tsf):
     if use_tsf is UseTsf.COORD:
         return preprocess.PytorchTransformer(preprocess.NullSingleTransformer())
-    else:
+    elif use_tsf in [UseTsf.SKIP, UseTsf.REX_SKIP]:
         # normalize position and force dimensions separately using shared scales
         return preprocess.PytorchTransformer(preprocess.RobustMinMaxScaler(dims_share_scale=[[0, 1], [3, 4]]),
+                                             preprocess.RobustMinMaxScaler(dims_share_scale=[[0, 1], [3, 4]]))
+    else:
+        return preprocess.PytorchTransformer(preprocess.NullSingleTransformer(),
                                              preprocess.RobustMinMaxScaler(dims_share_scale=[[0, 1], [3, 4]]))
 
 
@@ -630,7 +640,7 @@ class EvaluateTask:
         return dists
 
 
-task_map = {'freespace': 0, 'Peg-U': 3, 'Peg-I': 5, 'Peg-T': 6, 'Peg-T(T)': 7}
+task_map = {'freespace': 0, 'Peg-U': 3, 'Peg-I': 5, 'Peg-T': 6, 'Peg-T(T)': 7, 'Peg-U(N)': 8}
 
 parser = argparse.ArgumentParser(description='Experiments on the real peg-in-hole environment')
 parser.add_argument('command',
@@ -738,8 +748,8 @@ if __name__ == "__main__":
             #     'name': 'TAMPC tuned', 'color': 'blue', 'label': True},
             # 'auto_recover__NONE__RANDOM__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
             #     'name': 'TAMPC random', 'color': 'orange'},
-            # 'auto_recover__NONE__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'non-adapative', 'color': 'purple'},
+            'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'non-adapative', 'color': 'purple', 'label': True},
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'adaptive baseline++', 'color': 'red', 'label': True},
             # 'sac__3': {'name': 'SAC', 'color': 'cyan'},
@@ -792,7 +802,7 @@ if __name__ == "__main__":
 
     else:
         use_tsf = UseTsf.SKIP
-        rep_name = "pegr_s1"
+        rep_name = "pegr_s0"
         d, env, config, ds = get_free_space_env_init(0)
         ds.update_preprocessor(get_pre_invariant_tsf_preprocessor(use_tsf=use_tsf))
         xu, y, trial = ds.training_set(original=True)
