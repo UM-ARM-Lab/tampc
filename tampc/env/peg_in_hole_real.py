@@ -535,6 +535,9 @@ class ExperimentRunner(simulation.Simulation):
         if len(pred_traj):
             self.pred_traj = np.stack(pred_traj)
             self.pred_cls = np.stack(pred_cls)
+        else:
+            self.pred_traj = np.array([])
+            self.pred_cls = np.array([])
         u.append(np.zeros(self.env.nu))
         self.u = np.stack(u)
         # make same length as state trajectory by appending 0 action
@@ -542,6 +545,9 @@ class ExperimentRunner(simulation.Simulation):
         if len(model_error):
             self.model_error = np.stack(model_error)
             self.model_error_normalized = np.stack(model_error_normalized)
+        else:
+            self.model_error = np.array([])
+            self.model_error_normalized = np.array([])
 
         terminal_cost, done = self.env.evaluate_cost(self.traj[-1])
         self.last_run_cost.append(terminal_cost * self.terminal_cost_multiplier)
