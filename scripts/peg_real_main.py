@@ -70,10 +70,10 @@ def get_env(level=0, **kwargs):
         env.set_task_config(hole=[x, y], init_peg=[1.64363362, 0.05320179])
         # for tuning close to goal behaviour (spiral exploration vs going straight to goal)
         # env.set_task_config(hole=[x, y], init_peg=[x + 0.01, y + 0.01])
-    elif level is task_map['Peg-U'] or level is task_map['Peg-U(N)']:
+    elif level is task_map['Peg-U(W)'] or level is task_map['Peg-U']:
         x = 1.6204533 - 0.000
         y = 0.04154706 + 0.013
-        env.set_task_config(hole=[x, y], init_peg=[1.53700509,  0.08727498])
+        env.set_task_config(hole=[x, y], init_peg=[1.53700509, 0.08727498])
         # for tuning close to goal behaviour (spiral exploration vs going straight to goal)
         # env.set_task_config(hole=[x, y], init_peg=[x + 0.0, y + 0.0])
 
@@ -452,6 +452,9 @@ class EvaluateTask:
         if level is task_map['Peg-T']:
             min_pos = [1.5, -0.14]
             max_pos = [1.85, 0.18]
+        elif level is task_map['Peg-U(W)'] or level is task_map['Peg-U']:
+            min_pos = [1.49, -0.14]
+            max_pos = [1.83, 0.188]
         else:
             raise RuntimeError("Unspecified range for level {}".format(level))
 
@@ -521,7 +524,6 @@ class EvaluateTask:
                     marker.points.append(Point(x=x, y=y, z=z))
             dd.marker_pub.publish(marker)
 
-            range_id = 1
             while True:
                 ij = input(
                     "enter i_start-i_end [0,{}], j_start-j_end [0,{}] to toggle node or q to finish".format(len(xs) - 1,
@@ -552,8 +554,7 @@ class EvaluateTask:
 
                 marker = dd.make_marker(scale=dd.BASE_SCALE * 0.3)
                 marker.ns = "nodes"
-                marker.id = range_id
-                range_id += 1
+                marker.id = i_interval[0] * nodes_per_side + j_interval[0]
 
                 for i in i_interval:
                     for j in j_interval:
@@ -640,7 +641,7 @@ class EvaluateTask:
         return dists
 
 
-task_map = {'freespace': 0, 'Peg-U': 3, 'Peg-I': 5, 'Peg-T': 6, 'Peg-T(T)': 7, 'Peg-U(N)': 8}
+task_map = {'freespace': 0, 'Peg-U(W)': 3, 'Peg-I': 5, 'Peg-T': 6, 'Peg-T(T)': 7, 'Peg-U': 8}
 
 parser = argparse.ArgumentParser(description='Experiments on the real peg-in-hole environment')
 parser.add_argument('command',
@@ -700,7 +701,7 @@ if __name__ == "__main__":
         mpc_params.update(d)
 
     if args.command == 'collect':
-        OfflineDataCollection.freespace(seed_offset=15, trials=5, trial_length=30, force_gui=args.gui)
+        OfflineDataCollection.freespace(seed_offset=20, trials=5, trial_length=30, force_gui=args.gui)
     elif args.command == 'learn_representation':
         for seed in args.seed:
             Learn.invariant(ut, seed=seed, name="pegr", MAX_EPOCH=1000, BATCH_SIZE=args.batch)
@@ -742,62 +743,31 @@ if __name__ == "__main__":
                                                 args.eval_run_prefix, task_type=task_type)
     elif args.command == 'visualize1':
         util.plot_task_res_dist({
-            'auto_recover__NONE__MAB__6__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_pegr_s1': {
+            # 'auto_recover__NONE__MAB__6__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_pegr_s1': {
+            #     'name': 'TAMPC', 'color': 'green', 'label': True},
+            'auto_recover__h15__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__rex_extract_2_pegr_s1': {
                 'name': 'TAMPC', 'color': 'green', 'label': True},
-            # 'auto_recover__h15_larger_min_window__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'TAMPC tuned', 'color': 'blue', 'label': True},
             # 'auto_recover__NONE__RANDOM__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
             #     'name': 'TAMPC random', 'color': 'orange'},
             'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'non-adapative', 'color': 'purple', 'label': True},
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'adaptive baseline++', 'color': 'red', 'label': True},
-            # 'sac__3': {'name': 'SAC', 'color': 'cyan'},
-            # 'sac__9': {'name': 'SAC', 'color': 'cyan'},
-            #
-            # 'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'TAMPC', 'color': 'green'},
-            # 'auto_recover__h20_less_anneal__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'TAMPC tuned', 'color': 'blue', 'label': True},
-            # 'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'TAMPC random', 'color': 'orange'},
-            # 'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'non-adapative', 'color': 'purple'},
-            # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'adaptive baseline++', 'color': 'red'},
-            # 'sac__5': {'name': 'SAC', 'color': 'cyan'},
+
         }, '{}_task_res.pkl'.format(peg_in_hole_real.DIR), task_type=peg_in_hole_real.DIR, figsize=(5, 7),
             set_y_label=True, max_t=300, expected_data_len=298,
             task_names=task_names)
 
     elif args.command == 'visualize2':
         util.plot_task_res_dist({
-            'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC', 'color': 'green'},
-            # 'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'TAMPC random', 'color': 'orange'},
-            'auto_recover__NONE__MAB__6__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal': {
-                'name': 'TAMPC skip z', 'color': 'black'},
-            # 'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'non-adapative', 'color': 'purple'},
-            # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'adaptive baseline++', 'color': 'red'},
-            # 'sac__6': {'name': 'SAC', 'color': 'cyan'},
-
-            'auto_recover__NONE__MAB__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC', 'color': 'green'},
-            'auto_recover__NONE__MAB__7__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal': {
-                'name': 'TAMPC skip z', 'color': 'black'},
-            # 'auto_recover__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'TAMPC original space', 'color': 'olive', 'label': True},
-            # 'auto_recover__NONE__RANDOM__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'TAMPC random', 'color': 'orange'},
-            # 'auto_recover__NONE__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'non-adapative', 'color': 'purple'},
-            # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'adaptive baseline++', 'color': 'red'},
-            # 'sac__7': {'name': 'SAC', 'color': 'cyan'},
-        }, 'peg_task_res.pkl', task_type='peg', figsize=(5, 7), set_y_label=False,
+            'auto_recover__h15__NONE__MAB__8__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_pegr_s0': {
+                'name': 'TAMPC', 'color': 'green', 'label': True},
+            'auto_recover__NONE__NONE__8__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'non-adapative', 'color': 'purple', 'label': True},
+            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__8__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'adaptive baseline++', 'color': 'red', 'label': True},
+        }, '{}_task_res.pkl'.format(peg_in_hole_real.DIR), task_type=peg_in_hole_real.DIR, figsize=(5, 7),
+            set_y_label=False, max_t=500, expected_data_len=498,
             task_names=task_names)
 
     else:
