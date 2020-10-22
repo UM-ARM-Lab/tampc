@@ -253,7 +253,7 @@ class InvariantTransform(LearnableParameterizedModel):
 class RexTraining(InvariantTransform):
     """Training method for out-of-distribution generalization https://arxiv.org/pdf/2003.00688.pdf"""
 
-    def __init__(self, *args, rex_anneal_ratio=0.5, rex_penalty_weight=1000, **kwargs):
+    def __init__(self, *args, rex_anneal_ratio=1 / 3, rex_penalty_weight=1000, **kwargs):
         """
         :param rex_anneal_ratio: [0,1] How far into the training do we use a reduced rex penalty
         """
