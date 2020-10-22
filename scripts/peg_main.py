@@ -398,10 +398,14 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
 
         def get_rep_model_name(ds):
             import re
-            tsf = ds.preprocessor.tsf.transforms[-1]
-            tsf_name = tsf.tsf.name
-            tsf_name = re.match(r".*?s\d+", tsf_name)[0]
-            # TODO also include model name
+            tsf_name = ""
+            try:
+                for tsf in ds.preprocessor.tsf.transforms:
+                    if isinstance(tsf, invariant.InvariantTransformer):
+                        tsf_name = tsf.tsf.name
+                        tsf_name = re.match(r".*?s\d+", tsf_name)[0]
+            except AttributeError:
+                pass
             return tsf_name
 
         run_name = default_run_prefix
