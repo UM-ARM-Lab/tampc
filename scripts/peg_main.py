@@ -158,7 +158,10 @@ def update_ds_with_transform(env, ds, use_tsf, evaluate_transform=True, rep_name
         preprocessor = no_tsf_preprocessor()
     # update the datasource to use transformed data
     untransformed_config = ds.update_preprocessor(preprocessor)
-    return untransformed_config, use_tsf.name, preprocessor
+    tsf_name = use_tsf.name
+    if rep_name is not None:
+        tsf_name = "{}_{}".format(tsf_name, rep_name)
+    return untransformed_config, tsf_name, preprocessor
 
 
 def no_tsf_preprocessor():

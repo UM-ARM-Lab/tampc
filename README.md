@@ -164,7 +164,7 @@ Differences will be pointed out. When running the scripts, logs of the messages 
 
 Note that different versions of pytorch and gpytorch might yield slightly different results. The models we used are included in `tampc/checkpoints`.  
 If you use these you can skip the representation learning and dynamics fine-tuning steps which can take a long time.  
-For the block tasks, pass in `--rep_name corl_saved` to use the saved learned representation and for peg tasks pass in `--rep_name corl_saved_peg`.  
+For the block tasks, pass in `--rep_name saved` to use the saved learned representation and for peg tasks pass in `--rep_name saved_peg`.  
 A copy of the saved dynamics model is present with the name (copy) after it in case you override it with fine tuning.  
 The estimated time for some steps is listed at the end of each line for you to consider if you wish to skip some steps.
 
@@ -179,7 +179,7 @@ Whether you are running with CUDA or not will also affect exact reproducibility.
 	```
 	python push_main.py learn_representation --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --batch 2048
 	```  
-	learning across the 10 seeds is only necessary for reproducing figure 4. If you only care to run the tasks, you can use the saved model with `--rep_name corl_saved` for the block tasks and `--rep_name corl_saved_peg` for the peg tasks. Alternatively, just learn the seed 1 for pushing and seed 0 for peg (default seeds). Should take about 1 hour per seed.
+	learning across the 10 seeds is only necessary for reproducing figure 4. If you only care to run the tasks, you can use the saved model with `--rep_name saved` for the block tasks and `--rep_name saved_peg` for the peg tasks. Alternatively, just learn the seed 1 for pushing and seed 0 for peg (default seeds). Should take about 1 hour per seed.
 3. (optional) learn ablations of the representation  
 	```
 	python push_main.py learn_representation --seed 0 1 2 3 4 5 6 7 8 9 --representation rex_ablation --batch 500
@@ -188,45 +188,45 @@ Whether you are running with CUDA or not will also affect exact reproducibility.
 	only for the planar pushing environment to reproduce figure 4. Should take about 15 minutes per seed.
 4. (optional) fine tune dynamics  
 	```
-	python push_main.py fine_tune_dynamics --representation learned_rex --rep_name corl_saved
+	python push_main.py fine_tune_dynamics --representation learned_rex --rep_name saved
 	```
-	to select a different learned representation, for example pass in `--rep_name corl_s1` to use the seed 1 model (`corl_saved` for the one used in the paper).  
+	to select a different learned representation, for example pass in `--rep_name s1` to use the seed 1 model (`saved` for the one used in the paper).  
 	If you decide to not use the default name, then you will have to also pass the same `--rep_name` argument to other commands.  
-	Note that 1 dynamics model is saved per representation type (`learned_rex`, `rex_ablation`, ...), so if you fine tune the dynamics on one representation model but forget to pass the `--rep_name` argument to the other commands, the resulting model will output garbage! If you want to use a different trained representation, you'll have to re-fine tune the dynamics. One hint is if the logged network error is higher than the least squares error (we check and log this at the start of running the controller). Note that you can also pass in `--seed 1` here to learn the dynamics with a different seed (only the first seed in the list is used). Should take about 3 minutes.
+	Note that 1 dynamics model is saved per representation type (`learned_rex`, `rex_ablation`, ...), so if you fine tune the dynamics on one representation model but forget to pass the `--rep_name` argument to the other commands, the resulting model will output garbage! If you want to use a different trained representation, you"ll have to re-fine tune the dynamics. One hint is if the logged network error is higher than the least squares error (we check and log this at the start of running the controller). Note that you can also pass in `--seed 1` here to learn the dynamics with a different seed (only the first seed in the list is used). Should take about 3 minutes.
 5. also learn dynamics in original space for comparison later `python push_main.py fine_tune_dynamics --representation none`
 6. run task with options
 	```
-	python push_main.py run --task 'Block-H' --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name corl_saved
-	python push_main.py run --task 'Block-D' --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name corl_saved
+	python push_main.py run --task "Block-H" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name saved
+	python push_main.py run --task "Block-D" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name saved
 	```
 	```
-	python peg_main.py run --task 'Peg-U' --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name corl_saved_peg
-	python peg_main.py run --task 'Peg-I' --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name corl_saved_peg
-	python peg_main.py run --task 'Peg-T' --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name corl_saved_peg
-	python peg_main.py run --task 'Peg-T(T)' --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name corl_saved_peg
+	python peg_main.py run --task "Peg-U" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name saved_peg
+	python peg_main.py run --task "Peg-I" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name saved_peg
+	python peg_main.py run --task "Peg-T" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name saved_peg
+	python peg_main.py run --task "Peg-T(T)" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name saved_peg
 	```
 	there is a `--visualize_rollout` option to show what the planned MPC trajectory would take the state. Should take about 10 minutes per 500 frame run.
 7. run task with adaptive baseline with the `--adaptive_baseline` option; for example
 	```
-	python push_main.py run --task 'Block-H' --seed 0 1 2 3 4 5 6 7 8 9 --adaptive_baseline
+	python push_main.py run --task "Block-H" --seed 0 1 2 3 4 5 6 7 8 9 --adaptive_baseline
 	```
 8. run task with random recovery policy ablation option
 	```
-	python push_main.py run --task 'Block-H' --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --random_ablation --rep_name corl_saved
-	python push_main.py run --task 'Block-D' --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --random_ablation --rep_name corl_saved
+	python push_main.py run --task "Block-H" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --random_ablation --rep_name saved
+	python push_main.py run --task "Block-D" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --random_ablation --rep_name saved
 	```
 9. run task with non-adaptive baseline with the `--nonadaptive_baseline` option; for example
 	```
-	python push_main.py run --task 'Block-H' --seed 0 1 2 3 4 5 6 7 8 9 --nonadaptive_baseline
+	python push_main.py run --task "Block-H" --seed 0 1 2 3 4 5 6 7 8 9 --nonadaptive_baseline
 	```
 10. run Peg-T(T) with dynamics in the original space
 	```
-	python peg_main.py run --task 'Peg-T(T)' --seed 0 1 2 3 4 5 6 7 8 9 --representation none --rep_name corl_saved_peg
+	python peg_main.py run --task "Peg-T(T)" --seed 0 1 2 3 4 5 6 7 8 9 --representation none --rep_name saved_peg
 	```
 11. run the tuned controller for Peg-U and Peg-I
 	```
-	python peg_main.py run --task 'Peg-U' --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name corl_saved_peg --tampc_param dynamics_minimum_window=15 --mpc_param horizon=15 --run_prefix h15_larger_min_window
-	python peg_main.py run --task 'Peg-I' --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name corl_saved_peg --tampc_param trap_cost_annealing_rate=0.95 --mpc_param horizon=20 --run_prefix h20_less_anneal
+	python peg_main.py run --task "Peg-U" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name saved_peg --tampc_param dynamics_minimum_window=15 --mpc_param horizon=15 --run_prefix h15_larger_min_window
+	python peg_main.py run --task "Peg-I" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name saved_peg --tampc_param trap_cost_annealing_rate=0.95 --mpc_param horizon=20 --run_prefix h20_less_anneal
 	```
 11. evaluate the performance of the runs to prepare for visualization (saved to cache)
 	```

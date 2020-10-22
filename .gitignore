@@ -20,6 +20,6 @@ MUJOCO_LOG.TXT
 logs/
 checkpoints/*
 backup_data
-!checkpoints/rex_extract_2_corl_saved*
-!checkpoints/dynamics_REX_EXTRACT_i5_o5_s1_pd1_pa1_a0_e0_y0.9000*
-!checkpoints/peg_REX_EXTRACT_0_i5_o5_s1_pd1_pa1_a0_e0_y0.10800*
+!checkpoints/rex_extract_2_saved*
+!checkpoints/dynamics_REX_EXTRACT_saved_i5_o5_s1_pd1_pa1_a0_e0_y0.9000*
+!checkpoints/peg_REX_EXTRACT_saved_peg_0_i5_o5_s1_pd1_pa1_a0_e0_y0.10800*

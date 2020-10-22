@@ -173,7 +173,6 @@ def get_pre_invariant_tsf_preprocessor(use_tsf):
     if use_tsf is UseTsf.COORD:
         return preprocess.PytorchTransformer(preprocess.NullSingleTransformer())
     else:
-        # TODO consider what transform to prepend for the other transforms
         return preprocess.PytorchTransformer(preprocess.NullSingleTransformer(),
                                              preprocess.RobustMinMaxScaler(feature_range=[[0, 0, 0], [3, 3, 1.5]]))
 
@@ -202,7 +201,10 @@ def update_ds_with_transform(env, ds, use_tsf, evaluate_transform=True, rep_name
         preprocessor = no_tsf_preprocessor()
     # update the datasource to use transformed data
     untransformed_config = ds.update_preprocessor(preprocessor)
-    return untransformed_config, use_tsf.name, preprocessor
+    tsf_name = use_tsf.name
+    if rep_name is not None:
+        tsf_name = "{}_{}".format(tsf_name, rep_name)
+    return untransformed_config, tsf_name, preprocessor
 
 
 def no_tsf_preprocessor():
@@ -249,11 +251,11 @@ def get_transform(env, ds, use_tsf, override_name=None):
     elif use_tsf is UseTsf.DX_TO_V:
         return LearnedTransform.DxToV(ds, d, name=override_name or "_s0")
     elif use_tsf is UseTsf.SEP_DEC:
-        return LearnedTransform.SeparateDecoder(ds, d, name=override_name or "corl_s1")
+        return LearnedTransform.SeparateDecoder(ds, d, name=override_name or "s1")
     elif use_tsf is UseTsf.EXTRACT:
-        return LearnedTransform.ExtractState(ds, d, name=override_name or "corl_s1")
+        return LearnedTransform.ExtractState(ds, d, name=override_name or "s1")
     elif use_tsf is UseTsf.REX_EXTRACT:
-        return LearnedTransform.RexExtract(ds, d, name=override_name or "corl_s1")
+        return LearnedTransform.RexExtract(ds, d, name=override_name or "s1")
     elif use_tsf is UseTsf.SKIP:
         return LearnedTransform.SkipLatentInput(ds, d, name=override_name or "ral_s1")
     elif use_tsf is UseTsf.REX_SKIP:
@@ -1884,7 +1886,7 @@ if __name__ == "__main__":
         OfflineDataCollection.push_against_wall_recovery()
     elif args.command == 'learn_representation':
         for seed in args.seed:
-            Learn.invariant(ut, seed=seed, name="corl", MAX_EPOCH=3000, BATCH_SIZE=args.batch)
+            Learn.invariant(ut, seed=seed, name="", MAX_EPOCH=3000, BATCH_SIZE=args.batch)
     elif args.command == 'fine_tune_dynamics':
         Learn.model(ut, seed=args.seed[0], name="", rep_name=args.rep_name)
     elif args.command == 'run':
