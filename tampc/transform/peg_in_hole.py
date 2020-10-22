@@ -1,11 +1,8 @@
 import torch.nn
 import torch
-from arm_pytorch_utilities import math_utils, load_data, linalg, tensor_utils
-from arm_pytorch_utilities.model import make
-from tampc.dynamics import model
+from arm_pytorch_utilities import tensor_utils
 from tampc.env import peg_in_hole
-from tampc.transform import invariant
-from tampc.transform.invariant import TransformToUse
+from tampc.transform.invariant import TranslationEvaluationTransform
 import logging
 
 logger = logging.getLogger(__name__)
@@ -18,31 +15,6 @@ def translation_generator():
             yield dd
 
 
-class PegTransform(invariant.InvariantTransform):
-    def _move_data_out_of_distribution(self, data, move_params):
-        X, U, Y = data
-        translation = move_params
-        if translation:
-            X = torch.cat((X[:, :2] + torch.tensor(translation, device=X.device, dtype=X.dtype), X[:, 2:]), dim=1)
-        return X, U, Y
-
-    def evaluate_validation(self, writer):
-        losses = super(PegTransform, self).evaluate_validation(writer)
-        if writer is not None:
-            for dd in translation_generator():
-                ls = self._evaluate_metrics_on_whole_set(True, TransformToUse.LATENT_SPACE, move_params=dd)
-                self._record_metrics(writer, ls, suffix="/validation_{}_{}".format(dd[0], dd[1]))
-
-                if self.ds_test is not None:
-                    for i, ds_test in enumerate(self.ds_test):
-                        ls = self._evaluate_metrics_on_whole_set(False, TransformToUse.LATENT_SPACE, move_params=dd,
-                                                                 ds_test=ds_test)
-                        if writer is not None:
-                            self._record_metrics(writer, ls, suffix="/test{}_{}_{}".format(i, dd[0], dd[1]), log=True)
-
-        return losses
-
-
 class CoordTransform:
     @staticmethod
     def factory(env, *args, **kwargs):
@@ -52,7 +24,7 @@ class CoordTransform:
             raise RuntimeError("No tsf specified for env type {}".format(type(env)))
         return tsf_type(*args, **kwargs)
 
-    class Base(PegTransform):
+    class Base(TranslationEvaluationTransform):
         def __init__(self, ds, nv=5, **kwargs):
             super().__init__(ds, peg_in_hole.PegFloatingGripperEnv.nx - 2 + peg_in_hole.PegFloatingGripperEnv.nu, nv,
                              name='peg_translation', **kwargs)
@@ -76,4 +48,3 @@ class CoordTransform:
 
         def learn_model(self, max_epoch, batch_N=500):
             pass
-

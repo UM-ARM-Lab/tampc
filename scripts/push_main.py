@@ -19,8 +19,8 @@ from arm_pytorch_utilities import preprocess
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.model import make
 from arm_pytorch_utilities.optim import get_device
-from tampc.transform.block_push import CoordTransform, translation_generator
-from tampc.util import update_ds_with_transform, no_tsf_preprocessor, UseTsf, get_transform
+from tampc.transform.block_push import CoordTransform
+from tampc.util import update_ds_with_transform, no_tsf_preprocessor, UseTsf, get_transform, TranslationNetworkWrapper
 from tensorboardX import SummaryWriter
 
 from tampc import cfg
@@ -207,8 +207,9 @@ def get_full_controller_name(pm, ctrl, tsf_name):
 def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics, seed=0):
     d = get_device()
     if prior_class is prior.NNPrior:
-        mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(ds.config).to(device=d)), ds,
-                           name="dynamics_{}".format(tsf_name))
+        mw = TranslationNetworkWrapper(model.DeterministicUser(make.make_sequential_network(ds.config).to(device=d)),
+                                       ds,
+                                       name="dynamics_{}".format(tsf_name))
 
         train_epochs = 500
         pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(
@@ -223,23 +224,6 @@ def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics, seed=0):
 
 
 # --- pushing specific data structures
-class PusherNetwork(model.NetworkModelWrapper):
-    """Network wrapper with some special validation evaluation"""
-
-    def evaluate_validation(self):
-        with torch.no_grad():
-            XUv, _, _ = self.ds.original_validation_set()
-            # try validation loss outside of our training region (by translating input)
-            for dd in translation_generator():
-                XU = torch.cat(
-                    (XUv[:, :2] + torch.tensor(dd, device=XUv.device, dtype=XUv.dtype),
-                     XUv[:, 2:]),
-                    dim=1)
-                if self.ds.preprocessor is not None:
-                    XU = self.ds.preprocessor.transform_x(XU)
-                vloss = self.user.compute_validation_loss(XU, self.Yv, self.ds)
-                self.writer.add_scalar("loss/validation_{}_{}".format(dd[0], dd[1]), vloss.mean(),
-                                       self.step)
 
 
 def constrain_state(state):
@@ -426,7 +410,8 @@ def test_online_model():
 
     prior_name = 'coord_prior'
 
-    mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds, name=prior_name)
+    mw = TranslationNetworkWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
+                                   name=prior_name)
 
     pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=600)
 
@@ -1440,8 +1425,8 @@ class Learn:
                                                   rep_name=rep_name)
         # tsf_name = "none_at_all"
 
-        mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
-                           name="dynamics_{}{}".format(tsf_name, name))
+        mw = TranslationNetworkWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
+                                       name="dynamics_{}{}".format(tsf_name, name))
         mw.learn_model(train_epochs, batch_N=batch_N)
 
 

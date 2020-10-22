@@ -38,7 +38,7 @@ from tampc.dynamics.hybrid_model import OnlineAdapt
 from tampc.controller import online_controller
 from tampc.controller.gating_function import AlwaysSelectNominal
 from tampc import util
-from tampc.util import update_ds_with_transform, no_tsf_preprocessor, UseTsf, get_transform
+from tampc.util import update_ds_with_transform, no_tsf_preprocessor, UseTsf, get_transform, TranslationNetworkWrapper
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
@@ -98,8 +98,9 @@ def get_free_space_env_init(seed=1, **kwargs):
 def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics, seed=0):
     d = get_device()
     if prior_class is prior.NNPrior:
-        mw = PegNetwork(model.DeterministicUser(make.make_sequential_network(ds.config).to(device=d)), ds,
-                        name="pegr_{}_{}".format(tsf_name, seed))
+        mw = TranslationNetworkWrapper(model.DeterministicUser(make.make_sequential_network(ds.config).to(device=d)),
+                                       ds,
+                                       name="pegr_{}_{}".format(tsf_name, seed))
 
         train_epochs = 500
         pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(
@@ -117,7 +118,9 @@ def get_prior(env, use_tsf=UseTsf.COORD, prior_class=prior.NNPrior, rep_name=Non
     if use_tsf in [UseTsf.SKIP, UseTsf.REX_SKIP]:
         prior_class = prior.PassthroughLatentDynamicsPrior
     ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
-    untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False,
+    untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf,
+                                                                            get_pre_invariant_preprocessor,
+                                                                            evaluate_transform=False,
                                                                             rep_name=rep_name)
     pm = get_loaded_prior(prior_class, ds, tsf_name, False)
     return ds, pm
@@ -197,23 +200,6 @@ class OfflineDataCollection:
         plt.show()
 
 
-class PegNetwork(model.NetworkModelWrapper):
-    def evaluate_validation(self):
-        with torch.no_grad():
-            XUv, _, _ = self.ds.original_validation_set()
-            # try validation loss outside of our training region (by translating input)
-            for dd in translation_generator():
-                XU = torch.cat(
-                    (XUv[:, :2] + torch.tensor(dd, device=XUv.device, dtype=XUv.dtype),
-                     XUv[:, 2:]),
-                    dim=1)
-                if self.ds.preprocessor is not None:
-                    XU = self.ds.preprocessor.transform_x(XU)
-                vloss = self.user.compute_validation_loss(XU, self.Yv, self.ds)
-                self.writer.add_scalar("loss/validation_{}_{}".format(dd[0], dd[1]), vloss.mean(),
-                                       self.step)
-
-
 def get_pre_invariant_preprocessor(use_tsf):
     if use_tsf is UseTsf.COORD:
         return preprocess.PytorchTransformer(preprocess.NullSingleTransformer())
@@ -247,8 +233,8 @@ class Learn:
         _, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf, get_pre_invariant_preprocessor, rep_name=rep_name)
         # tsf_name = "none_at_all"
 
-        mw = PegNetwork(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
-                        name="pegr_{}{}".format(tsf_name, name))
+        mw = TranslationNetworkWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
+                                       name="pegr_{}{}".format(tsf_name, name))
         mw.learn_model(train_epochs, batch_N=batch_N)
 
 

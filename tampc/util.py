@@ -1,5 +1,6 @@
 import enum
 
+import torch
 from arm_pytorch_utilities import draw, preprocess
 from arm_pytorch_utilities.optim import get_device
 from tampc.dynamics import model
@@ -17,7 +18,8 @@ import time
 import argparse
 
 from tampc.transform import invariant
-from tampc.transform.block_push import CoordTransform, LearnedTransform
+from tampc.transform.block_push import CoordTransform
+from tampc.transform.invariant import translation_generator, LearnedTransform
 
 logger = logging.getLogger(__name__)
 
@@ -399,3 +401,22 @@ def get_transform(env, ds, use_tsf, override_name=None):
         return LearnedTransform.RexSkip(ds, d, name=override_name or "ral_s1")
     else:
         raise RuntimeError("Unrecgonized transform {}".format(use_tsf))
+
+
+class TranslationNetworkWrapper(model.NetworkModelWrapper):
+    """Network wrapper with some special validation evaluation"""
+
+    def evaluate_validation(self):
+        with torch.no_grad():
+            XUv, _, _ = self.ds.original_validation_set()
+            # try validation loss outside of our training region (by translating input)
+            for dd in translation_generator():
+                XU = torch.cat(
+                    (XUv[:, :2] + torch.tensor(dd, device=XUv.device, dtype=XUv.dtype),
+                     XUv[:, 2:]),
+                    dim=1)
+                if self.ds.preprocessor is not None:
+                    XU = self.ds.preprocessor.transform_x(XU)
+                vloss = self.user.compute_validation_loss(XU, self.Yv, self.ds)
+                self.writer.add_scalar("loss/validation_{}_{}".format(dd[0], dd[1]), vloss.mean(),
+                                       self.step)
