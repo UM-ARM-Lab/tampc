@@ -4,7 +4,6 @@ import typing
 import os
 import time
 import pickle
-import enum
 from datetime import datetime
 import argparse
 import pprint
@@ -20,8 +19,8 @@ from arm_pytorch_utilities import preprocess
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.model import make
 from arm_pytorch_utilities.optim import get_device
-from tampc.transform.block_push import CoordTransform, LearnedTransform, \
-    translation_generator
+from tampc.transform.block_push import CoordTransform, translation_generator
+from tampc.util import update_ds_with_transform, no_tsf_preprocessor, UseTsf, get_transform
 from tensorboardX import SummaryWriter
 
 from tampc import cfg
@@ -169,7 +168,7 @@ def get_free_space_env_init(seed=1, **kwargs):
     return d, env, config, ds
 
 
-def get_pre_invariant_tsf_preprocessor(use_tsf):
+def get_pre_invariant_preprocessor(use_tsf):
     if use_tsf is UseTsf.COORD:
         return preprocess.PytorchTransformer(preprocess.NullSingleTransformer())
     else:
@@ -177,98 +176,13 @@ def get_pre_invariant_tsf_preprocessor(use_tsf):
                                              preprocess.RobustMinMaxScaler(feature_range=[[0, 0, 0], [3, 3, 1.5]]))
 
 
-def update_ds_with_transform(env, ds, use_tsf, evaluate_transform=True, rep_name=None):
-    invariant_tsf = get_transform(env, ds, use_tsf, override_name=rep_name)
-
-    if invariant_tsf:
-        # load transform (only 1 function for learning transform reduces potential for different learning params)
-        if use_tsf is not UseTsf.COORD and not invariant_tsf.load(invariant_tsf.get_last_checkpoint()):
-            raise RuntimeError("Transform {} should be learned before using".format(invariant_tsf.name))
-
-        if evaluate_transform:
-            losses = invariant_tsf.evaluate_validation(None)
-            logger.info("tsf on validation %s",
-                        "  ".join(
-                            ["{} {:.5f}".format(name, loss.mean().cpu().item()) if loss is not None else "" for
-                             name, loss
-                             in zip(invariant_tsf.loss_names(), losses)]))
-
-        components = [get_pre_invariant_tsf_preprocessor(use_tsf), invariant.InvariantTransformer(invariant_tsf)]
-        if use_tsf not in [UseTsf.SKIP, UseTsf.REX_SKIP]:
-            components.append(preprocess.PytorchTransformer(preprocess.RobustMinMaxScaler()))
-        preprocessor = preprocess.Compose(components)
-    else:
-        preprocessor = no_tsf_preprocessor()
-    # update the datasource to use transformed data
-    untransformed_config = ds.update_preprocessor(preprocessor)
-    tsf_name = use_tsf.name
-    if rep_name is not None:
-        tsf_name = "{}_{}".format(tsf_name, rep_name)
-    return untransformed_config, tsf_name, preprocessor
-
-
-def no_tsf_preprocessor():
-    # preprocessor = preprocess.Compose([preprocess.PytorchTransformer(preprocess.AngleToCosSinRepresentation(2),
-    #                                                                  preprocess.NullSingleTransformer()),
-    #                                    preprocess.PytorchTransformer(preprocess.MinMaxScaler())])
-    return preprocess.PytorchTransformer(preprocess.RobustMinMaxScaler())
-
-
-class UseTsf(enum.Enum):
-    NO_TRANSFORM = 0
-    COORD = 1
-    YAW_SELECT = 2
-    LINEAR_ENCODER = 3
-    DECODER = 4
-    DECODER_SINCOS = 5
-    # ones that actually work below
-    FEEDFORWARD_PART = 10
-    DX_TO_V = 11
-    SEP_DEC = 12
-    EXTRACT = 13
-    REX_EXTRACT = 14
-    SKIP = 15
-    REX_SKIP = 16
-
-
-def get_transform(env, ds, use_tsf, override_name=None):
-    # add in invariant transform here
-    d = get_device()
-    if use_tsf is UseTsf.NO_TRANSFORM:
-        return None
-    elif use_tsf is UseTsf.COORD:
-        return CoordTransform.factory(env, ds)
-    elif use_tsf is UseTsf.YAW_SELECT:
-        return LearnedTransform.ParameterizeYawSelect(ds, d, name=override_name or "_s2")
-    elif use_tsf is UseTsf.LINEAR_ENCODER:
-        return LearnedTransform.LinearComboLatentInput(ds, d, name=override_name or "rand_start_s9")
-    elif use_tsf is UseTsf.DECODER:
-        return LearnedTransform.ParameterizeDecoder(ds, d, name=override_name or "_s9")
-    elif use_tsf is UseTsf.DECODER_SINCOS:
-        return LearnedTransform.ParameterizeDecoder(ds, d, name=override_name or "sincos_s2", use_sincos_angle=True)
-    elif use_tsf is UseTsf.FEEDFORWARD_PART:
-        return LearnedTransform.LearnedPartialPassthrough(ds, d, name=override_name or "_s0")
-    elif use_tsf is UseTsf.DX_TO_V:
-        return LearnedTransform.DxToV(ds, d, name=override_name or "_s0")
-    elif use_tsf is UseTsf.SEP_DEC:
-        return LearnedTransform.SeparateDecoder(ds, d, name=override_name or "s1")
-    elif use_tsf is UseTsf.EXTRACT:
-        return LearnedTransform.ExtractState(ds, d, name=override_name or "s1")
-    elif use_tsf is UseTsf.REX_EXTRACT:
-        return LearnedTransform.RexExtract(ds, d, name=override_name or "s1")
-    elif use_tsf is UseTsf.SKIP:
-        return LearnedTransform.SkipLatentInput(ds, d, name=override_name or "ral_s1")
-    elif use_tsf is UseTsf.REX_SKIP:
-        return LearnedTransform.RexSkip(ds, d, name=override_name or "ral_s1")
-    else:
-        raise RuntimeError("Unrecgonized transform {}".format(use_tsf))
-
-
 def get_prior(env, use_tsf=UseTsf.COORD, prior_class=prior.NNPrior, rep_name=None):
     if use_tsf in [UseTsf.SKIP, UseTsf.REX_SKIP]:
         prior_class = prior.PassthroughLatentDynamicsPrior
     ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
-    untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False,
+    untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf,
+                                                                            get_pre_invariant_preprocessor,
+                                                                            evaluate_transform=False,
                                                                             rep_name=rep_name)
     pm = get_loaded_prior(prior_class, ds, tsf_name, False)
 
@@ -426,6 +340,7 @@ class OfflineDataCollection:
         logger.info("initial random seed %d", rand.seed(seed))
 
         untransformed_config, tsf_name, _ = update_ds_with_transform(env, ds, UseTsf.COORD,
+                                                                     get_pre_invariant_preprocessor,
                                                                      evaluate_transform=False)
         pm = get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics)
 
@@ -612,7 +527,8 @@ def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTsf.COORD, relearn_dy
 
     logger.info("initial random seed %d", rand.seed(seed))
 
-    untransformed_config, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
+    untransformed_config, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf, get_pre_invariant_preprocessor,
+                                                                 evaluate_transform=False)
 
     pm = get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics)
 
@@ -1229,7 +1145,8 @@ def evaluate_gating_function(use_tsf=UseTsf.COORD, test_file="pushing/model_sele
     seed = rand.seed(9)
 
     _, env, _, ds = get_free_space_env_init(seed)
-    _, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, evaluate_transform=False)
+    _, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, get_pre_invariant_preprocessor,
+                                                         evaluate_transform=False)
     ds_neg, _ = get_ds(env, test_file, validation_ratio=0.)
     ds_neg.update_preprocessor(preprocessor)
     ds_recovery, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
@@ -1505,7 +1422,7 @@ class Learn:
     @staticmethod
     def invariant(use_tsf=UseTsf.DX_TO_V, seed=1, name="", MAX_EPOCH=3000, BATCH_SIZE=500, resume=False, **kwargs):
         d, env, config, ds = get_free_space_env_init(seed)
-        ds.update_preprocessor(get_pre_invariant_tsf_preprocessor(use_tsf))
+        ds.update_preprocessor(get_pre_invariant_preprocessor(use_tsf))
         invariant_cls = get_transform(env, ds, use_tsf).__class__
         ds_test, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
         # ds_test_2, _ = get_ds(env, "pushing/test_sufficiency_3_failed_test_140891.mat", validation_ratio=0.)
@@ -1519,7 +1436,8 @@ class Learn:
     def model(use_tsf, seed=1, name="", train_epochs=500, batch_N=500, rep_name=None):
         d, env, config, ds = get_free_space_env_init(seed)
 
-        _, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf, rep_name=rep_name)
+        _, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf, get_pre_invariant_preprocessor,
+                                                  rep_name=rep_name)
         # tsf_name = "none_at_all"
 
         mw = PusherNetwork(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
@@ -1593,6 +1511,7 @@ class Visualize:
     def dist_diff_nominal_and_bug_trap(use_tsf, test_file="pushing/predetermined_bug_trap.mat"):
         _, env, _, ds = get_free_space_env_init()
         untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf,
+                                                                                get_pre_invariant_preprocessor,
                                                                                 evaluate_transform=False)
         coord_z_names = ['p', '\\theta', 'f', '\\beta', '$r_x$', '$r_y$'] if use_tsf in (
             UseTsf.COORD, UseTsf.COORD_LEARN_DYNAMICS) else None
@@ -1641,6 +1560,7 @@ class Visualize:
     def dynamics_stochasticity(use_tsf=UseTsf.COORD):
         _, env, _, ds = get_free_space_env_init()
         untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf,
+                                                                                get_pre_invariant_preprocessor,
                                                                                 evaluate_transform=False)
 
         ds_eval, _ = get_ds(env, "pushing/fixed_p_and_beta.mat", validation_ratio=0.)

@@ -1,8 +1,6 @@
-import enum
 import torch
 import pickle
 import time
-import math
 import pybullet as p
 import numpy as np
 import matplotlib.pyplot as plt
@@ -30,10 +28,9 @@ from arm_pytorch_utilities import preprocess
 from tampc import cfg
 from tampc.env import peg_in_hole_real
 from tampc.controller import controller
-from tampc.transform.peg_in_hole import CoordTransform, translation_generator
-from tampc.transform.block_push import LearnedTransform
+from tampc.transform.peg_in_hole import translation_generator
 from tampc.transform import invariant
-from tampc.dynamics import online_model, model, prior, hybrid_model
+from tampc.dynamics import model, prior, hybrid_model
 
 from arm_pytorch_utilities.model import make
 
@@ -41,6 +38,7 @@ from tampc.dynamics.hybrid_model import OnlineAdapt
 from tampc.controller import online_controller
 from tampc.controller.gating_function import AlwaysSelectNominal
 from tampc import util
+from tampc.util import update_ds_with_transform, no_tsf_preprocessor, UseTsf, get_transform
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
@@ -95,70 +93,6 @@ def get_free_space_env_init(seed=1, **kwargs):
 
     logger.info("initial random seed %d", rand.seed(seed))
     return d, env, config, ds
-
-
-class UseTsf(enum.Enum):
-    NO_TRANSFORM = 0
-    COORD = 1
-    SEP_DEC = 12
-    EXTRACT = 13
-    REX_EXTRACT = 14
-    SKIP = 15
-    REX_SKIP = 16
-
-
-def get_transform(env, ds, use_tsf, override_name=None):
-    # add in invariant transform here
-    d = get_device()
-    if use_tsf is UseTsf.NO_TRANSFORM:
-        return None
-    elif use_tsf is UseTsf.COORD:
-        return CoordTransform.factory(env, ds)
-    elif use_tsf is UseTsf.SEP_DEC:
-        return LearnedTransform.SeparateDecoder(ds, d, nz=5, nv=5, name=override_name or "peg_s0")
-    elif use_tsf is UseTsf.REX_EXTRACT:
-        return LearnedTransform.RexExtract(ds, d, nz=5, nv=5, name=override_name or "peg_s0")
-    elif use_tsf is UseTsf.SKIP:
-        return LearnedTransform.SkipLatentInput(ds, d, name=override_name or "peg_s0")
-    elif use_tsf is UseTsf.REX_SKIP:
-        return LearnedTransform.RexSkip(ds, d, name=override_name or "peg_s0")
-    else:
-        raise RuntimeError("Unrecgonized transform {}".format(use_tsf))
-
-
-# TODO move these shared script methods into shared module
-def update_ds_with_transform(env, ds, use_tsf, evaluate_transform=True, rep_name=None):
-    invariant_tsf = get_transform(env, ds, use_tsf, override_name=rep_name)
-
-    if invariant_tsf:
-        # load transform (only 1 function for learning transform reduces potential for different learning params)
-        if use_tsf is not UseTsf.COORD and not invariant_tsf.load(invariant_tsf.get_last_checkpoint()):
-            raise RuntimeError("Transform {} should be learned before using".format(invariant_tsf.name))
-
-        if evaluate_transform:
-            losses = invariant_tsf.evaluate_validation(None)
-            logger.info("tsf on validation %s",
-                        "  ".join(
-                            ["{} {:.5f}".format(name, loss.mean().cpu().item()) if loss is not None else "" for
-                             name, loss
-                             in zip(invariant_tsf.loss_names(), losses)]))
-
-        components = [get_pre_invariant_tsf_preprocessor(use_tsf), invariant.InvariantTransformer(invariant_tsf)]
-        if use_tsf not in [UseTsf.SKIP, UseTsf.REX_SKIP]:
-            components.append(preprocess.PytorchTransformer(preprocess.RobustMinMaxScaler()))
-        preprocessor = preprocess.Compose(components)
-    else:
-        preprocessor = no_tsf_preprocessor()
-    # update the datasource to use transformed data
-    untransformed_config = ds.update_preprocessor(preprocessor)
-    tsf_name = use_tsf.name
-    if rep_name is not None:
-        tsf_name = "{}_{}".format(tsf_name, rep_name)
-    return untransformed_config, tsf_name, preprocessor
-
-
-def no_tsf_preprocessor():
-    return preprocess.PytorchTransformer(preprocess.RobustMinMaxScaler())
 
 
 def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics, seed=0):
@@ -280,7 +214,7 @@ class PegNetwork(model.NetworkModelWrapper):
                                        self.step)
 
 
-def get_pre_invariant_tsf_preprocessor(use_tsf):
+def get_pre_invariant_preprocessor(use_tsf):
     if use_tsf is UseTsf.COORD:
         return preprocess.PytorchTransformer(preprocess.NullSingleTransformer())
     elif use_tsf in [UseTsf.SKIP, UseTsf.REX_SKIP]:
@@ -298,7 +232,7 @@ class Learn:
                   **kwargs):
         d, env, config, ds = get_free_space_env_init(seed)
 
-        ds.update_preprocessor(get_pre_invariant_tsf_preprocessor(use_tsf))
+        ds.update_preprocessor(get_pre_invariant_preprocessor(use_tsf))
         invariant_cls = get_transform(env, ds, use_tsf).__class__
         common_opts = {'name': "{}_s{}".format(name, seed)}
         invariant_tsf = invariant_cls(ds, d, **common_opts, **kwargs)
@@ -310,7 +244,7 @@ class Learn:
     def model(use_tsf, seed=1, name="", train_epochs=500, batch_N=500, rep_name=None):
         d, env, config, ds = get_free_space_env_init(seed)
 
-        _, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf, rep_name=rep_name)
+        _, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf, get_pre_invariant_preprocessor, rep_name=rep_name)
         # tsf_name = "none_at_all"
 
         mw = PegNetwork(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
@@ -777,7 +711,7 @@ if __name__ == "__main__":
         use_tsf = UseTsf.SKIP
         rep_name = "pegr_s0"
         d, env, config, ds = get_free_space_env_init(0)
-        ds.update_preprocessor(get_pre_invariant_tsf_preprocessor(use_tsf=use_tsf))
+        ds.update_preprocessor(get_pre_invariant_preprocessor(use_tsf=use_tsf))
         xu, y, trial = ds.training_set(original=True)
         ds, pm = get_prior(env, use_tsf, rep_name=rep_name)
         yhat = pm.dyn_net.predict(xu, get_next_state=False, return_in_orig_space=True)

@@ -1,4 +1,7 @@
-from arm_pytorch_utilities import draw
+import enum
+
+from arm_pytorch_utilities import draw, preprocess
+from arm_pytorch_utilities.optim import get_device
 from tampc.dynamics import model
 from tampc import cfg
 
@@ -12,6 +15,9 @@ import pickle
 import re
 import time
 import argparse
+
+from tampc.transform import invariant
+from tampc.transform.block_push import CoordTransform, LearnedTransform
 
 logger = logging.getLogger(__name__)
 
@@ -308,3 +314,88 @@ def param_type(s):
         return {name: value}
     except:
         raise argparse.ArgumentTypeError("Parameters must be given as name=scalar space-separated pairs")
+
+
+def update_ds_with_transform(env, ds, use_tsf, get_pre_invariant_preprocessor, evaluate_transform=True,
+                             rep_name=None):
+    invariant_tsf = get_transform(env, ds, use_tsf, override_name=rep_name)
+
+    if invariant_tsf:
+        # load transform (only 1 function for learning transform reduces potential for different learning params)
+        if use_tsf is not UseTsf.COORD and not invariant_tsf.load(invariant_tsf.get_last_checkpoint()):
+            raise RuntimeError("Transform {} should be learned before using".format(invariant_tsf.name))
+
+        if evaluate_transform:
+            losses = invariant_tsf.evaluate_validation(None)
+            logger.info("tsf on validation %s",
+                        "  ".join(
+                            ["{} {:.5f}".format(name, loss.mean().cpu().item()) if loss is not None else "" for
+                             name, loss
+                             in zip(invariant_tsf.loss_names(), losses)]))
+
+        components = [get_pre_invariant_preprocessor(use_tsf), invariant.InvariantTransformer(invariant_tsf)]
+        if use_tsf not in [UseTsf.SKIP, UseTsf.REX_SKIP]:
+            components.append(preprocess.PytorchTransformer(preprocess.RobustMinMaxScaler()))
+        preprocessor = preprocess.Compose(components)
+    else:
+        preprocessor = no_tsf_preprocessor()
+    # update the datasource to use transformed data
+    untransformed_config = ds.update_preprocessor(preprocessor)
+    tsf_name = use_tsf.name
+    if rep_name is not None:
+        tsf_name = "{}_{}".format(tsf_name, rep_name)
+    return untransformed_config, tsf_name, preprocessor
+
+
+def no_tsf_preprocessor():
+    return preprocess.PytorchTransformer(preprocess.RobustMinMaxScaler())
+
+
+class UseTsf(enum.Enum):
+    NO_TRANSFORM = 0
+    COORD = 1
+    YAW_SELECT = 2
+    LINEAR_ENCODER = 3
+    DECODER = 4
+    DECODER_SINCOS = 5
+    # ones that actually work below
+    FEEDFORWARD_PART = 10
+    DX_TO_V = 11
+    SEP_DEC = 12
+    EXTRACT = 13
+    REX_EXTRACT = 14
+    SKIP = 15
+    REX_SKIP = 16
+
+
+def get_transform(env, ds, use_tsf, override_name=None):
+    # add in invariant transform here
+    d = get_device()
+    if use_tsf is UseTsf.NO_TRANSFORM:
+        return None
+    elif use_tsf is UseTsf.COORD:
+        return CoordTransform.factory(env, ds)
+    elif use_tsf is UseTsf.YAW_SELECT:
+        return LearnedTransform.ParameterizeYawSelect(ds, d, name=override_name or "_s2")
+    elif use_tsf is UseTsf.LINEAR_ENCODER:
+        return LearnedTransform.LinearComboLatentInput(ds, d, name=override_name or "rand_start_s9")
+    elif use_tsf is UseTsf.DECODER:
+        return LearnedTransform.ParameterizeDecoder(ds, d, name=override_name or "_s9")
+    elif use_tsf is UseTsf.DECODER_SINCOS:
+        return LearnedTransform.ParameterizeDecoder(ds, d, name=override_name or "sincos_s2", use_sincos_angle=True)
+    elif use_tsf is UseTsf.FEEDFORWARD_PART:
+        return LearnedTransform.LearnedPartialPassthrough(ds, d, name=override_name or "_s0")
+    elif use_tsf is UseTsf.DX_TO_V:
+        return LearnedTransform.DxToV(ds, d, name=override_name or "_s0")
+    elif use_tsf is UseTsf.SEP_DEC:
+        return LearnedTransform.SeparateDecoder(ds, d, name=override_name or "s1")
+    elif use_tsf is UseTsf.EXTRACT:
+        return LearnedTransform.ExtractState(ds, d, name=override_name or "s1")
+    elif use_tsf is UseTsf.REX_EXTRACT:
+        return LearnedTransform.RexExtract(ds, d, name=override_name or "s1")
+    elif use_tsf is UseTsf.SKIP:
+        return LearnedTransform.SkipLatentInput(ds, d, name=override_name or "ral_s1")
+    elif use_tsf is UseTsf.REX_SKIP:
+        return LearnedTransform.RexSkip(ds, d, name=override_name or "ral_s1")
+    else:
+        raise RuntimeError("Unrecgonized transform {}".format(use_tsf))
