@@ -20,7 +20,8 @@ from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.model import make
 from arm_pytorch_utilities.optim import get_device
 from tampc.transform.block_push import CoordTransform
-from tampc.util import update_ds_with_transform, no_tsf_preprocessor, UseTsf, get_transform, TranslationNetworkWrapper
+from tampc.util import update_ds_with_transform, no_tsf_preprocessor, UseTsf, get_transform, TranslationNetworkWrapper, \
+    EnvGetter
 from tensorboardX import SummaryWriter
 
 from tampc import cfg
@@ -47,146 +48,111 @@ logger = logging.getLogger(__name__)
 
 REACTION_IN_STATE = True
 
-# have to be set after selecting an environment
-env_dir = None
-
 
 # --- SHARED GETTERS
-def get_data_dir(level=0):
-    return '{}{}.mat'.format(env_dir, level)
+class BlockPushGetter(EnvGetter):
+    @staticmethod
+    def dynamics_prefix() -> str:
+        return "dynamics"
 
+    @staticmethod
+    def ds(env, data_dir, **kwargs):
+        d = get_device()
+        config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
+        ds = block_push.PushDataSource(env, data_dir=data_dir, config=config, device=d, **kwargs)
+        return ds
 
-def get_env(mode=p.GUI, level=0, log_video=False):
-    global env_dir
-    init_block_pos = [-0.8, 0.12 - 0.025]
-    init_block_yaw = 0
-    init_pusher = 0
-    goal_pos = [0.1, 0.5]
-    if level is 1:
-        init_block_pos = [-0.8, 0.23]
-        init_block_yaw = -math.pi / 5
-        goal_pos = [0.85, -0.35]
-    if level is 2:
-        translation = 10
-        init_block_pos = [-0.8 + translation, 0.23 + translation]
-        init_block_yaw = -math.pi / 5
-        goal_pos = [0.85 + translation, -0.35 + translation]
-    elif level is 3:
-        init_block_pos = [0., 0.6]
-        init_block_yaw = -math.pi / 4
-        goal_pos = [-0.2, -0.45]
-    elif level is 4:
-        init_block_pos = [-0.4, 0.23]
-        init_block_yaw = -math.pi / 5
-        goal_pos = [0.25, -0.65]
-    elif level is 5:
-        init_block_pos = [-0.4, 0.23]
-        init_block_yaw = -math.pi / 5.2
-        goal_pos = [0.55, -0.65]
-    elif level is 6:
-        init_block_pos = [0., 0.6]
-        init_block_yaw = -math.pi / 2.2
-        goal_pos = [-0.2, -0.45]
-    env_opts = {
-        'mode': mode,
-        'goal': goal_pos,
-        'init_pusher': init_pusher,
-        'log_video': log_video,
-        'init_block': init_block_pos,
-        'init_yaw': init_block_yaw,
-        'environment_level': level,
-    }
-    # env = interactive_block_pushing.PushAgainstWallEnv(**env_opts)
-    # env_dir = 'pushing/no_restriction'
-    # env = block_push.PushAgainstWallStickyEnv(**env_opts)
-    # env_dir = 'pushing/sticky'
-    # if REACTION_IN_STATE:
-    #     env = block_push.PushWithForceDirectlyReactionInStateEnv(**env_opts)
-    # else:
-    #     env = block_push.PushWithForceDirectlyEnv(**env_opts)
-    # env_dir = 'pushing/direct_force_mini_step'
-    env = block_push.PushPhysicallyAnyAlongEnv(**env_opts)
-    env_dir = 'pushing/physical'
-    # env = block_push.FixedPushDistPhysicalEnv(**env_opts)
-    # env_dir = 'pushing/fixed_mag_physical'
-    return env
+    @staticmethod
+    def pre_invariant_preprocessor(use_tsf: UseTsf) -> preprocess.Transformer:
+        if use_tsf is UseTsf.COORD:
+            return preprocess.PytorchTransformer(preprocess.NullSingleTransformer())
+        else:
+            return preprocess.PytorchTransformer(preprocess.NullSingleTransformer(),
+                                                 preprocess.RobustMinMaxScaler(feature_range=[[0, 0, 0], [3, 3, 1.5]]))
 
+    @staticmethod
+    def controller_options(env) -> typing.Tuple[dict, dict]:
+        d = get_device()
+        u_min, u_max = env.get_control_bounds()
+        Q = torch.tensor(env.state_cost(), dtype=torch.double)
+        R = 0.01
+        sigma = [0.2, 0.4, 0.7]
+        noise_mu = [0, 0.1, 0]
+        u_init = [0, 0.5, 0]
+        # tune this so that we figure out to make u-turns
+        sigma = torch.tensor(sigma, dtype=torch.double, device=d)
+        common_wrapper_opts = {
+            'Q': Q,
+            'R': R,
+            'R_env': env.control_cost(),
+            'recovery_scale': 2000,
+            'u_min': u_min,
+            'u_max': u_max,
+            'compare_to_goal': env.state_difference,
+            'state_dist': env.state_distance,
+            'u_similarity': env.control_similarity,
+            'device': d,
+            'terminal_cost_multiplier': 50,
+            'abs_unrecognized_threshold': 10,
+            # 'nominal_max_velocity':  0.02,
+        }
+        mpc_opts = {
+            'num_samples': 500,
+            'noise_sigma': torch.diag(sigma),
+            'noise_mu': torch.tensor(noise_mu, dtype=torch.double, device=d),
+            'lambda_': 1e-2,
+            'horizon': 40,
+            'u_init': torch.tensor(u_init, dtype=torch.double, device=d),
+            'sample_null_action': False,
+            'step_dependent_dynamics': True,
+            'rollout_samples': 10,
+            'rollout_var_cost': 0,  # penalize variance of trajectory cost across samples
+        }
+        return common_wrapper_opts, mpc_opts
 
-def get_controller_options(env):
-    d = get_device()
-    u_min, u_max = env.get_control_bounds()
-    Q = torch.tensor(env.state_cost(), dtype=torch.double)
-    R = 0.01
-    sigma = [0.2, 0.4, 0.7]
-    noise_mu = [0, 0.1, 0]
-    u_init = [0, 0.5, 0]
-    # tune this so that we figure out to make u-turns
-    sigma = torch.tensor(sigma, dtype=torch.double, device=d)
-    common_wrapper_opts = {
-        'Q': Q,
-        'R': R,
-        'R_env': env.control_cost(),
-        'recovery_scale': 2000,
-        'u_min': u_min,
-        'u_max': u_max,
-        'compare_to_goal': env.state_difference,
-        'state_dist': env.state_distance,
-        'u_similarity': env.control_similarity,
-        'device': d,
-        'terminal_cost_multiplier': 50,
-        'abs_unrecognized_threshold': 10,
-        # 'nominal_max_velocity':  0.02,
-    }
-    mpc_opts = {
-        'num_samples': 500,
-        'noise_sigma': torch.diag(sigma),
-        'noise_mu': torch.tensor(noise_mu, dtype=torch.double, device=d),
-        'lambda_': 1e-2,
-        'horizon': 40,
-        'u_init': torch.tensor(u_init, dtype=torch.double, device=d),
-        'sample_null_action': False,
-        'step_dependent_dynamics': True,
-        'rollout_samples': 10,
-        'rollout_var_cost': 0,  # penalize variance of trajectory cost across samples
-    }
-    return common_wrapper_opts, mpc_opts
-
-
-def get_ds(env, data_dir, **kwargs):
-    d = get_device()
-    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-    ds = block_push.PushDataSource(env, data_dir=data_dir, config=config, device=d, **kwargs)
-    return ds, config
-
-
-def get_free_space_env_init(seed=1, **kwargs):
-    d = get_device()
-    env = get_env(kwargs.pop('mode', p.DIRECT), **kwargs)
-    ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
-
-    logger.info("initial random seed %d", rand.seed(seed))
-    return d, env, config, ds
-
-
-def get_pre_invariant_preprocessor(use_tsf):
-    if use_tsf is UseTsf.COORD:
-        return preprocess.PytorchTransformer(preprocess.NullSingleTransformer())
-    else:
-        return preprocess.PytorchTransformer(preprocess.NullSingleTransformer(),
-                                             preprocess.RobustMinMaxScaler(feature_range=[[0, 0, 0], [3, 3, 1.5]]))
-
-
-def get_prior(env, use_tsf=UseTsf.COORD, prior_class=prior.NNPrior, rep_name=None):
-    if use_tsf in [UseTsf.SKIP, UseTsf.REX_SKIP]:
-        prior_class = prior.PassthroughLatentDynamicsPrior
-    ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
-    untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf,
-                                                                            get_pre_invariant_preprocessor,
-                                                                            evaluate_transform=False,
-                                                                            rep_name=rep_name)
-    pm = get_loaded_prior(prior_class, ds, tsf_name, False)
-
-    return ds, pm
+    @classmethod
+    def env(cls, mode=p.GUI, level=0, log_video=False):
+        init_block_pos = [-0.8, 0.12 - 0.025]
+        init_block_yaw = 0
+        init_pusher = 0
+        goal_pos = [0.1, 0.5]
+        if level is 1:
+            init_block_pos = [-0.8, 0.23]
+            init_block_yaw = -math.pi / 5
+            goal_pos = [0.85, -0.35]
+        if level is 2:
+            translation = 10
+            init_block_pos = [-0.8 + translation, 0.23 + translation]
+            init_block_yaw = -math.pi / 5
+            goal_pos = [0.85 + translation, -0.35 + translation]
+        elif level is 3:
+            init_block_pos = [0., 0.6]
+            init_block_yaw = -math.pi / 4
+            goal_pos = [-0.2, -0.45]
+        elif level is 4:
+            init_block_pos = [-0.4, 0.23]
+            init_block_yaw = -math.pi / 5
+            goal_pos = [0.25, -0.65]
+        elif level is 5:
+            init_block_pos = [-0.4, 0.23]
+            init_block_yaw = -math.pi / 5.2
+            goal_pos = [0.55, -0.65]
+        elif level is 6:
+            init_block_pos = [0., 0.6]
+            init_block_yaw = -math.pi / 2.2
+            goal_pos = [-0.2, -0.45]
+        env_opts = {
+            'mode': mode,
+            'goal': goal_pos,
+            'init_pusher': init_pusher,
+            'log_video': log_video,
+            'init_block': init_block_pos,
+            'init_yaw': init_block_yaw,
+            'environment_level': level,
+        }
+        env = block_push.PushPhysicallyAnyAlongEnv(**env_opts)
+        cls.env_dir = 'pushing/physical'
+        return env
 
 
 def get_local_model(env, pm, ds_local, d=get_device(), **kwargs):
@@ -204,28 +170,7 @@ def get_full_controller_name(pm, ctrl, tsf_name):
     return name
 
 
-def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics, seed=0):
-    d = get_device()
-    if prior_class is prior.NNPrior:
-        mw = TranslationNetworkWrapper(model.DeterministicUser(make.make_sequential_network(ds.config).to(device=d)),
-                                       ds,
-                                       name="dynamics_{}".format(tsf_name))
-
-        train_epochs = 500
-        pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(
-            sort_by_time=False), train_epochs=train_epochs)
-    elif prior_class is prior.PassthroughLatentDynamicsPrior:
-        pm = prior.PassthroughLatentDynamicsPrior(ds)
-    elif prior_class is prior.NoPrior:
-        pm = prior.NoPrior()
-    else:
-        pm = prior_class.from_data(ds)
-    return pm
-
-
 # --- pushing specific data structures
-
-
 def constrain_state(state):
     # yaw gets normalized
     state[:, 2] = math_utils.angle_normalize(state[:, 2])
@@ -262,11 +207,11 @@ class OfflineDataCollection:
 
     @staticmethod
     def freespace(seed=4, trials=20, trial_length=40, force_gui=False):
-        env = get_env(p.GUI if force_gui else p.DIRECT, 0)
+        env = BlockPushGetter.env(p.GUI if force_gui else p.DIRECT, 0)
         u_min, u_max = env.get_control_bounds()
         ctrl = controller.FullRandomController(env.nu, u_min, u_max)
         # use mode p.GUI to see what the trials look like
-        save_dir = '{}{}'.format(env_dir, 0)
+        save_dir = '{}{}'.format(BlockPushGetter.env_dir, 0)
         sim = block_push.InteractivePush(env, ctrl, num_frames=trial_length, plot=False, save=True,
                                          stop_when_done=False, save_dir=save_dir)
         rand.seed(seed)
@@ -288,7 +233,7 @@ class OfflineDataCollection:
     @staticmethod
     def push_against_wall_recovery():
         # get data in and around the bug trap we want to avoid in the future
-        env = get_env(p.GUI, 1, log_video=True)
+        env = BlockPushGetter.env(p.GUI, 1, log_video=True)
         init_block_pos = [-0.6, 0.15]
         init_block_yaw = -1.2 * math.pi / 4
         env.set_task_config(init_block=init_block_pos, init_yaw=init_block_yaw)
@@ -318,15 +263,15 @@ class OfflineDataCollection:
     def model_selector_evaluation(seed=5, level=1, relearn_dynamics=False,
                                   prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior):
         # load a reasonable model
-        env = get_env(p.GUI, level=level, log_video=True)
-        ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
+        env = BlockPushGetter.env(p.GUI, level=level, log_video=True)
+        ds = BlockPushGetter.ds(env, BlockPushGetter.data_dir(0), validation_ratio=0.1)
 
         logger.info("initial random seed %d", rand.seed(seed))
 
         untransformed_config, tsf_name, _ = update_ds_with_transform(env, ds, UseTsf.COORD,
-                                                                     get_pre_invariant_preprocessor,
+                                                                     BlockPushGetter.pre_invariant_preprocessor,
                                                                      evaluate_transform=False)
-        pm = get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics)
+        pm = BlockPushGetter.loaded_prior(prior_class, ds, tsf_name, relearn_dynamics)
 
         u = []
         for _ in range(10):
@@ -347,8 +292,8 @@ def verify_coordinate_transform(seed=6, use_tsf=UseTsf.COORD):
     # comparison tolerance
     tol = 2e-4
     name = 'same_action_repeated'
-    env = get_env(p.DIRECT, level=0)
-    ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
+    env = BlockPushGetter.env(p.DIRECT, level=0)
+    ds = BlockPushGetter.ds(env, BlockPushGetter.data_dir(0), validation_ratio=0.1)
 
     tsf = get_transform(env, ds, use_tsf=use_tsf)
     # tsf = invariant.InvariantTransformer(tsf)
@@ -368,7 +313,7 @@ def verify_coordinate_transform(seed=6, use_tsf=UseTsf.COORD):
     # assuming we have translational and rotational invariance, doing the same action should result in same delta
     while True:
         try:
-            ds_test, config = get_ds(env, 'pushing/{}.mat'.format(name), validation_ratio=0.)
+            ds_test = BlockPushGetter.ds(env, 'pushing/{}.mat'.format(name), validation_ratio=0.)
         except IOError:
             # collect data if we don't have any yet
             seed = rand.seed(seed)
@@ -395,8 +340,8 @@ def verify_coordinate_transform(seed=6, use_tsf=UseTsf.COORD):
 def test_online_model():
     seed = 1
     d = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    env = get_env(p.DIRECT, level=0)
-    ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
+    env = BlockPushGetter.env(p.DIRECT, level=0)
+    ds = BlockPushGetter.ds(env, BlockPushGetter.data_dir(0), validation_ratio=0.1)
 
     logger.info("initial random seed %d", rand.seed(seed))
 
@@ -410,8 +355,8 @@ def test_online_model():
 
     prior_name = 'coord_prior'
 
-    mw = TranslationNetworkWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
-                                   name=prior_name)
+    mw = TranslationNetworkWrapper(
+        model.DeterministicUser(make.make_sequential_network(ds.original_config()).to(device=d)), ds, name=prior_name)
 
     pm = prior.NNPrior.from_data(mw, checkpoint=mw.get_last_checkpoint(), train_epochs=600)
 
@@ -504,18 +449,19 @@ def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTsf.COORD, relearn_dy
                                prior_class: typing.Type[prior.OnlineDynamicsPrior] = prior.NNPrior, **kwargs):
     d = get_device()
     if plot_model_error:
-        env = get_env(p.DIRECT, level=level)
+        env = BlockPushGetter.env(p.DIRECT, level=level)
     else:
-        env = get_env(p.GUI, level=level, log_video=True)
+        env = BlockPushGetter.env(p.GUI, level=level, log_video=True)
 
-    ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
+    ds = BlockPushGetter.ds(env, BlockPushGetter.data_dir(0), validation_ratio=0.1)
 
     logger.info("initial random seed %d", rand.seed(seed))
 
-    untransformed_config, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf, get_pre_invariant_preprocessor,
+    untransformed_config, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf,
+                                                                 BlockPushGetter.pre_invariant_preprocessor,
                                                                  evaluate_transform=False)
 
-    pm = get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics)
+    pm = BlockPushGetter.loaded_prior(prior_class, ds, tsf_name, relearn_dynamics)
 
     # test that the model predictions are relatively symmetric for positive and negative along
     if isinstance(env, block_push.PushAgainstWallStickyEnv) and isinstance(pm,
@@ -561,6 +507,7 @@ def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTsf.COORD, relearn_dy
         # relative error (compared to the mean magnitude)
         Er = E / np.mean(np.abs(Y), axis=0)
         ylabels = ['d' + label for label in env.state_names()]
+        config = ds.original_config()
         f, ax = plt.subplots(config.ny, 3, constrained_layout=True)
         for i in range(config.ny):
             ax[i, 0].plot(Y[:, i])
@@ -572,7 +519,7 @@ def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTsf.COORD, relearn_dy
         plt.show()
         return
 
-    common_wrapper_opts, mpc_opts = get_controller_options(env)
+    common_wrapper_opts, mpc_opts = BlockPushGetter.controller_options(env)
     nominal_kwargs = {"online_adapt": online_adapt, }
     nominal_kwargs.update(kwargs)
     hybrid_dynamics = hybrid_model.HybridDynamicsModel([ds], pm, env.state_difference, [use_tsf.name],
@@ -607,16 +554,16 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
                                                    gating=None,
                                                    use_tsf=UseTsf.COORD, test_traj=None, **kwargs):
     if plot_model_eval:
-        env = get_env(p.DIRECT)
+        env = BlockPushGetter.env(p.DIRECT)
     else:
-        env = get_env(p.GUI, level=level, log_video=True)
+        env = BlockPushGetter.env(p.GUI, level=level, log_video=True)
 
     logger.info("initial random seed %d", rand.seed(seed))
 
-    ds, pm = get_prior(env, use_tsf)
+    ds, pm = BlockPushGetter.prior(env, use_tsf)
 
     # data from predetermined policy for getting into and out of bug trap
-    ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
+    ds_wall = BlockPushGetter.ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
     ds_wall.update_preprocessor(ds.preprocessor)
 
     dss = [ds, ds_wall]
@@ -641,7 +588,8 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
     if plot_model_eval:
         if not test_traj:
             test_traj = ("pushing/predetermined_bug_trap.mat", "pushing/physical0.mat")
-        ds_test, config = get_ds(env, test_traj, validation_ratio=0.)
+        ds_test = BlockPushGetter.ds(env, test_traj, validation_ratio=0.)
+        config = ds_test.original_config()
         ds_test.update_preprocessor(ds.preprocessor)
         test_slice = slice(0, 150)
 
@@ -807,7 +755,7 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
         env.close()
         return
 
-    common_wrapper_opts, mpc_opts = get_controller_options(env)
+    common_wrapper_opts, mpc_opts = BlockPushGetter.controller_options(env)
     ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
     ctrl.set_goal(env.goal)
@@ -845,20 +793,20 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
     if adaptive_control_baseline:
         use_tsf = UseTsf.NO_TRANSFORM
 
-    env = get_env(p.GUI, level=level, log_video=True)
+    env = BlockPushGetter.env(p.GUI, level=level, log_video=True)
     logger.info("initial random seed %d", rand.seed(seed))
 
-    ds, pm = get_prior(env, use_tsf, rep_name=rep_name)
+    ds, pm = BlockPushGetter.prior(env, use_tsf, rep_name=rep_name)
     dss = [ds]
     demo_trajs = []
     if use_demo:
         demo_trajs = ["pushing/predetermined_bug_trap.mat"]
     for demo in demo_trajs:
-        ds_local, config = get_ds(env, demo, validation_ratio=0.)
+        ds_local = BlockPushGetter.ds(env, demo, validation_ratio=0.)
         ds_local.update_preprocessor(ds.preprocessor)
         dss.append(ds_local)
 
-    tampc_opts, mpc_opts = get_controller_options(env)
+    tampc_opts, mpc_opts = BlockPushGetter.controller_options(env)
     if override_tampc_params is not None:
         tampc_opts.update(override_tampc_params)
     if override_mpc_params is not None:
@@ -1129,19 +1077,19 @@ def evaluate_gating_function(use_tsf=UseTsf.COORD, test_file="pushing/model_sele
     num_pos_samples = 100  # start with balanced data
     seed = rand.seed(9)
 
-    _, env, _, ds = get_free_space_env_init(seed)
-    _, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, get_pre_invariant_preprocessor,
+    _, env, _, ds = BlockPushGetter.free_space_env_init(seed)
+    _, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf, BlockPushGetter.pre_invariant_preprocessor,
                                                          evaluate_transform=False)
-    ds_neg, _ = get_ds(env, test_file, validation_ratio=0.)
+    ds_neg = BlockPushGetter.ds(env, test_file, validation_ratio=0.)
     ds_neg.update_preprocessor(preprocessor)
-    ds_recovery, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
+    ds_recovery = BlockPushGetter.ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
     ds_recovery.update_preprocessor(preprocessor)
 
     rand.seed(seed)
     gating = get_gating([ds, ds_recovery], tsf_name)
 
     # get evaluation data by getting definite positive samples from the freespace dataset
-    pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)
+    pm = BlockPushGetter.loaded_prior(prior.NNPrior, ds, tsf_name, False)
     # get freespace model error as well
     XUf, Yf, infof = ds.training_set(original=True)
     Yhatf = pm.dyn_net.predict(XUf, get_next_state=False)
@@ -1269,12 +1217,12 @@ def evaluate_gating_function(use_tsf=UseTsf.COORD, test_file="pushing/model_sele
 def evaluate_ctrl_sampler(eval_file, eval_i, seed=1, use_tsf=UseTsf.COORD,
                           do_rollout_best_action=True, assume_all_nonnominal_dynamics_are_traps=False,
                           rollout_prev_xu=True, manual_control=None, step_N_steps=80, **kwargs):
-    env = get_env(p.GUI, level=1, log_video=do_rollout_best_action)
+    env = BlockPushGetter.env(p.GUI, level=1, log_video=do_rollout_best_action)
     env.draw_user_text("eval {} seed {}".format(eval_file, seed), 14, left_offset=-1.5)
     env.draw_user_text("eval index {}".format(eval_i), 13, left_offset=-1.5)
     logger.info("initial random seed %d", rand.seed(seed))
 
-    ds, pm = get_prior(env, use_tsf)
+    ds, pm = BlockPushGetter.prior(env, use_tsf)
     dss = [ds]
 
     hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, [use_tsf.name],
@@ -1283,7 +1231,7 @@ def evaluate_ctrl_sampler(eval_file, eval_i, seed=1, use_tsf=UseTsf.COORD,
                                                        local_model_kwargs=kwargs)
     gating = hybrid_dynamics.get_gating()
 
-    common_wrapper_opts, mpc_opts = get_controller_options(env)
+    common_wrapper_opts, mpc_opts = BlockPushGetter.controller_options(env)
     ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
                                         autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE,
                                         reuse_escape_as_demonstration=False,
@@ -1292,7 +1240,7 @@ def evaluate_ctrl_sampler(eval_file, eval_i, seed=1, use_tsf=UseTsf.COORD,
                                         **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
     ctrl.set_goal(env.goal)
 
-    ds_eval, _ = get_ds(env, eval_file, validation_ratio=0.)
+    ds_eval = BlockPushGetter.ds(env, eval_file, validation_ratio=0.)
     ds_eval.update_preprocessor(ds.preprocessor)
 
     # evaluate on a non-recovery dataset to see if rolling out the actions from the recovery set is helpful
@@ -1406,11 +1354,11 @@ def evaluate_ctrl_sampler(eval_file, eval_i, seed=1, use_tsf=UseTsf.COORD,
 class Learn:
     @staticmethod
     def invariant(use_tsf=UseTsf.DX_TO_V, seed=1, name="", MAX_EPOCH=3000, BATCH_SIZE=500, resume=False, **kwargs):
-        d, env, config, ds = get_free_space_env_init(seed)
-        ds.update_preprocessor(get_pre_invariant_preprocessor(use_tsf))
+        d, env, config, ds = BlockPushGetter.free_space_env_init(seed)
+        ds.update_preprocessor(BlockPushGetter.pre_invariant_preprocessor(use_tsf))
         invariant_cls = get_transform(env, ds, use_tsf).__class__
-        ds_test, _ = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
-        # ds_test_2, _ = get_ds(env, "pushing/test_sufficiency_3_failed_test_140891.mat", validation_ratio=0.)
+        ds_test = BlockPushGetter.ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
+        # ds_test_2 = BlockPushGetter.ds(env, "pushing/test_sufficiency_3_failed_test_140891.mat", validation_ratio=0.)
         common_opts = {'name': "{}_s{}".format(name, seed), 'ds_test': [ds_test]}
         invariant_tsf = invariant_cls(ds, d, **common_opts, **kwargs)
         if resume:
@@ -1419,14 +1367,14 @@ class Learn:
 
     @staticmethod
     def model(use_tsf, seed=1, name="", train_epochs=500, batch_N=500, rep_name=None):
-        d, env, config, ds = get_free_space_env_init(seed)
+        d, env, config, ds = BlockPushGetter.free_space_env_init(seed)
 
-        _, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf, get_pre_invariant_preprocessor,
+        _, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf, BlockPushGetter.pre_invariant_preprocessor,
                                                   rep_name=rep_name)
         # tsf_name = "none_at_all"
 
         mw = TranslationNetworkWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
-                                       name="dynamics_{}{}".format(tsf_name, name))
+                                       name="dynamics_{}{}_{}".format(tsf_name, name, seed))
         mw.learn_model(train_epochs, batch_N=batch_N)
 
 
@@ -1450,8 +1398,8 @@ class Visualize:
 
     @staticmethod
     def state_sequence(level, file, restrict_slice=None, step=3):
-        env = get_env(mode=p.GUI, level=level)
-        ds, _ = get_ds(env, file, validation_ratio=0.)
+        env = BlockPushGetter.env(mode=p.GUI, level=level)
+        ds = BlockPushGetter.ds(env, file, validation_ratio=0.)
         XU, _, _ = ds.training_set(original=True)
         X, U = torch.split(XU, ds.original_config().nx, dim=1)
         if restrict_slice:
@@ -1494,16 +1442,16 @@ class Visualize:
 
     @staticmethod
     def dist_diff_nominal_and_bug_trap(use_tsf, test_file="pushing/predetermined_bug_trap.mat"):
-        _, env, _, ds = get_free_space_env_init()
+        _, env, _, ds = BlockPushGetter.free_space_env_init()
         untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf,
-                                                                                get_pre_invariant_preprocessor,
+                                                                                BlockPushGetter.pre_invariant_preprocessor,
                                                                                 evaluate_transform=False)
         coord_z_names = ['p', '\\theta', 'f', '\\beta', '$r_x$', '$r_y$'] if use_tsf in (
             UseTsf.COORD, UseTsf.COORD_LEARN_DYNAMICS) else None
         coord_v_names = ['d{}'.format(n) for n in coord_z_names] if use_tsf in (
             UseTsf.COORD, UseTsf.COORD_LEARN_DYNAMICS) else None
 
-        ds_test, _ = get_ds(env, test_file, validation_ratio=0.)
+        ds_test = BlockPushGetter.ds(env, test_file, validation_ratio=0.)
         ds_test.update_preprocessor(preprocessor)
 
         fs, axes = Visualize._dataset_training_dist(env, ds, coord_z_names, coord_v_names)
@@ -1543,27 +1491,27 @@ class Visualize:
 
     @staticmethod
     def dynamics_stochasticity(use_tsf=UseTsf.COORD):
-        _, env, _, ds = get_free_space_env_init()
+        _, env, _, ds = BlockPushGetter.free_space_env_init()
         untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf,
-                                                                                get_pre_invariant_preprocessor,
+                                                                                BlockPushGetter.pre_invariant_preprocessor,
                                                                                 evaluate_transform=False)
 
-        ds_eval, _ = get_ds(env, "pushing/fixed_p_and_beta.mat", validation_ratio=0.)
+        ds_eval = BlockPushGetter.ds(env, "pushing/fixed_p_and_beta.mat", validation_ratio=0.)
         ds_eval.update_preprocessor(preprocessor)
 
-        pm = get_loaded_prior(prior.NNPrior, ds, tsf_name, False)
+        pm = BlockPushGetter.loaded_prior(prior.NNPrior, ds, tsf_name, False)
         Visualize._conditioned_dataset([None] * env.nx, [0.9, None, 0.8], env, ds_eval, pm)
         plt.show()
 
     @staticmethod
     def model_actions_at_given_state():
         seed = 1
-        env = get_env(p.GUI, level=1)
+        env = BlockPushGetter.env(p.GUI, level=1)
 
         logger.info("initial random seed %d", rand.seed(seed))
 
-        ds, pm = get_prior(env)
-        ds_wall, config = get_ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
+        ds, pm = BlockPushGetter.prior(env)
+        ds_wall = BlockPushGetter.ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
         ds_wall.update_preprocessor(ds.preprocessor)
         dynamics_gp = get_local_model(env, pm, ds_wall)
 
@@ -1595,8 +1543,8 @@ class EvaluateTask:
     @staticmethod
     def closest_distance_to_goal(file, level, visualize=True, nodes_per_side=150):
         from sklearn.preprocessing import MinMaxScaler
-        env = get_env(p.GUI if visualize else p.DIRECT, level=level)
-        ds, _ = get_ds(env, file, validation_ratio=0., loader_args={'ignore_masks': True})
+        env = BlockPushGetter.env(p.GUI if visualize else p.DIRECT, level=level)
+        ds = BlockPushGetter.ds(env, file, validation_ratio=0., loader_args={'ignore_masks': True})
         XU, _, _ = ds.training_set(original=True)
         X, U = torch.split(XU, ds.original_config().nx, dim=1)
 

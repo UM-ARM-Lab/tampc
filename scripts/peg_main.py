@@ -10,6 +10,7 @@ import os
 import argparse
 from datetime import datetime
 import pprint
+import typing
 
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.optim import get_device
@@ -19,7 +20,7 @@ from tampc import cfg
 from tampc.env import peg_in_hole
 from tampc.controller import controller
 from tampc.transform import invariant
-from tampc.dynamics import online_model, model, prior, hybrid_model
+from tampc.dynamics import model, hybrid_model
 
 from arm_pytorch_utilities.model import make
 
@@ -27,7 +28,8 @@ from tampc.dynamics.hybrid_model import OnlineAdapt
 from tampc.controller import online_controller
 from tampc.controller.gating_function import AlwaysSelectNominal
 from tampc import util
-from tampc.util import update_ds_with_transform, no_tsf_preprocessor, UseTsf, get_transform, TranslationNetworkWrapper
+from tampc.util import update_ds_with_transform, no_tsf_preprocessor, UseTsf, get_transform, TranslationNetworkWrapper, \
+    EnvGetter
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
@@ -40,136 +42,104 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 
 logger = logging.getLogger(__name__)
 
-env_dir = None
-
 
 # --- SHARED GETTERS
-def get_data_dir(level=0):
-    return '{}{}.mat'.format(env_dir, level)
+class PegGetter(EnvGetter):
+    @staticmethod
+    def dynamics_prefix() -> str:
+        return "peg"
 
+    @staticmethod
+    def ds(env, data_dir, **kwargs):
+        d = get_device()
+        config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
+        ds = peg_in_hole.PegInHoleDataSource(env, data_dir=data_dir, config=config, device=d, **kwargs)
+        return ds
 
-def get_env(mode=p.GUI, level=0, log_video=False):
-    global env_dir
-    init_peg = [-0.2, 0]
-    hole_pos = [0.3, 0.3]
+    @staticmethod
+    def pre_invariant_preprocessor(use_tsf: UseTsf) -> preprocess.Transformer:
+        if use_tsf is UseTsf.COORD:
+            return preprocess.PytorchTransformer(preprocess.NullSingleTransformer())
+        else:
+            return preprocess.PytorchTransformer(preprocess.NullSingleTransformer(),
+                                                 preprocess.RobustMinMaxScaler())
 
-    if level is 2:
-        init_peg = [0, -0.2]
-        hole_pos = [0, 0.2]
+    @staticmethod
+    def controller_options(env) -> typing.Tuple[dict, dict]:
+        d = get_device()
+        u_min, u_max = env.get_control_bounds()
+        Q = torch.tensor(env.state_cost(), dtype=torch.double)
+        R = 0.01
+        sigma = [0.2, 0.2]
+        noise_mu = [0, 0]
+        u_init = [0, 0]
+        sigma = torch.tensor(sigma, dtype=torch.double, device=d)
+        common_wrapper_opts = {
+            'Q': Q,
+            'R': R,
+            'u_min': u_min,
+            'u_max': u_max,
+            'compare_to_goal': env.state_difference,
+            'state_dist': env.state_distance,
+            'u_similarity': env.control_similarity,
+            'device': d,
+            'terminal_cost_multiplier': 50,
+            'trap_cost_annealing_rate': 0.9,
+            'abs_unrecognized_threshold': 15,
+            # 'nonnominal_dynamics_penalty_tolerance': 0.1,
+            # 'dynamics_minimum_window': 15,
+        }
+        mpc_opts = {
+            'num_samples': 500,
+            'noise_sigma': torch.diag(sigma),
+            'noise_mu': torch.tensor(noise_mu, dtype=torch.double, device=d),
+            'lambda_': 1e-2,
+            'horizon': 10,
+            'u_init': torch.tensor(u_init, dtype=torch.double, device=d),
+            'sample_null_action': False,
+            'step_dependent_dynamics': True,
+            'rollout_samples': 10,
+            'rollout_var_cost': 0,
+        }
+        return common_wrapper_opts, mpc_opts
 
-    if level in [3, 5]:
-        init_peg = [0, -0.05]
-        hole_pos = [0, 0.2]
+    @classmethod
+    def env(cls, mode=p.GUI, level=0, log_video=False):
+        init_peg = [-0.2, 0]
+        hole_pos = [0.3, 0.3]
 
-    if level is 4:
-        init_peg = [-0.15, 0.2]
-        hole_pos = [0, 0.2]
+        if level is 2:
+            init_peg = [0, -0.2]
+            hole_pos = [0, 0.2]
 
-    if level is 6:
-        init_peg = [0.15, 0.07]
+        if level in [3, 5]:
+            init_peg = [0, -0.05]
+            hole_pos = [0, 0.2]
 
-    if level is 7:
-        init_peg = [0.15 + 10, 0.07 + 10]
+        if level is 4:
+            init_peg = [-0.15, 0.2]
+            hole_pos = [0, 0.2]
 
-    if level is 10:
-        init_peg = [0., 0.05]
-        hole_pos = [0, 0.2]
+        if level is 6:
+            init_peg = [0.15, 0.07]
 
-    env_opts = {
-        'mode': mode,
-        'hole': hole_pos,
-        'init_peg': init_peg,
-        'log_video': log_video,
-        'environment_level': level,
-    }
-    env = peg_in_hole.PegFloatingGripperEnv(**env_opts)
-    env_dir = 'peg/floating'
-    return env
+        if level is 7:
+            init_peg = [0.15 + 10, 0.07 + 10]
 
+        if level is 10:
+            init_peg = [0., 0.05]
+            hole_pos = [0, 0.2]
 
-def get_ds(env, data_dir, **kwargs):
-    d = get_device()
-    config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
-    ds = peg_in_hole.PegInHoleDataSource(env, data_dir=data_dir, config=config, device=d, **kwargs)
-    return ds, config
-
-
-def get_free_space_env_init(seed=1, **kwargs):
-    d = get_device()
-    env = get_env(kwargs.pop('mode', p.DIRECT), **kwargs)
-    ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
-
-    logger.info("initial random seed %d", rand.seed(seed))
-    return d, env, config, ds
-
-
-def get_loaded_prior(prior_class, ds, tsf_name, relearn_dynamics, seed=0):
-    d = get_device()
-    if prior_class is prior.NNPrior:
-        mw = TranslationNetworkWrapper(model.DeterministicUser(make.make_sequential_network(ds.config).to(device=d)),
-                                       ds, name="peg_{}_{}".format(tsf_name, seed))
-
-        train_epochs = 500
-        pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(
-            sort_by_time=False), train_epochs=train_epochs)
-    elif prior_class is prior.PassthroughLatentDynamicsPrior:
-        pm = prior.PassthroughLatentDynamicsPrior(ds)
-    elif prior_class is prior.NoPrior:
-        pm = prior.NoPrior()
-    else:
-        pm = prior_class.from_data(ds)
-    return pm
-
-
-def get_prior(env, use_tsf=UseTsf.COORD, prior_class=prior.NNPrior, rep_name=None):
-    if use_tsf in [UseTsf.SKIP, UseTsf.REX_SKIP]:
-        prior_class = prior.PassthroughLatentDynamicsPrior
-    ds, config = get_ds(env, get_data_dir(0), validation_ratio=0.1)
-    untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf,
-                                                                            get_pre_invariant_preprocessor,
-                                                                            evaluate_transform=False,
-                                                                            rep_name=rep_name)
-    pm = get_loaded_prior(prior_class, ds, tsf_name, False)
-    return ds, pm
-
-
-def get_controller_options(env):
-    d = get_device()
-    u_min, u_max = env.get_control_bounds()
-    Q = torch.tensor(env.state_cost(), dtype=torch.double)
-    R = 0.01
-    sigma = [0.2, 0.2]
-    noise_mu = [0, 0]
-    u_init = [0, 0]
-    sigma = torch.tensor(sigma, dtype=torch.double, device=d)
-    common_wrapper_opts = {
-        'Q': Q,
-        'R': R,
-        'u_min': u_min,
-        'u_max': u_max,
-        'compare_to_goal': env.state_difference,
-        'state_dist': env.state_distance,
-        'u_similarity': env.control_similarity,
-        'device': d,
-        'terminal_cost_multiplier': 50,
-        'trap_cost_annealing_rate': 0.9,
-        'abs_unrecognized_threshold': 15,
-        # 'nonnominal_dynamics_penalty_tolerance': 0.1,
-        # 'dynamics_minimum_window': 15,
-    }
-    mpc_opts = {
-        'num_samples': 500,
-        'noise_sigma': torch.diag(sigma),
-        'noise_mu': torch.tensor(noise_mu, dtype=torch.double, device=d),
-        'lambda_': 1e-2,
-        'horizon': 10,
-        'u_init': torch.tensor(u_init, dtype=torch.double, device=d),
-        'sample_null_action': False,
-        'step_dependent_dynamics': True,
-        'rollout_samples': 10,
-        'rollout_var_cost': 0,
-    }
-    return common_wrapper_opts, mpc_opts
+        env_opts = {
+            'mode': mode,
+            'hole': hole_pos,
+            'init_peg': init_peg,
+            'log_video': log_video,
+            'environment_level': level,
+        }
+        env = peg_in_hole.PegFloatingGripperEnv(**env_opts)
+        cls.env_dir = 'peg/floating'
+        return env
 
 
 class OfflineDataCollection:
@@ -181,11 +151,11 @@ class OfflineDataCollection:
 
     @staticmethod
     def freespace(seed=4, trials=200, trial_length=50, force_gui=False):
-        env = get_env(p.GUI if force_gui else p.DIRECT, 0)
+        env = PegGetter.env(p.GUI if force_gui else p.DIRECT, 0)
         u_min, u_max = env.get_control_bounds()
         ctrl = controller.FullRandomController(env.nu, u_min, u_max)
         # use mode p.GUI to see what the trials look like
-        save_dir = '{}{}'.format(env_dir, 0)
+        save_dir = '{}{}'.format(PegGetter.env_dir, 0)
         sim = peg_in_hole.PegInHole(env, ctrl, num_frames=trial_length, plot=False, save=True,
                                     stop_when_done=False, save_dir=save_dir)
         rand.seed(seed)
@@ -205,21 +175,13 @@ class OfflineDataCollection:
         plt.show()
 
 
-def get_pre_invariant_preprocessor(use_tsf):
-    if use_tsf is UseTsf.COORD:
-        return preprocess.PytorchTransformer(preprocess.NullSingleTransformer())
-    else:
-        return preprocess.PytorchTransformer(preprocess.NullSingleTransformer(),
-                                             preprocess.RobustMinMaxScaler())
-
-
 class Learn:
     @staticmethod
     def invariant(use_tsf=UseTsf.REX_EXTRACT, seed=1, name="", MAX_EPOCH=1000, BATCH_SIZE=500, resume=False,
                   **kwargs):
-        d, env, config, ds = get_free_space_env_init(seed)
+        d, env, config, ds = PegGetter.free_space_env_init(seed)
 
-        ds.update_preprocessor(get_pre_invariant_preprocessor(use_tsf))
+        ds.update_preprocessor(PegGetter.pre_invariant_preprocessor(use_tsf))
         invariant_cls = get_transform(env, ds, use_tsf).__class__
         common_opts = {'name': "{}_s{}".format(name, seed)}
         invariant_tsf = invariant_cls(ds, d, **common_opts, **kwargs)
@@ -229,9 +191,10 @@ class Learn:
 
     @staticmethod
     def model(use_tsf, seed=1, name="", train_epochs=500, batch_N=500, rep_name=None):
-        d, env, config, ds = get_free_space_env_init(seed)
+        d, env, config, ds = PegGetter.free_space_env_init(seed)
 
-        _, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf, get_pre_invariant_preprocessor, rep_name=rep_name)
+        _, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf, PegGetter.pre_invariant_preprocessor,
+                                                  rep_name=rep_name)
         # tsf_name = "none_at_all"
 
         mw = TranslationNetworkWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
@@ -252,15 +215,15 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                    override_tampc_params=None,
                    override_mpc_params=None,
                    **kwargs):
-    env = get_env(p.GUI, level=level, log_video=True)
+    env = PegGetter.env(p.GUI, level=level, log_video=True)
     logger.info("initial random seed %d", rand.seed(seed))
 
-    ds, pm = get_prior(env, use_tsf, rep_name=rep_name)
+    ds, pm = PegGetter.prior(env, use_tsf, rep_name=rep_name)
 
     dss = [ds]
     demo_trajs = []
     for demo in demo_trajs:
-        ds_local, config = get_ds(env, demo, validation_ratio=0.)
+        ds_local = PegGetter.ds(env, demo, validation_ratio=0.)
         ds_local.update_preprocessor(ds.preprocessor)
         dss.append(ds_local)
 
@@ -276,7 +239,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
     else:
         gating = hybrid_dynamics.get_gating() if gating is None else gating
 
-    tampc_opts, mpc_opts = get_controller_options(env)
+    tampc_opts, mpc_opts = PegGetter.controller_options(env)
     if override_tampc_params is not None:
         tampc_opts.update(override_tampc_params)
     if override_mpc_params is not None:
@@ -459,7 +422,7 @@ def tune_recovery_policy(*args, num_frames=100, **kwargs):
 
 def evaluate_after_rollout(rollout_file, rollout_stop_index, *args, num_frames=100, **kwargs):
     def setup(env, ctrl: online_controller.OnlineMPPI, ds):
-        ds_eval, _ = get_ds(env, rollout_file, validation_ratio=0.)
+        ds_eval = PegGetter.ds(env, rollout_file, validation_ratio=0.)
         ds_eval.update_preprocessor(ds.preprocessor)
 
         # evaluate on a non-recovery dataset to see if rolling out the actions from the recovery set is helpful
@@ -495,8 +458,8 @@ class EvaluateTask:
     @staticmethod
     def closest_distance_to_goal(file, level, visualize=True, nodes_per_side=150):
         from sklearn.preprocessing import MinMaxScaler
-        env = get_env(p.GUI if visualize else p.DIRECT, level=level)
-        ds, _ = get_ds(env, file, validation_ratio=0.)
+        env = PegGetter.env(p.GUI if visualize else p.DIRECT, level=level)
+        ds = PegGetter.ds(env, file, validation_ratio=0.)
         XU, _, _ = ds.training_set(original=True)
         X, U = torch.split(XU, ds.original_config().nx, dim=1)
 

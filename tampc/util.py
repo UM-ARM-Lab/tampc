@@ -1,9 +1,13 @@
 import enum
+import abc
+import typing
 
 import torch
-from arm_pytorch_utilities import draw, preprocess
+from arm_pytorch_utilities import draw, preprocess, rand
+from arm_pytorch_utilities.model import make
 from arm_pytorch_utilities.optim import get_device
-from tampc.dynamics import model
+from arm_pytorch_utilities.make_data import datasource
+from tampc.dynamics import model, prior
 from tampc import cfg
 
 import contextlib
@@ -420,3 +424,80 @@ class TranslationNetworkWrapper(model.NetworkModelWrapper):
                 vloss = self.user.compute_validation_loss(XU, self.Yv, self.ds)
                 self.writer.add_scalar("loss/validation_{}_{}".format(dd[0], dd[1]), vloss.mean(),
                                        self.step)
+
+
+class EnvGetter(abc.ABC):
+    env_dir = None
+
+    @classmethod
+    def data_dir(cls, level=0) -> str:
+        """Return data directory corresponding to an environment level"""
+        return '{}{}.mat'.format(cls.env_dir, level)
+
+    @staticmethod
+    @abc.abstractmethod
+    def ds(env, data_dir, **kwargs) -> datasource.FileDataSource:
+        """Return a datasource corresponding to this environment and data directory"""
+
+    @staticmethod
+    @abc.abstractmethod
+    def pre_invariant_preprocessor(use_tsf: UseTsf) -> preprocess.Transformer:
+        """Return preprocessor applied before the invariant transform"""
+
+    @staticmethod
+    @abc.abstractmethod
+    def controller_options(env) -> typing.Tuple[dict, dict]:
+        """Return controller option default values suitable for this environment"""
+
+    @classmethod
+    @abc.abstractmethod
+    def env(cls, mode, level=0, log_video=False):
+        """Create and return an environment; internally should set cls.env_dir"""
+
+    @classmethod
+    def free_space_env_init(cls, seed=1, **kwargs):
+        d = get_device()
+        env = cls.env(kwargs.pop('mode', 0), **kwargs)
+        ds, config = cls.ds(env, cls.data_dir(0), validation_ratio=0.1)
+
+        logger.info("initial random seed %d", rand.seed(seed))
+        return d, env, config, ds
+
+    @classmethod
+    def prior(cls, env, use_tsf=UseTsf.COORD, prior_class=prior.NNPrior, rep_name=None):
+        """Get dynamics prior in transformed space, along with the datasource used for fitting the transform"""
+        if use_tsf in [UseTsf.SKIP, UseTsf.REX_SKIP]:
+            prior_class = prior.PassthroughLatentDynamicsPrior
+        ds = cls.ds(env, cls.data_dir(0), validation_ratio=0.1)
+        untransformed_config, tsf_name, preprocessor = update_ds_with_transform(env, ds, use_tsf,
+                                                                                cls.pre_invariant_preprocessor,
+                                                                                evaluate_transform=False,
+                                                                                rep_name=rep_name)
+        pm = cls.loaded_prior(prior_class, ds, tsf_name, False)
+
+        return ds, pm
+
+    @staticmethod
+    @abc.abstractmethod
+    def dynamics_prefix() -> str:
+        """Return the prefix of dynamics functions corresponding to this environment"""
+
+    @classmethod
+    def loaded_prior(cls, prior_class, ds, tsf_name, relearn_dynamics, seed=0):
+        """Directly get loaded dynamics prior, training it if necessary on some datasource"""
+        d = get_device()
+        if prior_class is prior.NNPrior:
+            mw = TranslationNetworkWrapper(
+                model.DeterministicUser(make.make_sequential_network(ds.config).to(device=d)),
+                ds, name="{}_{}_{}".format(cls.dynamics_prefix(), tsf_name, seed))
+
+            train_epochs = 500
+            pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(
+                sort_by_time=False), train_epochs=train_epochs)
+        elif prior_class is prior.PassthroughLatentDynamicsPrior:
+            pm = prior.PassthroughLatentDynamicsPrior(ds)
+        elif prior_class is prior.NoPrior:
+            pm = prior.NoPrior()
+        else:
+            pm = prior_class.from_data(ds)
+        return pm
