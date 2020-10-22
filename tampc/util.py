@@ -458,10 +458,10 @@ class EnvGetter(abc.ABC):
     def free_space_env_init(cls, seed=1, **kwargs):
         d = get_device()
         env = cls.env(kwargs.pop('mode', 0), **kwargs)
-        ds, config = cls.ds(env, cls.data_dir(0), validation_ratio=0.1)
+        ds = cls.ds(env, cls.data_dir(0), validation_ratio=0.1)
 
         logger.info("initial random seed %d", rand.seed(seed))
-        return d, env, config, ds
+        return d, env, ds.current_config(), ds
 
     @classmethod
     def prior(cls, env, use_tsf=UseTsf.COORD, prior_class=prior.NNPrior, rep_name=None):
@@ -501,3 +501,25 @@ class EnvGetter(abc.ABC):
         else:
             pm = prior_class.from_data(ds)
         return pm
+
+    @classmethod
+    def learn_invariant(cls, use_tsf=UseTsf.REX_EXTRACT, seed=1, name="", MAX_EPOCH=1000, BATCH_SIZE=500, resume=False,
+                        **kwargs):
+        d, env, config, ds = cls.free_space_env_init(seed)
+
+        ds.update_preprocessor(cls.pre_invariant_preprocessor(use_tsf))
+        invariant_cls = get_transform(env, ds, use_tsf).__class__
+        common_opts = {'name': "{}_s{}".format(name, seed)}
+        invariant_tsf = invariant_cls(ds, d, **common_opts, **kwargs)
+        if resume:
+            invariant_tsf.load(invariant_tsf.get_last_checkpoint())
+        invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
+
+    @classmethod
+    def learn_model(cls, use_tsf, seed=1, name="", train_epochs=500, batch_N=500, rep_name=None):
+        d, env, config, ds = cls.free_space_env_init(seed)
+
+        _, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf, cls.pre_invariant_preprocessor, rep_name=rep_name)
+        mw = TranslationNetworkWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
+                                       name="{}_{}{}_{}".format(cls.dynamics_prefix(), tsf_name, name, seed))
+        mw.learn_model(train_epochs, batch_N=batch_N)

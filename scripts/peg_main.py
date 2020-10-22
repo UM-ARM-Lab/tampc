@@ -175,33 +175,6 @@ class OfflineDataCollection:
         plt.show()
 
 
-class Learn:
-    @staticmethod
-    def invariant(use_tsf=UseTsf.REX_EXTRACT, seed=1, name="", MAX_EPOCH=1000, BATCH_SIZE=500, resume=False,
-                  **kwargs):
-        d, env, config, ds = PegGetter.free_space_env_init(seed)
-
-        ds.update_preprocessor(PegGetter.pre_invariant_preprocessor(use_tsf))
-        invariant_cls = get_transform(env, ds, use_tsf).__class__
-        common_opts = {'name': "{}_s{}".format(name, seed)}
-        invariant_tsf = invariant_cls(ds, d, **common_opts, **kwargs)
-        if resume:
-            invariant_tsf.load(invariant_tsf.get_last_checkpoint())
-        invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
-
-    @staticmethod
-    def model(use_tsf, seed=1, name="", train_epochs=500, batch_N=500, rep_name=None):
-        d, env, config, ds = PegGetter.free_space_env_init(seed)
-
-        _, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf, PegGetter.pre_invariant_preprocessor,
-                                                  rep_name=rep_name)
-        # tsf_name = "none_at_all"
-
-        mw = TranslationNetworkWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
-                                       name="peg_{}{}_{}".format(tsf_name, name, seed))
-        mw.learn_model(train_epochs, batch_N=batch_N)
-
-
 def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=None,
                    use_tsf=UseTsf.COORD, nominal_adapt=OnlineAdapt.NONE,
                    autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE,
@@ -668,9 +641,9 @@ if __name__ == "__main__":
         OfflineDataCollection.freespace(seed=args.seed[0], trials=200, trial_length=50, force_gui=args.gui)
     elif args.command == 'learn_representation':
         for seed in args.seed:
-            Learn.invariant(ut, seed=seed, name="peg", MAX_EPOCH=1000, BATCH_SIZE=args.batch)
+            PegGetter.learn_invariant(ut, seed=seed, name="peg", MAX_EPOCH=1000, BATCH_SIZE=args.batch)
     elif args.command == 'fine_tune_dynamics':
-        Learn.model(ut, seed=args.seed[0], name="", rep_name=args.rep_name)
+        PegGetter.learn_model(ut, seed=args.seed[0], name="", rep_name=args.rep_name)
     elif args.command == 'run':
         nominal_adapt = OnlineAdapt.NONE
         autonomous_recovery = online_controller.AutonomousRecovery.MAB

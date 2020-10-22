@@ -154,6 +154,20 @@ class BlockPushGetter(EnvGetter):
         cls.env_dir = 'pushing/physical'
         return env
 
+    @classmethod
+    def learn_invariant(cls, use_tsf=UseTsf.DX_TO_V, seed=1, name="", MAX_EPOCH=3000, BATCH_SIZE=500, resume=False,
+                        **kwargs):
+        d, env, config, ds = cls.free_space_env_init(seed)
+        ds.update_preprocessor(cls.pre_invariant_preprocessor(use_tsf))
+        invariant_cls = get_transform(env, ds, use_tsf).__class__
+        ds_test = cls.ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
+        # ds_test_2 = BlockPushGetter.ds(env, "pushing/test_sufficiency_3_failed_test_140891.mat", validation_ratio=0.)
+        common_opts = {'name': "{}_s{}".format(name, seed), 'ds_test': [ds_test]}
+        invariant_tsf = invariant_cls(ds, d, **common_opts, **kwargs)
+        if resume:
+            invariant_tsf.load(invariant_tsf.get_last_checkpoint())
+        invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
+
 
 def get_local_model(env, pm, ds_local, d=get_device(), **kwargs):
     return hybrid_model.HybridDynamicsModel.get_local_model(env.state_difference, pm, d, ds_local, **kwargs)
@@ -1351,33 +1365,6 @@ def evaluate_ctrl_sampler(eval_file, eval_i, seed=1, use_tsf=UseTsf.COORD,
     # plt.show()
 
 
-class Learn:
-    @staticmethod
-    def invariant(use_tsf=UseTsf.DX_TO_V, seed=1, name="", MAX_EPOCH=3000, BATCH_SIZE=500, resume=False, **kwargs):
-        d, env, config, ds = BlockPushGetter.free_space_env_init(seed)
-        ds.update_preprocessor(BlockPushGetter.pre_invariant_preprocessor(use_tsf))
-        invariant_cls = get_transform(env, ds, use_tsf).__class__
-        ds_test = BlockPushGetter.ds(env, "pushing/predetermined_bug_trap.mat", validation_ratio=0.)
-        # ds_test_2 = BlockPushGetter.ds(env, "pushing/test_sufficiency_3_failed_test_140891.mat", validation_ratio=0.)
-        common_opts = {'name': "{}_s{}".format(name, seed), 'ds_test': [ds_test]}
-        invariant_tsf = invariant_cls(ds, d, **common_opts, **kwargs)
-        if resume:
-            invariant_tsf.load(invariant_tsf.get_last_checkpoint())
-        invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
-
-    @staticmethod
-    def model(use_tsf, seed=1, name="", train_epochs=500, batch_N=500, rep_name=None):
-        d, env, config, ds = BlockPushGetter.free_space_env_init(seed)
-
-        _, tsf_name, _ = update_ds_with_transform(env, ds, use_tsf, BlockPushGetter.pre_invariant_preprocessor,
-                                                  rep_name=rep_name)
-        # tsf_name = "none_at_all"
-
-        mw = TranslationNetworkWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
-                                       name="dynamics_{}{}_{}".format(tsf_name, name, seed))
-        mw.learn_model(train_epochs, batch_N=batch_N)
-
-
 class Visualize:
     @staticmethod
     def _state_sequence(env, X, u_0, step):
@@ -1743,9 +1730,9 @@ if __name__ == "__main__":
         OfflineDataCollection.push_against_wall_recovery()
     elif args.command == 'learn_representation':
         for seed in args.seed:
-            Learn.invariant(ut, seed=seed, name="", MAX_EPOCH=3000, BATCH_SIZE=args.batch)
+            BlockPushGetter.learn_invariant(ut, seed=seed, name="", MAX_EPOCH=3000, BATCH_SIZE=args.batch)
     elif args.command == 'fine_tune_dynamics':
-        Learn.model(ut, seed=args.seed[0], name="", rep_name=args.rep_name)
+        BlockPushGetter.learn_model(ut, seed=args.seed[0], name="", rep_name=args.rep_name)
     elif args.command == 'run':
         nominal_adapt = OnlineAdapt.NONE
         autonomous_recovery = online_controller.AutonomousRecovery.MAB
@@ -1814,10 +1801,6 @@ if __name__ == "__main__":
             success_min_dist=0.5)
 
     else:
-        for seed in range(10):
-            Learn.invariant(UseTsf.SKIP, seed=seed, name="prenormalized", MAX_EPOCH=3000, BATCH_SIZE=500)
-        # for seed in range(10):
-        #     Learn.invariant(UseTsf.REX_SKIP, seed=seed, name="prenormalized", MAX_EPOCH=3000, BATCH_SIZE=2048)
         pass
         # tune_trap_set_cost(seed=0, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
         #                    use_trap_cost=True,
