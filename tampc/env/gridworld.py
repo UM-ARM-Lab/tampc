@@ -132,12 +132,7 @@ class GridEnv(Env):
         return manhattan_dist, done
 
     # --- control (commonly overridden)
-    def step(self, action):
-        action = np.clip(action, *self.get_control_bounds())
-        action = int(action)  # floors
-
-        # check what dynamics we are in
-        state = tuple(self.state)
+    def _take_step(self, state, action):
         dyn = self.NOMINAL_DYNAMICS
         if state in self.cw_dynamics:
             dyn = self.NOMINAL_DYNAMICS[1:] + self.NOMINAL_DYNAMICS[:1]
@@ -147,8 +142,14 @@ class GridEnv(Env):
         new_state = (state[0] + dx, state[1] + dy)
         if (new_state[0] >= 0) and (new_state[0] < self.size[0]) \
                 and (new_state[1] >= 0) and (new_state[1] < self.size[1]) and new_state not in self.walls:
-            self.state = np.array(new_state)
+            state = new_state
+        return state
 
+    def step(self, action):
+        action = np.clip(action, *self.get_control_bounds())
+        action = int(action)  # floors
+
+        self.state = np.array(self._take_step(tuple(self.state), action))
         cost, done = self.evaluate_cost(self.state, action)
 
         return np.copy(self.state), -cost, done, None
@@ -156,6 +157,44 @@ class GridEnv(Env):
     def reset(self):
         self.state = np.copy(self.init)
         return np.copy(self.state), None
+
+    def _compute_trap_difficulty_state(self, state):
+        visited = set()
+        visited.add(state)
+        current = [state]
+        d = 1
+        c, _ = self.evaluate_cost(np.array(state))
+        if c == 0:
+            return 0
+        # BFS on the current node until we find a node with lower cost
+        while len(current):
+            next_depth = []
+            for s in current:
+                # look at all neighbours
+                for action in range(len(self.NOMINAL_DYNAMICS)):
+                    new_s = self._take_step(s, action)
+                    # ignore if we've already visited it
+                    if new_s in visited:
+                        continue
+                    ccc, _ = self.evaluate_cost(np.array(new_s))
+                    if ccc < c:
+                        return d if d > 1 else 0
+                    next_depth.append(new_s)
+                    visited.add(new_s)
+            d += 1
+            current = next_depth
+
+    def compute_true_trap_difficulty(self):
+        """Given the current environment, compute: X -> R which maps each state to its trap difficulty"""
+        trap_difficulty = {}
+        for x in range(self.size[0]):
+            for y in range(self.size[1]):
+                state = (x, y)
+                if state in self.walls:
+                    continue
+                trap_difficulty[state] = self._compute_trap_difficulty_state(state)
+
+        return trap_difficulty
 
 
 # TODO move shared parts of this out of this function
@@ -216,6 +255,33 @@ class DebugRvizDrawer:
         for x, y in env.cw_dynamics:
             marker.points.append(Point(x=x, y=y, z=z + 0.01))
         self.marker_pub.publish(marker)
+
+    def draw_trap_difficulty(self, env: GridEnv, max_difficulty=8):
+        trap_difficulty = env.compute_true_trap_difficulty()
+        marker = self.make_marker(scale=self.BASE_SCALE * 1.5)
+        marker.ns = "trap_difficulty"
+        marker.id = 0
+        for (x, y), difficulty in trap_difficulty.items():
+            marker.points.append(Point(x=x, y=y, z=self.BASE_Z + 0.005))
+            marker.colors.append(ColorRGBA(r=1, g=0, b=0, a=difficulty / max_difficulty))
+        self.marker_pub.publish(marker)
+
+        for (x, y), difficulty in trap_difficulty.items():
+            if difficulty > 0:
+                marker = self.make_marker(marker_type=Marker.TEXT_VIEW_FACING, scale=self.BASE_SCALE)
+                marker.ns = "trap_difficulty_label"
+                marker.id = x * env.size[0] + y
+                marker.text = str(difficulty)
+
+                marker.pose.position.y = x
+                marker.pose.position.x = y
+                marker.pose.position.z = self.BASE_Z + 0.02
+                marker.pose.orientation.w = 1
+
+                marker.color.a = 1
+                marker.color.r = 0
+                marker.color.g = 0
+                self.marker_pub.publish(marker)
 
     def draw_state(self, state, time_step, nominal_model_error=0, prev_state=None):
         marker = self.make_marker(scale=self.BASE_SCALE)
