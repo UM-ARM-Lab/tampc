@@ -25,7 +25,7 @@ DIR = "grid"
 class GridLoader(TrajectoryLoader):
     @staticmethod
     def _info_names():
-        pass
+        return []
 
     def _process_file_raw_data(self, d):
         x = d['X']
@@ -67,23 +67,24 @@ class GridEnv(Env):
     def control_names():
         return ['dir']
 
-    @staticmethod
-    def get_control_bounds():
+    @classmethod
+    def get_control_bounds(cls):
         u_min = np.array([0])
-        u_max = np.array([5])
+        u_max = np.array([len(cls.NOMINAL_DYNAMICS) - 0.0001])
         return u_min, u_max
 
     @staticmethod
     @handle_data_format_for_state_diff
     def control_similarity(u1, u2):
-        return np.floor(u1) == np.floor(u2)
+        return (torch.floor(u1) == torch.floor(u2)).view(-1)
 
     @classmethod
     def control_cost(cls):
         return np.diag([1 for _ in range(cls.nu)])
 
-    def __init__(self, environment_level=0, goal=(0, 2), init=(5, 5)):
+    def __init__(self, environment_level=0, goal=(0, 2), init=(5, 5), check_boundaries=True):
         self.level = environment_level
+        self.check_boundaries = check_boundaries
 
         # initial config
         self.goal = None
@@ -138,17 +139,22 @@ class GridEnv(Env):
 
     # --- control (commonly overridden)
     def _take_step(self, state, action):
+        dx, dy = self.unpack_action(state, action)
+
+        # only move if we'll stay within map and not move into a wall
+        new_state = (state[0] + dx, state[1] + dy)
+        if (not self.check_boundaries) or \
+                ((new_state[0] >= 0) and (new_state[0] < self.size[0])
+                 and (new_state[1] >= 0) and (new_state[1] < self.size[1]) and new_state not in self.walls):
+            state = new_state
+        return state
+
+    def unpack_action(self, state, action):
         dyn = self.NOMINAL_DYNAMICS
         if state in self.cw_dynamics:
             dyn = self.NOMINAL_DYNAMICS[1:] + self.NOMINAL_DYNAMICS[:1]
         dx, dy = dyn[action]
-
-        # only move if we'll stay within map and not move into a wall
-        new_state = (state[0] + dx, state[1] + dy)
-        if (new_state[0] >= 0) and (new_state[0] < self.size[0]) \
-                and (new_state[1] >= 0) and (new_state[1] < self.size[1]) and new_state not in self.walls:
-            state = new_state
-        return state
+        return dx, dy
 
     def step(self, action):
         action = np.clip(action, *self.get_control_bounds())
@@ -326,7 +332,7 @@ class DebugRvizDrawer:
                     marker.colors.append(ColorRGBA(r=1, g=0, b=0, a=difficulty / max_difficulty))
                 self.marker_pub.publish(marker)
 
-    def draw_state(self, state, time_step, nominal_model_error=0, prev_state=None):
+    def draw_state(self, state, time_step, nominal_model_error=0, action=None):
         marker = self.make_marker(scale=self.BASE_SCALE)
         marker.ns = "state_trajectory"
         marker.id = time_step
@@ -344,12 +350,12 @@ class DebugRvizDrawer:
         marker.colors.append(c)
         marker.points.append(p)
         self.marker_pub.publish(marker)
-        if prev_state is not None:
+        if action is not None:
             action_marker = self.make_marker(marker_type=Marker.LINE_LIST, scale=self.action_scale)
             action_marker.ns = "action"
             action_marker.id = 0
             action_marker.points.append(p)
-            p = Point(x=prev_state[0], y=prev_state[1], z=z)
+            p = Point(x=state[0] + action[0], y=state[1] + action[1], z=z)
             action_marker.points.append(p)
 
             c = ColorRGBA()
@@ -391,7 +397,7 @@ class DebugRvizDrawer:
             p = Point()
             p.x = rollouts[t][0]
             p.y = rollouts[t][1]
-            p.z = rollouts[t][2]
+            p.z = self.BASE_Z + 0.01
             c = ColorRGBA()
             c.a = 1
             c.r = 0
@@ -412,6 +418,8 @@ class DebugRvizDrawer:
         action_marker.ns = "trap_action"
         action_marker.id = 0
 
+        z = self.BASE_Z + 0.007
+
         T = len(trap_set)
         for t in range(T):
             state, action = trap_set[t]
@@ -419,13 +427,14 @@ class DebugRvizDrawer:
             p = Point()
             p.x = state[0]
             p.y = state[1]
-            p.z = state[2]
+            p.z = z
             state_marker.points.append(p)
             action_marker.points.append(p)
+            # TODO unpack action from class to direction to draw it
             p = Point()
-            p.x = state[0] + action[0] * self.action_scale
-            p.y = state[1] + action[1] * self.action_scale
-            p.z = state[2]
+            p.x = state[0]
+            p.y = state[1]
+            p.z = z
             action_marker.points.append(p)
 
             cc = (t + 1) / (T + 1)
@@ -453,6 +462,8 @@ class DebugRvizDrawer:
         self.clear_markers("walls", delete_all=False)
         self.clear_markers("cw_dynamics", delete_all=False)
 
+        self.clear_markers("trap_difficulty", delete_all=True)
+        self.clear_markers("trap_difficulty_label", delete_all=True)
         self.clear_markers("state_trajectory", delete_all=True)
         self.clear_markers("trap_state", delete_all=False)
         self.clear_markers("trap_action", delete_all=False)
@@ -466,7 +477,7 @@ class DebugRvizDrawer:
         marker.text = text
 
         marker.pose.position.y = -1 - offset * self.BASE_SCALE * 2
-        marker.pose.position.x = 0 + left_offset * 0.5
+        marker.pose.position.x = 9 + left_offset * 5
         marker.pose.position.z = self.BASE_Z
         marker.pose.orientation.w = 1
 
@@ -550,12 +561,13 @@ class ExperimentRunner(simulation.Simulation):
                 rollouts = self.ctrl.get_rollouts(obs)
                 self.dd.draw_rollouts(rollouts)
 
+            self.dd.draw_state(obs, simTime, model_pred_error, action=self.env.unpack_action(tuple(obs), int(
+                np.clip(action, *self.env.get_control_bounds()))))
             # sanitize action
             if torch.is_tensor(action):
                 action = action.cpu()
             action = np.array(action).flatten()
             obs, rew, done, info = self.env.step(action)
-            self.dd.draw_state(obs, simTime, model_pred_error, prev_state=traj[-1])
             cost = -rew
             logger.info("%d cost %-5.2f took %.3fs done %d action %-12s obs %s", simTime, cost,
                         time.perf_counter() - start, done,
@@ -606,7 +618,7 @@ class ExperimentRunner(simulation.Simulation):
     def _export_data_dict(self):
         # output (1 step prediction)
         # only save the full information rather than states to allow changing dynamics dimensions without recollecting
-        X = self.info
+        X = self.traj
         # mark the end of the trajectory (the last time is not valid)
         mask = np.ones(X.shape[0], dtype=int)
         # need to also throw out first step if predicting reaction force since there's no previous state
