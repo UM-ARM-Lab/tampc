@@ -128,8 +128,13 @@ class GridEnv(Env):
             for x in range(3, 6):
                 self.walls.add((x, 6))
         elif self.level == 3:
-            # TODO make goal surrounded by non-nominal dynamics
-            pass
+            self.size = (12, 12)
+            for y in range(2, 10):
+                self.walls.add((5, y))
+            self.walls.update([(4, 2), (6, 2), (4, 9), (6, 9)])
+            for y in range(3, 9):
+                for x in range(6, 9):
+                    self.cw_dynamics.add((x, y))
 
     # --- control helpers (rarely overridden)
     def evaluate_cost(self, state, action=None):
