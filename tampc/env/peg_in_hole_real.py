@@ -4,7 +4,7 @@ import rospy
 
 import numpy as np
 from tampc import cfg
-from tampc.env.pybullet_env import PybulletLoader, handle_data_format_for_state_diff, PybulletEnvDataSource
+from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource
 
 from tampc_or import cfg as robot_cfg
 from tampc_or_msgs.srv import Calibrate, Action, Observe, CalibStaticWrench
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 DIR = "peg_real"
 
 
-class PegRealLoader(PybulletLoader):
+class PegRealLoader(TrajectoryLoader):
     @staticmethod
     def _info_names():
         return []
@@ -696,7 +696,7 @@ class SpiralController:
         return [x, y]
 
 
-class PegRealDataSource(PybulletEnvDataSource):
+class PegRealDataSource(EnvDataSource):
     loader_map = {RealPegEnv: PegRealLoader}
 
     @staticmethod

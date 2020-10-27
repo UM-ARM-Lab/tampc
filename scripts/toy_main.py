@@ -3,6 +3,7 @@ import logging
 
 import matplotlib.pyplot as plt
 import numpy as np
+import tampc.env.env
 import torch
 import torch.nn
 from arm_pytorch_utilities import preprocess
@@ -35,7 +36,7 @@ def get_control_bounds():
     return u_min, u_max
 
 
-def get_env(mode=myenv.Mode.GUI):
+def get_env(mode=tampc.env.env.Mode.GUI):
     global save_dir
     init_state = [-1.5, 1.5]
     goal = [2, -2]
@@ -50,7 +51,7 @@ def get_env(mode=myenv.Mode.GUI):
 
 
 def test_env_control():
-    env = get_env(myenv.Mode.GUI)
+    env = get_env(tampc.env.env.Mode.GUI)
     u_min, u_max = get_control_bounds()
     ctrl = controller.FullRandomController(env.nu, u_min, u_max)
     sim = toy.ToySim(env, ctrl, num_frames=100, plot=False, save=False)
@@ -60,7 +61,7 @@ def test_env_control():
 
 def collect_data(trials=20, trial_length=40, x_min=(-3, 0), x_max=(3, 3)):
     logger.info("initial random seed %d", rand.seed(1))
-    env = get_env(myenv.Mode.DIRECT)
+    env = get_env(tampc.env.env.Mode.DIRECT)
     u_min, u_max = get_control_bounds()
     ctrl = controller.FullRandomController(env.nu, u_min, u_max)
 
@@ -91,7 +92,7 @@ def show_prior_accuracy(expected_max_error=1., relative=True):
     :return:
     """
 
-    env = get_env(myenv.Mode.DIRECT)
+    env = get_env(tampc.env.env.Mode.DIRECT)
     # plot a contour map over the state space - input space of how accurate the prior is
     # can't use preprocessor except for the neural network prior because their returned matrices are wrt transformed
     preprocessor = preprocess.PytorchTransformer(preprocess.MinMaxScaler())
@@ -121,7 +122,7 @@ def compare_empirical_and_prior_error(trials=20, trial_length=50, expected_max_e
     :param expected_max_error:
     :return:
     """
-    env = get_env(myenv.Mode.DIRECT)
+    env = get_env(tampc.env.env.Mode.DIRECT)
 
     # data source
     preprocessor = preprocess.PytorchTransformer(preprocess.MinMaxScaler())
@@ -243,7 +244,7 @@ def evaluate_ctrl(env, ctrl, trials, trial_length):
                 break
 
             costs[t, j] = cost
-            if env.mode == myenv.Mode.GUI:
+            if env.mode == tampc.env.env.Mode.GUI:
                 env.render()
 
             if ctrl.dynamics.emp_error is not None:
@@ -365,7 +366,7 @@ class PolynomialInvariantTransform(NoDecoderTransform):
 
 
 def learn_invariant(seed=1, name="", MAX_EPOCH=10, BATCH_SIZE=10):
-    env = get_env(myenv.Mode.DIRECT)
+    env = get_env(tampc.env.env.Mode.DIRECT)
 
     preprocessor = None
     config = load_data.DataConfig(predict_difference=True, predict_all_dims=True, expanded_input=False)
@@ -394,7 +395,7 @@ class UseTransform:
 
 
 def evaluate_invariant(name='', trials=5, trial_length=50):
-    env = get_env(myenv.Mode.DIRECT)
+    env = get_env(tampc.env.env.Mode.DIRECT)
     seed = 1
     use_tsf = UseTransform.POLYNOMIAL_TRANSFORM
 

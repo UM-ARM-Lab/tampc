@@ -288,8 +288,8 @@ class RexTraining(InvariantTransform):
         max_step = max_epoch * math.ceil(len(ds_train) / batch_N)
         rex_anneal_step = self.rex_anneal_ratio * max_step
 
-        from tampc.env.pybullet_env import PybulletEnvDataSource
-        assert isinstance(self.ds, PybulletEnvDataSource)
+        from tampc.env.env import EnvDataSource
+        assert isinstance(self.ds, EnvDataSource)
 
         for epoch in range(max_epoch):
             logger.debug("Start epoch %d", epoch)

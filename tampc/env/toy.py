@@ -4,6 +4,7 @@ import matplotlib.patches as mpatches
 import matplotlib.path as mpath
 import matplotlib.pyplot as plt
 import numpy as np
+import tampc.env.env
 from arm_pytorch_utilities import load_data as load_utils
 from arm_pytorch_utilities.make_data import datasource
 from hybrid_sysid import simulation
@@ -65,7 +66,7 @@ class ToyEnv:
     nu = 2
     ny = 2
 
-    def __init__(self, init_state, goal, xlim=(-3, 3), ylim=(-3, 3), mode=myenv.Mode.GUI,
+    def __init__(self, init_state, goal, xlim=(-3, 3), ylim=(-3, 3), mode=tampc.env.env.Mode.GUI,
                  process_noise=(0.01, 0.01), max_move_step=0.01,
                  hide_disp=False, keep_within_bounds=True):
         """Simulate for T time steps with a controller"""
@@ -90,7 +91,7 @@ class ToyEnv:
         self.ax = None
         self.goal_marker = None
         self.set_task_config(goal, init_state)
-        if self.mode == myenv.Mode.GUI:
+        if self.mode == tampc.env.env.Mode.GUI:
             self.start_visualization()
 
     def set_task_config(self, goal=None, init_state=None):
@@ -130,7 +131,7 @@ class ToyEnv:
     def reset(self, full=False):
         # full reset goes back to real initial conditions
         if full:
-            if self.mode == myenv.Mode.GUI:
+            if self.mode == tampc.env.env.Mode.GUI:
                 self.goal_marker = None
                 plt.close(self.f)
                 self.start_visualization()
@@ -361,7 +362,7 @@ class ToySim(simulation.Simulation):
             action = self.ctrl.command(obs)
             action = np.array(action).flatten()
             obs, rew, done, info = self.env.step(action)
-            if self.mode == myenv.Mode.GUI:
+            if self.mode == tampc.env.env.Mode.GUI:
                 self.env.render()
 
             self.u[simTime, :] = action

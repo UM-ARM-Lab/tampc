@@ -8,8 +8,8 @@ import torch
 
 import numpy as np
 from tampc import cfg
-from tampc.env.pybullet_env import PybulletEnv, PybulletLoader, handle_data_format_for_state_diff, \
-    get_total_contact_force, ContactInfo, PybulletEnvDataSource
+from tampc.env.pybullet_env import PybulletEnv, get_total_contact_force, ContactInfo
+from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource
 from tampc.env.pybullet_sim import PybulletSim
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ pandaEndEffectorIndex = 11
 pandaNumDofs = 7
 
 
-class PegLoader(PybulletLoader):
+class PegLoader(TrajectoryLoader):
     @staticmethod
     def _info_names():
         return []
@@ -827,7 +827,7 @@ class PegInHole(PybulletSim):
         super(PegInHole, self).__init__(env, ctrl, save_dir=save_dir, **kwargs)
 
 
-class PegInHoleDataSource(PybulletEnvDataSource):
+class PegInHoleDataSource(EnvDataSource):
     loader_map = {PegInHoleEnv: PegLoader, PegFloatingGripperEnv: PegLoader}
 
     @staticmethod

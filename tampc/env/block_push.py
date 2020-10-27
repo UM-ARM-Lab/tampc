@@ -10,8 +10,8 @@ import numpy as np
 from arm_pytorch_utilities import math_utils
 from arm_pytorch_utilities import simulation
 from tampc import cfg
-from tampc.env.pybullet_env import PybulletEnv, ContactInfo, PybulletLoader, handle_data_format_for_state_diff, \
-    get_total_contact_force, get_lateral_friction_forces, PybulletEnvDataSource
+from tampc.env.pybullet_env import PybulletEnv, ContactInfo, get_total_contact_force, get_lateral_friction_forces
+from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource
 from tampc.env.pybullet_sim import PybulletSim
 
 logger = logging.getLogger(__name__)
@@ -82,7 +82,7 @@ def pusher_pos_along_face(block_pos, block_yaw, pusher_pos, face=BlockFace.LEFT)
     return along_face, from_center
 
 
-class PushLoader(PybulletLoader):
+class PushLoader(TrajectoryLoader):
     @staticmethod
     def _info_names():
         return ['reaction', 'model error', 'wall contact']
@@ -1085,7 +1085,7 @@ class InteractivePush(PybulletSim):
         return simulation.ReturnMeaning.SUCCESS
 
 
-class PushDataSource(PybulletEnvDataSource):
+class PushDataSource(EnvDataSource):
     loader_map = {PushAgainstWallEnv: PushLoader,
                   PushAgainstWallStickyEnv: PushLoaderRestricted,
                   PushWithForceDirectlyEnv: PushLoaderRestricted,
