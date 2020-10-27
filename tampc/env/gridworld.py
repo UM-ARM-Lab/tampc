@@ -119,8 +119,13 @@ class GridEnv(Env):
                     for x in range(12):
                         self.cw_dynamics.add((x, y))
         elif self.level == 2:
-            # TODO make goal surrounded by traps
-            pass
+            self.size = (12, 12)
+            for y in range(4, 7):
+                self.walls.add((5, y))
+            for x in range(2, 6):
+                self.walls.add((x, 4))
+            for x in range(3, 6):
+                self.walls.add((x, 6))
         elif self.level == 3:
             # TODO make goal surrounded by non-nominal dynamics
             pass
@@ -291,7 +296,7 @@ class DebugRvizDrawer:
             marker.points.append(Point(x=x, y=y, z=z + 0.01))
         self.marker_pub.publish(marker)
 
-    def draw_trap_difficulty(self, env: GridEnv, max_difficulty=8):
+    def draw_trap_difficulty(self, env: GridEnv, max_difficulty=20):
         trap_difficulty = env.compute_true_trap_difficulty()
 
         for (x, y), difficulty in trap_difficulty.items():
@@ -302,8 +307,8 @@ class DebugRvizDrawer:
                 marker.id = id
                 marker.text = str(difficulty)
 
-                marker.pose.position.y = x
-                marker.pose.position.x = y
+                marker.pose.position.x = x
+                marker.pose.position.y = y
                 marker.pose.position.z = self.BASE_Z + 0.02
                 marker.pose.orientation.w = 1
 

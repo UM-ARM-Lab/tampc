@@ -53,7 +53,7 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 logger = logging.getLogger(__name__)
 
 # --- SHARED GETTERS
-task_map = {'freespace': 0, 'I': 1, 'I-non-nominal': 4, 'Impossible': 2, 'Non-nominal': 3}
+task_map = {'freespace': 0, 'I': 1, 'I-non-nominal': 4, 'U': 2, 'Non-nominal': 3}
 
 
 class GridGetter(EnvGetter):
