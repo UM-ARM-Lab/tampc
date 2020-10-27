@@ -78,6 +78,93 @@ class TrajectoryLoader(load_utils.DataLoader):
         return xu, y, info
 
 
+class Env:
+    @property
+    @abc.abstractmethod
+    def nx(self):
+        """Dimensionality of state space"""
+        return 0
+
+    @property
+    @abc.abstractmethod
+    def nu(self):
+        """Dimensionality of action space"""
+        return 0
+
+    @staticmethod
+    @abc.abstractmethod
+    def state_names():
+        """Get list of names, one for each state corresponding to the index"""
+        return []
+
+    @staticmethod
+    @abc.abstractmethod
+    def state_difference(state, other_state):
+        """Get state - other_state in state space"""
+        return np.array([])
+
+    @staticmethod
+    @abc.abstractmethod
+    def state_distance(state_difference):
+        """Get a measure of distance in the state space"""
+        return 0
+
+    @staticmethod
+    @abc.abstractmethod
+    def control_names():
+        return []
+
+    @staticmethod
+    @abc.abstractmethod
+    def get_control_bounds():
+        """Get lower and upper bounds for control"""
+        return np.array([]), np.array([])
+
+    @staticmethod
+    @abc.abstractmethod
+    def control_similarity(u1, u2):
+        """Get similarity between 0 - 1 of two controls"""
+
+    @classmethod
+    @abc.abstractmethod
+    def state_cost(cls):
+        """Assuming cost function is xQx + uRu, return Q"""
+        return np.diag([])
+
+    @classmethod
+    @abc.abstractmethod
+    def control_cost(cls):
+        """Assuming cost function is xQx + uRu, return R"""
+        return np.diag([])
+
+    def verify_dims(self):
+        u_min, u_max = self.get_control_bounds()
+        assert u_min.shape[0] == u_max.shape[0]
+        assert u_min.shape[0] == self.nu
+        assert len(self.state_names()) == self.nx
+        assert len(self.control_names()) == self.nu
+        assert self.state_cost().shape[0] == self.nx
+        assert self.control_cost().shape[0] == self.nu
+
+    def reset(self):
+        """reset robot to init configuration"""
+        pass
+
+    @abc.abstractmethod
+    def step(self, action):
+        """Take an action step, returning new state, reward, done, and additional info in the style of gym envs"""
+        state = np.array(self.nx)
+        cost, done = self.evaluate_cost(state, action)
+        info = None
+        return state, -cost, done, info
+
+    @abc.abstractmethod
+    def evaluate_cost(self, state, action=None):
+        cost = 0
+        done = False
+        return cost, done
+
+
 class Mode:
     DIRECT = 0
     GUI = 1
@@ -102,7 +189,7 @@ def handle_data_format_for_state_diff(state_diff):
 
 
 class EnvDataSource(datasource.FileDataSource):
-    def __init__(self, env, data_dir=None, loader_args=None, **kwargs):
+    def __init__(self, env: Env, data_dir=None, loader_args=None, **kwargs):
         if data_dir is None:
             data_dir = self._default_data_dir()
         if loader_args is None:

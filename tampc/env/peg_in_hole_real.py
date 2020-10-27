@@ -4,7 +4,7 @@ import rospy
 
 import numpy as np
 from tampc import cfg
-from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource
+from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource, Env
 
 from tampc_or import cfg as robot_cfg
 from tampc_or_msgs.srv import Calibrate, Action, Observe, CalibStaticWrench
@@ -76,7 +76,7 @@ class VideoLogger:
             self.srv_video('{}.mp4'.format(time.time()), False, 3600)
 
 
-class RealPegEnv:
+class RealPegEnv(Env):
     """Interaction with robot via our ROS node; manages what dimensions of the returned observation
     is necessary for dynamics (passed back as state) and which are extra (passed back as info)"""
     nu = 2

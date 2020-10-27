@@ -11,66 +11,12 @@ from datetime import datetime
 from arm_pytorch_utilities import math_utils
 
 import pybullet_data
-from tampc.env.env import Mode
+from tampc.env.env import Mode, Env
 
 logger = logging.getLogger(__name__)
 
 
-class PybulletEnv:
-    @property
-    @abc.abstractmethod
-    def nx(self):
-        return 0
-
-    @property
-    @abc.abstractmethod
-    def nu(self):
-        return 0
-
-    @staticmethod
-    @abc.abstractmethod
-    def state_names():
-        """Get list of names, one for each state corresponding to the index"""
-        return []
-
-    @staticmethod
-    @abc.abstractmethod
-    def state_difference(state, other_state):
-        """Get state - other_state in state space"""
-        return np.array([])
-
-    @staticmethod
-    @abc.abstractmethod
-    def state_distance(state_difference):
-        """Get a measure of distance in the state space"""
-        return 0
-
-    @staticmethod
-    @abc.abstractmethod
-    def control_names():
-        return []
-
-    @staticmethod
-    @abc.abstractmethod
-    def get_control_bounds():
-        """Get lower and upper bounds for control"""
-        return np.array([]), np.array([])
-
-    @staticmethod
-    @abc.abstractmethod
-    def control_similarity(u1, u2):
-        """Get similarity between 0 - 1 of two controls"""
-
-    @classmethod
-    @abc.abstractmethod
-    def state_cost(cls):
-        return np.diag([])
-
-    @classmethod
-    @abc.abstractmethod
-    def control_cost(cls):
-        return np.diag([])
-
+class PybulletEnv(Env):
     def __init__(self, mode=Mode.DIRECT, log_video=False, default_debug_height=0, camera_dist=1.5):
         self.log_video = log_video
         self.mode = mode
@@ -127,36 +73,10 @@ class PybulletEnv:
     def close(self):
         p.disconnect(self.physics_client)
 
-    def verify_dims(self):
-        u_min, u_max = self.get_control_bounds()
-        assert u_min.shape[0] == u_max.shape[0]
-        assert u_min.shape[0] == self.nu
-        assert len(self.state_names()) == self.nx
-        assert len(self.control_names()) == self.nu
-        assert self.Q.shape[0] == self.nx
-        assert self.R.shape[0] == self.nu
-
     def draw_user_text(self, text, location_index=1, left_offset=1.0):
         if location_index is 0:
             raise RuntimeError("Can't use same location index (0) as cost")
         self._dd.draw_text('user{}_{}'.format(location_index, left_offset), text, location_index, left_offset)
-
-    def reset(self):
-        """reset robot to init configuration"""
-        pass
-
-    @abc.abstractmethod
-    def step(self, action):
-        state = np.array(self.nx)
-        cost, done = self.evaluate_cost(state, action)
-        info = None
-        return state, -cost, done, info
-
-    @abc.abstractmethod
-    def evaluate_cost(self, state, action=None):
-        cost = 0
-        done = False
-        return cost, done
 
     @abc.abstractmethod
     def _draw_action(self, action, old_state=None, debug=0):
