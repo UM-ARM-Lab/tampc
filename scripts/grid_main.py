@@ -77,8 +77,8 @@ class GridGetter(EnvGetter):
         d = get_device()
         u_min, u_max = env.get_control_bounds()
         Q = torch.tensor(env.state_cost(), dtype=torch.double)
-        R = 0.01
-        sigma = [1.5]
+        R = 0.00001 # has to be > 0 to measure whether we are inputting control effort
+        sigma = [2.5]
         noise_mu = [2]
         u_init = [2]
         sigma = torch.tensor(sigma, dtype=torch.double, device=d)
@@ -93,7 +93,7 @@ class GridGetter(EnvGetter):
             'device': d,
             'terminal_cost_multiplier': 50,
             'trap_cost_annealing_rate': 0.8,
-            'abs_unrecognized_threshold': 15,
+            'abs_unrecognized_threshold': 0.5,
             'dynamics_minimum_window': 2,
             'max_trap_weight': 0.01,
         }
@@ -114,7 +114,7 @@ class GridGetter(EnvGetter):
     @classmethod
     def env(cls, mode=0, level=0, log_video=False, **kwargs):
         env = gridworld.GridEnv(environment_level=level, **kwargs)
-        if level is task_map['I']:
+        if level is task_map['I'] or level is task_map['freespace']:
             env.set_task_config(goal=[1, 6], init=[7, 6])
         elif level is task_map['I-non-nominal']:
             env.set_task_config(goal=[1, 6], init=[7, 6])
@@ -125,24 +125,28 @@ class GridGetter(EnvGetter):
 class OfflineDataCollection:
     @staticmethod
     def freespace(seed_offset=0, trials=200, trial_length=50, force_gui=False):
-        env = GridGetter.env(level=0)
+        env = GridGetter.env(level=0, check_boundaries=False)
         u_min, u_max = env.get_control_bounds()
         ctrl = controller.FullRandomController(env.nu, u_min, u_max)
         # use mode p.GUI to see what the trials look like
         save_dir = '{}{}'.format(GridGetter.env_dir, 0)
         sim = gridworld.ExperimentRunner(env, ctrl, num_frames=trial_length, plot=False, save=True,
-                                         pause_s_between_steps=0.1, stop_when_done=False,
+                                         pause_s_between_steps=0.01, stop_when_done=False,
                                          save_dir=save_dir)
+        rospy.sleep(0.5)
+        sim.clear_markers()
         # randomly distribute data
         for offset in range(trials):
             seed = rand.seed(seed_offset + offset)
             # random position
-            init = [np.random.random() * max_val for max_val in env.size]
+            init = [int(np.random.random() * max_val) for max_val in env.size]
             env.set_task_config(init=init)
             ctrl = controller.FullRandomController(env.nu, u_min, u_max)
             sim.ctrl = ctrl
-            with recorder.WindowRecorder(window_names=("RViz*", "RViz"), name_suffix="rviz", frame_rate=30.0,
-                                         save_dir=cfg.VIDEO_DIR):
+            with recorder.WindowRecorder(
+                    window_names=("RViz*", "RViz", "gridworld.rviz - RViz", "gridworld.rviz* - RViz"),
+                    name_suffix="rviz", frame_rate=30.0,
+                    save_dir=cfg.VIDEO_DIR):
                 sim.run(seed)
 
         if sim.save:
@@ -164,7 +168,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                    override_tampc_params=None,
                    override_mpc_params=None,
                    **kwargs):
-    env = GridGetter.env(level=level, stub=False)
+    env = GridGetter.env(level=level)
     logger.info("initial random seed %d", rand.seed(seed))
 
     ds, pm = GridGetter.prior(env, use_tsf, rep_name=rep_name)
@@ -205,12 +209,9 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                                         **tampc_opts,
                                         mpc_opts=mpc_opts)
 
-    z = 0.98
-    goal = np.r_[env.hole, z, 0, 0]
-    ctrl.set_goal(goal)
+    ctrl.set_goal(env.goal)
 
-    sim = gridworld.ExperimentRunner(env, ctrl, num_frames=num_frames, plot=False, save=True, pause_s_between_steps=0.1,
-                                     stop_when_done=True)
+    sim = gridworld.ExperimentRunner(env, ctrl, num_frames=num_frames, plot=False, save=True, stop_when_done=True)
     seed = rand.seed(seed)
 
     if run_name is None:
@@ -255,8 +256,10 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
     if reuse_escape_as_demonstration:
         sim.dd.draw_text("resuse", "reuse escape", 3, left_offset=-1.4)
     sim.dd.draw_text("run_name", run_name, 18, left_offset=-0.8)
-    with recorder.WindowRecorder(window_names=("RViz*", "RViz"), name_suffix="rviz", frame_rate=30.0,
-                                 save_dir=cfg.VIDEO_DIR):
+    with recorder.WindowRecorder(
+            window_names=("RViz*", "RViz", "gridworld.rviz - RViz", "gridworld.rviz* - RViz"),
+            name_suffix="rviz", frame_rate=30.0,
+            save_dir=cfg.VIDEO_DIR):
         pre_run_setup(env, ctrl, ds)
 
         sim.run(seed, run_name)
@@ -505,7 +508,7 @@ parser.add_argument('--task', default=list(task_map.keys())[0], choices=task_map
                     help='run parameter: what task to run')
 parser.add_argument('--run_prefix', default=None, type=str,
                     help='run parameter: prefix to save the run under')
-parser.add_argument('--num_frames', metavar='N', type=int, default=100,
+parser.add_argument('--num_frames', metavar='N', type=int, default=200,
                     help='run parameter: number of simulation frames to run')
 parser.add_argument('--no_trap_cost', action='store_true', help='run parameter: turn off trap set cost')
 parser.add_argument('--nonadaptive_baseline', action='store_true',
@@ -539,12 +542,12 @@ if __name__ == "__main__":
         mpc_params.update(d)
 
     if args.command == 'collect':
-        OfflineDataCollection.freespace(seed_offset=20, trials=5, trial_length=30, force_gui=args.gui)
+        OfflineDataCollection.freespace(seed_offset=0, trials=100, trial_length=30, force_gui=args.gui)
     elif args.command == 'learn_representation':
         for seed in args.seed:
             GridGetter.learn_invariant(ut, seed=seed, name=gridworld.DIR, MAX_EPOCH=1000, BATCH_SIZE=args.batch)
     elif args.command == 'fine_tune_dynamics':
-        GridGetter.learn_model(ut, seed=args.seed[0], name="", rep_name=args.rep_name)
+        GridGetter.learn_model(ut, seed=args.seed[0], name="", rep_name=args.rep_name, train_epochs=1000)
     elif args.command == 'run':
         nominal_adapt = OnlineAdapt.NONE
         autonomous_recovery = online_controller.AutonomousRecovery.MAB
@@ -581,4 +584,22 @@ if __name__ == "__main__":
     elif args.command == 'visualize1':
         pass
     else:
-        pass
+        use_tsf = UseTsf.NO_TRANSFORM
+        d, env, config, ds = GridGetter.free_space_env_init(0)
+        ds.update_preprocessor(GridGetter.pre_invariant_preprocessor(use_tsf=use_tsf))
+        xu, y, trial = ds.training_set(original=True)
+        ds, pm = GridGetter.prior(env, use_tsf)
+        yhat = pm.dyn_net.predict(xu, get_next_state=False, return_in_orig_space=True)
+        u = xu[:, env.nx:]
+        f, axes = plt.subplots(2, 1, figsize=(10, 9))
+        axes[0].scatter(u[:, 0].cpu(), yhat[:, 0].cpu(), color="red")
+        axes[0].scatter(u[:, 0].cpu(), y[:, 0].cpu())
+        axes[0].set_ylabel('dx')
+        axes[0].set_xlabel('u')
+
+        axes[1].scatter(u[:, 0].cpu(), yhat[:, 1].cpu(), color="red")
+        axes[1].scatter(u[:, 0].cpu(), y[:, 1].cpu())
+        axes[1].set_ylabel('dy')
+        axes[1].set_xlabel('u')
+
+        plt.show()
