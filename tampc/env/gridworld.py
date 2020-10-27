@@ -196,6 +196,41 @@ class GridEnv(Env):
 
         return trap_difficulty
 
+    def compute_trap_basin(self, trap_state):
+        """Given the state, compute the basin of attraction around it"""
+        visited = set()
+        visited.add(trap_state)
+        basin = set()
+        basin.add(trap_state)
+        c, _ = self.evaluate_cost(np.array(trap_state))
+        current = [trap_state]
+        # BFS on the current node to expand all nodes that will go to trap_state greedily
+        while len(current):
+            next_depth = []
+            for s in current:
+                # look at all neighbours
+                for action in range(len(self.NOMINAL_DYNAMICS)):
+                    new_s = self._take_step(s, action)
+                    # ignore if we've already visited it
+                    if new_s in visited:
+                        continue
+                    # look at their neighbours
+                    their_neighbours = []
+                    for their_action in range(len(self.NOMINAL_DYNAMICS)):
+                        their_next_s = self._take_step(new_s, their_action)
+                        # check if their minimum cost neighbour is in the basin
+                        ccc, _ = self.evaluate_cost(np.array(their_next_s))
+                        their_neighbours.append((ccc, their_next_s))
+                    their_neighbours = sorted(their_neighbours)
+                    min_cost_state = their_neighbours[0][1]
+                    if min_cost_state in basin:
+                        next_depth.append(new_s)
+                        basin.add(new_s)
+                    visited.add(new_s)
+            current = next_depth
+
+        return basin
+
 
 # TODO move shared parts of this out of this function
 class DebugRvizDrawer:
@@ -258,19 +293,13 @@ class DebugRvizDrawer:
 
     def draw_trap_difficulty(self, env: GridEnv, max_difficulty=8):
         trap_difficulty = env.compute_true_trap_difficulty()
-        marker = self.make_marker(scale=self.BASE_SCALE * 1.5)
-        marker.ns = "trap_difficulty"
-        marker.id = 0
-        for (x, y), difficulty in trap_difficulty.items():
-            marker.points.append(Point(x=x, y=y, z=self.BASE_Z + 0.005))
-            marker.colors.append(ColorRGBA(r=1, g=0, b=0, a=difficulty / max_difficulty))
-        self.marker_pub.publish(marker)
 
         for (x, y), difficulty in trap_difficulty.items():
             if difficulty > 0:
+                id = x * env.size[0] + y
                 marker = self.make_marker(marker_type=Marker.TEXT_VIEW_FACING, scale=self.BASE_SCALE)
                 marker.ns = "trap_difficulty_label"
-                marker.id = x * env.size[0] + y
+                marker.id = id
                 marker.text = str(difficulty)
 
                 marker.pose.position.y = x
@@ -281,6 +310,15 @@ class DebugRvizDrawer:
                 marker.color.a = 1
                 marker.color.r = 0
                 marker.color.g = 0
+                self.marker_pub.publish(marker)
+
+                basin = env.compute_trap_basin((x, y))
+                marker = self.make_marker(scale=self.BASE_SCALE * 1.5)
+                marker.ns = "trap_difficulty"
+                marker.id = id
+                for x, y in basin:
+                    marker.points.append(Point(x=x, y=y, z=self.BASE_Z + 0.005))
+                    marker.colors.append(ColorRGBA(r=1, g=0, b=0, a=difficulty / max_difficulty))
                 self.marker_pub.publish(marker)
 
     def draw_state(self, state, time_step, nominal_model_error=0, prev_state=None):
