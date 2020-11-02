@@ -13,6 +13,7 @@ from std_msgs.msg import ColorRGBA
 
 # runner imports
 from arm_pytorch_utilities import simulation
+from arm_pytorch_utilities.math_utils import rotate_wrt_origin
 from tampc.controller import controller, online_controller
 import time
 import copy
@@ -143,18 +144,21 @@ class GridEnv(Env):
         return manhattan_dist, done
 
     # --- control (commonly overridden)
+    def _inside_boundaries(self, new_state):
+        return (new_state[0] >= 0) and (new_state[0] < self.size[0]) and (new_state[1] >= 0) and (
+                new_state[1] < self.size[1])
+
     def _take_step(self, state, action):
         dx, dy = self.unpack_action(state, action)
 
         # only move if we'll stay within map and not move into a wall
         new_state = (state[0] + dx, state[1] + dy)
-        if (not self.check_boundaries) or \
-                ((new_state[0] >= 0) and (new_state[0] < self.size[0])
-                 and (new_state[1] >= 0) and (new_state[1] < self.size[1]) and new_state not in self.walls):
+        if (not self.check_boundaries) or (self._inside_boundaries(new_state) and new_state not in self.walls):
             state = new_state
         return state
 
     def unpack_action(self, state, action):
+        action = int(action)  # floors
         dyn = self.NOMINAL_DYNAMICS
         if state in self.cw_dynamics:
             dyn = self.NOMINAL_DYNAMICS[1:] + self.NOMINAL_DYNAMICS[:1]
@@ -163,7 +167,6 @@ class GridEnv(Env):
 
     def step(self, action):
         action = np.clip(action, *self.get_control_bounds())
-        action = int(action)  # floors
 
         self.state = np.array(self._take_step(tuple(self.state), action))
         cost, done = self.evaluate_cost(self.state, action)
@@ -248,6 +251,174 @@ class GridEnv(Env):
         return basin
 
 
+class GridContinuousEnv(GridEnv):
+    """Continuous action version of grid world"""
+    nu = 2
+
+    @classmethod
+    def state_cost(cls):
+        return np.diag([1, 1])
+
+    @staticmethod
+    def state_distance(state_difference):
+        return np.linalg.norm(state_difference, axis=1)
+        # return state_difference.norm(dim=1)
+
+    @staticmethod
+    def control_names():
+        return ['d$x$', 'd$y$']
+
+    @classmethod
+    def get_control_bounds(cls):
+        u_min = np.array([-1, -1])
+        u_max = np.array([1, 1])
+        return u_min, u_max
+
+    @staticmethod
+    @handle_data_format_for_state_diff
+    def control_similarity(u1, u2):
+        return torch.cosine_similarity(u1, u2, dim=-1).clamp(0, 1)
+
+    @classmethod
+    def control_cost(cls):
+        return np.diag([1 for _ in range(cls.nu)])
+
+    def evaluate_cost(self, state, action=None):
+        dist = self.state_distance(self.state_difference(state, self.goal))
+        done = dist < self.dist_for_done
+        return dist, done
+
+    def __init__(self, mini_step_magnitude=0.05, dist_for_done=0.1, **kwargs):
+        self.dist_for_done = dist_for_done
+        self.mini_step_magnitude = mini_step_magnitude
+        super(GridContinuousEnv, self).__init__(**kwargs)
+
+    # --- control (commonly overridden)
+    def unpack_action(self, state, action):
+        return action
+
+    def _take_step(self, state, action):
+        # simulate taking steps in mini_steps
+        step_size = np.linalg.norm(action)
+        if step_size == 0:
+            return state
+        dmini = action / step_size * self.mini_step_magnitude
+        stepped = 0
+
+        while stepped < step_size:
+            # last step, scale action down to the remaining step
+            if stepped + self.mini_step_magnitude >= step_size:
+                remaining_size = step_size - stepped
+                dmini = action / step_size * remaining_size
+
+            tile = self.get_tile(state)
+            dxy = dmini
+            if tile in self.cw_dynamics:
+                dxy = np.array(rotate_wrt_origin(dxy, -np.pi / 2))
+
+            new_state = state + dxy
+            # can't move anymore (no sliding) so just return current state
+            if self.check_boundaries and (
+                    not self._inside_boundaries(new_state) or self.get_tile(new_state) in self.walls):
+                return state
+            state = new_state
+            stepped += self.mini_step_magnitude
+
+        return state
+
+    # def _compute_trap_difficulty_state(self, state):
+    #     """Compute trap difficulty with a definition of trap that is no movement induced by an optimal controller
+    #     that knows the true local dynamics with a horizon of 1"""
+    #     # optimal controller under euclidean distance would take straight line
+    #     action = self.goal - state
+    #     c, _ = self.evaluate_cost(state)
+    #     # if it knew local dynamics
+    #     if self.get_tile(state) in self.cw_dynamics:
+    #         action = np.array(rotate_wrt_origin(action, np.pi / 2))
+    #
+    #     step_size = np.linalg.norm(action)
+    #     if step_size > 1:
+    #         action /= step_size
+    #
+    #     # if it also knew wall dynamics
+    #     if self.get_tile(state + action) in self.walls:
+    #         for dim in range(2):
+    #             new_action = np.copy(action)
+    #             new_action[dim] = 0
+    #             if self.get_tile(state + new_action) not in self.walls:
+    #                 action = new_action
+    #                 break
+    #
+    #     step_size = np.linalg.norm(action)
+    #     new_s = self._take_step(state, action)
+    #     new_c, _ = self.evaluate_cost(new_s)
+    #     blocked = self.state_distance(self.state_difference(state, new_s)) < 0.1
+    #     decreased_cost = new_c + step_size * 0.05 < c
+    #     # return 1 if blocked else 0
+    #     return 1 if not decreased_cost else 0
+
+    def _compute_trap_difficulty_state(self, state):
+        """Compute trap difficulty with a definition of trap that is no movement induced by an optimal controller
+        that knows the true local dynamics with a horizon of 1"""
+        # optimal controller under euclidean distance would take straight line
+        action = self.goal - state
+        c, _ = self.evaluate_cost(state)
+        d = 1
+        max_d = 20
+
+        while d < max_d:
+            # if it knew local non-nominal dynamics
+            if self.get_tile(state) in self.cw_dynamics:
+                action = np.array(rotate_wrt_origin(action, np.pi / 2))
+            step_size = np.linalg.norm(action)
+            if step_size > 1:
+                action /= step_size
+            # if it also knew wall dynamics
+            if self.get_tile(state + action) in self.walls:
+                for dim in range(2):
+                    new_action = np.copy(action)
+                    new_action[dim] = 0
+                    if self.get_tile(state + new_action) not in self.walls:
+                        action = new_action
+                        break
+            step_size = np.linalg.norm(action)
+
+            new_s = self._take_step(state, action)
+            new_c, _ = self.evaluate_cost(new_s)
+            if new_c + step_size * 0.05 < c:
+                return d if d > 1 else 0
+
+            blocked = self.state_distance(self.state_difference(state, new_s)) < 0.1 * step_size
+            if blocked:
+                return 1000
+            d += 1
+            state = new_s
+        return 1000
+
+    def compute_true_trap_difficulty(self):
+        """Given the current environment, compute: X -> R which maps each state to its trap difficulty"""
+        trap_difficulty = {}
+        N = 100
+        for x in np.linspace(0, self.size[0], N):
+            for y in np.linspace(0, self.size[1], N):
+                state = (x, y)
+                if self.get_tile(state) in self.walls:
+                    continue
+                trap_difficulty[state] = self._compute_trap_difficulty_state(np.array(state))
+
+        return trap_difficulty
+
+    def compute_trap_basin(self, trap_state):
+        # no real concept of a basin under this definition of a trap
+        basin = set()
+        basin.add(trap_state)
+        return basin
+
+    @staticmethod
+    def get_tile(state):
+        return round(state[0]), round(state[1])
+
+
 # TODO move shared parts of this out of this function
 class DebugRvizDrawer:
     BASE_SCALE = 0.5
@@ -304,15 +475,16 @@ class DebugRvizDrawer:
         marker.color.a = 0.5
         marker.color.b = 0.5
         for x, y in env.cw_dynamics:
-            marker.points.append(Point(x=x, y=y, z=z + 0.01))
+            marker.points.append(Point(x=x, y=y, z=z + 0.001))
         self.marker_pub.publish(marker)
 
     def draw_trap_difficulty(self, env: GridEnv, max_difficulty=20):
         trap_difficulty = env.compute_true_trap_difficulty()
-
+        id = 0
         for (x, y), difficulty in trap_difficulty.items():
             if difficulty > 0:
-                id = x * env.size[0] + y
+                id += 1
+                # id = x * env.size[0] + y
                 marker = self.make_marker(marker_type=Marker.TEXT_VIEW_FACING, scale=self.BASE_SCALE)
                 marker.ns = "trap_difficulty_label"
                 marker.id = id
@@ -336,6 +508,7 @@ class DebugRvizDrawer:
                     marker.points.append(Point(x=x, y=y, z=self.BASE_Z + 0.005))
                     marker.colors.append(ColorRGBA(r=1, g=0, b=0, a=difficulty / max_difficulty))
                 self.marker_pub.publish(marker)
+                rospy.sleep(0.01)
 
     def draw_state(self, state, time_step, nominal_model_error=0, action=None):
         marker = self.make_marker(scale=self.BASE_SCALE)
@@ -566,8 +739,8 @@ class ExperimentRunner(simulation.Simulation):
                 rollouts = self.ctrl.get_rollouts(obs)
                 self.dd.draw_rollouts(rollouts)
 
-            self.dd.draw_state(obs, simTime, model_pred_error, action=self.env.unpack_action(tuple(obs), int(
-                np.clip(action, *self.env.get_control_bounds()))))
+            self.dd.draw_state(obs, simTime, model_pred_error, action=self.env.unpack_action(tuple(obs), np.clip(action,
+                                                                                                                 *self.env.get_control_bounds())))
             # sanitize action
             if torch.is_tensor(action):
                 action = action.cpu()
