@@ -136,6 +136,18 @@ class DebugDrawer:
         self._camera_pos = [0, 0]
         self._camera_height = camera_height
         self._default_height = default_height
+        self._3dmode = False
+
+    def toggle_3d(self, using_3d):
+        self._3dmode = using_3d
+
+    def _process_point_height(self, point, height):
+        if height is None:
+            if self._3dmode:
+                height = point[2]
+            else:
+                height = self._default_height
+        return height
 
     def draw_point(self, name, point, color=(0, 0, 0), length=0.01, height=None):
         if name not in self._debug_ids:
@@ -143,8 +155,7 @@ class DebugDrawer:
         uids = self._debug_ids[name]
 
         # ignore 3rd dimension if it exists to plot everything at the same height
-        if height is None:
-            height = self._default_height
+        height = self._process_point_height(point, height)
 
         location = (point[0], point[1], height)
         uids[0] = p.addUserDebugLine(np.add(location, [length, 0, 0]), np.add(location, [-length, 0, 0]), color, 2,
@@ -153,8 +164,7 @@ class DebugDrawer:
                                      replaceItemUniqueId=uids[1])
 
     def draw_2d_pose(self, name, pose, color=(0, 0, 0), length=0.15 / 2, height=None):
-        if height is None:
-            height = self._default_height
+        height = self._process_point_height(pose, height)
         if name not in self._debug_ids:
             self._debug_ids[name] = [-1, -1]
         uids = self._debug_ids[name]
@@ -199,10 +209,8 @@ class DebugDrawer:
         return f_size
 
     def draw_contact_friction(self, name, contact, flip=True, height=None):
-        if height is None:
-            height = self._default_height
         start = list(contact[ContactInfo.POS_A])
-        start[2] = height
+        start[2] = self._process_point_height(start, height)
         # friction along y
         scale = 0.1
         c = (1, 0.4, 0.7)
@@ -211,15 +219,13 @@ class DebugDrawer:
         self.draw_2d_line('{}x'.format(name), start, fxd, size=np.linalg.norm(fxd), scale=scale, color=c)
 
     def draw_transition(self, prev_block, new_block, height=None):
-        if height is None:
-            height = self._default_height
         name = 't'
         if name not in self._debug_ids:
             self._debug_ids[name] = []
 
         self._debug_ids[name].append(
-            p.addUserDebugLine([prev_block[0], prev_block[1], height],
-                               (new_block[0], new_block[1], height),
+            p.addUserDebugLine([prev_block[0], prev_block[1], self._process_point_height(prev_block, height)],
+                               (new_block[0], new_block[1], self._process_point_height(new_block, height)),
                                [0, 0, 1], 2))
 
     def clear_transitions(self):
