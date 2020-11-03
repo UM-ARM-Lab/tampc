@@ -52,7 +52,7 @@ class ArmEnv(PybulletEnv):
     """To start with we have a fixed gripper orientation so the state is 3D position only"""
     nu = 3
     nx = 6
-    MAX_FORCE = 5 * 240
+    MAX_FORCE = 1 * 40
     MAX_GRIPPER_FORCE = 20
     MAX_PUSH_DIST = 0.03
     FINGER_OPEN = 0.04
@@ -208,6 +208,7 @@ class ArmEnv(PybulletEnv):
             visId = p.createVisualShape(p.GEOM_BOX, halfExtents=half_extents, rgbaColor=[0.2, 0.2, 0.2, 0.8])
             wallId = p.createMultiBody(0, colId, visId, basePosition=[0.5, 0.4, 0.2],
                                        baseOrientation=p.getQuaternionFromEuler([0, 0, np.pi / 2]))
+            p.changeDynamics(wallId, -1, lateralFriction=1)
             self.walls.append(wallId)
 
         for wallId in self.walls:
@@ -467,7 +468,8 @@ class ArmEnv(PybulletEnv):
         p.setJointMotorControlArray(self.armId, self.armInds, controlMode=p.POSITION_CONTROL,
                                     targetPositions=jointPoses[:num_arm_indices],
                                     targetVelocities=[0] * num_arm_indices,
-                                    forces=[self.MAX_FORCE] * num_arm_indices,
+                                    # forces=[self.MAX_FORCE] * num_arm_indices,
+                                    forces=[100, 100, 60, 60, 50, 40, 40],
                                     positionGains=[0.3] * num_arm_indices,
                                     velocityGains=[1] * num_arm_indices)
         # self._close_gripper()
