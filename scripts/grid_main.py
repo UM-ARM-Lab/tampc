@@ -77,10 +77,13 @@ class GridGetter(EnvGetter):
         d = get_device()
         u_min, u_max = env.get_control_bounds()
         Q = torch.tensor(env.state_cost(), dtype=torch.double)
-        R = 0.00001 # has to be > 0 to measure whether we are inputting control effort
-        sigma = [2.5]
-        noise_mu = [2]
-        u_init = [2]
+        R = 0.00001  # has to be > 0 to measure whether we are inputting control effort
+        # sigma = [2.5]
+        # noise_mu = [2]
+        # u_init = [2]
+        sigma = [0.2, 0.2]
+        noise_mu = [0, 0]
+        u_init = [0, 0]
         sigma = torch.tensor(sigma, dtype=torch.double, device=d)
         common_wrapper_opts = {
             'Q': Q,
@@ -113,12 +116,14 @@ class GridGetter(EnvGetter):
 
     @classmethod
     def env(cls, mode=0, level=0, log_video=False, **kwargs):
-        env = gridworld.GridEnv(environment_level=level, **kwargs)
+        # env = gridworld.GridEnv(environment_level=level, **kwargs)
+        # cls.env_dir = '{}/raw'.format(gridworld.DIR)
+        env = gridworld.GridContinuousEnv(environment_level=level, **kwargs)
+        cls.env_dir = '{}/continuous'.format(gridworld.DIR)
         if level is task_map['I'] or level is task_map['freespace']:
             env.set_task_config(goal=[1, 6], init=[7, 6])
         elif level is task_map['I-non-nominal']:
             env.set_task_config(goal=[1, 6], init=[7, 6])
-        cls.env_dir = '{}/raw'.format(gridworld.DIR)
         return env
 
 
@@ -260,7 +265,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
             window_names=("RViz*", "RViz", "gridworld.rviz - RViz", "gridworld.rviz* - RViz"),
             name_suffix="rviz", frame_rate=30.0,
             save_dir=cfg.VIDEO_DIR):
-        pre_run_setup(env, ctrl, ds)
+        pre_run_setup(env, ctrl, ds, sim)
 
         sim.run(seed, run_name)
         logger.info("last run cost %f", np.sum(sim.last_run_cost))
@@ -270,218 +275,25 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
 
 
 def test_autonomous_recovery(*args, **kwargs):
-    def default_setup(env, ctrl, ds):
+    def default_setup(env, ctrl, ds, sim):
         return
 
     run_controller('auto_recover', default_setup, *args, **kwargs)
 
 
-# TODO computer ground truth trap difficulty at each state
+def compute_traps(*args, **kwargs):
+    def default_setup(env, ctrl, ds, sim):
+        sim.dd.draw_board(env)
+        if ctrl.goal is not None:
+            sim.dd.draw_goal(ctrl.goal)
 
-# TODO evaluate
-# class EvaluateTask:
-#     @staticmethod
-#     def closest_distance_to_goal(file, level, just_get_ok_nodes=False, visualize=True, nodes_per_side=150):
-#         from sklearn.preprocessing import MinMaxScaler
-#         from visualization_msgs.msg import Marker
-#         from geometry_msgs.msg import Point
-#         from std_msgs.msg import ColorRGBA
-#
-#         env = GridGetter.env(level=level)
-#         ds = GridGetter.ds(env, file, validation_ratio=0.)
-#         XU, _, _ = ds.training_set(original=True)
-#         X, U = torch.split(XU, ds.original_config().nx, dim=1)
-#
-#         if level is task_map['Peg-T']:
-#             min_pos = [1.5, -0.14]
-#             max_pos = [1.85, 0.18]
-#         elif level is task_map['Peg-U(W)'] or level is task_map['Peg-U']:
-#             min_pos = [1.49, -0.14]
-#             max_pos = [1.83, 0.188]
-#         else:
-#             raise RuntimeError("Unspecified range for level {}".format(level))
-#
-#         scaler = MinMaxScaler(feature_range=(0, nodes_per_side - 1))
-#         scaler.fit(np.array([min_pos, max_pos]))
-#
-#         reached_states = X[:, :2].cpu().numpy()
-#         goal_pos = env.goal[:2]
-#
-#         lower_bound_dist = np.linalg.norm((reached_states - goal_pos), axis=1).min()
-#
-#         def node_to_pos(node):
-#             return scaler.inverse_transform([node])[0]
-#
-#         def pos_to_node(pos):
-#             pair = scaler.transform([pos])[0]
-#             node = tuple(int(round(v)) for v in pair)
-#             return node
-#
-#         dd = gridworld.DebugRvizDrawer()
-#         z = X[0, 2].item()
-#         # draw search boundaries
-#         marker = dd.make_marker(marker_type=Marker.LINE_STRIP)
-#         marker.ns = "boundary"
-#         marker.id = 0
-#         marker.color.a = 1
-#         marker.color.r = 0
-#         marker.color.g = 0
-#         marker.color.b = 0
-#         marker.points = [Point(x=min_pos[0], y=min_pos[1], z=z), Point(x=max_pos[0], y=min_pos[1], z=z),
-#                          Point(x=max_pos[0], y=max_pos[1], z=z), Point(x=min_pos[0], y=max_pos[1], z=z),
-#                          Point(x=min_pos[0], y=min_pos[1], z=z)]
-#         dd.marker_pub.publish(marker)
-#
-#         # draw previous trajectory
-#         marker = dd.make_marker(marker_type=Marker.POINTS)
-#         marker.ns = "state_trajectory"
-#         marker.id = 0
-#         for i in range(len(X)):
-#             p = reached_states[i]
-#             marker.points.append(Point(x=p[0], y=p[1], z=z))
-#         marker.color.a = 1
-#         marker.color.b = 1
-#         dd.marker_pub.publish(marker)
-#
-#         # try to load it if possible
-#         fullname = os.path.join(cfg.DATA_DIR, 'ok_{}{}_{}.pkl'.format(peg_in_hole_real.DIR, level, nodes_per_side))
-#         if os.path.exists(fullname):
-#             with open(fullname, 'rb') as f:
-#                 ok_nodes = pickle.load(f)
-#                 logger.info("loaded ok nodes from %s", fullname)
-#         else:
-#             ok_nodes = [[None for _ in range(nodes_per_side)] for _ in range(nodes_per_side)]
-#             # discretize positions and show goal states
-#             xs = np.linspace(min_pos[0], max_pos[0], nodes_per_side)
-#             ys = np.linspace(min_pos[1], max_pos[1], nodes_per_side)
-#             # publish to rviz
-#             marker = dd.make_marker(scale=dd.BASE_SCALE * 0.3)
-#             marker.ns = "nodes"
-#             marker.id = 0
-#             marker.color.a = 1
-#             marker.color.g = 1
-#             for i, x in enumerate(xs):
-#                 for j, y in enumerate(ys):
-#                     n = pos_to_node((x, y))
-#                     ok_nodes[i][j] = n
-#                     marker.points.append(Point(x=x, y=y, z=z))
-#             dd.marker_pub.publish(marker)
-#
-#             while True:
-#                 ij = input(
-#                     "enter i_start-i_end [0,{}], j_start-j_end [0,{}] to toggle node or q to finish".format(len(xs) - 1,
-#                                                                                                             len(
-#                                                                                                                 ys) - 1))
-#                 if ij.strip() == 'q':
-#                     break
-#                 try:
-#                     i, j = ij.split(',')
-#                     # see if things can be broken down into interval
-#                     if '-' in i:
-#                         v_min, v_max = tuple(int(v) for v in i.split('-'))
-#                         i_interval = range(v_min, v_max + 1)
-#                         if v_min < 0 or v_min > v_max or v_max >= len(xs):
-#                             raise RuntimeError()
-#                     else:
-#                         i_interval = [int(i)]
-#                     if '-' in j:
-#                         v_min, v_max = tuple(int(v) for v in j.split('-'))
-#                         j_interval = range(v_min, v_max + 1)
-#                         if v_min < 0 or v_min > v_max or v_max >= len(ys):
-#                             raise RuntimeError()
-#                     else:
-#                         j_interval = [int(j)]
-#                 except RuntimeError:
-#                     print("did not enter in correct format, try again")
-#                     continue
-#
-#                 marker = dd.make_marker(scale=dd.BASE_SCALE * 0.3)
-#                 marker.ns = "nodes"
-#                 marker.id = i_interval[0] * nodes_per_side + j_interval[0]
-#
-#                 for i in i_interval:
-#                     for j in j_interval:
-#                         xy = node_to_pos((i, j))
-#                         marker.points.append(Point(x=xy[0], y=xy[1], z=z + 0.0001))
-#                         # toggle whether this node is OK or not
-#                         if ok_nodes[i][j] is None:
-#                             ok_nodes[i][j] = (i, j)
-#                             marker.colors.append(ColorRGBA(r=0, g=1, b=0, a=1))
-#                         else:
-#                             ok_nodes[i][j] = None
-#                             marker.colors.append(ColorRGBA(r=1, g=0, b=0, a=1))
-#                 dd.marker_pub.publish(marker)
-#
-#         with open(fullname, 'wb') as f:
-#             pickle.dump(ok_nodes, f)
-#             logger.info("saved ok nodes to %s", fullname)
-#
-#         if just_get_ok_nodes:
-#             return
-#
-#         # distance 1 step along x
-#         dxx = (max_pos[0] - min_pos[0]) / nodes_per_side
-#         dyy = (max_pos[1] - min_pos[1]) / nodes_per_side
-#         neighbours = [[-1, 0], [0, 1], [1, 0], [0, -1]]
-#         distances = [dxx, dyy, dxx, dyy]
-#         # create graph and do search on it based on environment obstacles
-#         g = util.Graph()
-#         for i in range(nodes_per_side):
-#             for j in range(nodes_per_side):
-#                 u = ok_nodes[i][j]
-#                 if u is None:
-#                     continue
-#                 g.add_node(u)
-#                 for dxy, dist in zip(neighbours, distances):
-#                     ii = i + dxy[0]
-#                     jj = j + dxy[1]
-#                     if ii < 0 or ii >= nodes_per_side:
-#                         continue
-#                     if jj < 0 or jj >= nodes_per_side:
-#                         continue
-#                     v = ok_nodes[ii][jj]
-#                     if v is not None:
-#                         g.add_edge(u, v, dist)
-#
-#         goal_node = pos_to_node(goal_pos)
-#         if ok_nodes[goal_node[0]][goal_node[1]] is None:
-#             goal_node = (goal_node[0], goal_node[1] + 1)
-#         visited, path = util.dijsktra(g, goal_node)
-#         # find min across visited states
-#         min_dist = 100
-#         min_node = None
-#         dists = []
-#         for xy in reached_states:
-#             n = pos_to_node(xy)
-#             if n not in visited:
-#                 logger.warning("reached state %s node %s not visited", xy, n)
-#                 dists.append(None)
-#             else:
-#                 dists.append(visited[n])
-#                 if visited[n] < min_dist:
-#                     min_dist = visited[n]
-#                     min_node = n
-#
-#         if min_node is None:
-#             print('min node outside search region, return lower bound')
-#             return lower_bound_dist * 1.2
-#         # display minimum path to goal
-#         min_xy = node_to_pos(min_node)
-#         marker = dd.make_marker(marker_type=Marker.LINE_STRIP)
-#         marker.ns = "mindist"
-#         marker.id = 0
-#         marker.color.a = 1
-#         marker.color.r = 1
-#         marker.points = [Point(x=min_xy[0], y=min_xy[1], z=z)]
-#         while min_node != goal_node:
-#             next_node = path[min_node]
-#             next_xy = node_to_pos(next_node)
-#             marker.points.append(Point(x=next_xy[0], y=next_xy[1], z=z))
-#             min_node = next_node
-#         dd.marker_pub.publish(marker)
-#
-#         print('min dist: {} lower bound: {}'.format(min_dist, lower_bound_dist))
-#         return dists
+        traps = env.compute_true_trap_difficulty(ctrl)
+        sim.dd.draw_trap_difficulty(traps)
+        rospy.sleep(1.5)
+        input('press enter to start')
+        exit(0)
+
+    run_controller('draw_traps', default_setup, *args, **kwargs)
 
 
 parser = argparse.ArgumentParser(description='Experiments on the 2D grid environment')
@@ -566,13 +378,13 @@ if __name__ == "__main__":
             ut = UseTsf.NO_TRANSFORM
 
         for seed in args.seed:
-            test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
-                                     nominal_adapt=nominal_adapt, rep_name=args.rep_name,
-                                     reuse_escape_as_demonstration=False, use_trap_cost=use_trap_cost,
-                                     assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
-                                     visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
-                                     override_tampc_params=tampc_params, override_mpc_params=mpc_params,
-                                     autonomous_recovery=autonomous_recovery)
+            compute_traps(seed=seed, level=level, use_tsf=ut,
+                          nominal_adapt=nominal_adapt, rep_name=args.rep_name,
+                          reuse_escape_as_demonstration=False, use_trap_cost=use_trap_cost,
+                          assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
+                          visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
+                          override_tampc_params=tampc_params, override_mpc_params=mpc_params,
+                          autonomous_recovery=autonomous_recovery)
     elif args.command == 'evaluate':
         task_type = gridworld.DIR
         trials = ["{}/{}".format(task_type, filename) for filename in os.listdir(os.path.join(cfg.DATA_DIR, task_type))
@@ -592,14 +404,11 @@ if __name__ == "__main__":
         yhat = pm.dyn_net.predict(xu, get_next_state=False, return_in_orig_space=True)
         u = xu[:, env.nx:]
         f, axes = plt.subplots(2, 1, figsize=(10, 9))
-        axes[0].scatter(u[:, 0].cpu(), yhat[:, 0].cpu(), color="red")
-        axes[0].scatter(u[:, 0].cpu(), y[:, 0].cpu())
-        axes[0].set_ylabel('dx')
-        axes[0].set_xlabel('u')
-
-        axes[1].scatter(u[:, 0].cpu(), yhat[:, 1].cpu(), color="red")
-        axes[1].scatter(u[:, 0].cpu(), y[:, 1].cpu())
-        axes[1].set_ylabel('dy')
-        axes[1].set_xlabel('u')
+        dims = ['x', 'y']
+        for i, dim in enumerate(dims):
+            axes[i].scatter(u[:, i].cpu(), yhat[:, i].cpu(), color="red")
+            axes[i].scatter(u[:, i].cpu(), y[:, i].cpu())
+            axes[i].set_ylabel('d{}'.format(dim))
+            axes[i].set_xlabel('u{}'.format(i))
 
         plt.show()
