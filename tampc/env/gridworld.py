@@ -113,9 +113,9 @@ class GridEnv(Env):
             self.size = (12, 12)
         elif self.level == 1 or self.level == 4:
             self.size = (12, 12)
-            for y in range(2, 10):
+            for y in range(3, 9):
                 self.walls.add((5, y))
-            self.walls.update([(4, 2), (6, 2), (4, 9), (6, 9)])
+            self.walls.update([(4, 3), (6, 3), (4, 8), (6, 8)])
             if self.level == 4:
                 for y in range(2):
                     for x in range(12):
@@ -597,15 +597,15 @@ class DebugRvizDrawer:
     def draw_trap_set(self, trap_set):
         if trap_set is None:
             return
-        state_marker = self.make_marker(scale=self.BASE_SCALE * 2)
+        state_marker = self.make_marker(scale=self.BASE_SCALE * 1)
         state_marker.ns = "trap_state"
         state_marker.id = 0
 
-        action_marker = self.make_marker(marker_type=Marker.LINE_LIST)
+        action_marker = self.make_marker(scale=self.BASE_SCALE * 0.3, marker_type=Marker.LINE_LIST)
         action_marker.ns = "trap_action"
         action_marker.id = 0
 
-        z = self.BASE_Z + 0.007
+        z = self.BASE_Z + 0.007 + 0.01
 
         T = len(trap_set)
         for t in range(T):
@@ -619,8 +619,8 @@ class DebugRvizDrawer:
             action_marker.points.append(p)
             # TODO unpack action from class to direction to draw it
             p = Point()
-            p.x = state[0]
-            p.y = state[1]
+            p.x = state[0] + action[0]
+            p.y = state[1] + action[1]
             p.z = z
             action_marker.points.append(p)
 

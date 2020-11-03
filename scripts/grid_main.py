@@ -77,7 +77,7 @@ class GridGetter(EnvGetter):
         d = get_device()
         u_min, u_max = env.get_control_bounds()
         Q = torch.tensor(env.state_cost(), dtype=torch.double)
-        R = 0.00001  # has to be > 0 to measure whether we are inputting control effort
+        R = 0.01  # has to be > 0 to measure whether we are inputting control effort
         # sigma = [2.5]
         # noise_mu = [2]
         # u_init = [2]
@@ -88,24 +88,26 @@ class GridGetter(EnvGetter):
         common_wrapper_opts = {
             'Q': Q,
             'R': R,
+            # 'recovery_scale': 100,
             'u_min': u_min,
             'u_max': u_max,
             'compare_to_goal': env.state_difference,
             'state_dist': env.state_distance,
             'u_similarity': env.control_similarity,
             'device': d,
-            'terminal_cost_multiplier': 50,
-            'trap_cost_annealing_rate': 0.8,
+            'terminal_cost_multiplier': 1,
+            'trap_cost_annealing_rate': 0.9,
             'abs_unrecognized_threshold': 0.5,
             'dynamics_minimum_window': 2,
             'max_trap_weight': 100,
+            'trap_cost_init_normalization': 20,
         }
         mpc_opts = {
             'num_samples': 1000,
             'noise_sigma': torch.diag(sigma),
             'noise_mu': torch.tensor(noise_mu, dtype=torch.double, device=d),
-            'lambda_': 1e-2,
-            'horizon': 5,
+            'lambda_': 1,
+            'horizon': 10,
             'u_init': torch.tensor(u_init, dtype=torch.double, device=d),
             'sample_null_action': False,
             'step_dependent_dynamics': True,
@@ -362,7 +364,7 @@ if __name__ == "__main__":
         GridGetter.learn_model(ut, seed=args.seed[0], name="", rep_name=args.rep_name, train_epochs=1000)
     elif args.command == 'run':
         nominal_adapt = OnlineAdapt.NONE
-        autonomous_recovery = online_controller.AutonomousRecovery.MAB
+        autonomous_recovery = online_controller.AutonomousRecovery.RETURN_STATE
         use_trap_cost = not args.no_trap_cost
 
         if args.adaptive_baseline:
@@ -378,13 +380,13 @@ if __name__ == "__main__":
             ut = UseTsf.NO_TRANSFORM
 
         for seed in args.seed:
-            compute_traps(seed=seed, level=level, use_tsf=ut,
-                          nominal_adapt=nominal_adapt, rep_name=args.rep_name,
-                          reuse_escape_as_demonstration=False, use_trap_cost=use_trap_cost,
-                          assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
-                          visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
-                          override_tampc_params=tampc_params, override_mpc_params=mpc_params,
-                          autonomous_recovery=autonomous_recovery)
+            test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
+                                     nominal_adapt=nominal_adapt, rep_name=args.rep_name,
+                                     reuse_escape_as_demonstration=False, use_trap_cost=use_trap_cost,
+                                     assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
+                                     visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
+                                     override_tampc_params=tampc_params, override_mpc_params=mpc_params,
+                                     autonomous_recovery=autonomous_recovery)
     elif args.command == 'evaluate':
         task_type = gridworld.DIR
         trials = ["{}/{}".format(task_type, filename) for filename in os.listdir(os.path.join(cfg.DATA_DIR, task_type))
