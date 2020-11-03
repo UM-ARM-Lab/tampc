@@ -200,6 +200,15 @@ class ArmEnv(PybulletEnv):
         self._setup_gripper()
 
         self.walls = []
+        if self.level == 0:
+            pass
+        elif self.level == 1:
+            half_extents = [0.2, 0.05, 0.3]
+            colId = p.createCollisionShape(p.GEOM_BOX, halfExtents=half_extents)
+            visId = p.createVisualShape(p.GEOM_BOX, halfExtents=half_extents, rgbaColor=[0.2, 0.2, 0.2, 0.8])
+            wallId = p.createMultiBody(0, colId, visId, basePosition=[0.5, 0.4, 0.2],
+                                       baseOrientation=p.getQuaternionFromEuler([0, 0, np.pi / 2]))
+            self.walls.append(wallId)
 
         for wallId in self.walls:
             p.changeVisualShape(wallId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])
