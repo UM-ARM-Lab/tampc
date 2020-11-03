@@ -1,3 +1,10 @@
+try:
+    import sys
+
+    sys.path.remove('/opt/ros/kinetic/lib/python2.7/dist-packages')
+except:
+    pass
+
 import torch
 import pybullet as p
 import typing
@@ -24,6 +31,7 @@ from tampc.controller import online_controller
 from tampc.controller.gating_function import AlwaysSelectNominal
 from tampc import util
 from tampc.util import no_tsf_preprocessor, UseTsf, EnvGetter
+from window_recorder import recorder
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
@@ -105,7 +113,7 @@ class ArmGetter(EnvGetter):
 class OfflineDataCollection:
     @staticmethod
     def freespace(seed_offset=0, trials=200, trial_length=50, force_gui=False):
-        env = ArmGetter.env(level=0, mode=p.GUI if force_gui else p.DIRECT, log_video=True)
+        env = ArmGetter.env(level=0, mode=p.GUI if force_gui else p.DIRECT)
         u_min, u_max = env.get_control_bounds()
         ctrl = controller.FullRandomController(env.nu, u_min, u_max)
         # use mode p.GUI to see what the trials look like
@@ -113,14 +121,18 @@ class OfflineDataCollection:
         sim = arm.ExperimentRunner(env, ctrl, num_frames=trial_length, plot=False, save=True,
                                    stop_when_done=False, save_dir=save_dir)
         # randomly distribute data
-        for offset in range(trials):
-            seed = rand.seed(seed_offset + offset)
-            # random position
-            init = [(np.random.random() - 0.5) * 1.7, (np.random.random() - 0.5) * 1.7, np.random.random() * 0.5]
-            env.set_task_config(init=init)
-            ctrl = controller.FullRandomController(env.nu, u_min, u_max)
-            sim.ctrl = ctrl
-            sim.run(seed)
+        with recorder.WindowRecorder(
+                window_names=["Bullet Physics ExampleBrowser using OpenGL3+ [btgl] Release build"],
+                name_suffix="pybullet", frame_rate=30.0,
+                save_dir=cfg.VIDEO_DIR):
+            for offset in range(trials):
+                seed = rand.seed(seed_offset + offset)
+                # random position
+                init = [(np.random.random() - 0.5) * 1.7, (np.random.random() - 0.5) * 1.7, np.random.random() * 0.5]
+                env.set_task_config(init=init)
+                ctrl = controller.FullRandomController(env.nu, u_min, u_max)
+                sim.ctrl = ctrl
+                sim.run(seed)
 
         if sim.save:
             load_data.merge_data_in_dir(cfg, save_dir, save_dir)
@@ -141,7 +153,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                    override_tampc_params=None,
                    override_mpc_params=None,
                    **kwargs):
-    env = ArmGetter.env(level=level, mode=p.GUI, log_video=True)
+    env = ArmGetter.env(level=level, mode=p.GUI)
     logger.info("initial random seed %d", rand.seed(seed))
 
     ds, pm = ArmGetter.prior(env, use_tsf, rep_name=rep_name)
@@ -223,7 +235,11 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
 
     pre_run_setup(env, ctrl, ds)
 
-    sim.run(seed, run_name)
+    with recorder.WindowRecorder(
+            window_names=["Bullet Physics ExampleBrowser using OpenGL3+ [btgl] Release build"],
+            name_suffix="pybullet", frame_rate=30.0,
+            save_dir=cfg.VIDEO_DIR):
+        sim.run(seed, run_name)
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
     plt.ioff()
     plt.show()
