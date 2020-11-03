@@ -177,14 +177,14 @@ class GridEnv(Env):
         self.state = np.copy(self.init)
         return np.copy(self.state), None
 
-    def _compute_trap_difficulty_state(self, state):
+    def _compute_trap_difficulty_state(self, state, ctrl):
         visited = set()
         visited.add(state)
         current = [state]
         d = 1
         c, _ = self.evaluate_cost(np.array(state))
         if c == 0:
-            return 0
+            return 0, []
         # BFS on the current node until we find a node with lower cost
         while len(current):
             next_depth = []
@@ -197,13 +197,16 @@ class GridEnv(Env):
                         continue
                     ccc, _ = self.evaluate_cost(np.array(new_s))
                     if ccc < c:
-                        return d if d > 1 else 0
+                        if d > 1:
+                            return d, self.compute_trap_basin(state)
+                        else:
+                            return 0, []
                     next_depth.append(new_s)
                     visited.add(new_s)
             d += 1
             current = next_depth
 
-    def compute_true_trap_difficulty(self):
+    def compute_true_trap_difficulty(self, ctrl):
         """Given the current environment, compute: X -> R which maps each state to its trap difficulty"""
         trap_difficulty = {}
         for x in range(self.size[0]):
@@ -211,7 +214,7 @@ class GridEnv(Env):
                 state = (x, y)
                 if state in self.walls:
                     continue
-                trap_difficulty[state] = self._compute_trap_difficulty_state(state)
+                trap_difficulty[state] = self._compute_trap_difficulty_state(state, ctrl)
 
         return trap_difficulty
 
@@ -261,8 +264,10 @@ class GridContinuousEnv(GridEnv):
 
     @staticmethod
     def state_distance(state_difference):
-        return np.linalg.norm(state_difference, axis=1)
-        # return state_difference.norm(dim=1)
+        if torch.is_tensor(state_difference):
+            return state_difference.norm(dim=1)
+        else:
+            return np.linalg.norm(state_difference, axis=1)
 
     @staticmethod
     def control_names():
@@ -284,7 +289,7 @@ class GridContinuousEnv(GridEnv):
         return np.diag([1 for _ in range(cls.nu)])
 
     def evaluate_cost(self, state, action=None):
-        dist = self.state_distance(self.state_difference(state, self.goal))
+        dist = np.linalg.norm(self.state_difference(state, self.goal))
         done = dist < self.dist_for_done
         return dist, done
 
@@ -357,62 +362,77 @@ class GridContinuousEnv(GridEnv):
     #     # return 1 if blocked else 0
     #     return 1 if not decreased_cost else 0
 
-    def _compute_trap_difficulty_state(self, state):
-        """Compute trap difficulty with a definition of trap that is no movement induced by an optimal controller
-        that knows the true local dynamics with a horizon of 1"""
-        # optimal controller under euclidean distance would take straight line
-        action = self.goal - state
-        c, _ = self.evaluate_cost(state)
-        d = 1
-        max_d = 20
+    # def _compute_trap_difficulty_state(self, state, ctrl):
+    #     """Compute trap difficulty with a definition of trap that is no movement induced by an optimal controller
+    #     that knows the true local dynamics with a horizon of 1"""
+    #     # optimal controller under euclidean distance would take straight line
+    #     action = self.goal - state
+    #     c, _ = self.evaluate_cost(state)
+    #     d = 1
+    #     max_d = 20
+    #
+    #     while d < max_d:
+    #         # if it knew local non-nominal dynamics
+    #         if self.get_tile(state) in self.cw_dynamics:
+    #             action = np.array(rotate_wrt_origin(action, np.pi / 2))
+    #         step_size = np.linalg.norm(action)
+    #         if step_size > 1:
+    #             action /= step_size
+    #         # if it also knew wall dynamics
+    #         if self.get_tile(state + action) in self.walls:
+    #             for dim in range(2):
+    #                 new_action = np.copy(action)
+    #                 new_action[dim] = 0
+    #                 if self.get_tile(state + new_action) not in self.walls:
+    #                     action = new_action
+    #                     break
+    #         step_size = np.linalg.norm(action)
+    #
+    #         new_s = self._take_step(state, action)
+    #         new_c, _ = self.evaluate_cost(new_s)
+    #         if new_c + step_size * 0.05 < c:
+    #             return d if d > 1 else 0
+    #
+    #         blocked = self.state_distance(self.state_difference(state, new_s)) < 0.1 * step_size
+    #         if blocked:
+    #             return 1000
+    #         d += 1
+    #         state = new_s
+    #     return 1000
 
-        while d < max_d:
-            # if it knew local non-nominal dynamics
-            if self.get_tile(state) in self.cw_dynamics:
-                action = np.array(rotate_wrt_origin(action, np.pi / 2))
-            step_size = np.linalg.norm(action)
-            if step_size > 1:
-                action /= step_size
-            # if it also knew wall dynamics
-            if self.get_tile(state + action) in self.walls:
-                for dim in range(2):
-                    new_action = np.copy(action)
-                    new_action[dim] = 0
-                    if self.get_tile(state + new_action) not in self.walls:
-                        action = new_action
-                        break
-            step_size = np.linalg.norm(action)
+    def _compute_trap_difficulty_state(self, state, ctrl):
+        """Applying the controller leads to entering a state cycle (visiting past state)"""
+        states = [state]
+        while True:
+            action = ctrl.command(state, None)
+            if torch.is_tensor(action):
+                action = action.cpu()
+            action = np.array(action).flatten()
 
-            new_s = self._take_step(state, action)
-            new_c, _ = self.evaluate_cost(new_s)
-            if new_c + step_size * 0.05 < c:
-                return d if d > 1 else 0
+            state = self._take_step(state, action)
+            # got to goal without getting stuck
+            cost, done = self.evaluate_cost(state)
+            if done:
+                return 0, []
+            # otherwise check if we are in a cycle (visited before)
+            # TODO detect cycle instead of just the same previous state - would have to assume controller is stateless
+            for i, prev_state in reversed(list(enumerate(states))):
+                dist = self.state_distance(self.state_difference(state, prev_state))
+                if dist < 0.001:
+                    return 1, states[i:]
+            states.append(state)
 
-            blocked = self.state_distance(self.state_difference(state, new_s)) < 0.1 * step_size
-            if blocked:
-                return 1000
-            d += 1
-            state = new_s
-        return 1000
-
-    def compute_true_trap_difficulty(self):
+    def compute_true_trap_difficulty(self, ctrl):
         """Given the current environment, compute: X -> R which maps each state to its trap difficulty"""
         trap_difficulty = {}
-        N = 100
-        for x in np.linspace(0, self.size[0], N):
-            for y in np.linspace(0, self.size[1], N):
+        for x in range(self.size[0]):
+            for y in range(self.size[1]):
                 state = (x, y)
                 if self.get_tile(state) in self.walls:
                     continue
-                trap_difficulty[state] = self._compute_trap_difficulty_state(np.array(state))
+                trap_difficulty[state] = self._compute_trap_difficulty_state(np.array(state), ctrl)
 
         return trap_difficulty
-
-    def compute_trap_basin(self, trap_state):
-        # no real concept of a basin under this definition of a trap
-        basin = set()
-        basin.add(trap_state)
-        return basin
 
     @staticmethod
     def get_tile(state):
@@ -478,35 +498,24 @@ class DebugRvizDrawer:
             marker.points.append(Point(x=x, y=y, z=z + 0.001))
         self.marker_pub.publish(marker)
 
-    def draw_trap_difficulty(self, env: GridEnv, max_difficulty=20):
-        trap_difficulty = env.compute_true_trap_difficulty()
+    def draw_trap_difficulty(self, traps, max_difficulty=5):
         id = 0
-        for (x, y), difficulty in trap_difficulty.items():
+        for (x, y), (difficulty, trap_states) in traps.items():
             if difficulty > 0:
                 id += 1
-                # id = x * env.size[0] + y
-                marker = self.make_marker(marker_type=Marker.TEXT_VIEW_FACING, scale=self.BASE_SCALE)
-                marker.ns = "trap_difficulty_label"
+                marker = self.make_marker(scale=self.BASE_SCALE * 1.5)
+                marker.ns = "computed_trap_basin"
                 marker.id = id
-                marker.text = str(difficulty)
-
-                marker.pose.position.x = x
-                marker.pose.position.y = y
-                marker.pose.position.z = self.BASE_Z + 0.02
-                marker.pose.orientation.w = 1
-
-                marker.color.a = 1
-                marker.color.r = 0
-                marker.color.g = 0
+                marker.points.append(Point(x=x, y=y, z=self.BASE_Z + 0.005))
+                marker.colors.append(ColorRGBA(r=1, g=0, b=0, a=difficulty / max_difficulty))
                 self.marker_pub.publish(marker)
 
-                basin = env.compute_trap_basin((x, y))
-                marker = self.make_marker(scale=self.BASE_SCALE * 1.5)
-                marker.ns = "trap_difficulty"
+                marker = self.make_marker(scale=self.BASE_SCALE * 1)
+                marker.ns = "computed_trap_state"
                 marker.id = id
-                for x, y in basin:
+                for x, y in trap_states:
                     marker.points.append(Point(x=x, y=y, z=self.BASE_Z + 0.005))
-                    marker.colors.append(ColorRGBA(r=1, g=0, b=0, a=difficulty / max_difficulty))
+                    marker.colors.append(ColorRGBA(r=1, g=0, b=1, a=difficulty / max_difficulty))
                 self.marker_pub.publish(marker)
                 rospy.sleep(0.01)
 
@@ -640,8 +649,8 @@ class DebugRvizDrawer:
         self.clear_markers("walls", delete_all=False)
         self.clear_markers("cw_dynamics", delete_all=False)
 
-        self.clear_markers("trap_difficulty", delete_all=True)
-        self.clear_markers("trap_difficulty_label", delete_all=True)
+        self.clear_markers("computed_trap_basin", delete_all=True)
+        self.clear_markers("computed_trap_state", delete_all=True)
         self.clear_markers("state_trajectory", delete_all=True)
         self.clear_markers("trap_state", delete_all=False)
         self.clear_markers("trap_action", delete_all=False)
@@ -817,5 +826,5 @@ class GridDataSource(EnvDataSource):
 
     @staticmethod
     def _loader_map(env_type):
-        loader_map = {GridEnv: GridLoader}
+        loader_map = {GridEnv: GridLoader, GridContinuousEnv: GridLoader}
         return loader_map.get(env_type, None)
