@@ -33,9 +33,9 @@ class PybulletEnv(Env):
 
         self._configure_physics_engine()
 
-    def set_camera_position(self, camera_pos):
+    def set_camera_position(self, camera_pos, yaw=0, pitch=-89):
         self._dd._camera_pos = camera_pos
-        p.resetDebugVisualizerCamera(cameraDistance=self.camera_dist, cameraYaw=0, cameraPitch=-89,
+        p.resetDebugVisualizerCamera(cameraDistance=self.camera_dist, cameraYaw=yaw, cameraPitch=pitch,
                                      cameraTargetPosition=[camera_pos[0], camera_pos[1], 0])
 
     def _configure_physics_engine(self):

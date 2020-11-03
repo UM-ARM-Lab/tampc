@@ -116,7 +116,7 @@ class ArmEnv(PybulletEnv):
         :param reaction_force_strategy how to aggregate measured reaction forces over control step into 1 value
         :param kwargs:
         """
-        super().__init__(**kwargs, default_debug_height=0.1, camera_dist=1.0)
+        super().__init__(**kwargs, default_debug_height=0.1, camera_dist=1.5)
         self._dd.toggle_3d(True)
         self.level = environment_level
         self.sim_step_wait = sim_step_wait
@@ -213,7 +213,8 @@ class ArmEnv(PybulletEnv):
         for wallId in self.walls:
             p.changeVisualShape(wallId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])
 
-        self.set_camera_position([0, 0])
+        self.set_camera_position([0, 0], yaw=113, pitch=-40)
+
         self.state = self._obs()
         self._draw_state()
 
