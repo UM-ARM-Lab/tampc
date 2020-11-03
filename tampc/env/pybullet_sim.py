@@ -15,6 +15,7 @@ class PybulletSim(simulation.Simulation):
                  visualize_rollouts=False,
                  visualize_action_sample=False,
                  visualize_prediction_error=False,
+                 reaction_dim=2,
                  **kwargs):
 
         super().__init__(save_dir=save_dir, num_frames=num_frames, config=cfg, **kwargs)
@@ -24,6 +25,7 @@ class PybulletSim(simulation.Simulation):
         self.visualize_rollouts = visualize_rollouts
         self.visualize_action_sample = visualize_action_sample
         self.visualize_prediction_error = visualize_prediction_error
+        self.reaction_dim = reaction_dim
 
         self.env = env
         self.ctrl = ctrl
@@ -54,7 +56,7 @@ class PybulletSim(simulation.Simulation):
         self.traj = np.zeros((self.num_frames, self.env.nx))
         self.pred_traj = np.zeros_like(self.traj)
         self.u = np.zeros((self.num_frames, self.env.nu))
-        self.reaction_force = np.zeros((self.num_frames, 2))
+        self.reaction_force = np.zeros((self.num_frames, self.reaction_dim))
         self.wall_contact = np.zeros((self.num_frames,))
         self.model_error = np.zeros_like(self.traj)
         self.time = np.arange(0, self.num_frames * self.sim_step_s, self.sim_step_s)

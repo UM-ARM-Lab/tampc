@@ -433,6 +433,7 @@ class ArmEnv(PybulletEnv):
     def _aggregate_info(self):
         info = {key: np.stack(value, axis=0) for key, value in self._contact_info.items() if len(value)}
         info['reaction'] = self._observe_reaction_force()
+        info['wall_contact'] = -1
         return info
 
     # --- control helpers (rarely overridden)
@@ -471,7 +472,10 @@ class ArmEnv(PybulletEnv):
                                                   self.endEffectorIndex,
                                                   end,
                                                   self.endEffectorOrientation)
+        self._send_move_command(jointPoses)
+        # self._close_gripper()
 
+    def _send_move_command(self, jointPoses):
         num_arm_indices = len(self.armInds)
         p.setJointMotorControlArray(self.armId, self.armInds, controlMode=p.POSITION_CONTROL,
                                     targetPositions=jointPoses[:num_arm_indices],
@@ -480,7 +484,6 @@ class ArmEnv(PybulletEnv):
                                     forces=[100, 100, 60, 60, 50, 40, 40],
                                     positionGains=[0.3] * num_arm_indices,
                                     velocityGains=[1] * num_arm_indices)
-        # self._close_gripper()
 
     def _move_and_wait(self, eePos, steps_to_wait=50):
         # execute the action
@@ -532,6 +535,7 @@ class ArmEnv(PybulletEnv):
         # set robot init config
         self._clear_state_between_control_steps()
         # start at rest
+        self._send_move_command(self.initJoints)
         for _ in range(1000):
             p.stepSimulation()
         self.state = self._obs()
@@ -546,7 +550,7 @@ def interpolate_pos(start, end, t):
 
 class ExperimentRunner(PybulletSim):
     def __init__(self, env: ArmEnv, ctrl, save_dir=DIR, **kwargs):
-        super(ExperimentRunner, self).__init__(env, ctrl, save_dir=save_dir, **kwargs)
+        super(ExperimentRunner, self).__init__(env, ctrl, save_dir=save_dir, reaction_dim=3, **kwargs)
 
 
 class ArmDataSource(EnvDataSource):

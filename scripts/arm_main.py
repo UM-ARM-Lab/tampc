@@ -96,7 +96,7 @@ class ArmGetter(EnvGetter):
         return common_wrapper_opts, mpc_opts
 
     @classmethod
-    def env(cls, mode=0, level=0, log_video=False, **kwargs):
+    def env(cls, level=0, log_video=False, **kwargs):
         env = arm.ArmEnv(environment_level=level, log_video=log_video, **kwargs)
         cls.env_dir = '{}/raw'.format(arm.DIR)
         return env
@@ -105,19 +105,18 @@ class ArmGetter(EnvGetter):
 class OfflineDataCollection:
     @staticmethod
     def freespace(seed_offset=0, trials=200, trial_length=50, force_gui=False):
-        env = ArmGetter.env(level=0, mode=p.GUI if force_gui else p.DIRECT)
+        env = ArmGetter.env(level=0, mode=p.GUI if force_gui else p.DIRECT, log_video=True)
         u_min, u_max = env.get_control_bounds()
         ctrl = controller.FullRandomController(env.nu, u_min, u_max)
         # use mode p.GUI to see what the trials look like
         save_dir = '{}{}'.format(ArmGetter.env_dir, 0)
         sim = arm.ExperimentRunner(env, ctrl, num_frames=trial_length, plot=False, save=True,
-                                   pause_s_between_steps=0.01, stop_when_done=False,
-                                   save_dir=save_dir)
+                                   stop_when_done=False, save_dir=save_dir)
         # randomly distribute data
         for offset in range(trials):
             seed = rand.seed(seed_offset + offset)
             # random position
-            init = [np.random.random() - 0.5, np.random.random() - 0.5, np.random.random() * 0.5]
+            init = [(np.random.random() - 0.5) * 1.7, (np.random.random() - 0.5) * 1.7, np.random.random() * 0.5]
             env.set_task_config(init=init)
             ctrl = controller.FullRandomController(env.nu, u_min, u_max)
             sim.ctrl = ctrl
@@ -142,7 +141,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                    override_tampc_params=None,
                    override_mpc_params=None,
                    **kwargs):
-    env = ArmGetter.env(level=level, log_video=True)
+    env = ArmGetter.env(level=level, mode=p.GUI, log_video=True)
     logger.info("initial random seed %d", rand.seed(seed))
 
     ds, pm = ArmGetter.prior(env, use_tsf, rep_name=rep_name)
