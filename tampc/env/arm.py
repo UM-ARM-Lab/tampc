@@ -260,6 +260,7 @@ class ArmEnv(PybulletEnv):
         #     0.00001, 0.00001, 0.00001, 0.00001
         # ]
 
+        p.enableJointForceTorqueSensor(self.armId, self.endEffectorIndex)
         self._calculate_init_joints()
         for i in self.armInds:
             p.resetJointState(self.armId, i, self.initJoints[i])
@@ -370,23 +371,30 @@ class ArmEnv(PybulletEnv):
             return self._reaction_force[:3]
 
     def _observe_additional_info(self, info, visualize=True):
-        reaction_force = [0, 0, 0]
+        joint_pos, joint_vel, joint_reaction_force, joint_applied = p.getJointState(self.armId, self.endEffectorIndex)
+        info['pv'] = joint_vel
 
-        # TODO try alternatively using enableJointForceTorqueSensor on the end effector (last joint?)
+        # transform reaction to world frame
+        states = p.getLinkState(self.armId, self.endEffectorIndex)
+        world_link_position = states[4]
+        world_link_orientation = states[5]
+        r, t = p.multiplyTransforms(world_link_position, world_link_orientation, joint_reaction_force[:3], [0, 0, 0, 0])
+        reaction_force = r
 
         # compute contact force between end effector and all bodies in the world
-        bodies = [self.planeId] + self.walls
-        for bodyId in bodies:
-            contactInfo = p.getContactPoints(bodyId, self.armId, linkIndexB=self.endEffectorIndex)
-            info['npb'] = len(contactInfo)
-            for i, contact in enumerate(contactInfo):
-                f_contact = get_total_contact_force(contact, False)
-                reaction_force = [sum(i) for i in zip(reaction_force, f_contact)]
-
-                name = 'r{}_{}'.format(bodyId, i)
-                if abs(contact[ContactInfo.NORMAL_MAG]) > abs(self._largest_contact.get(name, 0)):
-                    self._largest_contact[name] = contact[ContactInfo.NORMAL_MAG]
-                    self._dd.draw_contact_point(name, contact, False)
+        # reaction_force = [0, 0, 0]
+        # bodies = [self.planeId] + self.walls
+        # for bodyId in bodies:
+        #     contactInfo = p.getContactPoints(bodyId, self.armId, linkIndexB=self.endEffectorIndex)
+        #     info['npb'] = len(contactInfo)
+        #     for i, contact in enumerate(contactInfo):
+        #         f_contact = get_total_contact_force(contact, False)
+        #         reaction_force = [sum(i) for i in zip(reaction_force, f_contact)]
+        #
+        #         name = 'r{}_{}'.format(bodyId, i)
+        #         if abs(contact[ContactInfo.NORMAL_MAG]) > abs(self._largest_contact.get(name, 0)):
+        #             self._largest_contact[name] = contact[ContactInfo.NORMAL_MAG]
+        #             self._dd.draw_contact_point(name, contact, False)
 
         self._observe_raw_reaction_force(info, reaction_force, visualize)
 
