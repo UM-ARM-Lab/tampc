@@ -536,9 +536,9 @@ def interpolate_pos(start, end, t):
     return t * end + (1 - t) * start
 
 
-class ArmRunner(PybulletSim):
+class ExperimentRunner(PybulletSim):
     def __init__(self, env: ArmEnv, ctrl, save_dir=DIR, **kwargs):
-        super(ArmRunner, self).__init__(env, ctrl, save_dir=save_dir, **kwargs)
+        super(ExperimentRunner, self).__init__(env, ctrl, save_dir=save_dir, **kwargs)
 
 
 class ArmDataSource(EnvDataSource):
