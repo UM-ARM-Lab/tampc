@@ -210,7 +210,7 @@ class MPC(ControllerWithModelPrediction):
             Yhat = Yhat - X
         E = Yhat - Y
         E_per_dim = E.abs().mean(dim=0)
-        self.model_error_per_dim = E_per_dim / E_per_dim.norm()
+        self.model_error_per_dim = E_per_dim
 
         # cost
         self.trap_set = []

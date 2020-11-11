@@ -85,7 +85,7 @@ class PegGetter(EnvGetter):
             'device': d,
             'terminal_cost_multiplier': 50,
             'trap_cost_annealing_rate': 0.9,
-            'abs_unrecognized_threshold': 15,
+            'abs_unrecognized_threshold': 15 / 1.2185,  # to account for previous runs with bug in error
             # 'nonnominal_dynamics_penalty_tolerance': 0.1,
             # 'dynamics_minimum_window': 15,
         }

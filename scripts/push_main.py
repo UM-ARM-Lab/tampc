@@ -93,7 +93,7 @@ class BlockPushGetter(EnvGetter):
             'u_similarity': env.control_similarity,
             'device': d,
             'terminal_cost_multiplier': 50,
-            'abs_unrecognized_threshold': 10,
+            'abs_unrecognized_threshold': 10 / 1.1407,  # to account for previous runs with bug in error
             # 'nominal_max_velocity':  0.02,
         }
         mpc_opts = {
