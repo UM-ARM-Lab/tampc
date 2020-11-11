@@ -62,30 +62,35 @@ class ArmGetter(EnvGetter):
 
     @staticmethod
     def pre_invariant_preprocessor(use_tsf: UseTsf) -> preprocess.Transformer:
-        return preprocess.PytorchTransformer(preprocess.MinMaxScaler(), preprocess.NullSingleTransformer())
+        return preprocess.PytorchTransformer(preprocess.RobustMinMaxScaler(), preprocess.RobustMinMaxScaler())
 
     @staticmethod
     def controller_options(env) -> typing.Tuple[dict, dict]:
         d = get_device()
         u_min, u_max = env.get_control_bounds()
         Q = torch.tensor(env.state_cost(), dtype=torch.double)
+        # Q = torch.tensor([1, 1, 1], dtype=torch.double)
         R = 0.001
-        sigma = [0.2, 0.2, 0.2]
-        noise_mu = [0, 0, 0]
-        u_init = [0, 0, 0]
+        # sigma = [0.2, 0.2, 0.2]
+        # noise_mu = [0, 0, 0]
+        # u_init = [0, 0, 0]
+        sigma = [0.2 for _ in range(env.nu)]
+        noise_mu = [0 for _ in range(env.nu)]
+        u_init = [0 for _ in range(env.nu)]
         sigma = torch.tensor(sigma, dtype=torch.double, device=d)
+
         common_wrapper_opts = {
             'Q': Q,
             'R': R,
             'u_min': u_min,
             'u_max': u_max,
-            'compare_to_goal': env.state_difference,
+            'compare_to_goal': env.compare_to_goal,
             'state_dist': env.state_distance,
             'u_similarity': env.control_similarity,
             'device': d,
             'terminal_cost_multiplier': 50,
             'trap_cost_annealing_rate': 0.8,
-            'abs_unrecognized_threshold': 0.5,
+            'abs_unrecognized_threshold': 5,
             'dynamics_minimum_window': 2,
             'max_trap_weight': 100,
         }
@@ -104,9 +109,12 @@ class ArmGetter(EnvGetter):
         return common_wrapper_opts, mpc_opts
 
     @classmethod
-    def env(cls, level=0, log_video=False, **kwargs):
-        env = arm.ArmEnv(environment_level=level, log_video=log_video, **kwargs)
-        cls.env_dir = '{}/raw'.format(arm.DIR)
+    def env(cls, level=0, log_video=True, **kwargs):
+        # env = arm.ArmEnv(environment_level=level, log_video=log_video, **kwargs)
+        # cls.env_dir = '{}/raw'.format(arm.DIR)
+        env = arm.ArmJointEnv(environment_level=level, log_video=log_video, **kwargs)
+        cls.env_dir = '{}/joints'.format(arm.DIR)
+        env.set_task_config(goal=(0.8, 0.0, 0.3))
         return env
 
 
@@ -121,18 +129,14 @@ class OfflineDataCollection:
         sim = arm.ExperimentRunner(env, ctrl, num_frames=trial_length, plot=False, save=True,
                                    stop_when_done=False, save_dir=save_dir)
         # randomly distribute data
-        with recorder.WindowRecorder(
-                window_names=["Bullet Physics ExampleBrowser using OpenGL3+ [btgl] Release build"],
-                name_suffix="pybullet", frame_rate=30.0,
-                save_dir=cfg.VIDEO_DIR):
-            for offset in range(trials):
-                seed = rand.seed(seed_offset + offset)
-                # random position
-                init = [(np.random.random() - 0.5) * 1.7, (np.random.random() - 0.5) * 1.7, np.random.random() * 0.5]
-                env.set_task_config(init=init)
-                ctrl = controller.FullRandomController(env.nu, u_min, u_max)
-                sim.ctrl = ctrl
-                sim.run(seed)
+        for offset in range(trials):
+            seed = rand.seed(seed_offset + offset)
+            # random position
+            init = [(np.random.random() - 0.5) * 1.7, (np.random.random() - 0.5) * 1.7, np.random.random() * 0.5]
+            env.set_task_config(init=init)
+            ctrl = controller.FullRandomController(env.nu, u_min, u_max)
+            sim.ctrl = ctrl
+            sim.run(seed)
 
         if sim.save:
             load_data.merge_data_in_dir(cfg, save_dir, save_dir)
@@ -235,11 +239,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
 
     pre_run_setup(env, ctrl, ds)
 
-    with recorder.WindowRecorder(
-            window_names=["Bullet Physics ExampleBrowser using OpenGL3+ [btgl] Release build"],
-            name_suffix="pybullet", frame_rate=30.0,
-            save_dir=cfg.VIDEO_DIR):
-        sim.run(seed, run_name)
+    sim.run(seed, run_name)
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
     plt.ioff()
     plt.show()
@@ -279,7 +279,7 @@ parser.add_argument('--task', default=list(task_map.keys())[0], choices=task_map
                     help='run parameter: what task to run')
 parser.add_argument('--run_prefix', default=None, type=str,
                     help='run parameter: prefix to save the run under')
-parser.add_argument('--num_frames', metavar='N', type=int, default=200,
+parser.add_argument('--num_frames', metavar='N', type=int, default=500,
                     help='run parameter: number of simulation frames to run')
 parser.add_argument('--no_trap_cost', action='store_true', help='run parameter: turn off trap set cost')
 parser.add_argument('--nonadaptive_baseline', action='store_true',
@@ -365,8 +365,8 @@ if __name__ == "__main__":
         f, axes = plt.subplots(3, 1, figsize=(10, 9))
         dims = ['x', 'y', 'z']
         for i, dim in enumerate(dims):
-            axes[i].scatter(u[:, i].cpu(), yhat[:, i].cpu(), color="red")
-            axes[i].scatter(u[:, i].cpu(), y[:, i].cpu())
+            axes[i].scatter(u[:, i].cpu(), y[:, i].cpu(), alpha=0.1)
+            axes[i].scatter(u[:, i].cpu(), yhat[:, i].cpu(), color="red", alpha=0.1)
             axes[i].set_ylabel('d{}'.format(dim))
             axes[i].set_xlabel('u{}'.format(i))
 

@@ -101,8 +101,8 @@ class ArmEnv(PybulletEnv):
     def control_cost(cls):
         return np.diag([1 for _ in range(cls.nu)])
 
-    def __init__(self, goal=(0.8, 0.0, 0.5), init=(0.3, 0.6, 0.2),
-                 environment_level=0, sim_step_wait=None, mini_steps=50, wait_sim_steps_per_mini_step=20,
+    def __init__(self, goal=(0.8, 0.0, 0.3), init=(0.3, 0.6, 0.2),
+                 environment_level=0, sim_step_wait=None, mini_steps=15, wait_sim_steps_per_mini_step=20,
                  debug_visualizations=None, dist_for_done=0.02,
                  reaction_force_strategy=ReactionForceStrategy.MEDIAN_OVER_MINI_STEPS, **kwargs):
         """
@@ -166,7 +166,7 @@ class ArmEnv(PybulletEnv):
 
     def _set_goal(self, goal):
         # ignore the pusher position
-        self.goal = np.array(goal)
+        self.goal = np.array(tuple(goal) + (0, 0, 0))
         self._dd.draw_point('goal', self.goal)
 
     def _set_init(self, init):
@@ -206,8 +206,8 @@ class ArmEnv(PybulletEnv):
             half_extents = [0.2, 0.05, 0.3]
             colId = p.createCollisionShape(p.GEOM_BOX, halfExtents=half_extents)
             visId = p.createVisualShape(p.GEOM_BOX, halfExtents=half_extents, rgbaColor=[0.2, 0.2, 0.2, 0.8])
-            wallId = p.createMultiBody(0, colId, visId, basePosition=[0.5, 0.4, 0.2],
-                                       baseOrientation=p.getQuaternionFromEuler([0, 0, np.pi / 2]))
+            wallId = p.createMultiBody(0, colId, visId, basePosition=[0.6, 0.30, 0.2],
+                                       baseOrientation=p.getQuaternionFromEuler([0, 0, 1.1]))
             p.changeDynamics(wallId, -1, lateralFriction=1)
             self.walls.append(wallId)
 
@@ -353,7 +353,7 @@ class ArmEnv(PybulletEnv):
         return state
 
     def _observe_ee(self):
-        link_info = p.getLinkState(self.armId, self.endEffectorIndex)
+        link_info = p.getLinkState(self.armId, self.endEffectorIndex, computeForwardKinematics=True)
         pos = link_info[4]
         return pos
 
@@ -544,6 +544,136 @@ class ArmEnv(PybulletEnv):
         return np.copy(self.state)
 
 
+class ArmJointEnv(ArmEnv):
+    """Control the joints directly"""
+    nu = 6
+    nx = 6 + 3
+    MAX_FORCE = 1 * 40
+    MAX_ANGLE_CHANGE = 0.07
+
+    @staticmethod
+    def state_names():
+        return ['q1', 'q2', 'q3', 'q4', 'q5', 'q6', '$r_x$ (N)', '$r_y$ (N)', '$r_z$ (N)']
+
+    def get_ee_pos(self, state):
+        # do forward kinematics to get ee pos from state
+        state = state.reshape(-1)
+        for i in range(6):
+            p.resetJointState(self.armId, i, state[i])
+        ee = np.array(self._observe_ee())
+        for i in range(6):
+            p.resetJointState(self.armId, i, self.state[i])
+        return ee
+
+    def compare_to_goal(self, state, goal):
+        # if torch.is_tensor(goal) and not torch.is_tensor(state):
+        #     state = torch.from_numpy(state).to(device=goal.device)
+        diff = state - goal
+        if len(diff.shape) == 1:
+            diff = diff.reshape(1, -1)
+        return diff
+
+    def _set_goal(self, goal):
+        try:
+            # get some IK solutions around goal
+            # TODO sample many orientations at the goal and include them all
+            # TODO change cost function to take the minimum distance to any of these configurations
+            goal_orientation = p.getQuaternionFromEuler([0, math.pi, 0])
+            self.goal = p.calculateInverseKinematics(self.armId,
+                                                     self.endEffectorIndex,
+                                                     goal,
+                                                     goal_orientation)
+            for i in range(6):
+                p.resetJointState(self.armId, i, self.goal[i])
+
+            self.goal_pos = np.array(self._observe_ee())
+            self._dd.draw_point('goal', self.goal_pos)
+            self.goal = np.array(self.goal[:6] + (0, 0, 0))
+        except AttributeError:
+            logger.warning("setting goal before able to do inverse kinematics; set goal after initialization")
+            pass
+
+    @staticmethod
+    def get_joints(state):
+        return state[:6]
+
+    @staticmethod
+    @handle_data_format_for_state_diff
+    def state_difference(state, other_state):
+        """Get state - other_state in state space"""
+        dpos = state[:, :6] - other_state[:, :6]
+        dreaction = state[:, 6:] - other_state[:, 6:]
+        return dpos, dreaction
+
+    @classmethod
+    def state_cost(cls):
+        return np.diag([1, 1, 1, 1, 1, 0, 0, 0, 0])
+
+    @staticmethod
+    def state_distance(state_difference):
+        return state_difference[:, :6].norm(dim=1)
+
+    @staticmethod
+    def control_names():
+        return ['d$q_1$', 'd$q_2$', 'd$q_3$', 'd$q_4$', 'd$q_5$', 'd$q_6$']
+
+    @classmethod
+    def get_control_bounds(cls):
+        u_min = np.array([-1 for _ in range(cls.nu)])
+        u_max = np.array([1 for _ in range(cls.nu)])
+        return u_min, u_max
+
+    def _obs(self):
+        state = np.concatenate((self._observe_joints(), self._observe_reaction_force()))
+        return state
+
+    def _observe_joints(self):
+        states = p.getJointStates(self.armId, self.armInds[:-1])
+        # retrieve just joint position
+        pos = [state[0] for state in states]
+        return pos
+
+    def _move_pusher(self, end):
+        # given joint poses directly
+        self._send_move_command(end)
+
+    def _unpack_action(self, action):
+        return np.array([a * self.MAX_ANGLE_CHANGE for a in action])
+
+    def evaluate_cost(self, state, action=None):
+        diff = self.get_ee_pos(state) - self.goal_pos
+        dist = np.linalg.norm(diff)
+        done = dist < self.dist_for_done
+        return (dist * 10) ** 2, done
+
+    def step(self, action):
+        action = np.clip(action, *self.get_control_bounds())
+        # normalize action such that the input can be within a fixed range
+        old_state = np.copy(self.state)
+        old_joints = self.get_joints(old_state)
+
+        dq = self._unpack_action(action)
+
+        new_joints = old_joints + dq
+
+        # execute push with mini-steps
+        for step in range(self.mini_steps):
+            intermediate_joints = interpolate_pos(old_joints, new_joints, (step + 1) / self.mini_steps)
+            # use fixed end effector angle
+            intermediate_joints = np.r_[intermediate_joints, 0]
+            self._move_and_wait(intermediate_joints, steps_to_wait=self.wait_sim_step_per_mini_step)
+
+        cost, done, info = self._finish_action(old_state, action)
+
+        return np.copy(self.state), -cost, done, info
+
+    def _draw_state(self):
+        pass
+
+    def _draw_action(self, action, old_state=None, debug=0):
+        pass
+
+
 def interpolate_pos(start, end, t):
     return t * end + (1 - t) * start
 
@@ -561,5 +691,5 @@ class ArmDataSource(EnvDataSource):
 
     @staticmethod
     def _loader_map(env_type):
-        loader_map = {ArmEnv: ArmLoader}
+        loader_map = {ArmEnv: ArmLoader, ArmJointEnv: ArmLoader}
         return loader_map.get(env_type, None)
