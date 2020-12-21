@@ -544,3 +544,38 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                 sim = torch.cosine_similarity(self.cost_weights[i], self.cost_weights[j], dim=0)
                 P[i, j] = P[j, i] = sim
         return P
+
+
+class APFLME(OnlineMPC):
+    """Artificial potential field local minima escape controller"""
+
+    def __init__(self, *args, samples=5000, trap_max_dist_influence=1, T_a=10, local_min_threshold=0.01,
+                 repulsion_gain=1, **kwargs):
+        self.samples = samples
+        super(APFLME, self).__init__(*args, **kwargs)
+        self.u_scale = self.u_max - self.u_min
+        self.trap_cost = cost.ArtificialRepulsionCost(self.trap_set, self.compare_to_goal, self.state_dist,
+                                                      trap_max_dist_influence, gain=repulsion_gain)
+        self.cost = cost.ComposeCost([self.goal_cost, self.trap_cost])
+        self.T_a = T_a
+        self.local_min_threshold = local_min_threshold
+
+    def _mpc_command(self, obs):
+        if len(self.x_history) > 1:
+            # check if stuck in local minima
+            recent_x = torch.stack(self.x_history[-self.T_a:-1])
+            d = self.state_dist(self.compare_to_goal(obs, recent_x))
+            logger.debug('dists %s', d)
+            if torch.any(d < self.local_min_threshold):
+                # place trap points where our model thinks our action will take us
+                trap_state = self._apply_dynamics(obs, self.u_history[-1])
+                self.trap_set.append(trap_state[0])
+
+        # sample a bunch of actions and run them through the dynamics
+        u = torch.rand(self.samples, self.u_scale.shape[0], device=self.u_scale.device)
+        u = u * self.u_scale + self.u_min
+        # select action that leads to min cost
+        next_state = self._apply_dynamics(obs.repeat(self.samples, 1), u)
+        c = self.cost(next_state)
+        ui = c.argmin()
+        return u[ui]

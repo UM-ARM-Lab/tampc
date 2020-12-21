@@ -210,25 +210,30 @@ Whether you are running with CUDA or not will also affect exact reproducibility.
 	```
 	python push_main.py run --task "Block-H" --seed 0 1 2 3 4 5 6 7 8 9 --adaptive_baseline
 	```
-8. run task with random recovery policy ablation option
+8. run task with artificial potential field baseline with the `--apf_baseline` option combined with a dynamics representation; for example
+	```
+	python peg_main.py run --task "Peg-U" --seed 0 1 2 3 4 5 6 7 8 9 --apf_baseline --representation none
+	python peg_main.py run --task "Peg-U" --seed 0 1 2 3 4 5 6 7 8 9 --apf_baseline --representation learned_rex --rep_name saved_peg
+	```
+9. run task with random recovery policy ablation option
 	```
 	python push_main.py run --task "Block-H" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --random_ablation --rep_name saved
 	python push_main.py run --task "Block-D" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --random_ablation --rep_name saved
 	```
-9. run task with non-adaptive baseline with the `--nonadaptive_baseline` option; for example
+10. run task with non-adaptive baseline with the `--nonadaptive_baseline` option; for example
 	```
 	python push_main.py run --task "Block-H" --seed 0 1 2 3 4 5 6 7 8 9 --nonadaptive_baseline
 	```
-10. run Peg-T(T) with dynamics in the original space
+11. run Peg-T(T) with dynamics in the original space
 	```
 	python peg_main.py run --task "Peg-T(T)" --seed 0 1 2 3 4 5 6 7 8 9 --representation none --rep_name saved_peg
 	```
-11. run the tuned controller for Peg-U and Peg-I
+12. run the tuned controller for Peg-U and Peg-I
 	```
 	python peg_main.py run --task "Peg-U" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name saved_peg --tampc_param dynamics_minimum_window=15 --mpc_param horizon=15 --run_prefix h15_larger_min_window
 	python peg_main.py run --task "Peg-I" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name saved_peg --tampc_param trap_cost_annealing_rate=0.95 --mpc_param horizon=20 --run_prefix h20_less_anneal
 	```
-11. evaluate the performance of the runs to prepare for visualization (saved to cache)
+13. evaluate the performance of the runs to prepare for visualization (saved to cache)
 	```
 	python push_main.py evaluate --eval_run_prefix auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
 	python push_main.py evaluate --eval_run_prefix auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
@@ -269,7 +274,7 @@ Whether you are running with CUDA or not will also affect exact reproducibility.
 	python peg_main.py evaluate --eval_run_prefix auto_recover__GP_KERNEL_INDEP_OUT__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST
 	```
 	also run this for any other series you decide to perform (including the SAC baseline) with different names by passing in `--run_prefix myname`. The data used in the paper is in `paper_data`; if you want to use that, copy the `data` directory inside of it to `tampc`, merging with the existing `data` directory.
-12. plot the performance results (columns of figure 7)
+14. plot the performance results (columns of figure 7)
 	```
 	python push_main.py visualize
 	python peg_main.py visualize1

@@ -187,6 +187,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                    visualize_rollout=False,
                    override_tampc_params=None,
                    override_mpc_params=None,
+                   apf_baseline=False,
                    **kwargs):
     env = PegGetter.env(p.GUI, level=level, log_video=True)
     logger.info("initial random seed %d", rand.seed(seed))
@@ -221,26 +222,33 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
     logger.debug("running with parameters\nhigh level controller: %s\nlow level MPC: %s",
                  pprint.pformat(tampc_opts), pprint.pformat(mpc_opts))
 
-    ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
-                                        autonomous_recovery=autonomous_recovery,
-                                        assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
-                                        reuse_escape_as_demonstration=reuse_escape_as_demonstration,
-                                        use_trap_cost=use_trap_cost,
-                                        **tampc_opts,
-                                        mpc_opts=mpc_opts)
+    if apf_baseline:
+        tampc_opts.pop('trap_cost_annealing_rate')
+        tampc_opts.pop('abs_unrecognized_threshold')
+        ctrl = online_controller.APFLME(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                        local_min_threshold=0.003, trap_max_dist_influence=0.05, repulsion_gain=0.01,
+                                        **tampc_opts)
+        env.draw_user_text("APF-LME baseline", 13, left_offset=-1.5)
+    else:
+        ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                            autonomous_recovery=autonomous_recovery,
+                                            assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
+                                            reuse_escape_as_demonstration=reuse_escape_as_demonstration,
+                                            use_trap_cost=use_trap_cost,
+                                            **tampc_opts,
+                                            mpc_opts=mpc_opts)
+        env.draw_user_text(gating.name, 13, left_offset=-1.5)
+        env.draw_user_text("recovery {}".format(autonomous_recovery.name), 11, left_offset=-1.6)
+        if reuse_escape_as_demonstration:
+            env.draw_user_text("reuse escape", 10, left_offset=-1.6)
+        if use_trap_cost:
+            env.draw_user_text("trap set cost".format(autonomous_recovery.name), 9, left_offset=-1.6)
+    env.draw_user_text("run seed {}".format(seed), 12, left_offset=-1.5)
 
     z = env.initGripperPos[2]
     goal = np.r_[env.hole, z, 0, 0]
     ctrl.set_goal(goal)
     # env._dd.draw_point('hole', env.hole, color=(0, 0.5, 0.8))
-
-    env.draw_user_text(gating.name, 13, left_offset=-1.5)
-    env.draw_user_text("run seed {}".format(seed), 12, left_offset=-1.5)
-    env.draw_user_text("recovery {}".format(autonomous_recovery.name), 11, left_offset=-1.6)
-    if reuse_escape_as_demonstration:
-        env.draw_user_text("reuse escape", 10, left_offset=-1.6)
-    if use_trap_cost:
-        env.draw_user_text("trap set cost".format(autonomous_recovery.name), 9, left_offset=-1.6)
 
     sim = peg_in_hole.PegInHole(env, ctrl, num_frames=num_frames, plot=False, save=True, stop_when_done=True,
                                 visualize_rollouts=visualize_rollout)
@@ -265,10 +273,13 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
             return tsf_name
 
         run_name = default_run_prefix
+        if apf_baseline:
+            run_prefix = 'APFLME'
         if run_prefix is not None:
             affix_run_name(run_prefix)
         affix_run_name(nominal_adapt.name)
-        affix_run_name(autonomous_recovery.name + ("_WITHDEMO" if use_demo else ""))
+        if not apf_baseline:
+            affix_run_name(autonomous_recovery.name + ("_WITHDEMO" if use_demo else ""))
         affix_run_name(level)
         affix_run_name(use_tsf.name)
         affix_run_name("ALLTRAP" if assume_all_nonnominal_dynamics_are_traps else "SOMETRAP")
@@ -610,6 +621,9 @@ parser.add_argument('--no_trap_cost', action='store_true', help='run parameter: 
 parser.add_argument('--nonadaptive_baseline', action='store_true',
                     help='run parameter: use non-adaptive baseline options')
 parser.add_argument('--adaptive_baseline', action='store_true', help='run parameter: use adaptive baseline options')
+parser.add_argument('--apf_baseline', action='store_true',
+                    help='run parameter: use artificial potential field baseline')
+
 parser.add_argument('--random_ablation', action='store_true', help='run parameter: use random recovery policy options')
 parser.add_argument('--visualize_rollout', action='store_true',
                     help='run parameter: visualize MPC rollouts (slows down running)')
@@ -668,7 +682,8 @@ if __name__ == "__main__":
                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
                                      visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
                                      override_tampc_params=tampc_params, override_mpc_params=mpc_params,
-                                     autonomous_recovery=autonomous_recovery)
+                                     autonomous_recovery=autonomous_recovery,
+                                     apf_baseline=args.apf_baseline)
     elif args.command == 'evaluate':
         util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
                                                 args.eval_run_prefix, suffix="{}.mat".format(args.num_frames),

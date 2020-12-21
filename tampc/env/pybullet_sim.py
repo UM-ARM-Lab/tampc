@@ -100,18 +100,18 @@ class PybulletSim(simulation.Simulation):
                 self.pred_cls[simTime] = self.ctrl.dynamics_class
                 self.env.draw_user_text("dyn cls {}".format(self.ctrl.dynamics_class), 2)
 
-                mode_text = "recovery" if self.ctrl.autonomous_recovery_mode else (
-                    "local" if self.ctrl.using_local_model_for_nonnominal_dynamics else "")
-                self.env.draw_user_text(mode_text, 3)
-                if self.ctrl.recovery_cost and isinstance(self.ctrl.recovery_cost,
-                                                          (control_cost.GoalSetCost, control_cost.CostQRSet)):
-                    # plot goal set
-                    self.env.visualize_goal_set(self.ctrl.recovery_cost.goal_set)
-
                 if self.ctrl.trap_set and self.ctrl.trap_cost is not None:
                     self.env.visualize_trap_set(self.ctrl.trap_set)
 
                 if self._has_recovery_policy() and self.ctrl.autonomous_recovery is online_controller.AutonomousRecovery.MAB:
+                    mode_text = "recovery" if self.ctrl.autonomous_recovery_mode else (
+                        "local" if self.ctrl.using_local_model_for_nonnominal_dynamics else "")
+                    self.env.draw_user_text(mode_text, 3)
+                    if self.ctrl.recovery_cost and isinstance(self.ctrl.recovery_cost,
+                                                              (control_cost.GoalSetCost, control_cost.CostQRSet)):
+                        # plot goal set
+                        self.env.visualize_goal_set(self.ctrl.recovery_cost.goal_set)
+
                     for i in range(self.ctrl.num_costs):
                         self.env.draw_user_text(
                             "a{} {:.2f} ({:.2f})".format(i, self.ctrl.mab._mean[i], self.ctrl.mab._cov[i, i]),
