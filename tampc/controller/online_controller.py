@@ -561,11 +561,15 @@ class APFLME(OnlineMPC):
         self.local_min_threshold = local_min_threshold
 
     def _mpc_command(self, obs):
+        t = len(self.u_history)
+        x = obs
+        if t > 0:
+            self.dynamics.update(self.x_history[-2], self.u_history[-1], x)
+
         if len(self.x_history) > 1:
             # check if stuck in local minima
             recent_x = torch.stack(self.x_history[-self.T_a:-1])
             d = self.state_dist(self.compare_to_goal(obs, recent_x))
-            logger.debug('dists %s', d)
             if torch.any(d < self.local_min_threshold):
                 # place trap points where our model thinks our action will take us
                 trap_state = self._apply_dynamics(obs, self.u_history[-1])
