@@ -617,6 +617,8 @@ parser.add_argument('--run_prefix', default=None, type=str,
                     help='run parameter: prefix to save the run under')
 parser.add_argument('--num_frames', metavar='N', type=int, default=500,
                     help='run parameter: number of simulation frames to run')
+parser.add_argument('--always_estimate_error', action='store_true',
+                    help='run parameter: always online estimate error dynamics using a GP')
 parser.add_argument('--no_trap_cost', action='store_true', help='run parameter: turn off trap set cost')
 parser.add_argument('--nonadaptive_baseline', action='store_true',
                     help='run parameter: use non-adaptive baseline options')
@@ -663,6 +665,8 @@ if __name__ == "__main__":
         autonomous_recovery = online_controller.AutonomousRecovery.MAB
         use_trap_cost = not args.no_trap_cost
 
+        if args.always_estimate_error:
+            nominal_adapt = OnlineAdapt.GP_KERNEL_INDEP_OUT
         if args.adaptive_baseline:
             nominal_adapt = OnlineAdapt.GP_KERNEL_INDEP_OUT
             autonomous_recovery = online_controller.AutonomousRecovery.NONE
