@@ -109,6 +109,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                  nominal_max_velocity=0,
                  nonnominal_dynamics_penalty_tolerance=0.6,
                  dynamics_minimum_window=5,
+                 clearance=1e-8,
                  assume_all_nonnominal_dynamics_are_traps=False,
                  recovery_scale=1, recovery_horizon=5, R_env=None,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
@@ -126,6 +127,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         if manual_init_trap_weight is not None:
             self.trap_set_weight = manual_init_trap_weight
         self.max_trap_weight = max_trap_weight
+        self.min_trap_weight = clearance ** 2 * 20  # C_m is 20 (maximum cost we care about)
 
         # list of strings of nominal states (separated by uses of local dynamics)
         self.nominal_dynamic_states = [[]]
@@ -454,7 +456,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.dynamics_class_history.append(self.dynamics_class)
 
         if not self.using_local_model_for_nonnominal_dynamics:
-            self.trap_set_weight *= self.trap_cost_annealing_rate
+            self.trap_set_weight = max(self.trap_set_weight * self.trap_cost_annealing_rate, self.min_trap_weight)
 
         if self._entering_trap():
             self._start_recovery_mode()
