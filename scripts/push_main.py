@@ -1656,7 +1656,11 @@ class EvaluateTask:
             n = pos_to_node(xy)
             if n not in visited:
                 logger.warning("reached state %s node %s not visited", xy, n)
-                dists.append(None)
+                # assign euclidean distance for those out of bounds
+                if xy[0] < min_pos[0] or xy[1] < min_pos[1] or xy[0] > max_pos[0] or xy[1] > max_pos[1]:
+                    dists.append(np.linalg.norm(xy - goal_pos))
+                else:
+                    dists.append(None)
             else:
                 dists.append(visited[n])
                 if visited[n] < min_dist:
@@ -1792,33 +1796,41 @@ if __name__ == "__main__":
             #     'name': 'TAMPC random', 'color': 'orange', 'label': True},
             # 'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2': {
             #     'name': 'TAMPC skip z (aggregate)', 'color': 'black', 'label': True},
-            'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s2': {
-                'name': 'TAMPC skip z (seed 2)', 'color': 'black', 'label': True},
-            'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s3': {
-                'name': 'TAMPC skip z (seed 3)', 'color': 'red', 'label': True},
-            'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s4': {
-                'name': 'TAMPC skip z (seed 4)', 'color': 'blue', 'label': True},
-            'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s5': {
-                'name': 'TAMPC skip z (seed 5)', 'color': 'cyan', 'label': True},
-            'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s6': {
-                'name': 'TAMPC skip z (seed 6)', 'color': 'magenta', 'label': True},
-            'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s7': {
-                'name': 'TAMPC skip z (seed 7)', 'color': 'orange', 'label': True},
-            # 'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'non-adapative', 'color': 'purple', 'label': True},
-            # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'adaptive baseline++', 'color': 'red', 'label': True},
-            # 'sac__5': {'name': 'SAC', 'color': 'cyan', 'label': True},
+            # 'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s2': {
+            #     'name': 'TAMPC skip z (seed 2)', 'color': 'black', 'label': True},
+            # 'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s3': {
+            #     'name': 'TAMPC skip z (seed 3)', 'color': 'red', 'label': True},
+            # 'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s4': {
+            #     'name': 'TAMPC skip z (seed 4)', 'color': 'blue', 'label': True},
+            # 'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s5': {
+            #     'name': 'TAMPC skip z (seed 5)', 'color': 'cyan', 'label': True},
+            # 'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s6': {
+            #     'name': 'TAMPC skip z (seed 6)', 'color': 'magenta', 'label': True},
+            # 'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s7': {
+            #     'name': 'TAMPC skip z (seed 7)', 'color': 'orange', 'label': True},
+            'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'non-adapative', 'color': 'purple', 'label': True},
+            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'adaptive baseline++', 'color': 'red', 'label': True},
+            'sac__5': {'name': 'SAC', 'color': 'cyan', 'label': True},
+            'auto_recover__APFLME__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-LME', 'color': 'black', 'label': True},
+            'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-LME adaptive', 'color': 'yellow', 'label': True},
 
-            # 'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'TAMPC', 'color': 'green'},
+            'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC', 'color': 'green'},
             # 'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
             #     'name': 'TAMPC random', 'color': 'orange'},
-            # 'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'non-adapative', 'color': 'purple'},
-            # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'adaptive baseline++', 'color': 'red'},
-            # 'sac__6': {'name': 'SAC', 'color': 'cyan'},
+            'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'non-adapative', 'color': 'purple'},
+            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'adaptive baseline++', 'color': 'red'},
+            'sac__6': {'name': 'SAC', 'color': 'cyan'},
+            'auto_recover__APFLME__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-LME', 'color': 'black'},
+            'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-LME adaptive', 'color': 'yellow'},
         }, 'pushing_task_res.pkl', expected_data_len=args.num_frames - 1, figsize=(5, 7), task_names=task_names,
             success_min_dist=0.5)
 

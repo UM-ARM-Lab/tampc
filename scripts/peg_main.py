@@ -704,8 +704,12 @@ if __name__ == "__main__":
                 'name': 'non-adapative', 'color': 'purple'},
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'adaptive baseline++', 'color': 'red'},
-            'sac__3': {'name': 'SAC', 'color': 'cyan'},
-            'sac__9': {'name': 'SAC', 'color': 'cyan'},
+            'auto_recover__apflme5__NONE__MAB__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-LME', 'color': 'black'},
+            'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-LME', 'color': 'yellow'},
+            'sac_3': {'name': 'SAC', 'color': 'cyan'},
+            'sac_9': {'name': 'SAC', 'color': 'cyan'},
 
             'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC', 'color': 'green'},
@@ -717,39 +721,51 @@ if __name__ == "__main__":
                 'name': 'non-adapative', 'color': 'purple'},
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'adaptive baseline++', 'color': 'red'},
-            'sac__5': {'name': 'SAC', 'color': 'cyan'},
+            'auto_recover__apflme5__NONE__MAB__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-LME', 'color': 'black'},
+            'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-LME', 'color': 'yellow'},
+            'sac_5': {'name': 'SAC', 'color': 'cyan'},
         }, 'peg_task_res.pkl', task_type='peg', figsize=(5, 7), set_y_label=False,
-            task_names=task_names)
+            task_names=task_names, success_min_dist=0.05)
 
     elif args.command == 'visualize2':
         util.plot_task_res_dist({
             'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC', 'color': 'green'},
-            # 'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'TAMPC random', 'color': 'orange'},
-            'auto_recover__NONE__MAB__6__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal': {
-                'name': 'TAMPC skip z', 'color': 'black'},
-            # 'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'non-adapative', 'color': 'purple'},
-            # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'adaptive baseline++', 'color': 'red'},
-            # 'sac__6': {'name': 'SAC', 'color': 'cyan'},
+            'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC random', 'color': 'orange'},
+            # 'auto_recover__NONE__MAB__6__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal': {
+            #     'name': 'TAMPC skip z', 'color': 'black'},
+            'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'non-adapative', 'color': 'purple'},
+            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'adaptive baseline++', 'color': 'red'},
+            'sac_6': {'name': 'SAC', 'color': 'cyan'},
+            'auto_recover__apflme5__NONE__MAB__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-LME', 'color': 'black'},
+            'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-LME', 'color': 'yellow'},
 
             'auto_recover__NONE__MAB__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC', 'color': 'green'},
-            'auto_recover__NONE__MAB__7__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal': {
-                'name': 'TAMPC skip z', 'color': 'black'},
-            # 'auto_recover__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'TAMPC original space', 'color': 'olive', 'label': True},
-            # 'auto_recover__NONE__RANDOM__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'TAMPC random', 'color': 'orange'},
-            # 'auto_recover__NONE__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'non-adapative', 'color': 'purple'},
-            # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'adaptive baseline++', 'color': 'red'},
-            # 'sac__7': {'name': 'SAC', 'color': 'cyan'},
+            # 'auto_recover__NONE__MAB__7__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal': {
+            #     'name': 'TAMPC skip z', 'color': 'black'},
+            'auto_recover__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC original space', 'color': 'olive', 'label': True},
+            'auto_recover__NONE__RANDOM__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC random', 'color': 'orange'},
+            'auto_recover__NONE__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'non-adapative', 'color': 'purple'},
+            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'adaptive baseline++', 'color': 'red'},
+            'sac__7': {'name': 'SAC', 'color': 'cyan'},
+            'auto_recover__apflme5__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-LME', 'color': 'black'},
+            'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-LME', 'color': 'yellow'},
         }, 'peg_task_res.pkl', task_type='peg', figsize=(5, 7), set_y_label=False,
-            task_names=task_names)
+            task_names=task_names, success_min_dist=0.05)
 
     else:
         pass

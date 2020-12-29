@@ -113,9 +113,12 @@ def plot_task_res_dist(series_to_plot, res_file,
                        expected_data_len=498,
                        figsize=(8, 9),
                        set_y_label=True,
-                       plot_cumulative_distribution=True,
-                       success_min_dist=None,
-                       plot_min_distribution=False):
+                       success_threshold_c='brown',
+                       plot_cumulative_distribution=False,
+                       plot_min_distribution=False,
+                       plot_min_scatter=True,
+                       store_min_up_to_now=False,
+                       success_min_dist=None):
     fullname = os.path.join(cfg.DATA_DIR, res_file)
     if os.path.exists(fullname):
         with open(fullname, 'rb') as f:
@@ -159,15 +162,20 @@ def plot_task_res_dist(series_to_plot, res_file,
                 for dhistory in dists:
                     min_dist_up_to_now = 100
                     for i, d in enumerate(dhistory):
-                        if d is None:
-                            dhistory[i] = min_dist_up_to_now
+                        if store_min_up_to_now:
+                            if d is None:
+                                dhistory[i] = min_dist_up_to_now
+                            else:
+                                min_dist_up_to_now = min(min_dist_up_to_now, d)
+                                dhistory[i] = min(min_dist_up_to_now, d)
                         else:
-                            min_dist_up_to_now = min(min_dist_up_to_now, d)
-                            dhistory[i] = min(min_dist_up_to_now, d)
+                            if d is None:
+                                dhistory[i] = dhistory[i - 1]
 
-                    # if list is shorter than expected that means it finished so should have 0 dist
+                    # if list is shorter than expected that means it finished so should have lower than success dist
                     if expected_data_len > len(dhistory):
-                        dhistory.extend([0] * (expected_data_len - len(dhistory)))
+                        dhistory.extend(
+                            [min(success_min_dist * 0.8, dhistory[-1])] * (expected_data_len - len(dhistory)))
                         success += 1
                     elif success_min_dist is not None:
                         success += min(dhistory) < success_min_dist
@@ -178,22 +186,30 @@ def plot_task_res_dist(series_to_plot, res_file,
                 all_series[level] = series
 
     if plot_min_distribution:
-        for level, series in all_series.items():
-            f, ax = plt.subplots(len(series), 1, figsize=figsize)
-            f.suptitle("{} task {}".format(task_type, level))
+        f, ax = plt.subplots(len(all_series), figsize=figsize)
+        if isinstance(ax, plt.Axes):
+            ax = [ax]
+        for j, (level, series) in enumerate(all_series.items()):
+            task_name = "{} task {}".format(task_type, level)
+            if task_names is not None:
+                task_name = task_names[level]
+            ax[j].set_title(task_name)
 
             for i, data in enumerate(series):
                 series_name, tk, dists, successes = data
                 dists = np.min(dists, axis=1)
+                plot_info = series_to_plot[series_name]
+                logger.info("%s\nsuccess percent %f%% %d trials", series_name, successes * 100, dists.shape[0])
                 logger.info("%s with %d runs mean {:.2f} ({:.2f})".format(np.mean(dists) * 10, np.std(dists) * 10),
                             series_name, len(dists))
-                sns.distplot(dists, ax=ax[i], hist=True, kde=False,
+                c = plot_info['color']
+                sns.distplot(dists, ax=ax[j], hist=False, kde=True, color=c,
+                             label=plot_info['name'] if 'label' in plot_info else '_nolegend_',
                              bins=np.linspace(mmdist[level][0], mmdist[level][1], 20))
-                ax[i].set_title((tk['adaptation'], tk['recovery'], tk['optimism']))
-                ax[i].set_xlim(*mmdist[level])
-                ax[i].set_ylim(0, int(0.6 * len(dists)))
-            ax[-1].set_xlabel('closest dist to goal [m]')
-            f.tight_layout(rect=[0, 0.03, 1, 0.95])
+            ax[j].axvline(x=success_min_dist, color=success_threshold_c)
+            ax[j].set_xlim(left=0)
+        ax[-1].set_xlabel('closest dist to goal [m]')
+        f.tight_layout(rect=[0, 0.03, 1, 0.95])
     if plot_cumulative_distribution:
         f, ax = plt.subplots(len(all_series), figsize=figsize)
         if isinstance(ax, plt.Axes):
@@ -220,9 +236,38 @@ def plot_task_res_dist(series_to_plot, res_file,
             ax[j].legend()
             ax[j].set_xlim(0, max_t)
             ax[j].set_ylim(0, mmdist[level][1] * 1.05)
+            ax[j].hlines(y=success_min_dist, xmin=0, xmax=max_t, colors=success_threshold_c, linestyles='--', lw=2)
+            if set_y_label:
+                ax[j].set_ylabel('closest ' if store_min_up_to_now else '' + 'dist to goal')
+        ax[-1].set_xlabel('control step')
+        f.tight_layout(rect=[0, 0.03, 1, 0.95])
+    if plot_min_scatter:
+        f, ax = plt.subplots(len(all_series), figsize=figsize)
+        if isinstance(ax, plt.Axes):
+            ax = [ax]
+        for j, (level, series) in enumerate(all_series.items()):
+            task_name = "{} task {}".format(task_type, level)
+            if task_names is not None:
+                task_name = task_names[level]
+            ax[j].set_title(task_name)
+            for i, data in enumerate(series):
+                series_name, tk, dists, successes = data
+                plot_info = series_to_plot[series_name]
+                logger.info("%s\nsuccess percent %f%% %d trials", series_name, successes * 100, dists.shape[0])
+
+                # returns first occurrence if repeated
+                t = dists.argmin(axis=1)
+                m = dists.min(axis=1)
+                c = plot_info['color']
+                ax[j].scatter(t, m, color=c, label=plot_info['name'] if 'label' in plot_info else '_nolegend_')
+
+            ax[j].legend()
+            ax[j].set_xlim(0, max_t)
+            ax[j].set_ylim(bottom=0)
+            ax[j].hlines(y=success_min_dist, xmin=0, xmax=max_t, colors=success_threshold_c, linestyles='--', lw=2)
             if set_y_label:
                 ax[j].set_ylabel('closest dist to goal')
-        ax[-1].set_xlabel('control step')
+        ax[-1].set_xlabel('control step for closest dist')
         f.tight_layout(rect=[0, 0.03, 1, 0.95])
 
     plt.show()
