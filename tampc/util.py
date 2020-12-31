@@ -323,7 +323,11 @@ def closest_distance_to_goal_whole_set(distance_runner, prefix, suffix=".mat", t
     if m is not None:
         level = int(m.group()[2:])
     else:
-        raise RuntimeError("Prefix has no level information in it")
+        m = re.search(r"_\d+", prefix)
+        if m is not None:
+            level = int(m.group()[1:])
+        else:
+            raise RuntimeError("Prefix has no level information in it")
 
     fullname = os.path.join(cfg.DATA_DIR, '{}_task_res.pkl'.format(task_type))
     if os.path.exists(fullname):

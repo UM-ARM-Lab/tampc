@@ -348,6 +348,37 @@ class PegInHoleEnv(PybulletEnv):
                 p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0 + translation, 0.075 + translation, wall_z],
                            p.getQuaternionFromEuler([0, 0, np.pi / 2]), useFixedBase=True,
                            globalScaling=0.06))
+        elif self.level == 8:
+            width = 0.037
+            y = 0.21
+            self._set_hole([0, 0.2])
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "short_wall.urdf"), [0., 0.16, wall_z],
+                                         p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
+                                         globalScaling=0.06))
+            self.walls.append(
+                p.loadURDF(os.path.join(cfg.ROOT_DIR, "short_wall.urdf"), [-width, y, wall_z],
+                           p.getQuaternionFromEuler([0, 0, np.pi / 2]), useFixedBase=True,
+                           globalScaling=0.06))
+            self.walls.append(
+                p.loadURDF(os.path.join(cfg.ROOT_DIR, "short_wall.urdf"), [width, y, wall_z],
+                           p.getQuaternionFromEuler([0, 0, np.pi / 2]), useFixedBase=True,
+                           globalScaling=0.06))
+            shifted_down = 0.1
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "short_wall.urdf"), [-width*2, 0.16, wall_z],
+                                         p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
+                                         globalScaling=0.06))
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "short_wall.urdf"), [width*2, 0.16, wall_z],
+                                         p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
+                                         globalScaling=0.06))
+            self.walls.append(
+                p.loadURDF(os.path.join(cfg.ROOT_DIR, "short_wall.urdf"), [width*3, y - shifted_down, wall_z],
+                           p.getQuaternionFromEuler([0, 0, np.pi / 2]), useFixedBase=True,
+                           globalScaling=0.06))
+            self.walls.append(
+                p.loadURDF(os.path.join(cfg.ROOT_DIR, "short_wall.urdf"), [-width*3, y - shifted_down, wall_z],
+                           p.getQuaternionFromEuler([0, 0, np.pi / 2]), useFixedBase=True,
+                           globalScaling=0.06))
+
         elif self.level == 10:
             self._set_hole([0, 0.2])
             # a "well" around the hole

@@ -112,7 +112,7 @@ class PegGetter(EnvGetter):
             init_peg = [0, -0.2]
             hole_pos = [0, 0.2]
 
-        if level in [3, 5]:
+        if level in [3, 5, 8]:
             init_peg = [0, -0.05]
             hole_pos = [0, 0.2]
 
@@ -450,7 +450,7 @@ class EvaluateTask:
         if level is 1:
             min_pos = [-0.3, -0.3]
             max_pos = [0.5, 0.5]
-        elif level is 3:
+        elif level is 3 or level is 8:
             min_pos = [-0.2, -0.1]
             max_pos = [0.2, 0.35]
         elif level is 5:
@@ -589,7 +589,7 @@ class EvaluateTask:
         return dists
 
 
-task_map = {'freespace': 0, 'Peg-U': 3, 'Peg-I': 5, 'Peg-T': 6, 'Peg-T(T)': 7}
+task_map = {'freespace': 0, 'Peg-U': 3, 'Peg-I': 5, 'Peg-T': 6, 'Peg-T(T)': 7, 'Peg-H': 8}
 
 parser = argparse.ArgumentParser(description='Experiments on the peg-in-hole environment')
 parser.add_argument('command',
@@ -694,12 +694,7 @@ if __name__ == "__main__":
                                                 task_type='peg')
     elif args.command == 'visualize1':
         util.plot_task_res_dist({
-            'auto_recover__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC', 'color': 'green'},
-            'auto_recover__h15_larger_min_window__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC tuned', 'color': 'blue', 'label': True},
-            'auto_recover__NONE__RANDOM__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC random', 'color': 'orange'},
+            'sac_3': {'name': 'SAC', 'color': 'cyan'},
             'auto_recover__NONE__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'non-adapative', 'color': 'purple'},
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
@@ -708,15 +703,14 @@ if __name__ == "__main__":
                 'name': 'APF-LME', 'color': 'black'},
             'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'APF-LME', 'color': 'yellow'},
-            'sac_3': {'name': 'SAC', 'color': 'cyan'},
-            'sac_9': {'name': 'SAC', 'color': 'cyan'},
-
-            'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC', 'color': 'green'},
-            'auto_recover__h20_less_anneal__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC tuned', 'color': 'blue', 'label': True},
-            'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            'auto_recover__NONE__RANDOM__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC random', 'color': 'orange'},
+            'auto_recover__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC', 'color': 'green'},
+            'auto_recover__h15_larger_min_window__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC tuned', 'color': 'blue', 'label': True},
+
+            'sac_5': {'name': 'SAC', 'color': 'cyan'},
             'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'non-adapative', 'color': 'purple'},
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
@@ -725,7 +719,12 @@ if __name__ == "__main__":
                 'name': 'APF-LME', 'color': 'black'},
             'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'APF-LME', 'color': 'yellow'},
-            'sac_5': {'name': 'SAC', 'color': 'cyan'},
+            'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC random', 'color': 'orange'},
+            'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC', 'color': 'green'},
+            'auto_recover__h20_less_anneal__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC tuned', 'color': 'blue', 'label': True},
         }, 'peg_task_res.pkl', task_type='peg', figsize=(5, 7), set_y_label=False,
             task_names=task_names, success_min_dist=0.05)
 
