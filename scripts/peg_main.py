@@ -187,6 +187,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                    visualize_rollout=False,
                    override_tampc_params=None,
                    override_mpc_params=None,
+                   never_estimate_error=False,
                    apf_baseline=False,
                    **kwargs):
     env = PegGetter.env(p.GUI, level=level, log_video=True)
@@ -235,6 +236,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                                             assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
                                             reuse_escape_as_demonstration=reuse_escape_as_demonstration,
                                             use_trap_cost=use_trap_cost,
+                                            never_estimate_error_dynamics=never_estimate_error,
                                             **tampc_opts,
                                             mpc_opts=mpc_opts)
         env.draw_user_text(gating.name, 13, left_offset=-1.5)
@@ -280,6 +282,8 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
         affix_run_name(nominal_adapt.name)
         if not apf_baseline:
             affix_run_name(autonomous_recovery.name + ("_WITHDEMO" if use_demo else ""))
+        if never_estimate_error:
+            affix_run_name('NO_E')
         affix_run_name(level)
         affix_run_name(use_tsf.name)
         affix_run_name("ALLTRAP" if assume_all_nonnominal_dynamics_are_traps else "SOMETRAP")
@@ -619,6 +623,8 @@ parser.add_argument('--num_frames', metavar='N', type=int, default=500,
                     help='run parameter: number of simulation frames to run')
 parser.add_argument('--always_estimate_error', action='store_true',
                     help='run parameter: always online estimate error dynamics using a GP')
+parser.add_argument('--never_estimate_error', action='store_true',
+                    help='run parameter: never online estimate error dynamics using a GP (always use e=0)')
 parser.add_argument('--no_trap_cost', action='store_true', help='run parameter: turn off trap set cost')
 parser.add_argument('--nonadaptive_baseline', action='store_true',
                     help='run parameter: use non-adaptive baseline options')
@@ -687,6 +693,7 @@ if __name__ == "__main__":
                                      visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
                                      override_tampc_params=tampc_params, override_mpc_params=mpc_params,
                                      autonomous_recovery=autonomous_recovery,
+                                     never_estimate_error=args.never_estimate_error,
                                      apf_baseline=args.apf_baseline)
     elif args.command == 'evaluate':
         util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,

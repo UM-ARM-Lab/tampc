@@ -110,11 +110,13 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                  nonnominal_dynamics_penalty_tolerance=0.6,
                  dynamics_minimum_window=5,
                  clearance=1e-8,
+                 never_estimate_error_dynamics=False,
                  assume_all_nonnominal_dynamics_are_traps=False,
                  recovery_scale=1, recovery_horizon=5, R_env=None,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
         self.abs_unrecognized_threshold = abs_unrecognized_threshold
+        self.never_estimate_error_dynamics = never_estimate_error_dynamics
 
         self.recovery_scale = recovery_scale
         self.R_env = tensor_utils.ensure_diagonal(R_env, self.nu).to(device=self.d,
@@ -327,9 +329,10 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         # includes the current observation
         self.nonnominal_dynamics_start_index = len(self.x_history) - 1
 
-        self.dynamics.use_temp_local_nominal_model()
-        # update the local model with the last transition for entering the mode
-        self.dynamics.update(self.x_history[-2], self.u_history[-1], x)
+        if not self.never_estimate_error_dynamics:
+            self.dynamics.use_temp_local_nominal_model()
+            # update the local model with the last transition for entering the mode
+            self.dynamics.update(self.x_history[-2], self.u_history[-1], x)
 
     def _start_recovery_mode(self):
         logger.debug("Entering autonomous recovery mode")
