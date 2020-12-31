@@ -235,7 +235,7 @@ def plot_task_res_dist(series_to_plot, res_file,
 
             ax[j].legend()
             ax[j].set_xlim(0, max_t)
-            ax[j].set_ylim(0, mmdist[level][1] * 1.05)
+            ax[j].set_ylim(bottom=0)
             ax[j].hlines(y=success_min_dist, xmin=0, xmax=max_t, colors=success_threshold_c, linestyles='--', lw=2)
             if set_y_label:
                 ax[j].set_ylabel('closest ' if store_min_up_to_now else '' + 'dist to goal')
