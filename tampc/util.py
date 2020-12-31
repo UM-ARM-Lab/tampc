@@ -143,6 +143,7 @@ def plot_task_res_dist(series_to_plot, res_file,
         if prefix not in tasks[level]:
             tasks[level][prefix] = dists
 
+    legend_props = {'prop': {'size': 8}, 'framealpha': 0.5}
     all_series = {}
     mmdist = {}
     for level, res in tasks.items():
@@ -231,9 +232,9 @@ def plot_task_res_dist(series_to_plot, res_file,
 
                 c = plot_info['color']
                 ax[j].plot(t, m, color=c, label=plot_info['name'] if 'label' in plot_info else '_nolegend_')
-                ax[j].fill_between(t, lower, upper, facecolor=c, alpha=0.25)
+                ax[j].fill_between(t, lower, upper, facecolor=c, alpha=plot_info.get('alpha', 0.2))
 
-            ax[j].legend()
+            ax[j].legend(**legend_props)
             ax[j].set_xlim(0, max_t)
             ax[j].set_ylim(bottom=0)
             ax[j].hlines(y=success_min_dist, xmin=0, xmax=max_t, colors=success_threshold_c, linestyles='--', lw=2)
@@ -261,7 +262,7 @@ def plot_task_res_dist(series_to_plot, res_file,
                 c = plot_info['color']
                 ax[j].scatter(t, m, color=c, label=plot_info['name'] if 'label' in plot_info else '_nolegend_')
 
-            ax[j].legend()
+            ax[j].legend(**legend_props)
             ax[j].set_xlim(0, max_t)
             ax[j].set_ylim(bottom=0)
             ax[j].hlines(y=success_min_dist, xmin=0, xmax=max_t, colors=success_threshold_c, linestyles='--', lw=2)

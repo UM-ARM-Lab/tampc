@@ -3,7 +3,7 @@ import torch
 import logging
 import abc
 import numpy as np
-from arm_pytorch_utilities import linalg, tensor_utils
+from arm_pytorch_utilities import linalg, tensor_utils, math_utils
 
 logger = logging.getLogger(__name__)
 
@@ -266,3 +266,24 @@ class ArtificialRepulsionCost(Cost):
             costs = torch.zeros(X.shape[0], dtype=X.dtype, device=X.device)
 
         return costs * self.gain
+
+
+class APFHelicoid2D(Cost):
+    """Helicoid potential field in 2D"""
+
+    def __init__(self, rxy, oxy, clockwise=False):
+        # robot and obstacle xy
+        self.rxy = rxy
+        self.oxy = oxy
+        self.clockwise = clockwise
+
+    @tensor_utils.handle_batch_input
+    def __call__(self, X, U=None, terminal=False):
+        original_angle = self.oxy - self.rxy
+        original_angle = torch.atan2(original_angle[1], original_angle[0])
+        Xxy = X[:, :2]
+        d = self.oxy - Xxy
+        angles = torch.atan2(d[:, 1], d[:, 0])
+
+        angular_diffs = math_utils.angular_diff_batch(original_angle, angles) * torch.norm(d,dim=1)
+        return angular_diffs * (1 if self.clockwise else -1)

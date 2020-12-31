@@ -588,3 +588,76 @@ class APFVO(OnlineMPC):
         c = self.cost(next_state)
         ui = c.argmin()
         return u[ui]
+
+
+class APFSP(OnlineMPC):
+    """Artificial potential field local minima escape using switched potentials controller
+    from https://link.springer.com/article/10.1007/s10846-017-0687-2
+    We use the same method for detecting local minima as with APFVO, but instead of superposition of potentials
+    we switch between global potential and a helical potential meant to direct around obstacles.
+    Note that this method assumes a 2D x-y support, so we will take the first 2 dimensions as x and y or robot.
+    """
+
+    def __init__(self, *args, samples=5000, trap_max_dist_influence=1, obstacle_reaction=10, **kwargs):
+        self.samples = samples
+        super(APFSP, self).__init__(*args, **kwargs)
+        self.u_scale = self.u_max - self.u_min
+        self.trap_max_dist_influence = trap_max_dist_influence
+        self.obstacle_reaction = obstacle_reaction
+        self.preloaded_control = []
+
+    def _mpc_command(self, obs):
+        t = len(self.u_history)
+        x = obs
+        if t > 0:
+            self.dynamics.update(self.x_history[-2], self.u_history[-1], x)
+
+        if len(self.x_history) > 1:
+            # check if bumped into obstacle
+            reaction_magnitude = torch.norm(x[-2:])
+            if reaction_magnitude > self.obstacle_reaction:
+                # place trap points where our model thinks our action will take us
+                trap_state = self._apply_dynamics(obs, self.u_history[-1])
+                self.trap_set.append(trap_state[0])
+                # need to back up a bit as otherwise the helicoid doesn't work with flat obstacles very well
+                # assume negative of control can reverse
+                self.preloaded_control.append(-self.u_history[-1])
+
+        if len(self.preloaded_control):
+            u = self.preloaded_control.pop()
+            return u
+
+        this_cost = self.goal_cost
+        # check if there are any traps that are too close along the tube from current pos to goal
+        active_obstacle = None
+        # specialization to x-y with Euclidean distance
+        xy = x[:2]
+        for o in self.trap_set:
+            oxy = o[:2]
+            gxy = self.goal[:2]
+            d = torch.norm(xy - oxy)
+            if d < self.trap_max_dist_influence:
+                # check if closer than previously found one
+                if active_obstacle is not None:
+                    dd = torch.norm(xy - active_obstacle)
+                    if dd < d:
+                        continue
+                # check if farther than the goal then ignore
+                if d > torch.norm(xy - gxy):
+                    continue
+                # check if obstacle is along the tube to the goal
+                obstacle_alignment = torch.cosine_similarity(oxy - xy, gxy - xy, dim=0)
+                if obstacle_alignment > 0.3:
+                    active_obstacle = oxy
+
+        if active_obstacle is not None:
+            this_cost = cost.APFHelicoid2D(xy, active_obstacle)
+
+        # sample a bunch of actions and run them through the dynamics
+        u = torch.rand(self.samples, self.u_scale.shape[0], device=self.u_scale.device)
+        u = u * self.u_scale + self.u_min
+        # select action that leads to min cost
+        next_state = self._apply_dynamics(obs.repeat(self.samples, 1), u)
+        c = this_cost(next_state)
+        ui = c.argmin()
+        return u[ui]

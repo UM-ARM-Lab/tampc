@@ -210,10 +210,10 @@ Whether you are running with CUDA or not will also affect exact reproducibility.
 	```
 	python push_main.py run --task "Block-H" --seed 0 1 2 3 4 5 6 7 8 9 --adaptive_baseline
 	```
-8. run task with artificial potential field baseline with the `--apf_baseline` option combined with a dynamics representation; for example
+8. run task with artificial potential field baselines
 	```
-	python peg_main.py run --task "Peg-U" --seed 0 1 2 3 4 5 6 7 8 9 --apf_baseline --representation none
-	python peg_main.py run --task "Peg-U" --seed 0 1 2 3 4 5 6 7 8 9 --apf_baseline --representation learned_rex --rep_name saved_peg
+	python peg_main.py run --task "Peg-U" --seed 0 1 2 3 4 5 6 7 8 9 --apfvo_baseline --representation none
+	python peg_main.py run --task "Peg-U" --seed 0 1 2 3 4 5 6 7 8 9 --apfsp_baseline --representation none
 	```
 9. run task with random recovery policy ablation option
 	```
@@ -227,6 +227,10 @@ Whether you are running with CUDA or not will also affect exact reproducibility.
 11. run Peg-T(T) with dynamics in the original space
 	```
 	python peg_main.py run --task "Peg-T(T)" --seed 0 1 2 3 4 5 6 7 8 9 --representation none --rep_name saved_peg
+	```
+12. run tasks with the no error estimation ablation with the `--never_estimate_error` option; for example
+	```
+	python peg_main.py run --task "Peg-T" --seed 0 1 2 3 4 5 6 7 8 9 --representation none --rep_name saved_peg --never_estimate_error
 	```
 12. run the tuned controller for Peg-U and Peg-I
 	```
