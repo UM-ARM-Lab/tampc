@@ -188,7 +188,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                    override_tampc_params=None,
                    override_mpc_params=None,
                    never_estimate_error=False,
-                   apf_baseline=False,
+                   apfvo_baseline=False,
                    **kwargs):
     env = PegGetter.env(p.GUI, level=level, log_video=True)
     logger.info("initial random seed %d", rand.seed(seed))
@@ -223,13 +223,13 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
     logger.debug("running with parameters\nhigh level controller: %s\nlow level MPC: %s",
                  pprint.pformat(tampc_opts), pprint.pformat(mpc_opts))
 
-    if apf_baseline:
+    if apfvo_baseline:
         tampc_opts.pop('trap_cost_annealing_rate')
         tampc_opts.pop('abs_unrecognized_threshold')
-        ctrl = online_controller.APFLME(ds, hybrid_dynamics, ds.original_config(), gating=gating,
-                                        local_min_threshold=0.003, trap_max_dist_influence=0.05, repulsion_gain=0.01,
-                                        **tampc_opts)
-        env.draw_user_text("APF-LME baseline", 13, left_offset=-1.5)
+        ctrl = online_controller.APFVO(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                       local_min_threshold=0.003, trap_max_dist_influence=0.05, repulsion_gain=0.01,
+                                       **tampc_opts)
+        env.draw_user_text("APF-VO baseline", 13, left_offset=-1.5)
     else:
         ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
                                             autonomous_recovery=autonomous_recovery,
@@ -629,8 +629,8 @@ parser.add_argument('--no_trap_cost', action='store_true', help='run parameter: 
 parser.add_argument('--nonadaptive_baseline', action='store_true',
                     help='run parameter: use non-adaptive baseline options')
 parser.add_argument('--adaptive_baseline', action='store_true', help='run parameter: use adaptive baseline options')
-parser.add_argument('--apf_baseline', action='store_true',
-                    help='run parameter: use artificial potential field baseline')
+parser.add_argument('--apfvo_baseline', action='store_true',
+                    help='run parameter: use artificial potential field virtual obstacles baseline')
 
 parser.add_argument('--random_ablation', action='store_true', help='run parameter: use random recovery policy options')
 parser.add_argument('--visualize_rollout', action='store_true',
@@ -694,7 +694,7 @@ if __name__ == "__main__":
                                      override_tampc_params=tampc_params, override_mpc_params=mpc_params,
                                      autonomous_recovery=autonomous_recovery,
                                      never_estimate_error=args.never_estimate_error,
-                                     apf_baseline=args.apf_baseline)
+                                     apfvo_baseline=args.apfvo_baseline)
     elif args.command == 'evaluate':
         util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
                                                 args.eval_run_prefix, suffix="{}.mat".format(args.num_frames),
@@ -707,11 +707,13 @@ if __name__ == "__main__":
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'adaptive baseline++', 'color': 'red'},
             'auto_recover__apflme5__NONE__MAB__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'APF-LME', 'color': 'black'},
-            'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'APF-LME', 'color': 'yellow'},
+                'name': 'APF-VO', 'color': 'black'},
+            # 'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-LME', 'color': 'yellow'},
             'auto_recover__NONE__RANDOM__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC random', 'color': 'orange'},
+            'auto_recover__NONE__MAB__NO_E__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC e=0', 'color': 'grey'},
             'auto_recover__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC', 'color': 'green'},
             'auto_recover__h15_larger_min_window__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
@@ -723,11 +725,13 @@ if __name__ == "__main__":
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'adaptive baseline++', 'color': 'red'},
             'auto_recover__apflme5__NONE__MAB__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'APF-LME', 'color': 'black'},
-            'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'APF-LME', 'color': 'yellow'},
+                'name': 'APF-VO', 'color': 'black'},
+            # 'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-LME', 'color': 'yellow'},
             'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC random', 'color': 'orange'},
+            'auto_recover__NONE__MAB__NO_E__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC e=0', 'color': 'grey'},
             'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC', 'color': 'green'},
             'auto_recover__h20_less_anneal__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
@@ -741,6 +745,8 @@ if __name__ == "__main__":
                 'name': 'TAMPC', 'color': 'green'},
             'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC random', 'color': 'orange'},
+            'auto_recover__NONE__MAB__NO_E__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC e=0', 'color': 'grey'},
             # 'auto_recover__NONE__MAB__6__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal': {
             #     'name': 'TAMPC skip z', 'color': 'black'},
             'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
@@ -749,9 +755,9 @@ if __name__ == "__main__":
                 'name': 'adaptive baseline++', 'color': 'red'},
             'sac_6': {'name': 'SAC', 'color': 'cyan'},
             'auto_recover__apflme5__NONE__MAB__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'APF-LME', 'color': 'black'},
-            'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'APF-LME', 'color': 'yellow'},
+                'name': 'APF-VO', 'color': 'black'},
+            # 'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-LME', 'color': 'yellow'},
 
             'auto_recover__NONE__MAB__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC', 'color': 'green'},
@@ -761,15 +767,17 @@ if __name__ == "__main__":
                 'name': 'TAMPC original space', 'color': 'olive', 'label': True},
             'auto_recover__NONE__RANDOM__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC random', 'color': 'orange'},
+            'auto_recover__NONE__MAB__NO_E__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC e=0', 'color': 'grey'},
             'auto_recover__NONE__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'non-adapative', 'color': 'purple'},
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'adaptive baseline++', 'color': 'red'},
             'sac__7': {'name': 'SAC', 'color': 'cyan'},
             'auto_recover__apflme5__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'APF-LME', 'color': 'black'},
-            'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'APF-LME', 'color': 'yellow'},
+                'name': 'APF-VO', 'color': 'black'},
+            # 'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-LME', 'color': 'yellow'},
         }, 'peg_task_res.pkl', task_type='peg', figsize=(5, 7), set_y_label=False,
             task_names=task_names, success_min_dist=0.05)
 

@@ -551,13 +551,13 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         return P
 
 
-class APFLME(OnlineMPC):
-    """Artificial potential field local minima escape controller"""
+class APFVO(OnlineMPC):
+    """Artificial potential field local minima escape using virtual obstacles controller"""
 
     def __init__(self, *args, samples=5000, trap_max_dist_influence=1, T_a=10, local_min_threshold=0.01,
                  repulsion_gain=1, **kwargs):
         self.samples = samples
-        super(APFLME, self).__init__(*args, **kwargs)
+        super(APFVO, self).__init__(*args, **kwargs)
         self.u_scale = self.u_max - self.u_min
         self.trap_cost = cost.ArtificialRepulsionCost(self.trap_set, self.compare_to_goal, self.state_dist,
                                                       trap_max_dist_influence, gain=repulsion_gain)

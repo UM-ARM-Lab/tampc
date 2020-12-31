@@ -804,7 +804,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                    override_tampc_params=None,
                    override_mpc_params=None,
                    never_estimate_error=False,
-                   apf_baseline=False,
+                   apfvo_baseline=False,
                    **kwargs):
     if adaptive_control_baseline:
         use_tsf = UseTsf.NO_TRANSFORM
@@ -856,15 +856,15 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
         else:
             gating = hybrid_dynamics.get_gating() if gating is None else gating
 
-        if apf_baseline:
+        if apfvo_baseline:
             tampc_opts.pop('abs_unrecognized_threshold')
             tampc_opts.pop('R_env')
             tampc_opts.pop('recovery_scale')
-            ctrl = online_controller.APFLME(ds, hybrid_dynamics, ds.original_config(), gating=gating,
-                                            local_min_threshold=0.003, trap_max_dist_influence=0.2,
-                                            repulsion_gain=0.01,
-                                            **tampc_opts)
-            env.draw_user_text("APF-LME baseline", 13, left_offset=-1.5)
+            ctrl = online_controller.APFVO(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                           local_min_threshold=0.003, trap_max_dist_influence=0.2,
+                                           repulsion_gain=0.01,
+                                           **tampc_opts)
+            env.draw_user_text("APF-VO baseline", 13, left_offset=-1.5)
         else:
             ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
                                                 autonomous_recovery=autonomous_recovery,
@@ -909,10 +909,10 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
         if adaptive_control_baseline:
             affix_run_name("ADAPTIVE_BASELINE")
         else:
-            if apf_baseline:
+            if apfvo_baseline:
                 affix_run_name('APFLME')
             affix_run_name(nominal_adapt.name)
-            if not apf_baseline:
+            if not apfvo_baseline:
                 affix_run_name(autonomous_recovery.name + ("_WITHDEMO" if use_demo else ""))
         if never_estimate_error:
             affix_run_name('NO_E')
@@ -1725,8 +1725,8 @@ parser.add_argument('--no_trap_cost', action='store_true', help='run parameter: 
 parser.add_argument('--nonadaptive_baseline', action='store_true',
                     help='run parameter: use non-adaptive baseline options')
 parser.add_argument('--adaptive_baseline', action='store_true', help='run parameter: use adaptive baseline options')
-parser.add_argument('--apf_baseline', action='store_true',
-                    help='run parameter: use artificial potential field baseline')
+parser.add_argument('--apfvo_baseline', action='store_true',
+                    help='run parameter: use artificial potential field virtual obstacles baseline')
 
 parser.add_argument('--random_ablation', action='store_true', help='run parameter: use random recovery policy options')
 parser.add_argument('--visualize_rollout', action='store_true',
@@ -1790,7 +1790,7 @@ if __name__ == "__main__":
                                      override_tampc_params=tampc_params, override_mpc_params=mpc_params,
                                      autonomous_recovery=autonomous_recovery,
                                      never_estimate_error=args.never_estimate_error,
-                                     apf_baseline=args.apf_baseline)
+                                     apfvo_baseline=args.apfvo_baseline)
     elif args.command == 'evaluate':
         util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
                                                 args.eval_run_prefix, suffix="{}.mat".format(args.num_frames))
@@ -1823,9 +1823,9 @@ if __name__ == "__main__":
                 'name': 'adaptive baseline++', 'color': 'red', 'label': True},
             'sac__5': {'name': 'SAC', 'color': 'cyan', 'label': True},
             'auto_recover__APFLME__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'APF-LME', 'color': 'black', 'label': True},
-            'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'APF-LME adaptive', 'color': 'yellow', 'label': True},
+                'name': 'APF-VO', 'color': 'black', 'label': True},
+            # 'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-LME adaptive', 'color': 'yellow', 'label': True},
 
             'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC', 'color': 'green'},
@@ -1839,9 +1839,9 @@ if __name__ == "__main__":
                 'name': 'adaptive baseline++', 'color': 'red'},
             'sac__6': {'name': 'SAC', 'color': 'cyan'},
             'auto_recover__APFLME__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'APF-LME', 'color': 'black'},
-            'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'APF-LME adaptive', 'color': 'yellow'},
+                'name': 'APF-VO', 'color': 'black'},
+            # 'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-LME adaptive', 'color': 'yellow'},
         }, 'pushing_task_res.pkl', expected_data_len=args.num_frames - 1, figsize=(5, 7), task_names=task_names,
             success_min_dist=0.5)
 
