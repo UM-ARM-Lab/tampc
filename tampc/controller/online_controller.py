@@ -68,7 +68,7 @@ class OnlineMPC(controller.MPC):
         cls = self.gating.sample_class(x, u)
         cls[bad_states] = -1
 
-        self.dynamics_class_prediction[t] = cls
+        # self.dynamics_class_prediction[t] = cls
 
         # hybrid dynamics
         next_state = self.dynamics(x, u, cls)
