@@ -161,6 +161,8 @@ def plot_task_res_dist(series_to_plot, res_file,
                 dists = [dlist for dlist in dists if type(dlist) is list]
                 # process the dists so they are all valid (replace nones)
                 for dhistory in dists:
+                    # strip anything beyond what we expect the data length to be
+                    del dhistory[expected_data_len:]
                     min_dist_up_to_now = 100
                     for i, d in enumerate(dhistory):
                         if store_min_up_to_now:
