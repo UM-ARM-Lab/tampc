@@ -360,19 +360,24 @@ class DebugRvizDrawer:
 
         T = len(trap_set)
         for t in range(T):
-            state, action = trap_set[t]
+            action = None
+            if len(trap_set[t]) is 2:
+                state, action = trap_set[t]
+            else:
+                state = trap_set[t]
 
             p = Point()
             p.x = state[0]
             p.y = state[1]
             p.z = state[2]
             state_marker.points.append(p)
-            action_marker.points.append(p)
-            p = Point()
-            p.x = state[0] + action[0] * self.action_scale
-            p.y = state[1] + action[1] * self.action_scale
-            p.z = state[2]
-            action_marker.points.append(p)
+            if action is not None:
+                action_marker.points.append(p)
+                p = Point()
+                p.x = state[0] + action[0] * self.action_scale
+                p.y = state[1] + action[1] * self.action_scale
+                p.z = state[2]
+                action_marker.points.append(p)
 
             cc = (t + 1) / (T + 1)
             c = ColorRGBA()
@@ -381,8 +386,9 @@ class DebugRvizDrawer:
             c.g = 0
             c.b = cc
             state_marker.colors.append(c)
-            action_marker.colors.append(c)
-            action_marker.colors.append(c)
+            if action is not None:
+                action_marker.colors.append(c)
+                action_marker.colors.append(c)
 
         self.marker_pub.publish(state_marker)
         self.marker_pub.publish(action_marker)
@@ -393,8 +399,8 @@ class DebugRvizDrawer:
         marker.action = Marker.DELETEALL if delete_all else Marker.DELETE
         self.marker_pub.publish(marker)
 
-    def draw_text(self, label, text, offset, left_offset=0):
-        marker = self.make_marker(marker_type=Marker.TEXT_VIEW_FACING, scale=self.BASE_SCALE * 5)
+    def draw_text(self, label, text, offset, left_offset=0, scale=5):
+        marker = self.make_marker(marker_type=Marker.TEXT_VIEW_FACING, scale=self.BASE_SCALE * scale)
         marker.ns = label
         marker.id = 0
         marker.text = text
@@ -487,13 +493,14 @@ class ExperimentRunner(simulation.Simulation):
             action = self.ctrl.command(obs, info)
 
             # visualization before taking action
-            if isinstance(self.ctrl, online_controller.OnlineMPPI):
+            if isinstance(self.ctrl, online_controller.OnlineMPC):
                 pred_cls.append(self.ctrl.dynamics_class)
                 self.dd.draw_text("dynamics class", "dyn cls {}".format(self.ctrl.dynamics_class), 2)
 
-                mode_text = "recovery" if self.ctrl.autonomous_recovery_mode else (
-                    "local" if self.ctrl.using_local_model_for_nonnominal_dynamics else "nominal")
-                self.dd.draw_text("control mode", mode_text, 3)
+                if isinstance(self.ctrl, online_controller.OnlineMPPI):
+                    mode_text = "recovery" if self.ctrl.autonomous_recovery_mode else (
+                        "local" if self.ctrl.using_local_model_for_nonnominal_dynamics else "nominal")
+                    self.dd.draw_text("control mode", mode_text, 3)
                 if self.ctrl.trap_set is not None:
                     self.dd.draw_trap_set(self.ctrl.trap_set)
 
