@@ -486,9 +486,18 @@ class ExperimentRunner(simulation.Simulation):
         model_error = []
         model_error_normalized = []
 
+        if isinstance(self.ctrl, online_controller.OnlineMPC):
+            XU, _, _ = self.ctrl.ds.training_set(original=True)
+            mean_z = XU[:, 2].mean().item()
+
         for simTime in range(self.num_frames - 1):
             self.dd.draw_text("step", "{}".format(simTime), 1)
             start = time.perf_counter()
+
+
+            if isinstance(self.ctrl, online_controller.OnlineMPC):
+                # set the observed z value to the average of training data due to problems from preprocessing
+                obs[2] = mean_z
 
             action = self.ctrl.command(obs, info)
 
