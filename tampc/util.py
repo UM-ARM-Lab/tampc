@@ -258,9 +258,18 @@ def plot_task_res_dist(series_to_plot, res_file,
                 plot_info = series_to_plot[series_name]
                 logger.info("%s\nsuccess percent %f%% %d trials", series_name, successes * 100, dists.shape[0])
 
+                # only register if we decrease sufficiently from previous min
+                n = dists.shape[0]
+                t = torch.zeros(n)
+                m = torch.ones(n)*100
+                for trial in range(n):
+                    for tt in range(dists.shape[1]):
+                        d = dists[trial, tt]
+                        if d < 0.95 * m[trial]:
+                            m[trial] = d
+                            t[trial] = tt
+
                 # returns first occurrence if repeated
-                t = dists.argmin(axis=1)
-                m = dists.min(axis=1)
                 c = plot_info['color']
                 ax[j].scatter(t, m, color=c, label=plot_info['name'] if 'label' in plot_info else '_nolegend_')
 
