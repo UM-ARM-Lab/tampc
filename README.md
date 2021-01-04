@@ -180,10 +180,11 @@ Whether you are running with CUDA or not will also affect exact reproducibility.
 	python push_main.py learn_representation --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --batch 2048
 	```  
 	learning across the 10 seeds is only necessary for reproducing figure 4. If you only care to run the tasks, you can use the saved model with `--rep_name saved` for the block tasks and `--rep_name saved_peg` for the peg tasks. Alternatively, just learn the seed 1 for pushing and seed 0 for peg (default seeds). Should take about 1 hour per seed.
-3. (optional) learn ablations of the representation  
+3. (optional) learn ablations of the representation and a feedforward baseline
 	```
 	python push_main.py learn_representation --seed 0 1 2 3 4 5 6 7 8 9 --representation rex_ablation --batch 500
 	python push_main.py learn_representation --seed 0 1 2 3 4 5 6 7 8 9 --representation extractor_ablation --batch 500
+	python push_main.py learn_representation --seed 0 1 2 3 4 5 6 7 8 9 --representation feedforward_baseline --batch 500
 	```  
 	only for the planar pushing environment to reproduce figure 4. Should take about 15 minutes per seed.
 4. (optional) fine tune dynamics  

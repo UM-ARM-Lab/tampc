@@ -1711,7 +1711,8 @@ parser.add_argument('--seed', metavar='N', type=int, nargs='+',
                     default=[0],
                     help='random seed(s) to run')
 tsf_map = {'none': UseTsf.NO_TRANSFORM, 'coordinate_transform': UseTsf.COORD, 'learned_rex': UseTsf.REX_EXTRACT,
-           'rex_ablation': UseTsf.EXTRACT, 'extractor_ablation': UseTsf.SEP_DEC, 'skip_z': UseTsf.SKIP}
+           'rex_ablation': UseTsf.EXTRACT, 'extractor_ablation': UseTsf.SEP_DEC, 'skip_z': UseTsf.SKIP,
+           'feedforward_baseline': UseTsf.FEEDFORWARD_BASELINE}
 parser.add_argument('--representation', default='none',
                     choices=tsf_map.keys(),
                     help='representation to use for nominal dynamics')

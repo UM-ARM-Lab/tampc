@@ -261,7 +261,7 @@ def plot_task_res_dist(series_to_plot, res_file,
                 # only register if we decrease sufficiently from previous min
                 n = dists.shape[0]
                 t = torch.zeros(n)
-                m = torch.ones(n)*100
+                m = torch.ones(n) * 100
                 for trial in range(n):
                     for tt in range(dists.shape[1]):
                         d = dists[trial, tt]
@@ -433,6 +433,7 @@ class UseTsf(enum.Enum):
     REX_EXTRACT = 14
     SKIP = 15
     REX_SKIP = 16
+    FEEDFORWARD_BASELINE = 17
 
 
 def get_transform(env, ds, use_tsf, override_name=None):
@@ -464,6 +465,8 @@ def get_transform(env, ds, use_tsf, override_name=None):
         return LearnedTransform.SkipLatentInput(ds, d, name=override_name or "ral_s1")
     elif use_tsf is UseTsf.REX_SKIP:
         return LearnedTransform.RexSkip(ds, d, name=override_name or "ral_s1")
+    elif use_tsf is UseTsf.FEEDFORWARD_BASELINE:
+        return LearnedTransform.NoTransform(ds, d, name=override_name)
     else:
         raise RuntimeError("Unrecgonized transform {}".format(use_tsf))
 
