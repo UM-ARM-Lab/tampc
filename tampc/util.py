@@ -271,7 +271,12 @@ def plot_task_res_dist(series_to_plot, res_file,
 
                 # returns first occurrence if repeated
                 c = plot_info['color']
-                ax[j].scatter(t, m, color=c, label=plot_info['name'] if 'label' in plot_info else '_nolegend_')
+                # ax[j].scatter(t, m, color=c, label=plot_info['name'] if 'label' in plot_info else '_nolegend_')
+                tm = t.median()
+                mm = m.median()
+                ax[j].errorbar(tm, mm, yerr=[[mm-np.percentile(m, 20)], [np.percentile(m, 80)-mm]],
+                               xerr=[[tm-np.percentile(t, 20)], [np.percentile(t, 80)-tm]], color=c,
+                               label=plot_info['name'] if 'label' in plot_info else '_nolegend_', fmt='o')
 
             ax[j].legend(**legend_props)
             ax[j].set_xlim(0, max_t)
