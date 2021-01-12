@@ -68,7 +68,7 @@ class OnlineMPC(controller.MPC):
         cls = self.gating.sample_class(x, u)
         cls[bad_states] = -1
 
-        self.dynamics_class_prediction[t] = cls
+        # self.dynamics_class_prediction[t] = cls
 
         # hybrid dynamics
         next_state = self.dynamics(x, u, cls)
@@ -109,11 +109,14 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                  nominal_max_velocity=0,
                  nonnominal_dynamics_penalty_tolerance=0.6,
                  dynamics_minimum_window=5,
+                 clearance=1e-8,
+                 never_estimate_error_dynamics=False,
                  assume_all_nonnominal_dynamics_are_traps=False,
                  recovery_scale=1, recovery_horizon=5, R_env=None,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
         super(OnlineMPPI, self).__init__(*args, **kwargs)
         self.abs_unrecognized_threshold = abs_unrecognized_threshold
+        self.never_estimate_error_dynamics = never_estimate_error_dynamics
 
         self.recovery_scale = recovery_scale
         self.R_env = tensor_utils.ensure_diagonal(R_env, self.nu).to(device=self.d,
@@ -126,6 +129,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         if manual_init_trap_weight is not None:
             self.trap_set_weight = manual_init_trap_weight
         self.max_trap_weight = max_trap_weight
+        self.min_trap_weight = clearance ** 2 * 20  # C_m is 20 (maximum cost we care about)
 
         # list of strings of nominal states (separated by uses of local dynamics)
         self.nominal_dynamic_states = [[]]
@@ -325,9 +329,10 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         # includes the current observation
         self.nonnominal_dynamics_start_index = len(self.x_history) - 1
 
-        self.dynamics.use_temp_local_nominal_model()
-        # update the local model with the last transition for entering the mode
-        self.dynamics.update(self.x_history[-2], self.u_history[-1], x)
+        if not self.never_estimate_error_dynamics:
+            self.dynamics.use_temp_local_nominal_model()
+            # update the local model with the last transition for entering the mode
+            self.dynamics.update(self.x_history[-2], self.u_history[-1], x)
 
     def _start_recovery_mode(self):
         logger.debug("Entering autonomous recovery mode")
@@ -454,7 +459,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         self.dynamics_class_history.append(self.dynamics_class)
 
         if not self.using_local_model_for_nonnominal_dynamics:
-            self.trap_set_weight *= self.trap_cost_annealing_rate
+            self.trap_set_weight = max(self.trap_set_weight * self.trap_cost_annealing_rate, self.min_trap_weight)
 
         if self._entering_trap():
             self._start_recovery_mode()
@@ -544,3 +549,116 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                 sim = torch.cosine_similarity(self.cost_weights[i], self.cost_weights[j], dim=0)
                 P[i, j] = P[j, i] = sim
         return P
+
+
+class APFVO(OnlineMPC):
+    """Artificial potential field local minima escape using virtual obstacles controller"""
+
+    def __init__(self, *args, samples=5000, trap_max_dist_influence=1, T_a=10, local_min_threshold=0.01,
+                 repulsion_gain=1, **kwargs):
+        self.samples = samples
+        super(APFVO, self).__init__(*args, **kwargs)
+        self.u_scale = self.u_max - self.u_min
+        self.trap_cost = cost.ArtificialRepulsionCost(self.trap_set, self.compare_to_goal, self.state_dist,
+                                                      trap_max_dist_influence, gain=repulsion_gain)
+        self.cost = cost.ComposeCost([self.goal_cost, self.trap_cost])
+        self.T_a = T_a
+        self.local_min_threshold = local_min_threshold
+
+    def _mpc_command(self, obs):
+        t = len(self.u_history)
+        x = obs
+        if t > 0:
+            self.dynamics.update(self.x_history[-2], self.u_history[-1], x)
+
+        if len(self.x_history) > 1:
+            # check if stuck in local minima
+            recent_x = torch.stack(self.x_history[-self.T_a:-1])
+            d = self.state_dist(self.compare_to_goal(obs, recent_x))
+            if torch.any(d < self.local_min_threshold):
+                # place trap points where our model thinks our action will take us
+                trap_state = self._apply_dynamics(obs, self.u_history[-1])
+                self.trap_set.append(trap_state[0])
+
+        # sample a bunch of actions and run them through the dynamics
+        u = torch.rand(self.samples, self.u_scale.shape[0], device=self.u_scale.device)
+        u = u * self.u_scale + self.u_min
+        # select action that leads to min cost
+        next_state = self._apply_dynamics(obs.repeat(self.samples, 1), u)
+        c = self.cost(next_state)
+        ui = c.argmin()
+        return u[ui]
+
+
+class APFSP(OnlineMPC):
+    """Artificial potential field local minima escape using switched potentials controller
+    from https://link.springer.com/article/10.1007/s10846-017-0687-2
+    We use the same method for detecting local minima as with APFVO, but instead of superposition of potentials
+    we switch between global potential and a helical potential meant to direct around obstacles.
+    Note that this method assumes a 2D x-y support, so we will take the first 2 dimensions as x and y or robot.
+    """
+
+    def __init__(self, *args, samples=5000, trap_max_dist_influence=1, obstacle_reaction=10, backup_scale=1, **kwargs):
+        self.samples = samples
+        super(APFSP, self).__init__(*args, **kwargs)
+        self.u_scale = self.u_max - self.u_min
+        self.trap_max_dist_influence = trap_max_dist_influence
+        self.obstacle_reaction = obstacle_reaction
+        self.backup_scale = backup_scale
+        self.preloaded_control = []
+
+    def _mpc_command(self, obs):
+        t = len(self.u_history)
+        x = obs
+        if t > 0:
+            self.dynamics.update(self.x_history[-2], self.u_history[-1], x)
+
+        if len(self.x_history) > 1:
+            # check if bumped into obstacle
+            reaction_magnitude = torch.norm(x[-2:])
+            if reaction_magnitude > self.obstacle_reaction:
+                # place trap points where our model thinks our action will take us
+                trap_state = self._apply_dynamics(obs, self.u_history[-1])
+                self.trap_set.append(trap_state[0])
+                # need to back up a bit as otherwise the helicoid doesn't work with flat obstacles very well
+                # assume negative of control can reverse
+                self.preloaded_control.append(-self.u_history[-1]*self.backup_scale)
+
+        if len(self.preloaded_control):
+            u = self.preloaded_control.pop()
+            return u
+
+        this_cost = self.goal_cost
+        # check if there are any traps that are too close along the tube from current pos to goal
+        active_obstacle = None
+        # specialization to x-y with Euclidean distance
+        xy = x[:2]
+        for o in self.trap_set:
+            oxy = o[:2]
+            gxy = self.goal[:2]
+            d = torch.norm(xy - oxy)
+            if d < self.trap_max_dist_influence:
+                # check if closer than previously found one
+                if active_obstacle is not None:
+                    dd = torch.norm(xy - active_obstacle)
+                    if dd < d:
+                        continue
+                # check if farther than the goal then ignore
+                if d > torch.norm(xy - gxy):
+                    continue
+                # check if obstacle is along the tube to the goal
+                obstacle_alignment = torch.cosine_similarity(oxy - xy, gxy - xy, dim=0)
+                if obstacle_alignment > 0.3:
+                    active_obstacle = oxy
+
+        if active_obstacle is not None:
+            this_cost = cost.APFHelicoid2D(xy, active_obstacle)
+
+        # sample a bunch of actions and run them through the dynamics
+        u = torch.rand(self.samples, self.u_scale.shape[0], device=self.u_scale.device)
+        u = u * self.u_scale + self.u_min
+        # select action that leads to min cost
+        next_state = self._apply_dynamics(obs.repeat(self.samples, 1), u)
+        c = this_cost(next_state)
+        ui = c.argmin()
+        return u[ui]

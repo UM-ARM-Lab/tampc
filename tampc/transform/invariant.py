@@ -310,10 +310,8 @@ class RexTraining(InvariantTransform):
                 weighed_losses = self._weigh_losses(losses)
                 var_across_env = self._rex_variance_across_envs(weighed_losses, info)
 
-                if self.step > rex_anneal_step:
-                    reduced_loss = sum(l.mean() / self.rex_penalty_weight for l in weighed_losses)
-                else:
-                    reduced_loss = sum(l.mean() for l in weighed_losses)
+                # always use reduced loss
+                reduced_loss = sum(l.mean() for l in weighed_losses)
 
                 reduced_loss += sum(v for v in var_across_env)
                 reduced_loss.backward()
@@ -672,7 +670,7 @@ class TranslationEvaluationTransform(InvariantTransform):
         if writer is not None:
             for dd in translation_generator():
                 ls = self._evaluate_metrics_on_whole_set(True, TransformToUse.LATENT_SPACE, move_params=dd)
-                self._record_metrics(writer, ls, suffix="/validation_{}_{}".format(dd[0], dd[1]))
+                self._record_metrics(writer, ls, suffix="/validation_{}_{}".format(dd[0], dd[1]), log=True)
 
                 if self.ds_test is not None:
                     for i, ds_test in enumerate(self.ds_test):
@@ -685,6 +683,61 @@ class TranslationEvaluationTransform(InvariantTransform):
 
 
 class LearnedTransform:
+    class NoTransform(TranslationEvaluationTransform):
+        """Directly learn map x,u -> dx; here to utilize the training framework for logging"""
+
+        def __init__(self, ds, device, dynamics_opts=None, **kwargs):
+            # z = (x,u), v = dx
+            opts = {'h_units': (32, 32)}
+            if dynamics_opts:
+                opts.update(dynamics_opts)
+            config = load_data.DataConfig()
+            nz = ds.config.input_dim()
+            nv = ds.config.ny
+            config.nx = nz
+            config.ny = nv
+            self.dynamics = model.DeterministicUser(make.make_sequential_network(config, **opts).to(device=device))
+            name = kwargs.pop('name', '')
+            super().__init__(ds, nz=nz, nv=nv, name='{}_{}'.format(self._name_prefix(), name), **kwargs)
+
+        def modules(self):
+            return {'dynamics': self.dynamics.model}
+
+        def _name_prefix(self):
+            return 'notransform'
+
+        @tensor_utils.ensure_2d_input
+        def xu_to_z(self, state, action):
+            z = torch.cat((state, action), dim=1)
+            return z
+
+        @tensor_utils.ensure_2d_input
+        def get_dx(self, x, v):
+            return v
+
+        @tensor_utils.ensure_2d_input
+        def get_v(self, x, dx, z):
+            return dx
+
+        def get_yhat(self, X, U, Y):
+            z = self.xu_to_z(X, U)
+            yhat = self.dynamics.sample(z)
+            return yhat
+
+        @staticmethod
+        def loss_names():
+            return "mse_loss", "percent_match"
+
+        def loss_weights(self):
+            return [0, 1]
+
+        def _evaluate_batch(self, X, U, Y, weights=None, tsf=TransformToUse.LATENT_SPACE):
+            z = self.xu_to_z(X, U)
+            yhat = self.dynamics.sample(z)
+            mse_loss = torch.norm(yhat - Y, dim=1)
+            return mse_loss, mse_loss / Y.norm(dim=1).mean(),
+
+
     class DxToV(TranslationEvaluationTransform):
         def __init__(self, ds, device, nz=5, nv=5, mse_weight=0, reconstruction_weight=1, match_weight=1,
                      encoder_opts=None,

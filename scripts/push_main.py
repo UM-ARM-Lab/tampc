@@ -66,6 +66,8 @@ class BlockPushGetter(EnvGetter):
     def pre_invariant_preprocessor(use_tsf: UseTsf) -> preprocess.Transformer:
         if use_tsf is UseTsf.COORD:
             return preprocess.PytorchTransformer(preprocess.NullSingleTransformer())
+        elif use_tsf is UseTsf.FEEDFORWARD_BASELINE:
+            return util.no_tsf_preprocessor()
         else:
             return preprocess.PytorchTransformer(preprocess.NullSingleTransformer(),
                                                  preprocess.RobustMinMaxScaler(feature_range=[[0, 0, 0], [3, 3, 1.5]]))
@@ -93,7 +95,7 @@ class BlockPushGetter(EnvGetter):
             'u_similarity': env.control_similarity,
             'device': d,
             'terminal_cost_multiplier': 50,
-            'abs_unrecognized_threshold': 10,
+            'abs_unrecognized_threshold': 10 / 1.1407,  # to account for previous runs with bug in error
             # 'nominal_max_velocity':  0.02,
         }
         mpc_opts = {
@@ -803,6 +805,9 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                    visualize_rollout=False,
                    override_tampc_params=None,
                    override_mpc_params=None,
+                   never_estimate_error=False,
+                   apfvo_baseline=False,
+                   apfsp_baseline=False,
                    **kwargs):
     if adaptive_control_baseline:
         use_tsf = UseTsf.NO_TRANSFORM
@@ -854,21 +859,38 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
         else:
             gating = hybrid_dynamics.get_gating() if gating is None else gating
 
-        ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
-                                            autonomous_recovery=autonomous_recovery,
-                                            assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
-                                            reuse_escape_as_demonstration=reuse_escape_as_demonstration,
-                                            use_trap_cost=use_trap_cost,
-                                            **tampc_opts, constrain_state=constrain_state,
-                                            mpc_opts=mpc_opts)
+        if apfvo_baseline or apfsp_baseline:
+            tampc_opts.pop('abs_unrecognized_threshold')
+            tampc_opts.pop('R_env')
+            tampc_opts.pop('recovery_scale')
+            if apfvo_baseline:
+                ctrl = online_controller.APFVO(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                               local_min_threshold=0.003, trap_max_dist_influence=0.2,
+                                               repulsion_gain=0.01,
+                                               **tampc_opts)
+                env.draw_user_text("APF-VO baseline", 13, left_offset=-1.5)
+            if apfsp_baseline:
+                ctrl = online_controller.APFSP(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                               trap_max_dist_influence=0.2,
+                                               **tampc_opts)
+                env.draw_user_text("APF-SP baseline", 13, left_offset=-1.5)
+        else:
+            ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                                autonomous_recovery=autonomous_recovery,
+                                                assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
+                                                reuse_escape_as_demonstration=reuse_escape_as_demonstration,
+                                                use_trap_cost=use_trap_cost,
+                                                never_estimate_error_dynamics=never_estimate_error,
+                                                **tampc_opts, constrain_state=constrain_state,
+                                                mpc_opts=mpc_opts)
+            env.draw_user_text(gating.name, 13, left_offset=-1.5)
+            env.draw_user_text("recovery {}".format(autonomous_recovery.name), 11, left_offset=-1.6)
+            if reuse_escape_as_demonstration:
+                env.draw_user_text("reuse escape", 10, left_offset=-1.6)
+            if use_trap_cost:
+                env.draw_user_text("trap set cost".format(autonomous_recovery.name), 9, left_offset=-1.6)
         ctrl.set_goal(env.goal)
-        env.draw_user_text(gating.name, 13, left_offset=-1.5)
         env.draw_user_text("run seed {}".format(seed), 12, left_offset=-1.5)
-        env.draw_user_text("recovery {}".format(autonomous_recovery.name), 11, left_offset=-1.6)
-        if reuse_escape_as_demonstration:
-            env.draw_user_text("reuse escape", 10, left_offset=-1.6)
-        if use_trap_cost:
-            env.draw_user_text("trap set cost".format(autonomous_recovery.name), 9, left_offset=-1.6)
 
     sim = block_push.InteractivePush(env, ctrl, num_frames=num_frames, plot=False, save=True, stop_when_done=True,
                                      visualize_rollouts=visualize_rollout)
@@ -896,8 +918,15 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
         if adaptive_control_baseline:
             affix_run_name("ADAPTIVE_BASELINE")
         else:
+            if apfvo_baseline:
+                affix_run_name('APFVO')
+            elif apfsp_baseline:
+                affix_run_name('APFSP')
             affix_run_name(nominal_adapt.name)
-            affix_run_name(autonomous_recovery.name + ("_WITHDEMO" if use_demo else ""))
+            if not apfvo_baseline and not apfsp_baseline:
+                affix_run_name(autonomous_recovery.name + ("_WITHDEMO" if use_demo else ""))
+        if never_estimate_error:
+            affix_run_name('NO_E')
         affix_run_name(level)
         affix_run_name(use_tsf.name)
         if not adaptive_control_baseline:
@@ -1642,7 +1671,11 @@ class EvaluateTask:
             n = pos_to_node(xy)
             if n not in visited:
                 logger.warning("reached state %s node %s not visited", xy, n)
-                dists.append(None)
+                # assign euclidean distance for those out of bounds
+                if xy[0] < min_pos[0] or xy[1] < min_pos[1] or xy[0] > max_pos[0] or xy[1] > max_pos[1]:
+                    dists.append(np.linalg.norm(xy - goal_pos))
+                else:
+                    dists.append(None)
             else:
                 dists.append(visited[n])
                 if visited[n] < min_dist:
@@ -1680,7 +1713,8 @@ parser.add_argument('--seed', metavar='N', type=int, nargs='+',
                     default=[0],
                     help='random seed(s) to run')
 tsf_map = {'none': UseTsf.NO_TRANSFORM, 'coordinate_transform': UseTsf.COORD, 'learned_rex': UseTsf.REX_EXTRACT,
-           'rex_ablation': UseTsf.EXTRACT, 'extractor_ablation': UseTsf.SEP_DEC, 'skip_z': UseTsf.SKIP}
+           'rex_ablation': UseTsf.EXTRACT, 'extractor_ablation': UseTsf.SEP_DEC, 'skip_z': UseTsf.SKIP,
+           'feedforward_baseline': UseTsf.FEEDFORWARD_BASELINE}
 parser.add_argument('--representation', default='none',
                     choices=tsf_map.keys(),
                     help='representation to use for nominal dynamics')
@@ -1695,10 +1729,19 @@ parser.add_argument('--task', default=list(task_map.keys())[0], choices=task_map
                     help='run parameter: what task to run')
 parser.add_argument('--num_frames', metavar='N', type=int, default=500,
                     help='run parameter: number of simulation frames to run')
+parser.add_argument('--always_estimate_error', action='store_true',
+                    help='run parameter: always online estimate error dynamics using a GP')
+parser.add_argument('--never_estimate_error', action='store_true',
+                    help='run parameter: never online estimate error dynamics using a GP (always use e=0)')
 parser.add_argument('--no_trap_cost', action='store_true', help='run parameter: turn off trap set cost')
 parser.add_argument('--nonadaptive_baseline', action='store_true',
                     help='run parameter: use non-adaptive baseline options')
 parser.add_argument('--adaptive_baseline', action='store_true', help='run parameter: use adaptive baseline options')
+parser.add_argument('--apfvo_baseline', action='store_true',
+                    help='run parameter: use artificial potential field virtual obstacles baseline')
+parser.add_argument('--apfsp_baseline', action='store_true',
+                    help='run parameter: use artificial potential field switched potential baseline')
+
 parser.add_argument('--random_ablation', action='store_true', help='run parameter: use random recovery policy options')
 parser.add_argument('--visualize_rollout', action='store_true',
                     help='run parameter: visualize MPC rollouts (slows down running)')
@@ -1729,8 +1772,12 @@ if __name__ == "__main__":
         OfflineDataCollection.freespace(seed=args.seed[0], trials=200, trial_length=50, force_gui=args.gui)
         OfflineDataCollection.push_against_wall_recovery()
     elif args.command == 'learn_representation':
+        dynamics_opts = {}
+        if ut == UseTsf.FEEDFORWARD_BASELINE:
+            dynamics_opts = {'h_units': (16, 32, 32, 32, 16, 32)}
         for seed in args.seed:
-            BlockPushGetter.learn_invariant(ut, seed=seed, name="", MAX_EPOCH=3000, BATCH_SIZE=args.batch)
+            BlockPushGetter.learn_invariant(ut, seed=seed, name=args.rep_name, MAX_EPOCH=3000, BATCH_SIZE=args.batch,
+                                            dynamics_opts=dynamics_opts)
     elif args.command == 'fine_tune_dynamics':
         BlockPushGetter.learn_model(ut, seed=args.seed[0], name="", rep_name=args.rep_name)
     elif args.command == 'run':
@@ -1738,6 +1785,8 @@ if __name__ == "__main__":
         autonomous_recovery = online_controller.AutonomousRecovery.MAB
         use_trap_cost = not args.no_trap_cost
 
+        if args.always_estimate_error:
+            nominal_adapt = OnlineAdapt.GP_KERNEL_INDEP_OUT
         if args.adaptive_baseline:
             nominal_adapt = OnlineAdapt.GP_KERNEL_INDEP_OUT
             autonomous_recovery = online_controller.AutonomousRecovery.NONE
@@ -1757,7 +1806,10 @@ if __name__ == "__main__":
                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
                                      visualize_rollout=args.visualize_rollout,
                                      override_tampc_params=tampc_params, override_mpc_params=mpc_params,
-                                     autonomous_recovery=autonomous_recovery)
+                                     autonomous_recovery=autonomous_recovery,
+                                     never_estimate_error=args.never_estimate_error,
+                                     apfvo_baseline=args.apfvo_baseline,
+                                     apfsp_baseline=args.apfsp_baseline)
     elif args.command == 'evaluate':
         util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
                                                 args.eval_run_prefix, suffix="{}.mat".format(args.num_frames))
@@ -1766,45 +1818,69 @@ if __name__ == "__main__":
         util.plot_task_res_dist({
             'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC', 'color': 'green', 'label': True},
-            # 'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'TAMPC random', 'color': 'orange', 'label': True},
+            'auto_recover__NONE__MAB__NO_E__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC e=0', 'color': [0.8, 0.5, 0], 'label': True},
+            'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC rand. rec.', 'color': [0.8, 0.8, 0], 'label': True},
             # 'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2': {
             #     'name': 'TAMPC skip z (aggregate)', 'color': 'black', 'label': True},
-            'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s2': {
-                'name': 'TAMPC skip z (seed 2)', 'color': 'black', 'label': True},
-            'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s3': {
-                'name': 'TAMPC skip z (seed 3)', 'color': 'red', 'label': True},
-            'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s4': {
-                'name': 'TAMPC skip z (seed 4)', 'color': 'blue', 'label': True},
-            'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s5': {
-                'name': 'TAMPC skip z (seed 5)', 'color': 'cyan', 'label': True},
-            'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s6': {
-                'name': 'TAMPC skip z (seed 6)', 'color': 'magenta', 'label': True},
-            'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s7': {
-                'name': 'TAMPC skip z (seed 7)', 'color': 'orange', 'label': True},
-            # 'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'non-adapative', 'color': 'purple', 'label': True},
-            # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'adaptive baseline++', 'color': 'red', 'label': True},
-            # 'sac__5': {'name': 'SAC', 'color': 'cyan', 'label': True},
+            # 'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s2': {
+            #     'name': 'TAMPC skip z (seed 2)', 'color': 'black', 'label': True},
+            # 'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s3': {
+            #     'name': 'TAMPC skip z (seed 3)', 'color': 'red', 'label': True},
+            # 'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s4': {
+            #     'name': 'TAMPC skip z (seed 4)', 'color': 'blue', 'label': True},
+            # 'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s5': {
+            #     'name': 'TAMPC skip z (seed 5)', 'color': 'cyan', 'label': True},
+            # 'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s6': {
+            #     'name': 'TAMPC skip z (seed 6)', 'color': 'magenta', 'label': True},
+            # 'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s7': {
+            #     'name': 'TAMPC skip z (seed 7)', 'color': 'orange', 'label': True},
+            'auto_recover__APFVO__NONE__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-VO', 'color': 'black', 'label': True},
+            # 'auto_recover__APFLME__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-VO', 'color': 'black', 'label': True},
+            'auto_recover__APFSP__NONE__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-SP', 'color': [0.5, 0.5, 0.5], 'label': True},
+            # 'auto_recover__APFSP__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-SP', 'color': [0.5, 0.5, 0.5], 'label': True},
+            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'adaptive MPC++', 'color': 'red', 'label': True},
+            'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'non-adapative', 'color': 'purple', 'label': True},
+            'sac__5': {'name': 'SAC', 'color': 'cyan', 'label': True},
+            # 'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-LME adaptive', 'color': 'yellow', 'label': True},
 
-            # 'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'TAMPC', 'color': 'green'},
-            # 'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'TAMPC random', 'color': 'orange'},
-            # 'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'non-adapative', 'color': 'purple'},
-            # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'adaptive baseline++', 'color': 'red'},
-            # 'sac__6': {'name': 'SAC', 'color': 'cyan'},
+            'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC', 'color': 'green'},
+            'auto_recover__NONE__MAB__NO_E__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC e=0', 'color': [0.8, 0.5, 0]},
+            'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC random', 'color': [0.8, 0.8, 0]},
+            'auto_recover__APFVO__NONE__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-VO', 'color': 'black'},
+            # 'auto_recover__APFLME__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-VO', 'color': 'black'},
+            'auto_recover__APFSP__NONE__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
+            # 'auto_recover__APFSP__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
+            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'adaptive MPC++', 'color': 'red'},
+            'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'non-adapative', 'color': 'purple'},
+            'sac__6': {'name': 'SAC', 'color': 'cyan'},
+            # 'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-LME adaptive', 'color': 'yellow'},
         }, 'pushing_task_res.pkl', expected_data_len=args.num_frames - 1, figsize=(5, 7), task_names=task_names,
-            success_min_dist=0.5)
+            success_min_dist=0.3)
 
     else:
-        pass
-        # tune_trap_set_cost(seed=0, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-        #                    use_trap_cost=True,
-        #                    autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-
-        # tune_recovery_policy(seed=0, level=1, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-        #                      autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+        # for size in [16, 64]:
+        for seed in range(10):
+            BlockPushGetter.learn_invariant(UseTsf.FEEDFORWARD_BASELINE, seed=seed, name="t17",
+                                            MAX_EPOCH=4000, BATCH_SIZE=500,
+                                            dynamics_opts={'h_units': (16, 32, 32, 32, 16, 32)})
+            # BlockPushGetter.learn_invariant(UseTsf.REX_EXTRACT, seed=seed, name="t16",
+            #                                 MAX_EPOCH=3000, BATCH_SIZE=2048)

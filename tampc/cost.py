@@ -3,7 +3,7 @@ import torch
 import logging
 import abc
 import numpy as np
-from arm_pytorch_utilities import linalg, tensor_utils
+from arm_pytorch_utilities import linalg, tensor_utils, math_utils
 
 logger = logging.getLogger(__name__)
 
@@ -233,3 +233,57 @@ class ComposeCost(Cost):
 
         costs = costs.sum(dim=0)
         return costs
+
+
+class ArtificialRepulsionCost(Cost):
+    """Cost for artificial potential fields of repulsion"""
+
+    def __init__(self, state_set, compare_to_goal, state_dist, max_dist_influence, gain=1):
+        self.state_set = state_set
+        self.compare_to_goal = compare_to_goal
+        self.state_dist = state_dist
+        self.max_dist_influence = max_dist_influence
+        self.gain = gain
+
+    @tensor_utils.handle_batch_input
+    def __call__(self, X, U=None, terminal=False):
+        costs = []
+        if U is not None:
+            assert X.shape[:-1] == U.shape[:-1]
+
+        for i, state in enumerate(self.state_set):
+            rho = self.state_dist(self.compare_to_goal(X, state))
+            inside_range = rho <= self.max_dist_influence
+            c = torch.zeros_like(rho)
+            c[inside_range] = (1 / rho[inside_range] - 1 / self.max_dist_influence).square()
+            c = torch.clamp(c, 0, TRAP_MAX_COST)
+            costs.append(c)
+
+        if len(costs):
+            costs = torch.stack(costs, dim=0)
+            costs = costs.sum(dim=0)
+        else:
+            costs = torch.zeros(X.shape[0], dtype=X.dtype, device=X.device)
+
+        return costs * self.gain
+
+
+class APFHelicoid2D(Cost):
+    """Helicoid potential field in 2D"""
+
+    def __init__(self, rxy, oxy, clockwise=False):
+        # robot and obstacle xy
+        self.rxy = rxy
+        self.oxy = oxy
+        self.clockwise = clockwise
+
+    @tensor_utils.handle_batch_input
+    def __call__(self, X, U=None, terminal=False):
+        original_angle = self.oxy - self.rxy
+        original_angle = torch.atan2(original_angle[1], original_angle[0])
+        Xxy = X[:, :2]
+        d = self.oxy - Xxy
+        angles = torch.atan2(d[:, 1], d[:, 0])
+
+        angular_diffs = math_utils.angular_diff_batch(original_angle, angles) * torch.norm(d,dim=1)
+        return angular_diffs * (1 if self.clockwise else -1)

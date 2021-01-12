@@ -247,7 +247,7 @@ class NetworkModelWrapper(LearnableParameterizedModel, DynamicsModel):
         for epoch in range(0, max_epoch):  # loop over the dataset multiple times
             if self.writer is None:
                 self.writer = SummaryWriter(flush_secs=20, comment=os.path.basename(self.name))
-            if save_checkpoint_every_n_epochs and epoch % save_checkpoint_every_n_epochs == 0:
+            if save_checkpoint_every_n_epochs and epoch > 0 and epoch % save_checkpoint_every_n_epochs == 0:
                 self.save()
 
             for i_batch, data in enumerate(train_loader):

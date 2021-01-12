@@ -388,11 +388,14 @@ class PushAgainstWallEnv(PybulletEnv):
             return
         T = len(trap_set)
         for t in range(T):
-            state, action = trap_set[t]
-            pose = self.get_block_pose(state)
             c = (t + 1) / (T + 1)
+            if len(trap_set[t]) is 2:
+                state, action = trap_set[t]
+                self._draw_action(action.cpu().numpy(), old_state=state.cpu().numpy(), debug=t + 1)
+            else:
+                state = trap_set[t]
+            pose = self.get_block_pose(state)
             self._dd.draw_2d_pose('ts{}'.format(t), pose, (1, 0, c))
-            self._draw_action(action.cpu().numpy(), old_state=state.cpu().numpy(), debug=t + 1)
         self._dd.clear_visualization_after('ts', T)
         self._dd.clear_visualization_after('u', T + 1)
 

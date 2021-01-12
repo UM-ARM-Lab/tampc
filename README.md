@@ -47,6 +47,7 @@ training model, and testing trained models on novel environments.
 
 
 # Reproducing Paper Results
+Use the `update_post_ral` branch of this repository (although master should work also).
 The codebase is entirely in python, and it is recommended to create a new [conda](https://docs.conda.io/projects/conda/en/latest/user-guide/install/) environment and set up the dependencies with the following commands. For the 3rd line, replace 9.2 with your CUDA version from `nvcc --version`.
 ```
 conda create --name tampc python=3.7.5
@@ -174,102 +175,118 @@ Whether you are running with CUDA or not will also affect exact reproducibility.
 	```
 	python push_main.py collect --seed 4
 	```  
-	you can visualize the collection process by passing in `--gui` flag. Should take about 1 hour.
-2. (optional) learn dynamics representations  
+	you can visualize the collection process by passing in `--gui` flag. Should take about 1 hour. The data is included as part of the repository, and this step is mainly for you to validate the collection process.
+2. (optional) learn dynamics representations and compare against feedforward baseline (reproduce figure 4)
 	```
-	python push_main.py learn_representation --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --batch 2048
+	python push_main.py learn_representation --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --batch 2048 --rep_name eval
+	python push_main.py learn_representation --seed 0 1 2 3 4 5 6 7 8 9 --representation feedforward_baseline --batch 500 --rep_name eval
+    python plot_run_result.py 
 	```  
-	learning across the 10 seeds is only necessary for reproducing figure 4. If you only care to run the tasks, you can use the saved model with `--rep_name saved` for the block tasks and `--rep_name saved_peg` for the peg tasks. Alternatively, just learn the seed 1 for pushing and seed 0 for peg (default seeds). Should take about 1 hour per seed.
-3. (optional) learn ablations of the representation  
-	```
-	python push_main.py learn_representation --seed 0 1 2 3 4 5 6 7 8 9 --representation rex_ablation --batch 500
-	python push_main.py learn_representation --seed 0 1 2 3 4 5 6 7 8 9 --representation extractor_ablation --batch 500
-	```  
-	only for the planar pushing environment to reproduce figure 4. Should take about 15 minutes per seed.
-4. (optional) fine tune dynamics  
+	learning across the 10 seeds is only necessary for reproducing figure 4. Should take 1-2 hours per seed. If you only care to run the tasks, you can use the saved model with `--rep_name saved` for the block tasks and `--rep_name saved_peg` for the peg tasks. Alternatively, just learn the seed 1 for pushing and seed 0 for peg (default seeds). Should take about 1 hour per seed.
+3. (optional) fine tune dynamics  
 	```
 	python push_main.py fine_tune_dynamics --representation learned_rex --rep_name saved
 	```
 	to select a different learned representation, for example pass in `--rep_name s1` to use the seed 1 model (`saved` for the one used in the paper).  
 	If you decide to not use the default name, then you will have to also pass the same `--rep_name` argument to other commands.  
 	Note that 1 dynamics model is saved per representation type (`learned_rex`, `rex_ablation`, ...), so if you fine tune the dynamics on one representation model but forget to pass the `--rep_name` argument to the other commands, the resulting model will output garbage! If you want to use a different trained representation, you"ll have to re-fine tune the dynamics. One hint is if the logged network error is higher than the least squares error (we check and log this at the start of running the controller). Note that you can also pass in `--seed 1` here to learn the dynamics with a different seed (only the first seed in the list is used). Should take about 3 minutes.
-5. also learn dynamics in original space for comparison later `python push_main.py fine_tune_dynamics --representation none`
-6. run task with options
+4. also learn dynamics in original space for comparison later `python push_main.py fine_tune_dynamics --representation none`
+5. run task with options
 	```
 	python push_main.py run --task "Block-H" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name saved
 	python push_main.py run --task "Block-D" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name saved
 	```
 	```
-	python peg_main.py run --task "Peg-U" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name saved_peg
-	python peg_main.py run --task "Peg-I" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name saved_peg
+	python peg_main.py run --task "Peg-U" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name saved_peg --tampc_param dynamics_minimum_window=15 --mpc_param horizon=15 --run_prefix h15_larger_min_window
+	python peg_main.py run --task "Peg-I" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name saved_peg --tampc_param trap_cost_annealing_rate=0.95 --mpc_param horizon=20 --run_prefix h20_less_anneal
 	python peg_main.py run --task "Peg-T" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name saved_peg
 	python peg_main.py run --task "Peg-T(T)" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name saved_peg
 	```
 	there is a `--visualize_rollout` option to show what the planned MPC trajectory would take the state. Should take about 10 minutes per 500 frame run.
-7. run task with adaptive baseline with the `--adaptive_baseline` option; for example
+6. run tasks with adaptive baseline with the `--adaptive_baseline` option; for example
 	```
 	python push_main.py run --task "Block-H" --seed 0 1 2 3 4 5 6 7 8 9 --adaptive_baseline
 	```
-8. run task with random recovery policy ablation option
+7. run tasks with artificial potential field (APF) baselines; for example
+	```
+	python peg_main.py run --task "Peg-U" --seed 0 1 2 3 4 5 6 7 8 9 --apfvo_baseline --representation learned_rex --rep_name saved_peg
+	python peg_main.py run --task "Peg-U" --seed 0 1 2 3 4 5 6 7 8 9 --apfsp_baseline --representation learned_rex --rep_name saved_peg
+	```
+8. run tasks with random recovery policy ablation option; for example
 	```
 	python push_main.py run --task "Block-H" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --random_ablation --rep_name saved
 	python push_main.py run --task "Block-D" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --random_ablation --rep_name saved
 	```
-9. run task with non-adaptive baseline with the `--nonadaptive_baseline` option; for example
+9. run tasks with non-adaptive baseline with the `--nonadaptive_baseline` option; for example
 	```
 	python push_main.py run --task "Block-H" --seed 0 1 2 3 4 5 6 7 8 9 --nonadaptive_baseline
 	```
 10. run Peg-T(T) with dynamics in the original space
 	```
-	python peg_main.py run --task "Peg-T(T)" --seed 0 1 2 3 4 5 6 7 8 9 --representation none --rep_name saved_peg
+	python peg_main.py run --task "Peg-T(T)" --seed 0 1 2 3 4 5 6 7 8 9 --representation none 
 	```
-11. run the tuned controller for Peg-U and Peg-I
+11. run tasks with the no error estimation ablation with the `--never_estimate_error` option; for example
 	```
-	python peg_main.py run --task "Peg-U" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name saved_peg --tampc_param dynamics_minimum_window=15 --mpc_param horizon=15 --run_prefix h15_larger_min_window
-	python peg_main.py run --task "Peg-I" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name saved_peg --tampc_param trap_cost_annealing_rate=0.95 --mpc_param horizon=20 --run_prefix h20_less_anneal
+	python peg_main.py run --task "Peg-T" --seed 0 1 2 3 4 5 6 7 8 9 --representation learned_rex --rep_name saved_peg --never_estimate_error
 	```
-11. evaluate the performance of the runs to prepare for visualization (saved to cache)
+12. evaluate the performance of the runs to prepare for visualization (saved to cache); for example (see the `_main.py` scripts' dictionary of runs to visualize for full list of names)
 	```
 	python push_main.py evaluate --eval_run_prefix auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
+	python push_main.py evaluate --eval_run_prefix auto_recover__NONE__MAB__NO_E__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
 	python push_main.py evaluate --eval_run_prefix auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
+	python push_main.py evaluate --eval_run_prefix auto_recover__APFVO__NONE__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
+	python push_main.py evaluate --eval_run_prefix auto_recover__APFSP__NONE__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
 	python push_main.py evaluate --eval_run_prefix auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST
 	python push_main.py evaluate --eval_run_prefix auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST
 	```
 	```
 	python push_main.py evaluate --eval_run_prefix auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
+	python push_main.py evaluate --eval_run_prefix auto_recover__NONE__MAB__NO_E__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
 	python push_main.py evaluate --eval_run_prefix auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
+	python push_main.py evaluate --eval_run_prefix auto_recover__APFVO__NONE__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
+	python push_main.py evaluate --eval_run_prefix auto_recover__APFSP__NONE__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
 	python push_main.py evaluate --eval_run_prefix auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST
 	python push_main.py evaluate --eval_run_prefix auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST
 	```
 	```
-	python peg_main.py evaluate --eval_run_prefix auto_recover__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
+	python peg_main.py evaluate --eval_run_prefix auto_recover__h15_larger_min_window__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
+	python peg_main.py evaluate --eval_run_prefix auto_recover__NONE__MAB__NO_E__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
 	python peg_main.py evaluate --eval_run_prefix auto_recover__NONE__RANDOM__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
+	python peg_main.py evaluate --eval_run_prefix auto_recover__APFVO__NONE__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
+	python peg_main.py evaluate --eval_run_prefix auto_recover__APFSP__NONE__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
 	python peg_main.py evaluate --eval_run_prefix auto_recover__NONE__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST
 	python peg_main.py evaluate --eval_run_prefix auto_recover__GP_KERNEL_INDEP_OUT__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST
-	python peg_main.py evaluate --eval_run_prefix auto_recover__h15_larger_min_window__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
 	```
 	```
-	python peg_main.py evaluate --eval_run_prefix auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
+	python peg_main.py evaluate --eval_run_prefix auto_recover__h20_less_anneal__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
+	python peg_main.py evaluate --eval_run_prefix auto_recover__NONE__MAB__NO_E__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
 	python peg_main.py evaluate --eval_run_prefix auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
+	python peg_main.py evaluate --eval_run_prefix auto_recover__APFVO__NONE__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
+	python peg_main.py evaluate --eval_run_prefix auto_recover__APFSP__NONE__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
 	python peg_main.py evaluate --eval_run_prefix auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST
 	python peg_main.py evaluate --eval_run_prefix auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST
-	python peg_main.py evaluate --eval_run_prefix auto_recover__h20_less_anneal__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
 	```
 	```
 	python peg_main.py evaluate --eval_run_prefix auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
+	python peg_main.py evaluate --eval_run_prefix auto_recover__NONE__MAB__NO_E__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
 	python peg_main.py evaluate --eval_run_prefix auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
+	python peg_main.py evaluate --eval_run_prefix auto_recover__APFVO__NONE__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
+	python peg_main.py evaluate --eval_run_prefix auto_recover__APFSP__NONE__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
 	python peg_main.py evaluate --eval_run_prefix auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST
 	python peg_main.py evaluate --eval_run_prefix auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST
 	```
 	```
 	python peg_main.py evaluate --eval_run_prefix auto_recover__NONE__MAB__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
+	python peg_main.py evaluate --eval_run_prefix auto_recover__NONE__MAB__NO_E__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
 	python peg_main.py evaluate --eval_run_prefix auto_recover__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
 	python peg_main.py evaluate --eval_run_prefix auto_recover__NONE__RANDOM__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
+	python peg_main.py evaluate --eval_run_prefix auto_recover__APFVO__NONE__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
+	python peg_main.py evaluate --eval_run_prefix auto_recover__APFSP__NONE__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST
 	python peg_main.py evaluate --eval_run_prefix auto_recover__NONE__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST
 	python peg_main.py evaluate --eval_run_prefix auto_recover__GP_KERNEL_INDEP_OUT__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST
 	```
-	also run this for any other series you decide to perform (including the SAC baseline) with different names by passing in `--run_prefix myname`. The data used in the paper is in `paper_data`; if you want to use that, copy the `data` directory inside of it to `tampc`, merging with the existing `data` directory.
-12. plot the performance results (columns of figure 7)
+	also run this for any other series you decide to perform (including the SAC baseline) with different names by passing in `--run_prefix myname`. 
+13. plot the performance results (columns of figure 7); will also report the success rate for Table 1.
 	```
 	python push_main.py visualize
 	python peg_main.py visualize1

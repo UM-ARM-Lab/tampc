@@ -60,6 +60,8 @@ class PegGetter(EnvGetter):
     def pre_invariant_preprocessor(use_tsf: UseTsf) -> preprocess.Transformer:
         if use_tsf is UseTsf.COORD:
             return preprocess.PytorchTransformer(preprocess.NullSingleTransformer())
+        elif use_tsf is UseTsf.FEEDFORWARD_BASELINE:
+            return util.no_tsf_preprocessor()
         else:
             return preprocess.PytorchTransformer(preprocess.NullSingleTransformer(),
                                                  preprocess.RobustMinMaxScaler())
@@ -85,7 +87,7 @@ class PegGetter(EnvGetter):
             'device': d,
             'terminal_cost_multiplier': 50,
             'trap_cost_annealing_rate': 0.9,
-            'abs_unrecognized_threshold': 15,
+            'abs_unrecognized_threshold': 15 / 1.2185,  # to account for previous runs with bug in error
             # 'nonnominal_dynamics_penalty_tolerance': 0.1,
             # 'dynamics_minimum_window': 15,
         }
@@ -112,7 +114,7 @@ class PegGetter(EnvGetter):
             init_peg = [0, -0.2]
             hole_pos = [0, 0.2]
 
-        if level in [3, 5]:
+        if level in [3, 5, 8]:
             init_peg = [0, -0.05]
             hole_pos = [0, 0.2]
 
@@ -140,6 +142,19 @@ class PegGetter(EnvGetter):
         env = peg_in_hole.PegFloatingGripperEnv(**env_opts)
         cls.env_dir = 'peg/floating'
         return env
+
+    @classmethod
+    def learn_invariant(cls, use_tsf=UseTsf.REX_EXTRACT, seed=1, name="", MAX_EPOCH=1000, BATCH_SIZE=500, resume=False,
+                        **kwargs):
+        d, env, config, ds = cls.free_space_env_init(seed)
+        ds.update_preprocessor(cls.pre_invariant_preprocessor(use_tsf))
+        invariant_cls = get_transform(env, ds, use_tsf).__class__
+        ds_test = cls.ds(env, "peg/peg_contact_test_set.mat", validation_ratio=0.)
+        common_opts = {'name': "{}_s{}".format(name, seed), 'ds_test': [ds_test]}
+        invariant_tsf = invariant_cls(ds, d, **common_opts, **kwargs)
+        if resume:
+            invariant_tsf.load(invariant_tsf.get_last_checkpoint())
+        invariant_tsf.learn_model(MAX_EPOCH, BATCH_SIZE)
 
 
 class OfflineDataCollection:
@@ -174,6 +189,34 @@ class OfflineDataCollection:
         plt.ioff()
         plt.show()
 
+    @staticmethod
+    def test_set():
+        # get data in and around the bug trap we want to avoid in the future
+        env = PegGetter.env(p.GUI, task_map['Peg-T'])
+        env.set_task_config(init_peg=[0.1, 0.12])
+
+        def rn(scale):
+            return np.random.randn() * scale
+
+        u = []
+        seed = rand.seed(2)
+        for _ in range(5):
+            u.append([0.4, 0.7 + rn(0.5)])
+        for i in range(15):
+            u.append([-0.0 + (i - 7) * 0.1, 0.8 + rn(0.5)])
+        for i in range(15):
+            u.append([-0.8 + rn(0.2), -0. + (i - 7) * 0.1])
+        for i in range(5):
+            u.append([-0.1 + rn(0.1), -1.])
+        u.append([-0.6, -0.])
+        for i in range(10):
+            u.append([-0. + rn(0.5), 0.9])
+
+        ctrl = controller.PreDeterminedController(np.array(u), *env.get_control_bounds())
+        sim = peg_in_hole.PegInHole(env, ctrl, num_frames=len(u), plot=False, save=True,
+                                    stop_when_done=False)
+        sim.run(seed, 'peg_contact_test_set')
+
 
 def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=None,
                    use_tsf=UseTsf.COORD, nominal_adapt=OnlineAdapt.NONE,
@@ -187,6 +230,9 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                    visualize_rollout=False,
                    override_tampc_params=None,
                    override_mpc_params=None,
+                   never_estimate_error=False,
+                   apfvo_baseline=False,
+                   apfsp_baseline=False,
                    **kwargs):
     env = PegGetter.env(p.GUI, level=level, log_video=True)
     logger.info("initial random seed %d", rand.seed(seed))
@@ -221,26 +267,49 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
     logger.debug("running with parameters\nhigh level controller: %s\nlow level MPC: %s",
                  pprint.pformat(tampc_opts), pprint.pformat(mpc_opts))
 
-    ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
-                                        autonomous_recovery=autonomous_recovery,
-                                        assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
-                                        reuse_escape_as_demonstration=reuse_escape_as_demonstration,
-                                        use_trap_cost=use_trap_cost,
-                                        **tampc_opts,
-                                        mpc_opts=mpc_opts)
+    if apfvo_baseline or apfsp_baseline:
+        tampc_opts.pop('trap_cost_annealing_rate')
+        tampc_opts.pop('abs_unrecognized_threshold')
+        if apfvo_baseline:
+            rho = 0.05
+            if level == task_map['Peg-I']:
+                rho = 0.04  # use lower value to prevent obstacle detected below to prevent us from entering the goal
+            elif level == task_map['Peg-U']:
+                rho = 0.025  # use lower value to place more dense virtual obstacles to increase chance of entering
+            ctrl = online_controller.APFVO(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                           local_min_threshold=0.005, trap_max_dist_influence=rho, repulsion_gain=0.01,
+                                           **tampc_opts)
+            env.draw_user_text("APF-VO baseline", 13, left_offset=-1.5)
+        if apfsp_baseline:
+            # anything lower leads to oscillation between backing up and entering the trap's field of influence
+            rho = 0.07
+            if level == task_map['Peg-U']:
+                rho = 0.055
+            ctrl = online_controller.APFSP(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                           trap_max_dist_influence=rho, backup_scale=0.7,
+                                           **tampc_opts)
+            env.draw_user_text("APF-SP baseline", 13, left_offset=-1.5)
+    else:
+        ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                            autonomous_recovery=autonomous_recovery,
+                                            assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
+                                            reuse_escape_as_demonstration=reuse_escape_as_demonstration,
+                                            use_trap_cost=use_trap_cost,
+                                            never_estimate_error_dynamics=never_estimate_error,
+                                            **tampc_opts,
+                                            mpc_opts=mpc_opts)
+        env.draw_user_text(gating.name, 13, left_offset=-1.5)
+        env.draw_user_text("recovery {}".format(autonomous_recovery.name), 11, left_offset=-1.6)
+        if reuse_escape_as_demonstration:
+            env.draw_user_text("reuse escape", 10, left_offset=-1.6)
+        if use_trap_cost:
+            env.draw_user_text("trap set cost".format(autonomous_recovery.name), 9, left_offset=-1.6)
+    env.draw_user_text("run seed {}".format(seed), 12, left_offset=-1.5)
 
     z = env.initGripperPos[2]
     goal = np.r_[env.hole, z, 0, 0]
     ctrl.set_goal(goal)
     # env._dd.draw_point('hole', env.hole, color=(0, 0.5, 0.8))
-
-    env.draw_user_text(gating.name, 13, left_offset=-1.5)
-    env.draw_user_text("run seed {}".format(seed), 12, left_offset=-1.5)
-    env.draw_user_text("recovery {}".format(autonomous_recovery.name), 11, left_offset=-1.6)
-    if reuse_escape_as_demonstration:
-        env.draw_user_text("reuse escape", 10, left_offset=-1.6)
-    if use_trap_cost:
-        env.draw_user_text("trap set cost".format(autonomous_recovery.name), 9, left_offset=-1.6)
 
     sim = peg_in_hole.PegInHole(env, ctrl, num_frames=num_frames, plot=False, save=True, stop_when_done=True,
                                 visualize_rollouts=visualize_rollout)
@@ -265,10 +334,17 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
             return tsf_name
 
         run_name = default_run_prefix
+        if apfvo_baseline:
+            run_prefix = 'APFVO'
+        elif apfsp_baseline:
+            run_prefix = 'APFSP'
         if run_prefix is not None:
             affix_run_name(run_prefix)
         affix_run_name(nominal_adapt.name)
-        affix_run_name(autonomous_recovery.name + ("_WITHDEMO" if use_demo else ""))
+        if not apfvo_baseline and not apfsp_baseline:
+            affix_run_name(autonomous_recovery.name + ("_WITHDEMO" if use_demo else ""))
+        if never_estimate_error:
+            affix_run_name('NO_E')
         affix_run_name(level)
         affix_run_name(use_tsf.name)
         affix_run_name("ALLTRAP" if assume_all_nonnominal_dynamics_are_traps else "SOMETRAP")
@@ -439,7 +515,7 @@ class EvaluateTask:
         if level is 1:
             min_pos = [-0.3, -0.3]
             max_pos = [0.5, 0.5]
-        elif level is 3:
+        elif level is 3 or level is 8:
             min_pos = [-0.2, -0.1]
             max_pos = [0.2, 0.35]
         elif level is 5:
@@ -578,7 +654,7 @@ class EvaluateTask:
         return dists
 
 
-task_map = {'freespace': 0, 'Peg-U': 3, 'Peg-I': 5, 'Peg-T': 6, 'Peg-T(T)': 7}
+task_map = {'freespace': 0, 'Peg-U': 3, 'Peg-I': 5, 'Peg-T': 6, 'Peg-T(T)': 7, 'Peg-H': 8}
 
 parser = argparse.ArgumentParser(description='Experiments on the peg-in-hole environment')
 parser.add_argument('command',
@@ -606,10 +682,19 @@ parser.add_argument('--run_prefix', default=None, type=str,
                     help='run parameter: prefix to save the run under')
 parser.add_argument('--num_frames', metavar='N', type=int, default=500,
                     help='run parameter: number of simulation frames to run')
+parser.add_argument('--always_estimate_error', action='store_true',
+                    help='run parameter: always online estimate error dynamics using a GP')
+parser.add_argument('--never_estimate_error', action='store_true',
+                    help='run parameter: never online estimate error dynamics using a GP (always use e=0)')
 parser.add_argument('--no_trap_cost', action='store_true', help='run parameter: turn off trap set cost')
 parser.add_argument('--nonadaptive_baseline', action='store_true',
                     help='run parameter: use non-adaptive baseline options')
 parser.add_argument('--adaptive_baseline', action='store_true', help='run parameter: use adaptive baseline options')
+parser.add_argument('--apfvo_baseline', action='store_true',
+                    help='run parameter: use artificial potential field virtual obstacles baseline')
+parser.add_argument('--apfsp_baseline', action='store_true',
+                    help='run parameter: use artificial potential field switched potential baseline')
+
 parser.add_argument('--random_ablation', action='store_true', help='run parameter: use random recovery policy options')
 parser.add_argument('--visualize_rollout', action='store_true',
                     help='run parameter: visualize MPC rollouts (slows down running)')
@@ -639,6 +724,7 @@ if __name__ == "__main__":
 
     if args.command == 'collect':
         OfflineDataCollection.freespace(seed=args.seed[0], trials=200, trial_length=50, force_gui=args.gui)
+        OfflineDataCollection.test_set()
     elif args.command == 'learn_representation':
         for seed in args.seed:
             PegGetter.learn_invariant(ut, seed=seed, name="peg", MAX_EPOCH=1000, BATCH_SIZE=args.batch)
@@ -649,6 +735,8 @@ if __name__ == "__main__":
         autonomous_recovery = online_controller.AutonomousRecovery.MAB
         use_trap_cost = not args.no_trap_cost
 
+        if args.always_estimate_error:
+            nominal_adapt = OnlineAdapt.GP_KERNEL_INDEP_OUT
         if args.adaptive_baseline:
             nominal_adapt = OnlineAdapt.GP_KERNEL_INDEP_OUT
             autonomous_recovery = online_controller.AutonomousRecovery.NONE
@@ -668,76 +756,123 @@ if __name__ == "__main__":
                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
                                      visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
                                      override_tampc_params=tampc_params, override_mpc_params=mpc_params,
-                                     autonomous_recovery=autonomous_recovery)
+                                     autonomous_recovery=autonomous_recovery,
+                                     never_estimate_error=args.never_estimate_error,
+                                     apfvo_baseline=args.apfvo_baseline,
+                                     apfsp_baseline=args.apfsp_baseline)
     elif args.command == 'evaluate':
         util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
                                                 args.eval_run_prefix, suffix="{}.mat".format(args.num_frames),
                                                 task_type='peg')
     elif args.command == 'visualize1':
         util.plot_task_res_dist({
-            'auto_recover__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC', 'color': 'green'},
-            'auto_recover__h15_larger_min_window__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC tuned', 'color': 'blue', 'label': True},
-            'auto_recover__NONE__RANDOM__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC random', 'color': 'orange'},
+            'sac_3': {'name': 'SAC', 'color': 'cyan'},
             'auto_recover__NONE__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'non-adapative', 'color': 'purple'},
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-                'name': 'adaptive baseline++', 'color': 'red'},
-            'sac__3': {'name': 'SAC', 'color': 'cyan'},
-            'sac__9': {'name': 'SAC', 'color': 'cyan'},
-
-            'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'adaptive MPC++', 'color': 'red'},
+            'auto_recover__APFVO__NONE__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-VO', 'color': 'black'},
+            # 'auto_recover__apflme5__NONE__MAB__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-VO', 'color': 'black'},
+            'auto_recover__APFSP__NONE__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
+            # 'auto_recover__APFSP__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
+            'auto_recover__NONE__RANDOM__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC random', 'color': [0.8, 0.8, 0]},
+            'auto_recover__NONE__MAB__NO_E__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC e=0', 'color': [0.8, 0.5, 0]},
+            # 'auto_recover__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'TAMPC', 'color': 'green'},
+            'auto_recover__h15_larger_min_window__NONE__MAB__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC', 'color': 'green'},
-            'auto_recover__h20_less_anneal__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC tuned', 'color': 'blue', 'label': True},
-            'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC random', 'color': 'orange'},
+
+            'sac_5': {'name': 'SAC', 'color': 'cyan'},
             'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'non-adapative', 'color': 'purple'},
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-                'name': 'adaptive baseline++', 'color': 'red'},
-            'sac__5': {'name': 'SAC', 'color': 'cyan'},
+                'name': 'adaptive MPC++', 'color': 'red'},
+            'auto_recover__APFVO__NONE__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-VO', 'color': 'black'},
+            # 'auto_recover__apflme5__NONE__MAB__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-VO', 'color': 'black'},
+            'auto_recover__APFSP__NONE__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
+            # 'auto_recover__APFSP__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
+            'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC random', 'color': [0.8, 0.8, 0]},
+            'auto_recover__NONE__MAB__NO_E__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC e=0', 'color': [0.8, 0.5, 0]},
+            # 'auto_recover__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'TAMPC', 'color': 'green'},
+            'auto_recover__h20_less_anneal__NONE__MAB__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC', 'color': 'green'},
         }, 'peg_task_res.pkl', task_type='peg', figsize=(5, 7), set_y_label=False,
-            task_names=task_names)
+            task_names=task_names, success_min_dist=0.05)
 
     elif args.command == 'visualize2':
         util.plot_task_res_dist({
+            # 'auto_recover__NONE__MAB__6__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal': {
+            #     'name': 'TAMPC skip z', 'color': 'black'},
+            'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'non-adapative', 'color': 'purple'},
+            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'adaptive MPC++', 'color': 'red'},
+            'sac_6': {'name': 'SAC', 'color': 'cyan'},
+            'auto_recover__APFVO__NONE__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-VO', 'color': 'black'},
+            # 'auto_recover__apflme5__NONE__MAB__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-VO', 'color': 'black'},
+            'auto_recover__APFSP__NONE__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
+            # 'auto_recover__APFSP__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
+            'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC random', 'color': [0.8, 0.8, 0]},
+            'auto_recover__NONE__MAB__NO_E__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC e=0', 'color': [0.8, 0.5, 0]},
             'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC', 'color': 'green'},
-            # 'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'TAMPC random', 'color': 'orange'},
-            'auto_recover__NONE__MAB__6__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal': {
-                'name': 'TAMPC skip z', 'color': 'black'},
-            # 'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'non-adapative', 'color': 'purple'},
-            # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'adaptive baseline++', 'color': 'red'},
-            # 'sac__6': {'name': 'SAC', 'color': 'cyan'},
 
+            # 'auto_recover__NONE__MAB__7__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal': {
+            #     'name': 'TAMPC skip z', 'color': 'black'},
+            'auto_recover__NONE__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'non-adapative', 'color': 'purple'},
+            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'adaptive MPC++', 'color': 'red'},
+            'sac__7': {'name': 'SAC', 'color': 'cyan'},
+            'auto_recover__APFVO__NONE__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-VO', 'color': 'black'},
+            # 'auto_recover__apflme5__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-VO', 'color': 'black'},
+            'auto_recover__APFSP__NONE__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
+            # 'auto_recover__APFSP__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
+            'auto_recover__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC original space', 'color': 'olive', 'label': True},
+            'auto_recover__NONE__RANDOM__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC random', 'color': [0.8, 0.8, 0]},
+            'auto_recover__NONE__MAB__NO_E__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC e=0', 'color': [0.8, 0.5, 0]},
             'auto_recover__NONE__MAB__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC', 'color': 'green'},
-            'auto_recover__NONE__MAB__7__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal': {
-                'name': 'TAMPC skip z', 'color': 'black'},
-            # 'auto_recover__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'TAMPC original space', 'color': 'olive', 'label': True},
-            # 'auto_recover__NONE__RANDOM__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'TAMPC random', 'color': 'orange'},
-            # 'auto_recover__NONE__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'non-adapative', 'color': 'purple'},
-            # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'adaptive baseline++', 'color': 'red'},
-            # 'sac__7': {'name': 'SAC', 'color': 'cyan'},
         }, 'peg_task_res.pkl', task_type='peg', figsize=(5, 7), set_y_label=False,
-            task_names=task_names)
+            task_names=task_names, success_min_dist=0.05)
 
     else:
-        pass
-
-        tune_trap_set_cost(seed=0, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                           use_trap_cost=True,
-                           autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
-
-        tune_recovery_policy(seed=0, level=0, use_tsf=ut, nominal_adapt=OnlineAdapt.NONE,
-                             autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE)
+        for seed in range(2):
+            PegGetter.learn_invariant(UseTsf.FEEDFORWARD_BASELINE, seed=seed, name="t12",
+                                      MAX_EPOCH=3000, BATCH_SIZE=500,
+                                      dynamics_opts={'h_units': (16, 32, 32, 32)})
+            # PegGetter.learn_invariant(UseTsf.FEEDFORWARD_BASELINE, seed=seed, name="t9",
+            #                           MAX_EPOCH=500, BATCH_SIZE=500,
+            #                           dynamics_opts={'h_units': (32, 32)})
+        # # for seed in range(10):
+        #     PegGetter.learn_invariant(UseTsf.REX_EXTRACT, seed=seed, name="t8",
+        #                               MAX_EPOCH=500, BATCH_SIZE=2048)
+        # # for seed in range(10):
+        #     PegGetter.learn_invariant(UseTsf.SEP_DEC, seed=seed, name="ral",
+        #                               MAX_EPOCH=500, BATCH_SIZE=500)
