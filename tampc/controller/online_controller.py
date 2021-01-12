@@ -598,12 +598,13 @@ class APFSP(OnlineMPC):
     Note that this method assumes a 2D x-y support, so we will take the first 2 dimensions as x and y or robot.
     """
 
-    def __init__(self, *args, samples=5000, trap_max_dist_influence=1, obstacle_reaction=10, **kwargs):
+    def __init__(self, *args, samples=5000, trap_max_dist_influence=1, obstacle_reaction=10, backup_scale=1, **kwargs):
         self.samples = samples
         super(APFSP, self).__init__(*args, **kwargs)
         self.u_scale = self.u_max - self.u_min
         self.trap_max_dist_influence = trap_max_dist_influence
         self.obstacle_reaction = obstacle_reaction
+        self.backup_scale = backup_scale
         self.preloaded_control = []
 
     def _mpc_command(self, obs):
@@ -621,7 +622,7 @@ class APFSP(OnlineMPC):
                 self.trap_set.append(trap_state[0])
                 # need to back up a bit as otherwise the helicoid doesn't work with flat obstacles very well
                 # assume negative of control can reverse
-                self.preloaded_control.append(-self.u_history[-1])
+                self.preloaded_control.append(-self.u_history[-1]*self.backup_scale)
 
         if len(self.preloaded_control):
             u = self.preloaded_control.pop()
