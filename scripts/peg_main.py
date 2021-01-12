@@ -203,9 +203,9 @@ class OfflineDataCollection:
         for _ in range(5):
             u.append([0.4, 0.7 + rn(0.5)])
         for i in range(15):
-            u.append([-0.0 + (i-7)*0.1, 0.8 + rn(0.5)])
+            u.append([-0.0 + (i - 7) * 0.1, 0.8 + rn(0.5)])
         for i in range(15):
-            u.append([-0.8 + rn(0.2), -0. + (i-7)*0.1])
+            u.append([-0.8 + rn(0.2), -0. + (i - 7) * 0.1])
         for i in range(5):
             u.append([-0.1 + rn(0.1), -1.])
         u.append([-0.6, -0.])
@@ -271,13 +271,22 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
         tampc_opts.pop('trap_cost_annealing_rate')
         tampc_opts.pop('abs_unrecognized_threshold')
         if apfvo_baseline:
+            rho = 0.05
+            if level == task_map['Peg-I']:
+                rho = 0.04  # use lower value to prevent obstacle detected below to prevent us from entering the goal
+            elif level == task_map['Peg-U']:
+                rho = 0.025  # use lower value to place more dense virtual obstacles to increase chance of entering
             ctrl = online_controller.APFVO(ds, hybrid_dynamics, ds.original_config(), gating=gating,
-                                           local_min_threshold=0.003, trap_max_dist_influence=0.05, repulsion_gain=0.01,
+                                           local_min_threshold=0.005, trap_max_dist_influence=rho, repulsion_gain=0.01,
                                            **tampc_opts)
             env.draw_user_text("APF-VO baseline", 13, left_offset=-1.5)
         if apfsp_baseline:
+            # anything lower leads to oscillation between backing up and entering the trap's field of influence
+            rho = 0.07
+            if level == task_map['Peg-U']:
+                rho = 0.055
             ctrl = online_controller.APFSP(ds, hybrid_dynamics, ds.original_config(), gating=gating,
-                                           trap_max_dist_influence=0.07,
+                                           trap_max_dist_influence=rho, backup_scale=0.7,
                                            **tampc_opts)
             env.draw_user_text("APF-SP baseline", 13, left_offset=-1.5)
     else:
@@ -762,12 +771,14 @@ if __name__ == "__main__":
                 'name': 'non-adapative', 'color': 'purple'},
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'adaptive MPC++', 'color': 'red'},
-            'auto_recover__apflme5__NONE__MAB__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            'auto_recover__APFVO__NONE__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'APF-VO', 'color': 'black'},
-            'auto_recover__APFSP__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            # 'auto_recover__apflme5__NONE__MAB__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-VO', 'color': 'black'},
+            'auto_recover__APFSP__NONE__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
-            # 'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'APF-LME', 'color': 'yellow'},
+            # 'auto_recover__APFSP__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
             'auto_recover__NONE__RANDOM__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC random', 'color': [0.8, 0.8, 0]},
             'auto_recover__NONE__MAB__NO_E__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
@@ -782,12 +793,14 @@ if __name__ == "__main__":
                 'name': 'non-adapative', 'color': 'purple'},
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'adaptive MPC++', 'color': 'red'},
-            'auto_recover__apflme5__NONE__MAB__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            'auto_recover__APFVO__NONE__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'APF-VO', 'color': 'black'},
-            'auto_recover__APFSP__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            # 'auto_recover__apflme5__NONE__MAB__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-VO', 'color': 'black'},
+            'auto_recover__APFSP__NONE__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
-            # 'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'APF-LME', 'color': 'yellow'},
+            # 'auto_recover__APFSP__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
             'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC random', 'color': [0.8, 0.8, 0]},
             'auto_recover__NONE__MAB__NO_E__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
@@ -808,12 +821,14 @@ if __name__ == "__main__":
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'adaptive MPC++', 'color': 'red'},
             'sac_6': {'name': 'SAC', 'color': 'cyan'},
-            'auto_recover__apflme5__NONE__MAB__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            'auto_recover__APFVO__NONE__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'APF-VO', 'color': 'black'},
-            'auto_recover__APFSP__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            # 'auto_recover__apflme5__NONE__MAB__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-VO', 'color': 'black'},
+            'auto_recover__APFSP__NONE__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
-            # 'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'APF-LME', 'color': 'yellow'},
+            # 'auto_recover__APFSP__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
             'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC random', 'color': [0.8, 0.8, 0]},
             'auto_recover__NONE__MAB__NO_E__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
@@ -828,12 +843,14 @@ if __name__ == "__main__":
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'adaptive MPC++', 'color': 'red'},
             'sac__7': {'name': 'SAC', 'color': 'cyan'},
-            'auto_recover__apflme5__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            'auto_recover__APFVO__NONE__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'APF-VO', 'color': 'black'},
+            # 'auto_recover__apflme5__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-VO', 'color': 'black'},
+            'auto_recover__APFSP__NONE__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
             # 'auto_recover__APFSP__NONE__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
             #     'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
-            # 'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'APF-LME', 'color': 'yellow'},
             'auto_recover__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC original space', 'color': 'olive', 'label': True},
             'auto_recover__NONE__RANDOM__7__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
@@ -848,7 +865,7 @@ if __name__ == "__main__":
     else:
         for seed in range(2):
             PegGetter.learn_invariant(UseTsf.FEEDFORWARD_BASELINE, seed=seed, name="t12",
-                                      MAX_EPOCH=500, BATCH_SIZE=2048,
+                                      MAX_EPOCH=3000, BATCH_SIZE=500,
                                       dynamics_opts={'h_units': (16, 32, 32, 32)})
             # PegGetter.learn_invariant(UseTsf.FEEDFORWARD_BASELINE, seed=seed, name="t9",
             #                           MAX_EPOCH=500, BATCH_SIZE=500,

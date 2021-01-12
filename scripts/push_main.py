@@ -1817,7 +1817,7 @@ if __name__ == "__main__":
             'auto_recover__NONE__MAB__NO_E__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC e=0', 'color': [0.8, 0.5, 0], 'label': True},
             'auto_recover__NONE__RANDOM__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC random', 'color': [0.8, 0.8, 0], 'label': True},
+                'name': 'TAMPC rand. rec.', 'color': [0.8, 0.8, 0], 'label': True},
             # 'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2': {
             #     'name': 'TAMPC skip z (aggregate)', 'color': 'black', 'label': True},
             # 'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s2': {
@@ -1832,10 +1832,14 @@ if __name__ == "__main__":
             #     'name': 'TAMPC skip z (seed 6)', 'color': 'magenta', 'label': True},
             # 'auto_recover__NONE__MAB__5__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_RAL_s7': {
             #     'name': 'TAMPC skip z (seed 7)', 'color': 'orange', 'label': True},
-            'auto_recover__APFLME__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            'auto_recover__APFVO__NONE__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'APF-VO', 'color': 'black', 'label': True},
-            'auto_recover__APFSP__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            # 'auto_recover__APFLME__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-VO', 'color': 'black', 'label': True},
+            'auto_recover__APFSP__NONE__5__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'APF-SP', 'color': [0.5, 0.5, 0.5], 'label': True},
+            # 'auto_recover__APFSP__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-SP', 'color': [0.5, 0.5, 0.5], 'label': True},
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'adaptive MPC++', 'color': 'red', 'label': True},
             'auto_recover__NONE__NONE__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
@@ -1850,10 +1854,14 @@ if __name__ == "__main__":
                 'name': 'TAMPC e=0', 'color': [0.8, 0.5, 0]},
             'auto_recover__NONE__RANDOM__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC random', 'color': [0.8, 0.8, 0]},
-            'auto_recover__APFLME__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            'auto_recover__APFVO__NONE__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'APF-VO', 'color': 'black'},
-            'auto_recover__APFSP__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            # 'auto_recover__APFLME__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-VO', 'color': 'black'},
+            'auto_recover__APFSP__NONE__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
+            # 'auto_recover__APFSP__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'adaptive MPC++', 'color': 'red'},
             'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
@@ -1862,13 +1870,13 @@ if __name__ == "__main__":
             # 'auto_recover__APFLME__GP_KERNEL_INDEP_OUT__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
             #     'name': 'APF-LME adaptive', 'color': 'yellow'},
         }, 'pushing_task_res.pkl', expected_data_len=args.num_frames - 1, figsize=(5, 7), task_names=task_names,
-            success_min_dist=0.5)
+            success_min_dist=0.3)
 
     else:
         # for size in [16, 64]:
-        for seed in range(3):
-            # BlockPushGetter.learn_invariant(UseTsf.FEEDFORWARD_BASELINE, seed=seed, name="t15",
-            #                                 MAX_EPOCH=2000, BATCH_SIZE=500,
-            #                                 dynamics_opts={'h_units': (16, 32, 32, 32)})
-            BlockPushGetter.learn_invariant(UseTsf.REX_EXTRACT, seed=seed, name="t16",
-                                            MAX_EPOCH=3000, BATCH_SIZE=2048)
+        for seed in range(10):
+            BlockPushGetter.learn_invariant(UseTsf.FEEDFORWARD_BASELINE, seed=seed, name="t17",
+                                            MAX_EPOCH=4000, BATCH_SIZE=500,
+                                            dynamics_opts={'h_units': (16, 32, 32, 32, 16, 32)})
+            # BlockPushGetter.learn_invariant(UseTsf.REX_EXTRACT, seed=seed, name="t16",
+            #                                 MAX_EPOCH=3000, BATCH_SIZE=2048)
