@@ -5,6 +5,7 @@ from tampc import cfg
 import numpy as np
 import matplotlib.pyplot as plt
 import pickle
+import socket
 
 
 def batch_size(run):
@@ -15,33 +16,37 @@ def batch_size(run):
 runs_basedir = os.path.join(cfg.ROOT_DIR, 'scripts/runs')
 POINTS_PER_EPOCH = 50 * 200 * 0.9
 MAX_POINTS = 3000
-MAX_EPOCH = 6000
-name_prefix = 'armconjunction'
+MAX_EPOCH = 3000
+name_prefix = socket.gethostname()  # 'armconjunction'
 largest_epoch_encountered = 0
 name_contains = None
 ignore_cache = False
 
+ymag = 6.68  # for push validation
+
 # scalar name combinations
 series = {
-    # 'sep_dec': {'name': 'w/o $h_\omega$'},
-    # 'extract': {'name': 'w/o REx', },
-    # 'rex_extract': {'name': 'full'},
-    'skipz_2_RAL': {'name': 'skip z'},
-    'skipz_2_prenormalized': {'name': 'prenorm skip z'},
-    # 'rex_skip_2_RAL': {'name': 'skip z + REx'},
-    # 'rex_skip_2_prenormalized': {'name': 'prenorm skip z + REx'},
+    'rex_extract_2_eval': {'name': 'ours', 'color': 'green'},
+    'notransform_eval': {'name': 'feedforward baseline', 'color': 'red'},
 }
-losses = {'percent_match': {'name': 'match', 'pos': 0}, 'percent_reconstruction': {'name': 'reconstruction', 'pos': 1}}
+# losses = {'percent_match': {'name': 'match', 'pos': 0}, 'percent_reconstruction': {'name': 'reconstruction', 'pos': 1}}
+losses = {'mse_loss': {'name': 'MSE', 'pos': 0}}
+# losses = {'percent_match': {'name': 'MSE', 'pos': 0}}
+# datasets = {'validation': {'name': '(a) validation', 'pos': 0},
+#             'validation_10_10': {'name': '(b) validation (10,10)', 'pos': 1}, 'test0': {'name': '(c) test', 'pos': 2}}
 datasets = {'validation': {'name': '(a) validation', 'pos': 0},
-            'validation_10_10': {'name': '(b) validation (10,10)', 'pos': 1}, 'test0': {'name': '(c) test', 'pos': 2}}
+            'validation_10_10': {'name': '(b) validation (10,10)', 'pos': 1}}
 
 runs = os.listdir(runs_basedir)
-runs_assignment = {s:[] for s in series.keys()}
+runs_assignment = {s: [] for s in series.keys()}
 
 for r in runs:
     run_dir = os.path.join(runs_basedir, r)
     run = os.path.join(run_dir, os.listdir(run_dir)[0])
-    name = r[r.index(name_prefix) + len(name_prefix):]
+    try:
+        name = r[r.index(name_prefix) + len(name_prefix):]
+    except ValueError:
+        continue
 
     if name_contains is not None and name_contains not in name:
         print("Ignoring {} since it does not contain {}".format(name, name_contains))
@@ -86,6 +91,8 @@ for r in runs:
                     max_epoch = steps[-1] * batch_size(run) // POINTS_PER_EPOCH
 
                     values = np.array([d.value for d in data])
+                    if loss == 'mse_loss':
+                        values /= ymag
                     steps_per_epoch = steps[-1] / max_epoch
                     epochs = steps / steps_per_epoch
                 except KeyError as e:
@@ -95,6 +102,14 @@ for r in runs:
                 to_add.append((t, epochs, values))
 
         # save to cache
+        if not os.path.exists(os.path.dirname(cache)):
+            try:
+                os.makedirs(os.path.dirname(cache))
+            except OSError as exc:  # Guard against race condition
+                import errno
+
+                if exc.errno != errno.EEXIST:
+                    raise
         with open(cache, 'wb') as f:
             pickle.dump(to_add, f)
             print('cached {}'.format(name))
@@ -106,7 +121,9 @@ for r in runs:
             series[run_series][t] = []
         series[run_series][t].append((epochs, values))
 
-f, axes = plt.subplots(len(losses), len(datasets), figsize=(10, 4), constrained_layout=True)
+f, axes = plt.subplots(len(losses), len(datasets), figsize=(10, 3), constrained_layout=True)
+if len(losses) is 1:
+    axes = axes.reshape(1, -1)
 plt.pause(0.1)
 
 for s, run_names in runs_assignment.items():
@@ -137,17 +154,19 @@ for s in series:
         # average across seeds
         m = np.mean(values, axis=0)
         std = np.std(values, axis=0)
-        ax.semilogx(epochs, m, label=series[s]['name'])
-        ax.fill_between(epochs, m - std, m + std, alpha=0.3)
-        ax.set_xlim(0, largest_epoch_encountered)
-        ax.set_ylim(0, 1)
+        c = color = series[s]['color']
+        ax.semilogx(epochs, m, label=series[s]['name'], color=c)
+        ax.fill_between(epochs, m - std, m + std, alpha=0.3, color=c)
+        ax.set_xlim(left=0, right=3200)
+        ax.set_ylim(bottom=0, top=1.5)
 
 for dataset_pairs in datasets.values():
     axes[0, dataset_pairs['pos']].set_title(dataset_pairs['name'])
 
-axes[0, 0].set_ylabel('match loss')
-axes[1, 0].set_ylabel('reconstruction loss')
-axes[1, 1].set_xlabel('epochs')
-axes[1, 0].legend()
+axes[0, 0].set_ylabel('Relative MSE')
+# axes[1, 0].set_ylabel('reconstruction loss')
+axes[-1, 0].set_xlabel('epochs')
+axes[-1, 1].set_xlabel('epochs')
+axes[-1, 0].legend()
 
 plt.show()

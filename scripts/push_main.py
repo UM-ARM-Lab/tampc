@@ -1772,8 +1772,12 @@ if __name__ == "__main__":
         OfflineDataCollection.freespace(seed=args.seed[0], trials=200, trial_length=50, force_gui=args.gui)
         OfflineDataCollection.push_against_wall_recovery()
     elif args.command == 'learn_representation':
+        dynamics_opts = {}
+        if ut == UseTsf.FEEDFORWARD_BASELINE:
+            dynamics_opts = {'h_units': (16, 32, 32, 32, 16, 32)}
         for seed in args.seed:
-            BlockPushGetter.learn_invariant(ut, seed=seed, name="", MAX_EPOCH=3000, BATCH_SIZE=args.batch)
+            BlockPushGetter.learn_invariant(ut, seed=seed, name=args.rep_name, MAX_EPOCH=3000, BATCH_SIZE=args.batch,
+                                            dynamics_opts=dynamics_opts)
     elif args.command == 'fine_tune_dynamics':
         BlockPushGetter.learn_model(ut, seed=args.seed[0], name="", rep_name=args.rep_name)
     elif args.command == 'run':
