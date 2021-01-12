@@ -121,8 +121,8 @@ class PegRealGetter(EnvGetter):
     def env(cls, mode=0, level=0, log_video=False, **kwargs):
         env = peg_in_hole_real.RealPegEnv(environment_level=level, **kwargs)
         if level is task_map['Real Peg-T']:
-            x = 1.74962708 - 0.001
-            y = -0.02913485 + 0.011
+            x = 1.73472827  # 1.74962708 - 0.001
+            y = -0.00480442  # -0.02913485 + 0.011
             env.set_task_config(hole=[x, y], init_peg=[1.64363362, 0.05320179])
             # for tuning close to goal behaviour (spiral exploration vs going straight to goal)
             # env.set_task_config(hole=[x, y], init_peg=[x + 0.01, y + 0.01])
@@ -230,7 +230,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                                            **tampc_opts)
         if apfsp_baseline:
             ctrl = online_controller.APFSP(ds, hybrid_dynamics, ds.original_config(), gating=gating,
-                                           trap_max_dist_influence=0.04,
+                                           trap_max_dist_influence=0.045,
                                            **tampc_opts)
     else:
         ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
@@ -628,43 +628,62 @@ if __name__ == "__main__":
         trials = ["{}/{}".format(task_type, filename) for filename in os.listdir(os.path.join(cfg.DATA_DIR, task_type))
                   if filename.startswith(args.eval_run_prefix)]
         # get all the trials to visualize for choosing where the obstacles are
-        EvaluateTask.closest_distance_to_goal(trials, level=level, just_get_ok_nodes=True)
+        # EvaluateTask.closest_distance_to_goal(trials, level=level, just_get_ok_nodes=True)
 
         util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
                                                 args.eval_run_prefix, task_type=task_type)
     elif args.command == 'visualize1':
         util.plot_task_res_dist({
             'auto_recover__NONE__MAB__6__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_pegr_s1': {
-                'name': 'TAMPC', 'color': 'green', 'label': True},
+                'name': 'TAMPC', 'color': 'green'},
+            'auto_recover__h15__NONE__MAB__NO_E__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC e=0', 'color': [0.8, 0.5, 0]},
             # 'auto_recover__NONE__RANDOM__3__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
             #     'name': 'TAMPC random', 'color': 'orange'},
+            'auto_recover__APFVO__NONE__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__rex_extract_2_pegr_s1': {
+                'name': 'APF-VO', 'color': 'black'},
+            'auto_recover__APFSP__NONE__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__rex_extract_2_pegr_s1': {
+                'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
             'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'non-adapative', 'color': 'purple'},
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-                'name': 'adaptive baseline++', 'color': 'red'},
+                'name': 'adaptive MPC++', 'color': 'red'},
 
             'auto_recover__h15__NONE__MAB__8__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_pegr_s0': {
                 'name': 'TAMPC', 'color': 'green'},
         }, '{}_task_res.pkl'.format(peg_in_hole_real.DIR), task_type=peg_in_hole_real.DIR, figsize=(5, 7),
-            set_y_label=False, max_t=500, expected_data_len=498, success_min_dist=0.02,
+            set_y_label=False, max_t=300, expected_data_len=298, success_min_dist=0.02,
             task_names=task_names)
 
     elif args.command == 'visualize2':
         util.plot_task_res_dist({
-            'auto_recover__h15__NONE__MAB__8__SKIP__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__skipz_2_pegr_s0': {
+            'auto_recover__NONE__MAB__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__rex_extract_2_pegr_s1': {
+                'name': 'TAMPC', 'color': 'green'},
+            'auto_recover__h15__NONE__MAB__NO_E__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC e=0', 'color': [0.8, 0.5, 0]},
+            'auto_recover__APFVO__NONE__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__rex_extract_2_pegr_s1': {
+                'name': 'APF-VO', 'color': 'black'},
+            'auto_recover__APFSP__NONE__6__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__rex_extract_2_pegr_s1': {
+                'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
+            'auto_recover__NONE__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'non-adapative', 'color': 'purple'},
+            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__6__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'adaptive MPC++', 'color': 'red'},
+
+            'auto_recover__h15__NONE__MAB__8__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__rex_extract_2_pegr_s1': {
                 'name': 'TAMPC', 'color': 'green'},
             'auto_recover__h15__NONE__MAB__NO_E__8__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC e=0', 'color': [0.8, 0.5, 0]},
-            'auto_recover__APFVO__NONE__8__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            'auto_recover__APFVO__NONE__8__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__rex_extract_2_pegr_s1': {
                 'name': 'APF-VO', 'color': 'black'},
-            'auto_recover__APFSP__NONE__8__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            'auto_recover__APFSP__NONE__8__REX_EXTRACT__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST__rex_extract_2_pegr_s1': {
                 'name': 'APF-SP', 'color': [0.5, 0.5, 0.5]},
             'auto_recover__NONE__NONE__8__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'non-adapative', 'color': 'purple'},
             'auto_recover__GP_KERNEL_INDEP_OUT__NONE__8__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
                 'name': 'adaptive MPC++', 'color': 'red'},
         }, '{}_task_res.pkl'.format(peg_in_hole_real.DIR), task_type=peg_in_hole_real.DIR, figsize=(5, 7),
-            set_y_label=False, max_t=500, expected_data_len=498,
+            set_y_label=False, max_t=500, expected_data_len=498, success_min_dist=0.02,
             task_names=task_names)
 
     else:
