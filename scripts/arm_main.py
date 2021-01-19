@@ -91,7 +91,7 @@ class ArmGetter(EnvGetter):
             'trap_cost_annealing_rate': 0.8,
             'abs_unrecognized_threshold': 5,
             'dynamics_minimum_window': 2,
-            'max_trap_weight': 100,
+            'max_trap_weight': 2,
         }
         mpc_opts = {
             'num_samples': 1000,

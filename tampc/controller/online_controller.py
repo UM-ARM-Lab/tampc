@@ -467,14 +467,14 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
         if self._left_trap():
             self._end_recovery_mode()
             if self.trap_cost is not None and len(self.trap_set):
-                if self.auto_init_trap_cost:
+                if self.max_trap_weight is not None:
+                    self.trap_set_weight = self.max_trap_weight
+                elif self.auto_init_trap_cost:
                     normalized_weights = [self.normalize_trapset_cost_to_state(prev_state) for prev_state in
                                           self.nominal_dynamic_states[-1][-6:]]
                     self.trap_set_weight = statistics.median(normalized_weights) * self.trap_cost_init_normalization
                 else:
                     self.trap_set_weight *= (1 / self.trap_cost_annealing_rate) * 5
-                if self.max_trap_weight is not None:
-                    self.trap_set_weight = min(self.max_trap_weight, self.trap_set_weight)
                 logger.debug("tune trap cost weight %f", self.trap_set_weight)
 
         if self._left_local_model():
