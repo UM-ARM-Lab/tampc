@@ -200,14 +200,14 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
             ctrl = online_controller.APFVO(ds, hybrid_dynamics, ds.original_config(), gating=gating,
                                            local_min_threshold=0.03, trap_max_dist_influence=rho, repulsion_gain=0.5,
                                            **tampc_opts)
-            env.draw_user_text("APF-VO baseline", 13, left_offset=-1.5)
+            env.draw_user_text("APF-VO baseline", 4, left_offset=-1.5)
         else:
             # anything lower leads to oscillation between backing up and entering the trap's field of influence
             rho = 0.07
             ctrl = online_controller.APFSP(ds, hybrid_dynamics, ds.original_config(), gating=gating,
                                            trap_max_dist_influence=rho, backup_scale=0.7,
                                            **tampc_opts)
-            env.draw_user_text("APF-SP baseline", 13, left_offset=-1.5)
+            env.draw_user_text("APF-SP baseline", 4, left_offset=-1.5)
     else:
         ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
                                             autonomous_recovery=autonomous_recovery,
@@ -217,6 +217,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                                             **tampc_opts,
                                             mpc_opts=mpc_opts)
 
+    env.draw_user_text("run seed {}".format(seed), 5, left_offset=-1.5)
     ctrl.set_goal(env.goal)
 
     sim = arm.ExperimentRunner(env, ctrl, num_frames=num_frames, plot=False, save=True, stop_when_done=True)
@@ -243,9 +244,9 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
 
         run_name = default_run_prefix
         if apfvo_baseline:
-            run_prefix = 'APFVO'
+            affix_run_name('APFVO')
         elif apfsp_baseline:
-            run_prefix = 'APFSP'
+            affix_run_name('APFSP')
         if run_prefix is not None:
             affix_run_name(run_prefix)
         affix_run_name(nominal_adapt.name)
@@ -261,12 +262,15 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
         affix_run_name(seed)
         affix_run_name(num_frames)
 
+    # env.draw_user_text(run_name, 6, left_offset=0.)
     pre_run_setup(env, ctrl, ds)
 
     sim.run(seed, run_name)
     logger.info("last run cost %f", np.sum(sim.last_run_cost))
     plt.ioff()
     plt.show()
+
+    env.close()
 
 
 def test_autonomous_recovery(*args, **kwargs):

@@ -348,7 +348,7 @@ class ArmEnv(PybulletEnv):
     def draw_user_text(self, text, location_index=1, left_offset=1):
         if location_index is 0:
             raise RuntimeError("Can't use same location index (0) as cost")
-        self._dd.draw_text('user{}'.format(location_index), text, location_index, left_offset)
+        self._dd.draw_text('user{}'.format(location_index), text, location_index, left_offset, offset_in_z=True)
 
     # --- observing state from simulation
     def _obs(self):

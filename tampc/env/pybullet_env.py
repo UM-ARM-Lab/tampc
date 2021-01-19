@@ -235,16 +235,21 @@ class DebugDrawer:
                 p.removeUserDebugItem(line)
             self._debug_ids[name] = []
 
-    def draw_text(self, name, text, location_index, left_offset=1.):
+    def draw_text(self, name, text, location_index, left_offset=1., offset_in_z=False):
         if name not in self._debug_ids:
             self._debug_ids[name] = -1
         uid = self._debug_ids[name]
 
+        z = 0.1
         move_down = location_index * 0.15
+        if offset_in_z:
+            move_down = 0
+            z += location_index * 0.1
+
         height_scale = self._camera_height * 0.7
         self._debug_ids[name] = p.addUserDebugText(str(text),
                                                    [self._camera_pos[0] + left_offset * height_scale,
-                                                    self._camera_pos[1] + (1 - move_down) * height_scale, 0.1],
+                                                    self._camera_pos[1] + (1 - move_down) * height_scale, z],
                                                    textColorRGB=[0.5, 0.1, 0.1],
                                                    textSize=2,
                                                    replaceItemUniqueId=uid)
