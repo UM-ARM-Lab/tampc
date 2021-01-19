@@ -31,7 +31,6 @@ from tampc.controller import online_controller
 from tampc.controller.gating_function import AlwaysSelectNominal
 from tampc import util
 from tampc.util import no_tsf_preprocessor, UseTsf, EnvGetter
-from window_recorder import recorder
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
@@ -153,9 +152,10 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                    run_prefix=None, run_name=None,
                    assume_all_nonnominal_dynamics_are_traps=False,
                    rep_name=None,
-                   visualize_rollout=False,
                    override_tampc_params=None,
                    override_mpc_params=None,
+                   apfvo_baseline=False,
+                   apfsp_baseline=False,
                    **kwargs):
     env = ArmGetter.env(level=level, mode=p.GUI)
     logger.info("initial random seed %d", rand.seed(seed))
@@ -190,13 +190,32 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
     logger.debug("running with parameters\nhigh level controller: %s\nlow level MPC: %s",
                  pprint.pformat(tampc_opts), pprint.pformat(mpc_opts))
 
-    ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
-                                        autonomous_recovery=autonomous_recovery,
-                                        assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
-                                        reuse_escape_as_demonstration=reuse_escape_as_demonstration,
-                                        use_trap_cost=use_trap_cost,
-                                        **tampc_opts,
-                                        mpc_opts=mpc_opts)
+    if apfvo_baseline or apfsp_baseline:
+        tampc_opts.pop('trap_cost_annealing_rate')
+        tampc_opts.pop('abs_unrecognized_threshold')
+        tampc_opts.pop('dynamics_minimum_window')
+        tampc_opts.pop('max_trap_weight')
+        if apfvo_baseline:
+            rho = 0.3
+            ctrl = online_controller.APFVO(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                           local_min_threshold=0.03, trap_max_dist_influence=rho, repulsion_gain=0.5,
+                                           **tampc_opts)
+            env.draw_user_text("APF-VO baseline", 13, left_offset=-1.5)
+        else:
+            # anything lower leads to oscillation between backing up and entering the trap's field of influence
+            rho = 0.07
+            ctrl = online_controller.APFSP(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                           trap_max_dist_influence=rho, backup_scale=0.7,
+                                           **tampc_opts)
+            env.draw_user_text("APF-SP baseline", 13, left_offset=-1.5)
+    else:
+        ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                            autonomous_recovery=autonomous_recovery,
+                                            assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
+                                            reuse_escape_as_demonstration=reuse_escape_as_demonstration,
+                                            use_trap_cost=use_trap_cost,
+                                            **tampc_opts,
+                                            mpc_opts=mpc_opts)
 
     ctrl.set_goal(env.goal)
 
@@ -223,10 +242,15 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
             return tsf_name
 
         run_name = default_run_prefix
+        if apfvo_baseline:
+            run_prefix = 'APFVO'
+        elif apfsp_baseline:
+            run_prefix = 'APFSP'
         if run_prefix is not None:
             affix_run_name(run_prefix)
         affix_run_name(nominal_adapt.name)
-        affix_run_name(autonomous_recovery.name + ("_WITHDEMO" if use_demo else ""))
+        if not apfvo_baseline and not apfsp_baseline:
+            affix_run_name(autonomous_recovery.name + ("_WITHDEMO" if use_demo else ""))
         affix_run_name(level)
         affix_run_name(use_tsf.name)
         affix_run_name("ALLTRAP" if assume_all_nonnominal_dynamics_are_traps else "SOMETRAP")
@@ -285,6 +309,11 @@ parser.add_argument('--no_trap_cost', action='store_true', help='run parameter: 
 parser.add_argument('--nonadaptive_baseline', action='store_true',
                     help='run parameter: use non-adaptive baseline options')
 parser.add_argument('--adaptive_baseline', action='store_true', help='run parameter: use adaptive baseline options')
+parser.add_argument('--apfvo_baseline', action='store_true',
+                    help='run parameter: use artificial potential field virtual obstacles baseline')
+parser.add_argument('--apfsp_baseline', action='store_true',
+                    help='run parameter: use artificial potential field switched potential baseline')
+
 parser.add_argument('--random_ablation', action='store_true', help='run parameter: use random recovery policy options')
 parser.add_argument('--visualize_rollout', action='store_true',
                     help='run parameter: visualize MPC rollouts (slows down running)')
@@ -343,7 +372,9 @@ if __name__ == "__main__":
                                      assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
                                      visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
                                      override_tampc_params=tampc_params, override_mpc_params=mpc_params,
-                                     autonomous_recovery=autonomous_recovery)
+                                     autonomous_recovery=autonomous_recovery,
+                                     apfvo_baseline=args.apfvo_baseline,
+                                     apfsp_baseline=args.apfsp_baseline)
     elif args.command == 'evaluate':
         task_type = arm.DIR
         trials = ["{}/{}".format(task_type, filename) for filename in os.listdir(os.path.join(cfg.DATA_DIR, task_type))
