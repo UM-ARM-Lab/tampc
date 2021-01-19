@@ -330,11 +330,11 @@ class EvaluateTask:
         X, U = torch.split(XU, ds.original_config().nx, dim=1)
 
         if level is task_map['Real Peg-T']:
-            min_pos = [1.5, -0.14]
-            max_pos = [1.85, 0.18]
+            min_pos = (1.5, -0.14)
+            max_pos = (1.85, 0.18)
         elif level is task_map['Peg-U(W)'] or level is task_map['Real Peg-U']:
-            min_pos = [1.49, -0.14]
-            max_pos = [1.83, 0.188]
+            min_pos = (1.49, -0.14)
+            max_pos = (1.83, 0.188)
         else:
             raise RuntimeError("Unspecified range for level {}".format(level))
 
@@ -456,29 +456,7 @@ class EvaluateTask:
         if just_get_ok_nodes:
             return
 
-        # distance 1 step along x
-        dxx = (max_pos[0] - min_pos[0]) / nodes_per_side
-        dyy = (max_pos[1] - min_pos[1]) / nodes_per_side
-        neighbours = [[-1, 0], [0, 1], [1, 0], [0, -1]]
-        distances = [dxx, dyy, dxx, dyy]
-        # create graph and do search on it based on environment obstacles
-        g = util.Graph()
-        for i in range(nodes_per_side):
-            for j in range(nodes_per_side):
-                u = ok_nodes[i][j]
-                if u is None:
-                    continue
-                g.add_node(u)
-                for dxy, dist in zip(neighbours, distances):
-                    ii = i + dxy[0]
-                    jj = j + dxy[1]
-                    if ii < 0 or ii >= nodes_per_side:
-                        continue
-                    if jj < 0 or jj >= nodes_per_side:
-                        continue
-                    v = ok_nodes[ii][jj]
-                    if v is not None:
-                        g.add_edge(u, v, dist)
+        g = util.grid_to_graph(min_pos, max_pos, nodes_per_side, ok_nodes)
 
         goal_node = pos_to_node(goal_pos)
         if ok_nodes[goal_node[0]][goal_node[1]] is None:

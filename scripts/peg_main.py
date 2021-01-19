@@ -513,21 +513,21 @@ class EvaluateTask:
         X, U = torch.split(XU, ds.original_config().nx, dim=1)
 
         if level is 1:
-            min_pos = [-0.3, -0.3]
-            max_pos = [0.5, 0.5]
+            min_pos = (-0.3, -0.3)
+            max_pos = (0.5, 0.5)
         elif level is 3 or level is 8:
-            min_pos = [-0.2, -0.1]
-            max_pos = [0.2, 0.35]
+            min_pos = (-0.2, -0.1)
+            max_pos = (0.2, 0.35)
         elif level is 5:
-            min_pos = [-0.4, -0.1]
-            max_pos = [0.4, 0.4]
+            min_pos = (-0.4, -0.1)
+            max_pos = (0.4, 0.4)
         elif level is 6:
-            min_pos = [-0.3, -0.1]
-            max_pos = [0.3, 0.3]
+            min_pos = (-0.3, -0.1)
+            max_pos = (0.3, 0.3)
         elif level is 7:
             translation = 10
-            min_pos = [-0.3 + translation, -0.1 + translation]
-            max_pos = [0.3 + translation, 0.3 + translation]
+            min_pos = (-0.3 + translation, -0.1 + translation)
+            max_pos = (0.3 + translation, 0.3 + translation)
         else:
             raise RuntimeError("Unspecified range for level {}".format(level))
 
@@ -591,33 +591,12 @@ class EvaluateTask:
             pickle.dump(ok_nodes, f)
             logger.info("saved ok nodes to %s", fullname)
 
-        # distance 1 step along x
-        dxx = (max_pos[0] - min_pos[0]) / nodes_per_side
-        dyy = (max_pos[1] - min_pos[1]) / nodes_per_side
-        neighbours = [[-1, 0], [0, 1], [1, 0], [0, -1]]
-        distances = [dxx, dyy, dxx, dyy]
-        # create graph and do search on it based on environment obstacles
-        g = util.Graph()
-        for i in range(nodes_per_side):
-            for j in range(nodes_per_side):
-                u = ok_nodes[i][j]
-                if u is None:
-                    continue
-                g.add_node(u)
-                for dxy, dist in zip(neighbours, distances):
-                    ii = i + dxy[0]
-                    jj = j + dxy[1]
-                    if ii < 0 or ii >= nodes_per_side:
-                        continue
-                    if jj < 0 or jj >= nodes_per_side:
-                        continue
-                    v = ok_nodes[ii][jj]
-                    if v is not None:
-                        g.add_edge(u, v, dist)
+        g = util.grid_to_graph(min_pos, max_pos, nodes_per_side, ok_nodes)
 
         goal_node = pos_to_node(goal_pos)
         if ok_nodes[goal_node[0]][goal_node[1]] is None:
             goal_node = (goal_node[0], goal_node[1] + 1)
+
         visited, path = util.dijsktra(g, goal_node)
         # find min across visited states
         min_dist = 100

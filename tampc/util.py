@@ -1,6 +1,7 @@
 import enum
 import abc
 import typing
+from typing import Tuple, Iterable
 
 import torch
 from arm_pytorch_utilities import draw, preprocess, rand
@@ -274,8 +275,8 @@ def plot_task_res_dist(series_to_plot, res_file,
                 # ax[j].scatter(t, m, color=c, label=plot_info['name'] if 'label' in plot_info else '_nolegend_')
                 tm = t.median()
                 mm = m.median()
-                ax[j].errorbar(tm, mm, yerr=[[mm-np.percentile(m, 20)], [np.percentile(m, 80)-mm]],
-                               xerr=[[tm-np.percentile(t, 20)], [np.percentile(t, 80)-tm]], color=c,
+                ax[j].errorbar(tm, mm, yerr=[[mm - np.percentile(m, 20)], [np.percentile(m, 80) - mm]],
+                               xerr=[[tm - np.percentile(t, 20)], [np.percentile(t, 80) - tm]], color=c,
                                label=plot_info['name'] if 'label' in plot_info else '_nolegend_', fmt='o')
 
             ax[j].legend(**legend_props)
@@ -303,6 +304,33 @@ class Graph:
     def add_edge(self, from_node, to_node, distance):
         self.edges[from_node].append(to_node)
         self.distances[(from_node, to_node)] = distance
+
+
+def grid_to_graph(min_pos: Tuple[float, float], max_pos: Tuple[float, float], nodes_per_side: int, ok_nodes,
+                  neighbours: Iterable[Tuple[int, int]] = ((-1, 0), (0, 1), (1, 0), (0, -1))) -> Graph:
+    # distance 1 step along x
+    dxx = (max_pos[0] - min_pos[0]) / nodes_per_side
+    dyy = (max_pos[1] - min_pos[1]) / nodes_per_side
+    distances = [dxx, dyy, dxx, dyy]
+    # create graph and do search on it based on environment obstacles
+    g = Graph()
+    for i in range(nodes_per_side):
+        for j in range(nodes_per_side):
+            u = ok_nodes[i][j]
+            if u is None:
+                continue
+            g.add_node(u)
+            for dxy, dist in zip(neighbours, distances):
+                ii = i + dxy[0]
+                jj = j + dxy[1]
+                if ii < 0 or ii >= nodes_per_side:
+                    continue
+                if jj < 0 or jj >= nodes_per_side:
+                    continue
+                v = ok_nodes[ii][jj]
+                if v is not None:
+                    g.add_edge(u, v, dist)
+    return g
 
 
 def dijsktra(graph, initial):
