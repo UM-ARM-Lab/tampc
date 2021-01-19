@@ -23,20 +23,16 @@ class PybulletEnv(Env):
         self.realtime = False
         self.sim_step_s = 1. / 240.
         self.randseed = None
-        self.camera_dist = camera_dist
 
         # quadratic cost
         self.Q = self.state_cost()
         self.R = self.control_cost()
 
+        self._configure_physics_engine()
         self._dd = DebugDrawer(default_debug_height, camera_dist)
 
-        self._configure_physics_engine()
-
     def set_camera_position(self, camera_pos, yaw=0, pitch=-89):
-        self._dd._camera_pos = camera_pos
-        p.resetDebugVisualizerCamera(cameraDistance=self.camera_dist, cameraYaw=yaw, cameraPitch=pitch,
-                                     cameraTargetPosition=[camera_pos[0], camera_pos[1], 0])
+        self._dd.set_camera_position(camera_pos, yaw, pitch)
 
     def _configure_physics_engine(self):
         mode_dict = {Mode.GUI: p.GUI, Mode.DIRECT: p.DIRECT}
@@ -73,10 +69,13 @@ class PybulletEnv(Env):
     def close(self):
         p.disconnect(self.physics_client)
 
-    def draw_user_text(self, text, location_index=1, left_offset=1.0):
-        if location_index is 0:
-            raise RuntimeError("Can't use same location index (0) as cost")
-        self._dd.draw_text('user{}_{}'.format(location_index, left_offset), text, location_index, left_offset)
+    def draw_user_text(self, text, location_index=1, left_offset=1.0, xy=None):
+        if xy:
+            self._dd.draw_screen_text('user_{}'.format(xy), text, xy)
+        else:
+            if location_index is 0:
+                raise RuntimeError("Can't use same location index (0) as cost")
+            self._dd.draw_text('user{}_{}'.format(location_index, left_offset), text, location_index, left_offset)
 
     @abc.abstractmethod
     def _draw_action(self, action, old_state=None, debug=0):
@@ -133,10 +132,24 @@ def get_lateral_friction_forces(contact, flip=True):
 class DebugDrawer:
     def __init__(self, default_height, camera_height):
         self._debug_ids = {}
-        self._camera_pos = [0, 0]
+        self._camera_pos = None
         self._camera_height = camera_height
         self._default_height = default_height
         self._3dmode = False
+        self._inv_camera_tsf = None
+        self.set_camera_position([0, 0])
+
+    def set_camera_position(self, camera_pos, yaw=0, pitch=-89):
+        self._camera_pos = camera_pos
+        p.resetDebugVisualizerCamera(cameraDistance=self._camera_height, cameraYaw=yaw, cameraPitch=pitch,
+                                     cameraTargetPosition=[camera_pos[0], camera_pos[1], 0])
+        # wait for reset
+        for _ in range(1000):
+            p.stepSimulation()
+        # cache the inverse camera transform for efficiency
+        info = p.getDebugVisualizerCamera()
+        view_matrix = np.array(info[2]).reshape(4, 4).T
+        self._inv_camera_tsf = np.linalg.inv(view_matrix)
 
     def toggle_3d(self, using_3d):
         self._3dmode = using_3d
@@ -250,6 +263,21 @@ class DebugDrawer:
         self._debug_ids[name] = p.addUserDebugText(str(text),
                                                    [self._camera_pos[0] + left_offset * height_scale,
                                                     self._camera_pos[1] + (1 - move_down) * height_scale, z],
+                                                   textColorRGB=[0.5, 0.1, 0.1],
+                                                   textSize=2,
+                                                   replaceItemUniqueId=uid)
+
+    def draw_screen_text(self, name, text, camera_frame_pos):
+        if name not in self._debug_ids:
+            self._debug_ids[name] = -1
+        uid = self._debug_ids[name]
+
+        # convert from camera frame to world frame
+        pos_in = np.r_[camera_frame_pos, 1]
+        world_frame_pos = self._inv_camera_tsf @ pos_in
+
+        self._debug_ids[name] = p.addUserDebugText(str(text),
+                                                   world_frame_pos[:3],
                                                    textColorRGB=[0.5, 0.1, 0.1],
                                                    textSize=2,
                                                    replaceItemUniqueId=uid)
