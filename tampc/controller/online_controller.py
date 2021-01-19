@@ -575,10 +575,12 @@ class APFVO(OnlineMPC):
             # check if stuck in local minima
             recent_x = torch.stack(self.x_history[-self.T_a:-1])
             d = self.state_dist(self.compare_to_goal(obs, recent_x))
+            # logger.debug("min dist %f", d.min())
             if torch.any(d < self.local_min_threshold):
                 # place trap points where our model thinks our action will take us
                 trap_state = self._apply_dynamics(obs, self.u_history[-1])
                 self.trap_set.append(trap_state[0])
+                logger.debug("trap added %s", trap_state[0])
 
         # sample a bunch of actions and run them through the dynamics
         u = torch.rand(self.samples, self.u_scale.shape[0], device=self.u_scale.device)
@@ -622,7 +624,7 @@ class APFSP(OnlineMPC):
                 self.trap_set.append(trap_state[0])
                 # need to back up a bit as otherwise the helicoid doesn't work with flat obstacles very well
                 # assume negative of control can reverse
-                self.preloaded_control.append(-self.u_history[-1]*self.backup_scale)
+                self.preloaded_control.append(-self.u_history[-1] * self.backup_scale)
 
         if len(self.preloaded_control):
             u = self.preloaded_control.pop()
