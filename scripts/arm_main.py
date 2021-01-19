@@ -196,18 +196,18 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
         tampc_opts.pop('dynamics_minimum_window')
         tampc_opts.pop('max_trap_weight')
         if apfvo_baseline:
-            rho = 0.3
+            rho = 0.4
             ctrl = online_controller.APFVO(ds, hybrid_dynamics, ds.original_config(), gating=gating,
                                            local_min_threshold=0.03, trap_max_dist_influence=rho, repulsion_gain=0.5,
                                            **tampc_opts)
-            env.draw_user_text("APF-VO baseline", 4, left_offset=-1.5)
+            env.draw_user_text("APF-VO baseline", xy=(0.5, 0.7, -1))
         else:
             # anything lower leads to oscillation between backing up and entering the trap's field of influence
             rho = 0.07
             ctrl = online_controller.APFSP(ds, hybrid_dynamics, ds.original_config(), gating=gating,
                                            trap_max_dist_influence=rho, backup_scale=0.7,
                                            **tampc_opts)
-            env.draw_user_text("APF-SP baseline", 4, left_offset=-1.5)
+            env.draw_user_text("APF-SP baseline", xy=(0.5, 0.7, -1))
     else:
         ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
                                             autonomous_recovery=autonomous_recovery,
@@ -217,7 +217,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                                             **tampc_opts,
                                             mpc_opts=mpc_opts)
 
-    env.draw_user_text("run seed {}".format(seed), 5, left_offset=-1.5)
+    env.draw_user_text("run seed {}".format(seed), xy=(0.5, 0.8, -1))
     ctrl.set_goal(env.goal)
 
     sim = arm.ExperimentRunner(env, ctrl, num_frames=num_frames, plot=False, save=True, stop_when_done=True)
@@ -262,7 +262,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
         affix_run_name(seed)
         affix_run_name(num_frames)
 
-    # env.draw_user_text(run_name, 6, left_offset=0.)
+    env.draw_user_text(run_name, xy=(-1.3, 0.9, -1))
     pre_run_setup(env, ctrl, ds)
 
     sim.run(seed, run_name)

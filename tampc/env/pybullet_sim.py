@@ -89,7 +89,7 @@ class PybulletSim(simulation.Simulation):
 
         for simTime in range(self.num_frames - 1):
             self.traj[simTime, :] = obs
-            self.env.draw_user_text("{}".format(simTime), 1)
+            self.env.draw_user_text("{}".format(simTime), xy=(0.5, 0.7, -1))
 
             start = time.perf_counter()
 
