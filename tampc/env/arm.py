@@ -103,7 +103,7 @@ class ArmEnv(PybulletEnv):
 
     def __init__(self, goal=(0.8, 0.0, 0.3), init=(0.3, 0.6, 0.2),
                  environment_level=0, sim_step_wait=None, mini_steps=15, wait_sim_steps_per_mini_step=20,
-                 debug_visualizations=None, dist_for_done=0.02,
+                 debug_visualizations=None, dist_for_done=0.04,
                  reaction_force_strategy=ReactionForceStrategy.MEDIAN_OVER_MINI_STEPS, **kwargs):
         """
         :param environment_level: what obstacles should show up in the environment

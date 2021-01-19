@@ -284,7 +284,24 @@ def test_autonomous_recovery(*args, **kwargs):
     run_controller('auto_recover', default_setup, *args, **kwargs)
 
 
-# TODO implement evaluate
+class EvaluateTask:
+    @staticmethod
+    def closest_distance_to_goal(file, level, visualize=True):
+        env = ArmGetter.env(mode=p.GUI if visualize else p.DIRECT, level=level)
+        ds = ArmGetter.ds(env, file, validation_ratio=0.)
+        XU, _, _ = ds.training_set(original=True)
+        X, U = torch.split(XU, ds.original_config().nx, dim=1)
+
+        reached_states = X.cpu().numpy()
+        goal_pos = env.goal_pos
+        reached_ee = np.stack(env.get_ee_pos(s) for s in reached_states)
+
+        dists = np.linalg.norm((reached_ee - goal_pos), axis=1)
+        lower_bound_dist = dists.min()
+
+        print('min dist: {} lower bound: {}'.format(lower_bound_dist, lower_bound_dist))
+        env.close()
+        return dists
 
 
 parser = argparse.ArgumentParser(description='Experiments on the 2D grid environment')
@@ -392,14 +409,26 @@ if __name__ == "__main__":
                                      apfsp_baseline=args.apfsp_baseline)
     elif args.command == 'evaluate':
         task_type = arm.DIR
-        trials = ["{}/{}".format(task_type, filename) for filename in os.listdir(os.path.join(cfg.DATA_DIR, task_type))
-                  if filename.startswith(args.eval_run_prefix)]
         # get all the trials to visualize for choosing where the obstacles are
-        # EvaluateTask.closest_distance_to_goal(trials, level=level, just_get_ok_nodes=True)
-        # util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
-        #                                         args.eval_run_prefix, task_type=task_type)
-    elif args.command == 'visualize1':
-        pass
+        util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
+                                                args.eval_run_prefix, task_type=task_type)
+    elif args.command == 'visualize':
+        util.plot_task_res_dist({
+            'auto_recover__NONE__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'non-adapative', 'color': 'purple', 'label': True},
+            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+                'name': 'adaptive MPC++', 'color': 'red', 'label': True},
+            'auto_recover__APFVO__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-VO', 'color': 'black', 'label': True},
+            'auto_recover__APFVO__rho04__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'APF-VO tuned', 'color': 'grey', 'label': True},
+            'auto_recover__NONE__MAB__NO_E__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC e=0', 'color': [0.8, 0.5, 0], 'label': True},
+            'auto_recover__fixed_max_weight2__NONE__MAB__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'TAMPC', 'color': 'green', 'label': True},
+        }, 'arm_task_res.pkl', task_type='arm', figsize=(5, 7), set_y_label=True,
+            task_names=task_names, success_min_dist=0.04)
+
     else:
         use_tsf = UseTsf.NO_TRANSFORM
         d, env, config, ds = ArmGetter.free_space_env_init(0)
