@@ -159,7 +159,7 @@ def plot_task_res_dist(series_to_plot, res_file,
                 dists = res_list[series_name]
                 success = 0
                 # remove any non-list elements (historical)
-                dists = [dlist for dlist in dists if type(dlist) is list]
+                dists = [list(dlist) for dlist in dists if isinstance(dlist, Iterable)]
                 # process the dists so they are all valid (replace nones)
                 for dhistory in dists:
                     # strip anything beyond what we expect the data length to be
