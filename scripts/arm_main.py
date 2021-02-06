@@ -44,7 +44,7 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 logger = logging.getLogger(__name__)
 
 # --- SHARED GETTERS
-task_map = {'freespace': 0, 'wall': 1}
+task_map = {'freespace': 0, 'wall': 1, 'wall_broken_joint': 2}
 
 
 class ArmGetter(EnvGetter):
@@ -306,7 +306,7 @@ class EvaluateTask:
 
 parser = argparse.ArgumentParser(description='Experiments on the 2D grid environment')
 parser.add_argument('command',
-                    choices=['collect', 'learn_representation', 'fine_tune_dynamics', 'run', 'evaluate', 'visualize1',
+                    choices=['collect', 'learn_representation', 'fine_tune_dynamics', 'run', 'evaluate', 'visualize',
                              'debug'],
                     help='which part of the experiment to run')
 parser.add_argument('--seed', metavar='N', type=int, nargs='+',
@@ -414,14 +414,14 @@ if __name__ == "__main__":
                                                 args.eval_run_prefix, task_type=task_type)
     elif args.command == 'visualize':
         util.plot_task_res_dist({
-            'auto_recover__NONE__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-                'name': 'non-adapative', 'color': 'purple', 'label': True},
-            'auto_recover__GP_KERNEL_INDEP_OUT__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-                'name': 'adaptive MPC++', 'color': 'red', 'label': True},
-            'auto_recover__APFVO__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'APF-VO', 'color': 'black', 'label': True},
+            # 'auto_recover__NONE__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+            #     'name': 'non-adapative', 'color': 'purple', 'label': True},
+            # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
+            #     'name': 'adaptive MPC++', 'color': 'red', 'label': True},
+            # 'auto_recover__APFVO__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'APF-VO', 'color': 'black', 'label': True},
             'auto_recover__APFVO__rho04__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'APF-VO tuned', 'color': 'grey', 'label': True},
+                'name': 'APF-VO', 'color': 'black', 'label': True},
             'auto_recover__NONE__MAB__NO_E__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
                 'name': 'TAMPC e=0', 'color': [0.8, 0.5, 0], 'label': True},
             'auto_recover__fixed_max_weight2__NONE__MAB__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {

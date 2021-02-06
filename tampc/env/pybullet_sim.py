@@ -98,7 +98,7 @@ class PybulletSim(simulation.Simulation):
             # visualizations before taking action
             if self._predicts_dynamics_cls():
                 self.pred_cls[simTime] = self.ctrl.dynamics_class
-                self.env.draw_user_text("dyn cls {}".format(self.ctrl.dynamics_class), 2)
+                self.env.draw_user_text("dyn cls {}".format(self.ctrl.dynamics_class), xy=(0.5, 0.6, -1))
 
                 if self.ctrl.trap_set and self.ctrl.trap_cost is not None:
                     self.env.visualize_trap_set(self.ctrl.trap_set)
@@ -106,22 +106,22 @@ class PybulletSim(simulation.Simulation):
                 if self._has_recovery_policy() and self.ctrl.autonomous_recovery is online_controller.AutonomousRecovery.MAB:
                     mode_text = "recovery" if self.ctrl.autonomous_recovery_mode else (
                         "local" if self.ctrl.using_local_model_for_nonnominal_dynamics else "")
-                    self.env.draw_user_text(mode_text, 3)
+                    self.env.draw_user_text(mode_text, xy=(0.5, 0.5, -1))
                     if self.ctrl.recovery_cost and isinstance(self.ctrl.recovery_cost,
                                                               (control_cost.GoalSetCost, control_cost.CostQRSet)):
                         # plot goal set
                         self.env.visualize_goal_set(self.ctrl.recovery_cost.goal_set)
 
-                    for i in range(self.ctrl.num_costs):
-                        self.env.draw_user_text(
-                            "a{} {:.2f} ({:.2f})".format(i, self.ctrl.mab._mean[i], self.ctrl.mab._cov[i, i]),
-                            4 + i)
-                    if self.ctrl.last_arm_pulled is not None:
-                        text = ["a"]
-                        for value in self.ctrl.recovery_cost_weight():
-                            text.append("{:.2f}".format(value))
-                        self.env.draw_user_text(" ".join(text), 4 + self.ctrl.num_costs,
-                                                left_offset=1 - (self.ctrl.num_costs - 3) * 0.1)
+                    # for i in range(self.ctrl.num_costs):
+                    #     self.env.draw_user_text(
+                    #         "a{} {:.2f} ({:.2f})".format(i, self.ctrl.mab._mean[i], self.ctrl.mab._cov[i, i]),
+                    #         4 + i)
+                    # if self.ctrl.last_arm_pulled is not None:
+                    #     text = ["a"]
+                    #     for value in self.ctrl.recovery_cost_weight():
+                    #         text.append("{:.2f}".format(value))
+                    #     self.env.draw_user_text(" ".join(text), 4 + self.ctrl.num_costs,
+                    #                             left_offset=1 - (self.ctrl.num_costs - 3) * 0.1)
 
             if self.visualize_action_sample and isinstance(self.ctrl, controller.MPPI_MPC):
                 self._plot_action_sample(self.ctrl.mpc.perturbed_action)

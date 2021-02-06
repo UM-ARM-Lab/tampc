@@ -202,7 +202,7 @@ class ArmEnv(PybulletEnv):
         self.walls = []
         if self.level == 0:
             pass
-        elif self.level == 1:
+        elif self.level in [1, 2]:
             half_extents = [0.2, 0.05, 0.3]
             colId = p.createCollisionShape(p.GEOM_BOX, halfExtents=half_extents)
             visId = p.createVisualShape(p.GEOM_BOX, halfExtents=half_extents, rgbaColor=[0.2, 0.2, 0.2, 0.8])
@@ -480,7 +480,7 @@ class ArmEnv(PybulletEnv):
                                     targetPositions=jointPoses[:num_arm_indices],
                                     targetVelocities=[0] * num_arm_indices,
                                     # forces=[self.MAX_FORCE] * num_arm_indices,
-                                    forces=[100, 100, 60, 60, 50, 40, 40],
+                                    forces=[100, 100, 60, 60, 50, 40 if self.level != 2 else 0, 40],
                                     positionGains=[0.3] * num_arm_indices,
                                     velocityGains=[1] * num_arm_indices)
 
