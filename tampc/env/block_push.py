@@ -424,7 +424,7 @@ class PushAgainstWallEnv(PybulletEnv):
         start = self._observe_pusher()
         self._dd.draw_2d_line(name, start, r, size=np.linalg.norm(r), scale=0.03, color=color)
 
-    def draw_user_text(self, text, location_index=1, left_offset=1.0):
+    def draw_user_text(self, text, location_index=1, left_offset=1.0, xy=None):
         if location_index is 0:
             raise RuntimeError("Can't use same location index (0) as cost")
         self._dd.draw_text('user{}_{}'.format(location_index, left_offset), text, location_index, left_offset)
