@@ -233,8 +233,9 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                    never_estimate_error=False,
                    apfvo_baseline=False,
                    apfsp_baseline=False,
+                   env_mode=p.GUI,
                    **kwargs):
-    env = PegGetter.env(p.GUI, level=level, log_video=True)
+    env = PegGetter.env(env_mode, level=level, log_video=True)
     logger.info("initial random seed %d", rand.seed(seed))
 
     ds, pm = PegGetter.prior(env, use_tsf, rep_name=rep_name)
@@ -503,6 +504,84 @@ def evaluate_after_rollout(rollout_file, rollout_stop_index, *args, num_frames=1
     run_controller('evaluate_after_rollout', setup, *args, num_frames=num_frames, **kwargs)
 
 
+def test_rollout_consistency(env_mode=p.DIRECT):
+    """Save the rollout of applying the controller to evaluate controller changes (sometimes desired, sometimes not)"""
+    test_file = "fixed_consistency_rollout.mat"
+    recreate_rollout = False
+    ds_saved = None
+
+    this_run_name = datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
+
+    def setup(env, ctrl: online_controller.OnlineMPPI, ds):
+        nonlocal ds_saved, recreate_rollout
+        try:
+            ds_saved = PegGetter.ds(env, test_file, validation_ratio=0.)
+        except FileNotFoundError:
+            response = input("{} rollout file not found, create one by applying current controller? [y/N]")
+            if response == 'y':
+                recreate_rollout = True
+            else:
+                exit(0)
+
+    # use fixed set of parameters to test when algorithm changes rather than default parameters
+    d = get_device()
+    sigma = [0.2, 0.2]
+    noise_mu = [0, 0]
+    u_init = [0, 0]
+    sigma = torch.tensor(sigma, dtype=torch.double, device=d)
+    override_tampc_parameters = {
+        'terminal_cost_multiplier': 50,
+        'trap_cost_annealing_rate': 0.9,
+        'abs_unrecognized_threshold': 15 / 1.2185,
+        # 'nonnominal_dynamics_penalty_tolerance': 0.1,
+        # 'dynamics_minimum_window': 15,
+    }
+    override_mpc_parameters = {
+        'num_samples': 500,
+        'noise_sigma': torch.diag(sigma),
+        'noise_mu': torch.tensor(noise_mu, dtype=torch.double, device=d),
+        'lambda_': 1e-2,
+        'horizon': 10,
+        'u_init': torch.tensor(u_init, dtype=torch.double, device=d),
+        'sample_null_action': False,
+        'step_dependent_dynamics': True,
+        'rollout_samples': 10,
+        'rollout_var_cost': 0,
+    }
+
+    run_controller('', setup, env_mode=env_mode, seed=5, level=task_map['Peg-U'], num_frames=100,
+                   use_tsf=UseTsf.REX_EXTRACT, nominal_adapt=OnlineAdapt.NONE,
+                   autonomous_recovery=online_controller.AutonomousRecovery.MAB,
+                   override_tampc_params=override_tampc_parameters,
+                   override_mpc_params=override_mpc_parameters,
+                   rep_name="saved_peg", run_name=this_run_name)
+
+    this_file = os.path.join(PegGetter.dynamics_prefix(), "{}.mat".format(this_run_name))
+    if not recreate_rollout:
+        assert isinstance(ds_saved, peg_in_hole.PegInHoleDataSource)
+        logger.info("Evaluating rollout in %s against %s", this_file, test_file)
+        # compare previously saved
+        XU, Y, info = ds_saved.training_set(original=True)
+        ds_this = PegGetter.ds(PegGetter.env(p.DIRECT), this_file, validation_ratio=0.)
+        XU_, Y_, info_ = ds_this.training_set(original=True)
+        # if there's discrepancy, report it and ask if the new one should replace the old
+        if torch.allclose(XU, XU_):
+            logger.info("Same rollouts as before")
+        else:
+            logger.info("Discrepency in rollouts, old:")
+            logger.info(XU)
+            logger.info("new:")
+            logger.info(XU_)
+            response = input("Replace old rollouts with new ones? (y when changes are intended) [y/N]")
+            if response == 'y':
+                recreate_rollout = True
+
+    if recreate_rollout:
+        import shutil
+        logger.info("Saving rollout to %s", test_file)
+        shutil.copyfile(os.path.join(cfg.DATA_DIR, this_file), os.path.join(cfg.DATA_DIR, test_file))
+
+
 class EvaluateTask:
     @staticmethod
     def closest_distance_to_goal(file, level, visualize=True, nodes_per_side=150):
@@ -638,7 +717,7 @@ task_map = {'freespace': 0, 'Peg-U': 3, 'Peg-I': 5, 'Peg-T': 6, 'Peg-T(T)': 7, '
 parser = argparse.ArgumentParser(description='Experiments on the peg-in-hole environment')
 parser.add_argument('command',
                     choices=['collect', 'learn_representation', 'fine_tune_dynamics', 'run', 'evaluate', 'visualize1',
-                             'visualize2', 'debug'],
+                             'visualize2', 'debug', 'test'],
                     help='which part of the experiment to run')
 parser.add_argument('--seed', metavar='N', type=int, nargs='+',
                     default=[0],
@@ -739,6 +818,8 @@ if __name__ == "__main__":
                                      never_estimate_error=args.never_estimate_error,
                                      apfvo_baseline=args.apfvo_baseline,
                                      apfsp_baseline=args.apfsp_baseline)
+    elif args.command == 'test':
+        test_rollout_consistency()
     elif args.command == 'evaluate':
         util.closest_distance_to_goal_whole_set(EvaluateTask.closest_distance_to_goal,
                                                 args.eval_run_prefix, suffix="{}.mat".format(args.num_frames),
