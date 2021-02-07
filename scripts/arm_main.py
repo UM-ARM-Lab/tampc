@@ -210,14 +210,18 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                                            **tampc_opts)
             env.draw_user_text("APF-SP baseline", xy=(0.5, 0.7, -1))
     else:
-        ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
-                                            autonomous_recovery=autonomous_recovery,
-                                            assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
-                                            reuse_escape_as_demonstration=reuse_escape_as_demonstration,
-                                            use_trap_cost=use_trap_cost,
-                                            never_estimate_error_dynamics=never_estimate_error,
-                                            **tampc_opts,
-                                            mpc_opts=mpc_opts)
+        ctrl = online_controller.TAMPC(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                       autonomous_recovery=autonomous_recovery,
+                                       assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
+                                       reuse_escape_as_demonstration=reuse_escape_as_demonstration,
+                                       use_trap_cost=use_trap_cost,
+                                       never_estimate_error_dynamics=never_estimate_error,
+                                       **tampc_opts,)
+        mpc = controller.ExperimentalMPPI(ctrl.mpc_apply_dynamics, ctrl.mpc_running_cost, ctrl.nx,
+                                          u_min=ctrl.u_min, u_max=ctrl.u_max,
+                                          terminal_state_cost=ctrl.mpc_terminal_cost,
+                                          device=ctrl.d, **mpc_opts)
+        ctrl.register_mpc(mpc)
 
     env.draw_user_text("run seed {}".format(seed), xy=(0.5, 0.8, -1))
     ctrl.set_goal(env.goal)

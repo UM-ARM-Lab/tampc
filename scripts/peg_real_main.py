@@ -233,14 +233,18 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                                            trap_max_dist_influence=0.045,
                                            **tampc_opts)
     else:
-        ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
-                                            autonomous_recovery=autonomous_recovery,
-                                            assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
-                                            reuse_escape_as_demonstration=reuse_escape_as_demonstration,
-                                            never_estimate_error_dynamics=never_estimate_error,
-                                            use_trap_cost=use_trap_cost,
-                                            **tampc_opts,
-                                            mpc_opts=mpc_opts)
+        ctrl = online_controller.TAMPC(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                       autonomous_recovery=autonomous_recovery,
+                                       assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
+                                       reuse_escape_as_demonstration=reuse_escape_as_demonstration,
+                                       never_estimate_error_dynamics=never_estimate_error,
+                                       use_trap_cost=use_trap_cost,
+                                       **tampc_opts)
+        mpc = controller.ExperimentalMPPI(ctrl.mpc_apply_dynamics, ctrl.mpc_running_cost, ctrl.nx,
+                                          u_min=ctrl.u_min, u_max=ctrl.u_max,
+                                          terminal_state_cost=ctrl.mpc_terminal_cost,
+                                          device=ctrl.d, **mpc_opts)
+        ctrl.register_mpc(mpc)
 
     z = 0.98
     goal = np.r_[env.hole, z, 0, 0]

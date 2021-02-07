@@ -80,7 +80,7 @@ class PybulletSim(simulation.Simulation):
         return isinstance(self.ctrl, online_controller.OnlineMPC)
 
     def _has_recovery_policy(self):
-        return isinstance(self.ctrl, online_controller.OnlineMPPI)
+        return isinstance(self.ctrl, online_controller.TAMPC)
 
     def _run_experiment(self):
         self.last_run_cost = []

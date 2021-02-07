@@ -78,17 +78,6 @@ class OnlineMPC(controller.MPC):
 
         return next_state
 
-    def _mpc_command(self, obs):
-        t = len(self.u_history)
-        x = obs
-        if t > 0:
-            self.dynamics.update(self.x_history[-2], self.u_history[-1], x)
-
-        self.mpc_cost_history.append(self.mpc.running_cost(x.view(1, -1), None))
-        u = self._compute_action(x)
-
-        return u
-
     def _compute_action(self, x):
         u = self.mpc.command(x)
         return u
@@ -102,7 +91,7 @@ class AutonomousRecovery(enum.IntEnum):
     MAB = 4
 
 
-class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
+class TAMPC(OnlineMPC):
     def __init__(self, *args, abs_unrecognized_threshold=10,
                  trap_cost_annealing_rate=0.97, trap_cost_init_normalization=1, manual_init_trap_weight=None,
                  max_trap_weight=None,
@@ -113,8 +102,9 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                  never_estimate_error_dynamics=False,
                  assume_all_nonnominal_dynamics_are_traps=False,
                  recovery_scale=1, recovery_horizon=5, R_env=None,
-                 autonomous_recovery=AutonomousRecovery.RETURN_STATE, reuse_escape_as_demonstration=True, **kwargs):
-        super(OnlineMPPI, self).__init__(*args, **kwargs)
+                 autonomous_recovery=AutonomousRecovery.RETURN_STATE,
+                 reuse_escape_as_demonstration=True, **kwargs):
+        super(TAMPC, self).__init__(*args, **kwargs)
         self.abs_unrecognized_threshold = abs_unrecognized_threshold
         self.never_estimate_error_dynamics = never_estimate_error_dynamics
 
@@ -158,35 +148,52 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
         self.recovery_cost = None
         self.autonomous_recovery = autonomous_recovery
-        self.original_horizon = self.mpc.T
         self.reuse_escape_as_demonstration = reuse_escape_as_demonstration
 
         # return fastest properties
         self.fastest_to_choose = 4
 
-        # MAB specific properties
-        # these are all normalized to be relative to 1
-        self.obs_noise = torch.ones(1, device=self.d) * 0.3
-        self.process_noise_scaling = 0.1
-        self.last_arm_pulled = None
-        self.pull_arm_every_n_steps = 3
-        self.turns_since_last_pull = self.pull_arm_every_n_steps
-        self.num_arms = 100
-        self.num_costs = 2
-        self.cost_weights = torch.rand((self.num_arms, self.num_costs), device=self.d)
-        # each arm is a row of the cost weight; normalize so it sums to 1
-        self.cost_weights /= self.cost_weights.sum(dim=1).view(self.num_arms, 1)
-        # give special meaning to the first few arms (they are 1-hot)
-        self.cost_weights[:self.num_costs, :self.num_costs] = torch.eye(self.num_costs, device=self.d)
-        # TODO include a more informed prior (from previous iterations); doesn't seem to be too important
-        self.mab = KFMANDB(torch.ones(self.num_arms, device=self.d) * 0.1,
-                           torch.eye(self.num_arms, device=self.d) * 0.1)
+    # exposed methods for MPC (not protected via _method_name)
+    def register_mpc(self, mpc):
+        self.mpc = mpc
+        self._init_mab()
+
+    def mpc_apply_dynamics(self, state, action, t=0):
+        return self._apply_dynamics(state, action, t=t)
+
+    def mpc_running_cost(self, state, action):
+        if self.autonomous_recovery_mode:
+            return self.recovery_cost(state, action)
+        return self._running_cost(state, action)
+
+    def mpc_terminal_cost(self, state, action):
+        if self.autonomous_recovery_mode:
+            return 0
+        return self._terminal_cost(state, action)
+
+    def get_rollouts(self, obs):
+        try:
+            return self.mpc.get_rollouts(torch.from_numpy(obs).to(dtype=self.dtype, device=self.d))[0].cpu().numpy()
+        except AttributeError:
+            logger.warning("MPC has no get_rollouts(state) method")
+
+    # internal reasoning methods
+    def _change_mpc_horizon(self, new_horizon):
+        try:
+            self.mpc.change_horizon(new_horizon)
+        except RuntimeError:
+            logger.warning("No change_horizon method on MPC")
 
     def _mpc_command(self, obs):
-        return OnlineMPC._mpc_command(self, obs)
+        t = len(self.u_history)
+        x = obs
+        if t > 0:
+            self.dynamics.update(self.x_history[-2], self.u_history[-1], x)
 
-    def _recovery_running_cost(self, state, action):
-        return self.recovery_cost(state, action)
+        self.mpc_cost_history.append(self.mpc_running_cost(x.view(1, -1), None))
+        u = self._compute_action(x)
+
+        return u
 
     def _control_effort(self, u):
         return u @ self.R_env @ u
@@ -337,7 +344,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
     def _start_recovery_mode(self):
         logger.debug("Entering autonomous recovery mode")
         self.autonomous_recovery_mode = True
-        # TODO also make autonomous recovery index include this observation
+        # maybe also make autonomous recovery index include this observation?
         self.autonomous_recovery_start_index = len(self.x_history)
 
         min_index = -1
@@ -351,12 +358,6 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                     min_index = i
         if min_index >= 0:
             self.trap_set.append((self.x_history[min_index], self.u_history[min_index]))
-
-        # start = max(self.nonnominal_dynamics_start_index, self.autonomous_recovery_end_index - 1)
-        # for i in range(start, len(self.x_history) - 1):
-        #     ii, moved, expected = self.single_step_move_dist[i]
-        #     if moved < 0.1 * expected:
-        #         self.trap_set.append((self.x_history[i], self.u_history[i]))
 
         if len(self.trap_set):
             temp = torch.stack([torch.cat((x, u)) for x, u in self.trap_set])
@@ -392,14 +393,12 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
                 assert len(costs) == self.num_costs
                 self.last_arm_pulled = None
                 # linear combination of costs over the different cost functions
-                # TODO normalize costs by their value at the current state? (to get on the same magnitude)
                 self.recovery_cost = cost.ComposeCost(costs, weights=self.recovery_cost_weight)
             else:
                 raise RuntimeError("Unhandled recovery strategy")
 
-            self.mpc.running_cost = self._recovery_running_cost
-            self.mpc.terminal_state_cost = None
-            self.mpc.change_horizon(self.recovery_horizon)
+            self.original_horizon = self.mpc.T
+            self._change_mpc_horizon(self.recovery_horizon)
 
     def recovery_cost_weight(self):
         return self.cost_weights[self.last_arm_pulled]
@@ -412,11 +411,7 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
         if self.autonomous_recovery in [AutonomousRecovery.RETURN_STATE, AutonomousRecovery.RETURN_FASTEST,
                                         AutonomousRecovery.MAB]:
-            # restore cost functions
-            self.mpc.running_cost = self._running_cost
-            self.mpc.terminal_state_cost = self._terminal_cost
-            self.mpc.change_horizon(self.original_horizon)
-
+            self._change_mpc_horizon(self.original_horizon)
             if self.autonomous_recovery is AutonomousRecovery.MAB and self.last_arm_pulled is not None:
                 self._update_mab_arm(self.last_arm_pulled.item())
 
@@ -528,6 +523,25 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
 
         # trap cost at last nominal state should have similar magnitude as the goal cost
         return goal_cost_at_state / trap_cost_at_state
+
+    # MAB methods
+    def _init_mab(self):
+        # MAB specific properties
+        # these are all normalized to be relative to 1
+        self.obs_noise = torch.ones(1, device=self.d) * 0.3
+        self.process_noise_scaling = 0.1
+        self.last_arm_pulled = None
+        self.pull_arm_every_n_steps = 3
+        self.turns_since_last_pull = self.pull_arm_every_n_steps
+        self.num_arms = 100
+        self.num_costs = 2
+        self.cost_weights = torch.rand((self.num_arms, self.num_costs), device=self.d)
+        # each arm is a row of the cost weight; normalize so it sums to 1
+        self.cost_weights /= self.cost_weights.sum(dim=1).view(self.num_arms, 1)
+        # give special meaning to the first few arms (they are 1-hot)
+        self.cost_weights[:self.num_costs, :self.num_costs] = torch.eye(self.num_costs, device=self.d)
+        self.mab = KFMANDB(torch.ones(self.num_arms, device=self.d) * 0.1,
+                           torch.eye(self.num_arms, device=self.d) * 0.1)
 
     def _update_mab_arm(self, arm):
         nominal = self.nominal_max_velocity

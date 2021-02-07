@@ -464,7 +464,7 @@ class ExperimentRunner(simulation.Simulation):
         return isinstance(self.ctrl, online_controller.OnlineMPC)
 
     def _has_recovery_policy(self):
-        return isinstance(self.ctrl, online_controller.OnlineMPPI)
+        return isinstance(self.ctrl, online_controller.TAMPC)
 
     def clear_markers(self):
         self.dd.clear_markers("state_trajectory", delete_all=True)
@@ -506,7 +506,7 @@ class ExperimentRunner(simulation.Simulation):
                 pred_cls.append(self.ctrl.dynamics_class)
                 self.dd.draw_text("dynamics class", "dyn cls {}".format(self.ctrl.dynamics_class), 2)
 
-                if isinstance(self.ctrl, online_controller.OnlineMPPI):
+                if isinstance(self.ctrl, online_controller.TAMPC):
                     mode_text = "recovery" if self.ctrl.autonomous_recovery_mode else (
                         "local" if self.ctrl.using_local_model_for_nonnominal_dynamics else "nominal")
                     self.dd.draw_text("control mode", mode_text, 3)

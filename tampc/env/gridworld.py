@@ -702,7 +702,7 @@ class ExperimentRunner(simulation.Simulation):
         return isinstance(self.ctrl, online_controller.OnlineMPC)
 
     def _has_recovery_policy(self):
-        return isinstance(self.ctrl, online_controller.OnlineMPPI)
+        return isinstance(self.ctrl, online_controller.TAMPC)
 
     def clear_markers(self):
         self.dd.clear_all_markers()
@@ -730,7 +730,7 @@ class ExperimentRunner(simulation.Simulation):
 
             # visualization before taking action
             model_pred_error = 0
-            if isinstance(self.ctrl, online_controller.OnlineMPPI):
+            if isinstance(self.ctrl, online_controller.TAMPC):
                 pred_cls.append(self.ctrl.dynamics_class)
                 self.dd.draw_text("dynamics class", "dyn cls {}".format(self.ctrl.dynamics_class), 2)
 

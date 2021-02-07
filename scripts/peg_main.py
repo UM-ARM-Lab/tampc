@@ -291,14 +291,19 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                                            **tampc_opts)
             env.draw_user_text("APF-SP baseline", 13, left_offset=-1.5)
     else:
-        ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
-                                            autonomous_recovery=autonomous_recovery,
-                                            assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
-                                            reuse_escape_as_demonstration=reuse_escape_as_demonstration,
-                                            use_trap_cost=use_trap_cost,
-                                            never_estimate_error_dynamics=never_estimate_error,
-                                            **tampc_opts,
-                                            mpc_opts=mpc_opts)
+        ctrl = online_controller.TAMPC(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                       autonomous_recovery=autonomous_recovery,
+                                       assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
+                                       reuse_escape_as_demonstration=reuse_escape_as_demonstration,
+                                       use_trap_cost=use_trap_cost,
+                                       never_estimate_error_dynamics=never_estimate_error,
+                                       **tampc_opts)
+        mpc = controller.ExperimentalMPPI(ctrl.mpc_apply_dynamics, ctrl.mpc_running_cost, ctrl.nx,
+                                          u_min=ctrl.u_min, u_max=ctrl.u_max,
+                                          terminal_state_cost=ctrl.mpc_terminal_cost,
+                                          device=ctrl.d, **mpc_opts)
+        ctrl.register_mpc(mpc)
+
         env.draw_user_text(gating.name, 13, left_offset=-1.5)
         env.draw_user_text("recovery {}".format(autonomous_recovery.name), 11, left_offset=-1.6)
         if reuse_escape_as_demonstration:
@@ -449,7 +454,7 @@ def tune_trap_set_cost(*args, num_frames=100, **kwargs):
 
 
 def tune_recovery_policy(*args, num_frames=100, **kwargs):
-    def setup(env, ctrl: online_controller.OnlineMPPI, ds):
+    def setup(env, ctrl: online_controller.TAMPC, ds):
         # setup initial conditions where we are close to a trap and have items in our trap set
         ctrl.nominal_max_velocity = 0.012
 
@@ -471,7 +476,7 @@ def tune_recovery_policy(*args, num_frames=100, **kwargs):
 
 
 def evaluate_after_rollout(rollout_file, rollout_stop_index, *args, num_frames=100, **kwargs):
-    def setup(env, ctrl: online_controller.OnlineMPPI, ds):
+    def setup(env, ctrl: online_controller.TAMPC, ds):
         ds_eval = PegGetter.ds(env, rollout_file, validation_ratio=0.)
         ds_eval.update_preprocessor(ds.preprocessor)
 
@@ -512,12 +517,13 @@ def test_rollout_consistency(env_mode=p.DIRECT):
 
     this_run_name = datetime.now().strftime('%Y_%m_%d_%H_%M_%S')
 
-    def setup(env, ctrl: online_controller.OnlineMPPI, ds):
+    def setup(env, ctrl: online_controller.TAMPC, ds):
         nonlocal ds_saved, recreate_rollout
         try:
             ds_saved = PegGetter.ds(env, test_file, validation_ratio=0.)
         except FileNotFoundError:
-            response = input("{} rollout file not found, create one by applying current controller? [y/N]")
+            response = input(
+                "{} rollout file not found, create one by applying current controller? [y/N]".format(test_file))
             if response == 'y':
                 recreate_rollout = True
             else:

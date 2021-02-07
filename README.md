@@ -7,6 +7,21 @@
 [pytorch mppi](https://github.com/LemonPi/pytorch_mppi)
 2. `pip3 install -e .`
 
+## Usage for Inclusion
+Different low level MPC modules could be used. The required properties are:
+```
+mpc.command(state) -> control - method for computing an action based on current state
+(optional) mpc.T - MPC horizon
+(optional) mpc.change_horizon(integer) - method for changing MPC horizon
+(optional) mpc.get_rollouts(state) -> state sequence - method for rolling out control from a given state for visualization
+```
+Methods provided by TAMPC to the low level MPC include:
+```
+mpc_apply_dynamics(state, action, t=0) -> next_state - forward dynamics model; t is the rollout time (0 is current, up to MPC horizon-1)
+mpc_running_cost(state, action) -> cost
+mpc_terminal_cost(state, action) -> terminal cost
+```
+
 ## Installation with ROS
 ```
 conda create --name <env_name> --channel conda-forge
@@ -23,7 +38,7 @@ Project Structure (for PyCharm) so the IDE knows where the paths are.
 Lastly, when running, add an environment variable `ROS_MASTER_URI` to point
 to the right ROS master.
 
-## Usage
+## Usage for Reproduction
 1. (optional and requires ROS) generate urdf files `python3 build_models.py`
     
 2. (only for training models) open tensorboard server (see below)

@@ -9,7 +9,7 @@ from gym import wrappers, logger as gym_log
 from arm_pytorch_utilities import rand, load_data, math_utils
 from arm_pytorch_utilities import preprocess
 
-from tampc.controller import online_controller
+from tampc.controller import online_controller, controller
 from tampc.controller import ilqr
 from tampc.dynamics import online_model, model, prior
 from tampc import cfg
@@ -261,14 +261,19 @@ if __name__ == "__main__":
     else:
         mppi_opts = {'num_samples': N_SAMPLES, 'horizon': TIMESTEPS, 'lambda_': 1,
                      'noise_sigma': torch.eye(nu, dtype=dtype, device=d) * 1}
-        ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(),
-                                            gating=gating_function.AlwaysSelectNominal(),
-                                            Q=Q, R=R, u_max=ACTION_HIGH, u_min=ACTION_LOW,
-                                            compare_to_goal=compare_to_goal,
-                                            device=d,
-                                            use_trap_cost=False,
-                                            autonomous_recovery=online_controller.AutonomousRecovery.NONE,
-                                            constrain_state=constrain_state, mpc_opts=mppi_opts)
+        ctrl = online_controller.TAMPC(ds, hybrid_dynamics, ds.original_config(),
+                                       gating=gating_function.AlwaysSelectNominal(),
+                                       Q=Q, R=R, u_max=ACTION_HIGH, u_min=ACTION_LOW,
+                                       compare_to_goal=compare_to_goal,
+                                       device=d,
+                                       use_trap_cost=False,
+                                       autonomous_recovery=online_controller.AutonomousRecovery.NONE,
+                                       constrain_state=constrain_state)
+        mpc = controller.ExperimentalMPPI(ctrl.mpc_apply_dynamics, ctrl.mpc_running_cost, ctrl.nx,
+                                          u_min=ctrl.u_min, u_max=ctrl.u_max,
+                                          terminal_state_cost=ctrl.mpc_terminal_cost,
+                                          device=ctrl.d, **mppi_opts)
+        ctrl.register_mpc(mpc)
         ctrl.set_goal(np.array([0, 0]))
 
 

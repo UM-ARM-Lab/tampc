@@ -542,8 +542,12 @@ def evaluate_freespace_control(seed=1, level=0, use_tsf=UseTsf.COORD, relearn_dy
                                                        device=d,
                                                        preprocessor=no_tsf_preprocessor(),
                                                        nominal_model_kwargs=nominal_kwargs)
-    ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, untransformed_config, **common_wrapper_opts,
-                                        mpc_opts=mpc_opts)
+    ctrl = online_controller.TAMPC(ds, hybrid_dynamics, untransformed_config, **common_wrapper_opts)
+    mpc = controller.ExperimentalMPPI(ctrl.mpc_apply_dynamics, ctrl.mpc_running_cost, ctrl.nx,
+                                      u_min=ctrl.u_min, u_max=ctrl.u_max,
+                                      terminal_state_cost=ctrl.mpc_terminal_cost,
+                                      device=ctrl.d, **mpc_opts)
+    ctrl.register_mpc(mpc)
 
     name = get_full_controller_name(pm, ctrl, tsf_name)
 
@@ -772,8 +776,13 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
         return
 
     common_wrapper_opts, mpc_opts = BlockPushGetter.controller_options(env)
-    ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
-                                        **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
+    ctrl = online_controller.TAMPC(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                   **common_wrapper_opts, constrain_state=constrain_state)
+    mpc = controller.ExperimentalMPPI(ctrl.mpc_apply_dynamics, ctrl.mpc_running_cost, ctrl.nx,
+                                      u_min=ctrl.u_min, u_max=ctrl.u_max,
+                                      terminal_state_cost=ctrl.mpc_terminal_cost,
+                                      device=ctrl.d, **mpc_opts)
+    ctrl.register_mpc(mpc)
     ctrl.set_goal(env.goal)
 
     name = get_full_controller_name(pm, ctrl, use_tsf.name)
@@ -875,14 +884,18 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                                                **tampc_opts)
                 env.draw_user_text("APF-SP baseline", 13, left_offset=-1.5)
         else:
-            ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
-                                                autonomous_recovery=autonomous_recovery,
-                                                assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
-                                                reuse_escape_as_demonstration=reuse_escape_as_demonstration,
-                                                use_trap_cost=use_trap_cost,
-                                                never_estimate_error_dynamics=never_estimate_error,
-                                                **tampc_opts, constrain_state=constrain_state,
-                                                mpc_opts=mpc_opts)
+            ctrl = online_controller.TAMPC(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                           autonomous_recovery=autonomous_recovery,
+                                           assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
+                                           reuse_escape_as_demonstration=reuse_escape_as_demonstration,
+                                           use_trap_cost=use_trap_cost,
+                                           never_estimate_error_dynamics=never_estimate_error,
+                                           **tampc_opts, constrain_state=constrain_state)
+            mpc = controller.ExperimentalMPPI(ctrl.mpc_apply_dynamics, ctrl.mpc_running_cost, ctrl.nx,
+                                              u_min=ctrl.u_min, u_max=ctrl.u_max,
+                                              terminal_state_cost=ctrl.mpc_terminal_cost,
+                                              device=ctrl.d, **mpc_opts)
+            ctrl.register_mpc(mpc)
             env.draw_user_text(gating.name, 13, left_offset=-1.5)
             env.draw_user_text("recovery {}".format(autonomous_recovery.name), 11, left_offset=-1.6)
             if reuse_escape_as_demonstration:
@@ -973,7 +986,7 @@ def tune_trap_set_cost(*args, num_frames=100, **kwargs):
 
 
 def tune_recovery_policy(*args, num_frames=100, **kwargs):
-    def setup(env, ctrl: online_controller.OnlineMPPI):
+    def setup(env, ctrl: online_controller.TAMPC):
         # setup initial conditions where we are close to a trap and have items in our trap set
         ctrl.nominal_max_velocity = 0.012
         ctrl.trap_set.append((torch.tensor([0.6147, 0.1381, -1.2658, 6.9630, 14.9701], device=ctrl.d, dtype=ctrl.dtype),
@@ -1275,12 +1288,17 @@ def evaluate_ctrl_sampler(eval_file, eval_i, seed=1, use_tsf=UseTsf.COORD,
     gating = hybrid_dynamics.get_gating()
 
     common_wrapper_opts, mpc_opts = BlockPushGetter.controller_options(env)
-    ctrl = online_controller.OnlineMPPI(ds, hybrid_dynamics, ds.original_config(), gating=gating,
-                                        autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE,
-                                        reuse_escape_as_demonstration=False,
-                                        use_trap_cost=True,
-                                        assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
-                                        **common_wrapper_opts, constrain_state=constrain_state, mpc_opts=mpc_opts)
+    ctrl = online_controller.TAMPC(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                                   autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE,
+                                   reuse_escape_as_demonstration=False,
+                                   use_trap_cost=True,
+                                   assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
+                                   **common_wrapper_opts, constrain_state=constrain_state)
+    mpc = controller.ExperimentalMPPI(ctrl.mpc_apply_dynamics, ctrl.mpc_running_cost, ctrl.nx,
+                                      u_min=ctrl.u_min, u_max=ctrl.u_max,
+                                      terminal_state_cost=ctrl.mpc_terminal_cost,
+                                      device=ctrl.d, **mpc_opts)
+    ctrl.register_mpc(mpc)
     ctrl.set_goal(env.goal)
 
     ds_eval = BlockPushGetter.ds(env, eval_file, validation_ratio=0.)
