@@ -691,6 +691,8 @@ class PlanarArmEnv(ArmEnv):
 
     @staticmethod
     def get_ee_pos(state):
+        if torch.is_tensor(state):
+            return torch.cat((state[:2], torch.tensor(FIXED_Z, dtype=state.dtype, device=state.device).view(1)))
         return np.r_[state[:2], FIXED_Z]
 
     @staticmethod
@@ -719,8 +721,17 @@ class PlanarArmEnv(ArmEnv):
         u_max = np.array([1, 1])
         return u_min, u_max
 
-    def __init__(self, goal=(1.0, -0.4, FIXED_Z), init=(0.5, 0.8, FIXED_Z), **kwargs):
-        super(PlanarArmEnv, self).__init__(goal=goal, init=init, camera_dist=1, **kwargs)
+    @staticmethod
+    def compare_to_goal(state, goal):
+        # if torch.is_tensor(goal) and not torch.is_tensor(state):
+        #     state = torch.from_numpy(state).to(device=goal.device)
+        diff = state - goal
+        if len(diff.shape) == 1:
+            diff = diff.reshape(1, -1)
+        return diff
+
+    def __init__(self, goal=(1.0, -0.4), init=(0.5, 0.8), **kwargs):
+        super(PlanarArmEnv, self).__init__(goal=goal, init=tuple(init) + (FIXED_Z,), **kwargs)
 
     def _observe_ee(self):
         return super(PlanarArmEnv, self)._observe_ee()[:2]
@@ -731,7 +742,7 @@ class PlanarArmEnv(ArmEnv):
     def _set_goal(self, goal):
         # ignore the pusher position
         self.goal = np.array(tuple(goal) + (0, 0))
-        self._dd.draw_point('goal', self.goal)
+        self._dd.draw_point('goal', tuple(self.goal) + (FIXED_Z,))
 
     def _setup_experiment(self):
         # add plane to push on (slightly below the base of the robot)
@@ -854,9 +865,8 @@ class FloatingGripperEnv(PlanarArmEnv):
         if action is not None:
             self._draw_action(action, old_state=state)
 
-    def __init__(self, goal=(1.0, -0.4, FIXED_Z), init=(-.1, 0.4, FIXED_Z), **kwargs):
-        super(PlanarArmEnv, self).__init__(goal=goal, init=init, camera_dist=1, **kwargs)
-
+    def __init__(self, goal=(1.0, -0.4), init=(-.1, 0.4), **kwargs):
+        super(FloatingGripperEnv, self).__init__(goal=goal, init=init, camera_dist=1, **kwargs)
 
     def _observe_ee(self):
         gripperPose = p.getBasePositionAndOrientation(self.gripperId)
@@ -914,6 +924,7 @@ class FloatingGripperEnv(PlanarArmEnv):
 
         for objId in self.immovable:
             p.changeVisualShape(objId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])
+        self.objects = self.immovable + self.movable
 
         self.set_camera_position([0.5, 0.3], yaw=-75, pitch=-80)
 
@@ -939,8 +950,6 @@ class FloatingGripperEnv(PlanarArmEnv):
 
         self._open_gripper()
         self._close_gripper()
-        p.enableJointForceTorqueSensor(self.gripperId, PandaJustGripperID.FINGER_A)
-        p.enableJointForceTorqueSensor(self.gripperId, PandaJustGripperID.FINGER_B)
 
     # def step(self, action):
     #     action = np.clip(action, *self.get_control_bounds())
@@ -976,9 +985,18 @@ class FloatingGripperEnv(PlanarArmEnv):
         return r
 
     def _observe_additional_info(self, info, visualize=True):
-        l_r = self._observe_single_finger(info, PandaJustGripperID.FINGER_A)
-        r_r = self._observe_single_finger(info, PandaJustGripperID.FINGER_B)
-        reaction_force = tuple(l_r[i] + r_r[i] for i in range(len(l_r)))
+        reaction_force = [0, 0, 0]
+
+        for objectId in self.objects:
+            contactInfo = p.getContactPoints(self.gripperId, objectId)
+            for i, contact in enumerate(contactInfo):
+                f_contact = get_total_contact_force(contact, False)
+                reaction_force = [sum(i) for i in zip(reaction_force, f_contact)]
+
+                name = 'r{}'.format(i)
+                if abs(contact[ContactInfo.NORMAL_MAG]) > abs(self._largest_contact.get(name, 0)):
+                    self._largest_contact[name] = contact[ContactInfo.NORMAL_MAG]
+
         self._observe_raw_reaction_force(info, reaction_force, visualize)
 
     def reset(self):
@@ -1021,5 +1039,5 @@ class ArmDataSource(EnvDataSource):
 
     @staticmethod
     def _loader_map(env_type):
-        loader_map = {ArmEnv: ArmLoader, ArmJointEnv: ArmLoader}
+        loader_map = {ArmEnv: ArmLoader, ArmJointEnv: ArmLoader, PlanarArmEnv: ArmLoader, FloatingGripperEnv: ArmLoader}
         return loader_map.get(env_type, None)
