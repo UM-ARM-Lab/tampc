@@ -103,7 +103,7 @@ class ArmEnv(PybulletEnv):
 
     def __init__(self, goal=(0.8, 0.0, 0.3), init=(0.3, 0.6, 0.2),
                  environment_level=0, sim_step_wait=None, mini_steps=15, wait_sim_steps_per_mini_step=20,
-                 debug_visualizations=None, dist_for_done=0.04,
+                 debug_visualizations=None, dist_for_done=0.04, camera_dist=1.5,
                  reaction_force_strategy=ReactionForceStrategy.MEDIAN_OVER_MINI_STEPS, **kwargs):
         """
         :param environment_level: what obstacles should show up in the environment
@@ -116,7 +116,7 @@ class ArmEnv(PybulletEnv):
         :param reaction_force_strategy how to aggregate measured reaction forces over control step into 1 value
         :param kwargs:
         """
-        super().__init__(**kwargs, default_debug_height=0.1, camera_dist=1.5)
+        super().__init__(**kwargs, default_debug_height=0.1, camera_dist=camera_dist)
         self._dd.toggle_3d(True)
         self.level = environment_level
         self.sim_step_wait = sim_step_wait
@@ -342,7 +342,7 @@ class ArmEnv(PybulletEnv):
             self._dd.draw_2d_line('u', start, pointer, (1, 0, 0), scale=0.2)
 
     def _draw_reaction_force(self, r, name, color=(1, 0, 1)):
-        start = self._observe_ee()
+        start = self.get_ee_pos(self._obs())
         self._dd.draw_2d_line(name, start, r, size=np.linalg.norm(r), scale=0.03, color=color)
 
     # --- observing state from simulation
@@ -480,7 +480,7 @@ class ArmEnv(PybulletEnv):
                                     targetPositions=jointPoses[:num_arm_indices],
                                     targetVelocities=[0] * num_arm_indices,
                                     # forces=[self.MAX_FORCE] * num_arm_indices,
-                                    forces=[100, 100, 60, 60, 50, 40 if self.level != 2 else 0, 40],
+                                    forces=[100, 100, 60, 60, 50, 40, 40],
                                     positionGains=[0.3] * num_arm_indices,
                                     velocityGains=[1] * num_arm_indices)
 
@@ -673,13 +673,175 @@ class ArmJointEnv(ArmEnv):
         pass
 
 
+FIXED_Z = 0.1
+
+
+class PlanarArmEnv(ArmEnv):
+    """To start with we have a fixed gripper orientation so the state is 3D position only"""
+    nu = 2
+    nx = 4
+
+    @staticmethod
+    def state_names():
+        # TODO allow theta rotation (see block push)
+        return ['x ee (m)', 'y ee (m)', '$r_x$ (N)', '$r_y$ (N)']
+
+    @staticmethod
+    def get_ee_pos(state):
+        return np.r_[state[:2], FIXED_Z]
+        # return torch.cat((state[:2], torch.tensor(FIXED_Z, dtype=state.dtype, device=state.device)), 0)
+
+    @staticmethod
+    @handle_data_format_for_state_diff
+    def state_difference(state, other_state):
+        """Get state - other_state in state space"""
+        dpos = state[:, :2] - other_state[:, :2]
+        dreaction = state[:, 2:] - other_state[:, 2:]
+        return dpos, dreaction
+
+    @classmethod
+    def state_cost(cls):
+        return np.diag([1, 1, 0, 0])
+
+    @staticmethod
+    def state_distance(state_difference):
+        return state_difference[:, :2].norm(dim=1)
+
+    @staticmethod
+    def control_names():
+        return ['d$x_r$', 'd$y_r$']
+
+    @staticmethod
+    def get_control_bounds():
+        u_min = np.array([-1, -1])
+        u_max = np.array([1, 1])
+        return u_min, u_max
+
+    def __init__(self, goal=(1.0, -0.4, FIXED_Z), init=(0.5, 0.8, FIXED_Z), **kwargs):
+        super(PlanarArmEnv, self).__init__(goal=goal, init=init, camera_dist=1, **kwargs)
+
+    def _observe_ee(self):
+        return super(PlanarArmEnv, self)._observe_ee()[:2]
+
+    def _observe_reaction_force(self):
+        return super(PlanarArmEnv, self)._observe_reaction_force()[:2]
+
+    def _set_goal(self, goal):
+        # ignore the pusher position
+        self.goal = np.array(tuple(goal) + (0, 0))
+        self._dd.draw_point('goal', self.goal)
+
+    def _setup_experiment(self):
+        # add plane to push on (slightly below the base of the robot)
+        self.planeId = p.loadURDF("plane.urdf", [0, 0, 0], useFixedBase=True)
+
+        self._setup_gripper()
+
+        # TODO set up cylindral obstacles, some of which can be moved
+        self.walls = []
+        if self.level == 0:
+            pass
+        elif self.level in [1, 2]:
+            half_extents = [0.2, 0.05, 0.3]
+            colId = p.createCollisionShape(p.GEOM_BOX, halfExtents=half_extents)
+            visId = p.createVisualShape(p.GEOM_BOX, halfExtents=half_extents, rgbaColor=[0.2, 0.2, 0.2, 0.8])
+            wallId = p.createMultiBody(0, colId, visId, basePosition=[0.6, 0.30, 0.2],
+                                       baseOrientation=p.getQuaternionFromEuler([0, 0, 1.1]))
+            p.changeDynamics(wallId, -1, lateralFriction=1)
+            self.walls.append(wallId)
+
+        for wallId in self.walls:
+            p.changeVisualShape(wallId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])
+
+        self.set_camera_position([0.5, 0.3], yaw=-75, pitch=-80)
+
+        self.state = self._obs()
+        self._draw_state()
+
+        # set gravity
+        p.setGravity(0, 0, -10)
+
+    def _setup_gripper(self):
+        # add kuka arm
+        self.armId = p.loadURDF("kuka_iiwa/model.urdf", [0, 0, 0], useFixedBase=True)
+        p.resetBasePositionAndOrientation(self.armId, [0, 0, FIXED_Z * 2],
+                                          p.getQuaternionFromEuler([math.pi / 2, 0, math.pi / 2]))
+
+        # orientation of the end effector
+        self.endEffectorOrientation = p.getQuaternionFromEuler([0, math.pi / 2, 0])
+        self.endEffectorIndex = kukaEndEffectorIndex
+        self.numJoints = p.getNumJoints(self.armId)
+        # get the joint ids
+        # self.armInds = [i for i in range(pandaNumDofs)]
+        self.armInds = [i for i in range(self.numJoints)]
+
+        p.enableJointForceTorqueSensor(self.armId, self.endEffectorIndex)
+        self._calculate_init_joints()
+        for i in self.armInds:
+            p.resetJointState(self.armId, i, self.initJoints[i])
+
+        # make arm translucent
+        visual_data = p.getVisualShapeData(self.armId)
+        for link in visual_data:
+            link_id = link[1]
+            if link_id == -1:
+                continue
+            rgba = list(link[7])
+            rgba[3] = 0.4
+            p.changeVisualShape(self.armId, link_id, rgbaColor=rgba)
+
+    def _unpack_action(self, action):
+        dx = action[0] * self.MAX_PUSH_DIST
+        dy = action[1] * self.MAX_PUSH_DIST
+        return dx, dy
+
+    def step(self, action):
+        action = np.clip(action, *self.get_control_bounds())
+        # normalize action such that the input can be within a fixed range
+        old_state = np.copy(self.state)
+        dx, dy = self._unpack_action(action)
+
+        if self._debug_visualizations[DebugVisualization.ACTION]:
+            self._draw_action(action)
+
+        ee_pos = self.get_ee_pos(old_state)
+        final_ee_pos = np.array((ee_pos[0] + dx, ee_pos[1] + dy, FIXED_Z))
+        self._dd.draw_point('final eepos', final_ee_pos, color=(1, 0.5, 0.5))
+
+        # execute push with mini-steps
+        for step in range(self.mini_steps):
+            intermediate_ee_pos = interpolate_pos(ee_pos, final_ee_pos, (step + 1) / self.mini_steps)
+            self._move_and_wait(intermediate_ee_pos, steps_to_wait=self.wait_sim_step_per_mini_step)
+
+        cost, done, info = self._finish_action(old_state, action)
+
+        return np.copy(self.state), -cost, done, info
+
+    def _draw_state(self):
+        pos = self.get_ee_pos(self.state)
+        self._dd.draw_point('state', pos)
+        if self._debug_visualizations[DebugVisualization.REACTION_IN_STATE]:
+            self._draw_reaction_force(np.r_[self.state[2:], FIXED_Z], 'sr', (0, 0, 0))
+
+    def _draw_action(self, action, old_state=None, debug=0):
+        if old_state is None:
+            old_state = self._obs()
+        start = np.r_[old_state[:2], FIXED_Z]
+        pointer = np.r_[action, 0]
+        if debug:
+            self._dd.draw_2d_line('u{}'.format(debug), start, pointer, (1, debug / 30, debug / 10), scale=0.2)
+        else:
+            self._dd.draw_2d_line('u', start, pointer, (1, 0, 0), scale=0.2)
+
+
 def interpolate_pos(start, end, t):
     return t * end + (1 - t) * start
 
 
 class ExperimentRunner(PybulletSim):
     def __init__(self, env: ArmEnv, ctrl, save_dir=DIR, **kwargs):
-        super(ExperimentRunner, self).__init__(env, ctrl, save_dir=save_dir, reaction_dim=3, **kwargs)
+        reaction_dim = 2 if isinstance(env, PlanarArmEnv) else 3
+        super(ExperimentRunner, self).__init__(env, ctrl, save_dir=save_dir, reaction_dim=reaction_dim, **kwargs)
 
 
 class ArmDataSource(EnvDataSource):

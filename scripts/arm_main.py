@@ -111,9 +111,11 @@ class ArmGetter(EnvGetter):
     def env(cls, level=0, log_video=True, **kwargs):
         # env = arm.ArmEnv(environment_level=level, log_video=log_video, **kwargs)
         # cls.env_dir = '{}/raw'.format(arm.DIR)
-        env = arm.ArmJointEnv(environment_level=level, log_video=log_video, **kwargs)
-        cls.env_dir = '{}/joints'.format(arm.DIR)
-        env.set_task_config(goal=(0.8, 0.0, 0.3))
+        # env = arm.ArmJointEnv(environment_level=level, log_video=log_video, **kwargs)
+        # cls.env_dir = '{}/joints'.format(arm.DIR)
+        # env.set_task_config(goal=(0.8, 0.0, 0.3))
+        env = arm.PlanarArmEnv(environment_level=level, log_video=log_video, **kwargs)
+        cls.env_dir = '{}/planar'.format(arm.DIR)
         return env
 
 
@@ -131,7 +133,11 @@ class OfflineDataCollection:
         for offset in range(trials):
             seed = rand.seed(seed_offset + offset)
             # random position
-            init = [(np.random.random() - 0.5) * 1.7, (np.random.random() - 0.5) * 1.7, np.random.random() * 0.5]
+            if isinstance(env, arm.PlanarArmEnv):
+                y_sign = -1 if np.random.random() < 0.5 else 1
+                init = [(np.random.random() + 0.2) * 1.0, (np.random.random() + 0.3) * 0.6 * y_sign, arm.FIXED_Z]
+            else:
+                init = [(np.random.random() - 0.5) * 1.7, (np.random.random() - 0.5) * 1.7, np.random.random() * 0.5]
             env.set_task_config(init=init)
             ctrl = controller.FullRandomController(env.nu, u_min, u_max)
             sim.ctrl = ctrl
@@ -216,7 +222,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                                        reuse_escape_as_demonstration=reuse_escape_as_demonstration,
                                        use_trap_cost=use_trap_cost,
                                        never_estimate_error_dynamics=never_estimate_error,
-                                       **tampc_opts,)
+                                       **tampc_opts, )
         mpc = controller.ExperimentalMPPI(ctrl.mpc_apply_dynamics, ctrl.mpc_running_cost, ctrl.nx,
                                           u_min=ctrl.u_min, u_max=ctrl.u_max,
                                           terminal_state_cost=ctrl.mpc_terminal_cost,
