@@ -114,8 +114,10 @@ class ArmGetter(EnvGetter):
         # env = arm.ArmJointEnv(environment_level=level, log_video=log_video, **kwargs)
         # cls.env_dir = '{}/joints'.format(arm.DIR)
         # env.set_task_config(goal=(0.8, 0.0, 0.3))
-        env = arm.PlanarArmEnv(environment_level=level, log_video=log_video, **kwargs)
-        cls.env_dir = '{}/planar'.format(arm.DIR)
+        # env = arm.PlanarArmEnv(environment_level=level, log_video=log_video, **kwargs)
+        # cls.env_dir = '{}/planar'.format(arm.DIR)
+        env = arm.FloatingGripperEnv(environment_level=level, log_video=log_video, **kwargs)
+        cls.env_dir = '{}/gripper'.format(arm.DIR)
         return env
 
 

@@ -4,11 +4,14 @@ import pybullet as p
 import time
 import enum
 import torch
+import os
 
 import numpy as np
 from tampc.env.pybullet_env import PybulletEnv, get_total_contact_force, ContactInfo
 from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource
+from tampc.env.peg_in_hole import PandaJustGripperID
 from tampc.env.pybullet_sim import PybulletSim
+from tampc import cfg
 
 logger = logging.getLogger(__name__)
 
@@ -689,7 +692,6 @@ class PlanarArmEnv(ArmEnv):
     @staticmethod
     def get_ee_pos(state):
         return np.r_[state[:2], FIXED_Z]
-        # return torch.cat((state[:2], torch.tensor(FIXED_Z, dtype=state.dtype, device=state.device)), 0)
 
     @staticmethod
     @handle_data_format_for_state_diff
@@ -832,6 +834,173 @@ class PlanarArmEnv(ArmEnv):
             self._dd.draw_2d_line('u{}'.format(debug), start, pointer, (1, debug / 30, debug / 10), scale=0.2)
         else:
             self._dd.draw_2d_line('u', start, pointer, (1, 0, 0), scale=0.2)
+
+
+class FloatingGripperEnv(PlanarArmEnv):
+    nu = 2
+    nx = 4
+    MAX_FORCE = 30
+    MAX_GRIPPER_FORCE = 30
+    MAX_PUSH_DIST = 0.03
+    OPEN_ANGLE = 0.04
+    CLOSE_ANGLE = 0.01
+
+    # --- set current state
+    def set_state(self, state, action=None):
+        p.resetBasePositionAndOrientation(self.gripperId, (state[0], state[1], FIXED_Z),
+                                          self.endEffectorOrientation)
+        self.state = state
+        self._draw_state()
+        if action is not None:
+            self._draw_action(action, old_state=state)
+
+    def __init__(self, goal=(1.0, -0.4, FIXED_Z), init=(-.1, 0.4, FIXED_Z), **kwargs):
+        super(PlanarArmEnv, self).__init__(goal=goal, init=init, camera_dist=1, **kwargs)
+
+
+    def _observe_ee(self):
+        gripperPose = p.getBasePositionAndOrientation(self.gripperId)
+        return gripperPose[0][:2]
+
+    def _open_gripper(self):
+        # p.resetJointState(self.gripperId, PandaJustGripperID.FINGER_A, self.OPEN_ANGLE)
+        # p.resetJointState(self.gripperId, PandaJustGripperID.FINGER_B, self.OPEN_ANGLE)
+        p.setJointMotorControlArray(self.gripperId,
+                                    [PandaJustGripperID.FINGER_A, PandaJustGripperID.FINGER_B],
+                                    p.POSITION_CONTROL,
+                                    targetPositions=[self.OPEN_ANGLE, self.OPEN_ANGLE],
+                                    forces=[self.MAX_GRIPPER_FORCE, self.MAX_GRIPPER_FORCE])
+
+    def _close_gripper(self):
+        pass
+        # p.setJointMotorControlArray(self.gripperId,
+        #                             [PandaJustGripperID.FINGER_A, PandaJustGripperID.FINGER_B],
+        #                             p.POSITION_CONTROL,
+        #                             targetPositions=[self.CLOSE_ANGLE, self.CLOSE_ANGLE],
+        #                             forces=[self.MAX_GRIPPER_FORCE, self.MAX_GRIPPER_FORCE])
+
+    def _move_pusher(self, end):
+        p.changeConstraint(self.gripperConstraint, end, maxForce=self.MAX_FORCE)
+        self._close_gripper()
+
+    def _setup_experiment(self):
+        # add plane to push on (slightly below the base of the robot)
+        self.planeId = p.loadURDF("plane.urdf", [0, 0, 0], useFixedBase=True)
+
+        self._setup_gripper()
+
+        self.immovable = []
+        self.movable = []
+        if self.level == 0:
+            pass
+        elif self.level in [1]:
+            # drop movable obstacles
+            h = 0.075
+            xs = [0.3, 0.8]
+            ys = [-0.3, 0.3]
+            objId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
+                               basePosition=[xs[0], ys[0], h])
+            self.movable.append(objId)
+            objId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
+                               basePosition=[xs[1], ys[1], h])
+            self.movable.append(objId)
+
+            objId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=True,
+                               basePosition=[xs[1], ys[0], h])
+            self.immovable.append(objId)
+            objId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=True,
+                               basePosition=[xs[0], ys[1], h])
+            self.immovable.append(objId)
+
+        for objId in self.immovable:
+            p.changeVisualShape(objId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])
+
+        self.set_camera_position([0.5, 0.3], yaw=-75, pitch=-80)
+
+        self.state = self._obs()
+        self._draw_state()
+
+        # set gravity
+        p.setGravity(0, 0, -10)
+
+    def _setup_gripper(self):
+        # orientation of the end effector (pointing down)
+        # TODO allow gripper to change yaw?
+        self.endEffectorOrientation = p.getQuaternionFromEuler([0, -np.pi / 2, 0])
+
+        # use a floating gripper
+        self.gripperId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "panda_gripper.urdf"), self.init,
+                                    self.endEffectorOrientation)
+        p.changeDynamics(self.gripperId, PandaJustGripperID.FINGER_A, lateralFriction=2)
+        p.changeDynamics(self.gripperId, PandaJustGripperID.FINGER_B, lateralFriction=2)
+
+        self.gripperConstraint = p.createConstraint(self.gripperId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
+                                                    self.init, self.endEffectorOrientation)
+
+        self._open_gripper()
+        self._close_gripper()
+        p.enableJointForceTorqueSensor(self.gripperId, PandaJustGripperID.FINGER_A)
+        p.enableJointForceTorqueSensor(self.gripperId, PandaJustGripperID.FINGER_B)
+
+    # def step(self, action):
+    #     action = np.clip(action, *self.get_control_bounds())
+    #     # normalize action such that the input can be within a fixed range
+    #     old_state = self._obs()
+    #     dx, dy = self._unpack_action(action)
+    #
+    #     if self._debug_visualizations[DebugVisualization.ACTION]:
+    #         self._draw_action(action, old_state=old_state)
+    #
+    #     ee_pos = self.get_ee_pos(old_state)
+    #     final_ee_pos = np.array((ee_pos[0] + dx, ee_pos[1] + dy, FIXED_Z))
+    #     self._dd.draw_point('final eepos', final_ee_pos, color=(0, 0.5, 0.5))
+    #
+    #     # execute push with mini-steps
+    #     for step in range(self.mini_steps):
+    #         intermediate_ee_pos = interpolate_pos(ee_pos, final_ee_pos, (step + 1) / self.mini_steps)
+    #         self._move_and_wait(intermediate_ee_pos, steps_to_wait=self.wait_sim_step_per_mini_step)
+    #
+    #     cost, done, info = self._finish_action(old_state, action)
+    #
+    #     return np.copy(self.state), -cost, done, info
+
+    def _observe_single_finger(self, info, fingerId):
+        joint_pos, joint_vel, joint_reaction_force, joint_applied = p.getJointState(self.gripperId, fingerId)
+        info['pv{}'.format(fingerId)] = joint_vel
+
+        # transform reaction to world frame
+        states = p.getLinkState(self.gripperId, fingerId)
+        world_link_position = states[4]
+        world_link_orientation = states[5]
+        r, t = p.multiplyTransforms(world_link_position, world_link_orientation, joint_reaction_force[:3], [0, 0, 0, 0])
+        return r
+
+    def _observe_additional_info(self, info, visualize=True):
+        l_r = self._observe_single_finger(info, PandaJustGripperID.FINGER_A)
+        r_r = self._observe_single_finger(info, PandaJustGripperID.FINGER_B)
+        reaction_force = tuple(l_r[i] + r_r[i] for i in range(len(l_r)))
+        self._observe_raw_reaction_force(info, reaction_force, visualize)
+
+    def reset(self):
+        for _ in range(1000):
+            p.stepSimulation()
+
+        self._open_gripper()
+        if self.gripperConstraint:
+            p.removeConstraint(self.gripperConstraint)
+        p.resetBasePositionAndOrientation(self.gripperId, self.init, self.endEffectorOrientation)
+        self.gripperConstraint = p.createConstraint(self.gripperId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
+                                                    self.init, self.endEffectorOrientation)
+        self._close_gripper()
+
+        # set robot init config
+        self._clear_state_between_control_steps()
+        # start at rest
+        for _ in range(1000):
+            p.stepSimulation()
+        self.state = self._obs()
+        self._dd.draw_point('x0', self.get_ee_pos(self.state), color=(0, 1, 0))
+        return np.copy(self.state)
 
 
 def interpolate_pos(start, end, t):
