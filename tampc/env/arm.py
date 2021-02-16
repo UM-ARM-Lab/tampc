@@ -740,9 +740,11 @@ class PlanarArmEnv(ArmEnv):
         return super(PlanarArmEnv, self)._observe_reaction_force()[:2]
 
     def _set_goal(self, goal):
+        if len(goal) > 2:
+            goal = goal[:2]
         # ignore the pusher position
         self.goal = np.array(tuple(goal) + (0, 0))
-        self._dd.draw_point('goal', tuple(self.goal) + (FIXED_Z,))
+        self._dd.draw_point('goal', tuple(goal) + (FIXED_Z,))
 
     def _setup_experiment(self):
         # add plane to push on (slightly below the base of the robot)
@@ -865,7 +867,7 @@ class FloatingGripperEnv(PlanarArmEnv):
         if action is not None:
             self._draw_action(action, old_state=state)
 
-    def __init__(self, goal=(1.0, -0.4), init=(-.1, 0.4), **kwargs):
+    def __init__(self, goal=(1.3, -0.4), init=(-.1, 0.4), **kwargs):
         super(FloatingGripperEnv, self).__init__(goal=goal, init=init, camera_dist=1, **kwargs)
 
     def _observe_ee(self):
@@ -921,6 +923,25 @@ class FloatingGripperEnv(PlanarArmEnv):
             objId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=True,
                                basePosition=[xs[0], ys[1], h])
             self.immovable.append(objId)
+        elif self.level is 3:
+            scale = 1.0
+            h = 0.075 * scale
+            xs = [0.3, 0.7]
+            ys = [-0.2, 0.2]
+            self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
+                                           basePosition=[xs[0], ys[0], h], globalScaling=scale))
+            self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
+                                           basePosition=[xs[1], ys[1], h], globalScaling=scale))
+            self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
+                                           basePosition=[xs[1], ys[0], h], globalScaling=scale))
+            self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
+                                           basePosition=[xs[0], ys[1], h], globalScaling=scale))
+            self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [xs[1] + 0.48, 0., h],
+                                             p.getQuaternionFromEuler([0, 0, np.pi / 2]), useFixedBase=True,
+                                             globalScaling=0.5))
+            self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [xs[0], ys[0] - 0.43, h],
+                                             p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
+                                             globalScaling=0.5))
 
         for objId in self.immovable:
             p.changeVisualShape(objId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])
@@ -950,28 +971,6 @@ class FloatingGripperEnv(PlanarArmEnv):
 
         self._open_gripper()
         self._close_gripper()
-
-    # def step(self, action):
-    #     action = np.clip(action, *self.get_control_bounds())
-    #     # normalize action such that the input can be within a fixed range
-    #     old_state = self._obs()
-    #     dx, dy = self._unpack_action(action)
-    #
-    #     if self._debug_visualizations[DebugVisualization.ACTION]:
-    #         self._draw_action(action, old_state=old_state)
-    #
-    #     ee_pos = self.get_ee_pos(old_state)
-    #     final_ee_pos = np.array((ee_pos[0] + dx, ee_pos[1] + dy, FIXED_Z))
-    #     self._dd.draw_point('final eepos', final_ee_pos, color=(0, 0.5, 0.5))
-    #
-    #     # execute push with mini-steps
-    #     for step in range(self.mini_steps):
-    #         intermediate_ee_pos = interpolate_pos(ee_pos, final_ee_pos, (step + 1) / self.mini_steps)
-    #         self._move_and_wait(intermediate_ee_pos, steps_to_wait=self.wait_sim_step_per_mini_step)
-    #
-    #     cost, done, info = self._finish_action(old_state, action)
-    #
-    #     return np.copy(self.state), -cost, done, info
 
     def _observe_single_finger(self, info, fingerId):
         joint_pos, joint_vel, joint_reaction_force, joint_applied = p.getJointState(self.gripperId, fingerId)

@@ -44,7 +44,7 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 logger = logging.getLogger(__name__)
 
 # --- SHARED GETTERS
-task_map = {'freespace': 0, 'wall': 1, 'wall_broken_joint': 2}
+task_map = {'freespace': 0, 'wall': 1, 'wall_broken_joint': 2, 'movable_cans': 3}
 
 
 class ArmGetter(EnvGetter):
@@ -61,7 +61,7 @@ class ArmGetter(EnvGetter):
 
     @staticmethod
     def pre_invariant_preprocessor(use_tsf: UseTsf) -> preprocess.Transformer:
-        return preprocess.PytorchTransformer(preprocess.RobustMinMaxScaler(), preprocess.RobustMinMaxScaler())
+        return preprocess.PytorchTransformer(preprocess.NullSingleTransformer(), preprocess.RobustMinMaxScaler())
 
     @staticmethod
     def controller_options(env) -> typing.Tuple[dict, dict]:
@@ -90,8 +90,9 @@ class ArmGetter(EnvGetter):
             'terminal_cost_multiplier': 50,
             'trap_cost_annealing_rate': 0.8,
             'abs_unrecognized_threshold': 5,
-            'dynamics_minimum_window': 2,
-            'max_trap_weight': 2,
+            'dynamics_minimum_window': 3,
+            'max_trap_weight': 1,
+            'nonnominal_dynamics_penalty_tolerance': 0.1,
         }
         mpc_opts = {
             'num_samples': 1000,
@@ -118,6 +119,8 @@ class ArmGetter(EnvGetter):
         # cls.env_dir = '{}/planar'.format(arm.DIR)
         env = arm.FloatingGripperEnv(environment_level=level, log_video=log_video, **kwargs)
         cls.env_dir = '{}/gripper'.format(arm.DIR)
+        if level is task_map['movable_cans']:
+            env.set_task_config(goal=(0.95, -0.4))
         return env
 
 
@@ -135,7 +138,7 @@ class OfflineDataCollection:
         for offset in range(trials):
             seed = rand.seed(seed_offset + offset)
             # random position
-            if isinstance(env, arm.PlanarArmEnv):
+            if isinstance(env, arm.PlanarArmEnv) and not isinstance(env, arm.FloatingGripperEnv):
                 y_sign = -1 if np.random.random() < 0.5 else 1
                 init = [(np.random.random() + 0.2) * 1.0, (np.random.random() + 0.3) * 0.6 * y_sign, arm.FIXED_Z]
             else:
