@@ -92,7 +92,7 @@ class ArmGetter(EnvGetter):
             'abs_unrecognized_threshold': 5,
             'dynamics_minimum_window': 3,
             'max_trap_weight': 1,
-            'nonnominal_dynamics_penalty_tolerance': 0.1,
+            'nonnominal_dynamics_penalty_tolerance': 0.01,
         }
         mpc_opts = {
             'num_samples': 1000,
@@ -299,6 +299,33 @@ def test_autonomous_recovery(*args, **kwargs):
     run_controller('auto_recover', default_setup, *args, **kwargs)
 
 
+def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
+    def setup(env, ctrl, ds):
+        level = kwargs['level']
+        if level is 0:
+            goal = [0.0, 0.]
+            # x = [goal[0], goal[1] - 0.6, 0, 0]
+            env.set_task_config(goal=goal, init=[1, 0])
+            ctrl.set_goal(env.goal)
+
+            # add cost for avoiding pushing into contact
+
+            # setup movable object in between straight line
+            h = 0.075
+            objId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
+                               basePosition=[goal[0] + 0.5, goal[1], h])
+
+            # reduce mass to allow easier pushes (still doesn't directly take it up)
+            # p.changeDynamics(objId, -1, mass=0.5)
+            env.movable.append(objId)
+            env.objects = env.movable
+            env.reset()
+
+            logger.info("env setup")
+
+    run_controller('tune_avoid_nonnom_action', setup, *args, num_frames=num_frames, **kwargs)
+
+
 class EvaluateTask:
     @staticmethod
     def closest_distance_to_goal(file, level, visualize=True):
@@ -412,16 +439,26 @@ if __name__ == "__main__":
             ut = UseTsf.NO_TRANSFORM
 
         for seed in args.seed:
-            test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
-                                     nominal_adapt=nominal_adapt, rep_name=args.rep_name,
-                                     reuse_escape_as_demonstration=False, use_trap_cost=use_trap_cost,
-                                     assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
-                                     visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
-                                     override_tampc_params=tampc_params, override_mpc_params=mpc_params,
-                                     autonomous_recovery=autonomous_recovery,
-                                     never_estimate_error=args.never_estimate_error,
-                                     apfvo_baseline=args.apfvo_baseline,
-                                     apfsp_baseline=args.apfsp_baseline)
+            # test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
+            #                          nominal_adapt=nominal_adapt, rep_name=args.rep_name,
+            #                          reuse_escape_as_demonstration=False, use_trap_cost=use_trap_cost,
+            #                          assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
+            #                          visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
+            #                          override_tampc_params=tampc_params, override_mpc_params=mpc_params,
+            #                          autonomous_recovery=autonomous_recovery,
+            #                          never_estimate_error=args.never_estimate_error,
+            #                          apfvo_baseline=args.apfvo_baseline,
+            #                          apfsp_baseline=args.apfsp_baseline)
+            test_avoid_nonnominal_action(seed=seed, level=level, use_tsf=ut,
+                                         nominal_adapt=nominal_adapt, rep_name=args.rep_name,
+                                         reuse_escape_as_demonstration=False, use_trap_cost=use_trap_cost,
+                                         assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
+                                         visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
+                                         override_tampc_params=tampc_params, override_mpc_params=mpc_params,
+                                         autonomous_recovery=autonomous_recovery,
+                                         never_estimate_error=args.never_estimate_error,
+                                         apfvo_baseline=args.apfvo_baseline,
+                                         apfsp_baseline=args.apfsp_baseline)
     elif args.command == 'evaluate':
         task_type = arm.DIR
         # get all the trials to visualize for choosing where the obstacles are
@@ -446,18 +483,28 @@ if __name__ == "__main__":
 
     else:
         use_tsf = UseTsf.NO_TRANSFORM
-        d, env, config, ds = ArmGetter.free_space_env_init(0)
-        ds.update_preprocessor(ArmGetter.pre_invariant_preprocessor(use_tsf=use_tsf))
-        xu, y, trial = ds.training_set(original=True)
-        ds, pm = ArmGetter.prior(env, use_tsf)
-        yhat = pm.dyn_net.predict(xu, get_next_state=False, return_in_orig_space=True)
-        u = xu[:, env.nx:]
-        f, axes = plt.subplots(3, 1, figsize=(10, 9))
-        dims = ['x', 'y', 'z']
-        for i, dim in enumerate(dims):
-            axes[i].scatter(u[:, i].cpu(), y[:, i].cpu(), alpha=0.1)
-            axes[i].scatter(u[:, i].cpu(), yhat[:, i].cpu(), color="red", alpha=0.1)
-            axes[i].set_ylabel('d{}'.format(dim))
-            axes[i].set_xlabel('u{}'.format(i))
 
-        plt.show()
+        # test_avoid_nonnominal_action(seed=0, level=level, use_tsf=ut,
+        #                              assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
+        #                              visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
+        #                              override_tampc_params=tampc_params, override_mpc_params=mpc_params,
+        #                              autonomous_recovery=online_controller.AutonomousRecovery.MAB,
+        #                              never_estimate_error=args.never_estimate_error,
+        #                              apfvo_baseline=args.apfvo_baseline,
+        #                              apfsp_baseline=args.apfsp_baseline)
+
+        # d, env, config, ds = ArmGetter.free_space_env_init(0)
+        # ds.update_preprocessor(ArmGetter.pre_invariant_preprocessor(use_tsf=use_tsf))
+        # xu, y, trial = ds.training_set(original=True)
+        # ds, pm = ArmGetter.prior(env, use_tsf)
+        # yhat = pm.dyn_net.predict(xu, get_next_state=False, return_in_orig_space=True)
+        # u = xu[:, env.nx:]
+        # f, axes = plt.subplots(3, 1, figsize=(10, 9))
+        # dims = ['x', 'y', 'z']
+        # for i, dim in enumerate(dims):
+        #     axes[i].scatter(u[:, i].cpu(), y[:, i].cpu(), alpha=0.1)
+        #     axes[i].scatter(u[:, i].cpu(), yhat[:, i].cpu(), color="red", alpha=0.1)
+        #     axes[i].set_ylabel('d{}'.format(dim))
+        #     axes[i].set_xlabel('u{}'.format(i))
+        #
+        # plt.show()

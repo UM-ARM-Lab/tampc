@@ -1,6 +1,7 @@
 import logging
 import enum
 import statistics
+import typing
 
 import torch
 from tampc.controller.multi_arm_bandit import KFMANDB
@@ -9,6 +10,7 @@ from arm_pytorch_utilities import tensor_utils
 from tampc.dynamics import hybrid_model
 from tampc.controller import controller, gating_function
 from tampc import cost
+from tampc import contact
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +154,12 @@ class TAMPC(OnlineMPC):
 
         # return fastest properties
         self.fastest_to_choose = 4
+
+        # contact tracking parameters
+        self.contact_set: typing.List[contact.ContactObject] = []
+        self.contact_force_threshold = 0.5
+        # state distance between making contacts for distinguishing separate contacts
+        self.contact_max_linkage_dist = 0.1
 
     # exposed methods for MPC (not protected via _method_name)
     def register_mpc(self, mpc):
@@ -307,9 +315,13 @@ class TAMPC(OnlineMPC):
         else:
             return False
 
-    def _avg_displacement(self, start, end):
-        diff = self.compare_to_goal(self.x_history[start], self.x_history[end])
+    def _state_dist_two_args(self, xa, xb):
+        diff = self.compare_to_goal(xa, xb)
         total = self.state_dist(diff)[0]
+        return total
+
+    def _avg_displacement(self, start, end):
+        total = self._state_dist_two_args(self.x_history[start], self.x_history[end])
         return total / (end - start)
 
     def _left_local_model(self):
@@ -429,6 +441,23 @@ class TAMPC(OnlineMPC):
             elif self._control_effort(self.u_history[i]) > 0:
                 self.nominal_dynamic_states[-1].insert(0, self.x_history[i])
 
+    def _update_contact_set(self, x, u, dx):
+        # associate each contact to a single object (max likelihood estimate on which object it is)
+        c = None
+        if len(self.contact_set) > 0:
+            # find associated contact
+            for cc in self.contact_set:
+                # we're using the x before contact because our estimate of the object points haven't moved yet
+                # TODO handle when multiple contact objects claim it is part of them
+                if cc.is_part_of_object(x, self.contact_max_linkage_dist, self._state_dist_two_args):
+                    c = cc
+                    break
+        # couldn't find an existing contact
+        if c is None:
+            c = contact.ContactObject()
+            self.contact_set.append(c)
+        c.add_transition(x, u, dx)
+
     def _compute_action(self, x):
         # use only state for dynamics_class selection; this way we can get dynamics_class before calculating action
         a = torch.zeros((1, self.nu), device=self.d, dtype=x.dtype)
@@ -443,6 +472,14 @@ class TAMPC(OnlineMPC):
                                                   torch.from_numpy(self.predicted_next_state).to(device=self.d))
             predicted_step_dist = self.state_dist(predicted_diff)[0]
             self.single_step_move_dist.append((x_index, last_step_dist, predicted_step_dist))
+
+        # update tracked contact objects
+        # TODO generalize extract reaction forces
+        reaction = x[-2:]
+        if reaction.norm() > self.contact_force_threshold:
+            # get previous x, u, dx
+            px = self.x_history[-2]  # note that x is already latest in list
+            self._update_contact_set(px, self.u_history[-1], self.compare_to_goal(x, px)[0])
 
         # in non-nominal dynamics
         if self._in_non_nominal_dynamics():

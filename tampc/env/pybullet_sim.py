@@ -104,6 +104,9 @@ class PybulletSim(simulation.Simulation):
                 if self.ctrl.trap_set and self.ctrl.trap_cost is not None:
                     self.env.visualize_trap_set(self.ctrl.trap_set)
 
+                if self._has_recovery_policy():
+                    self.env.visualize_contact_set(self.ctrl.contact_set)
+
                 if self._has_recovery_policy() and self.ctrl.autonomous_recovery is online_controller.AutonomousRecovery.MAB:
                     mode_text = "recovery" if self.ctrl.autonomous_recovery_mode else (
                         "local" if self.ctrl.using_local_model_for_nonnominal_dynamics else "")

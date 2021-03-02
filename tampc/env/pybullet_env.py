@@ -90,12 +90,25 @@ class PybulletEnv(Env):
         pass
 
     @abc.abstractmethod
+    def visualize_contact_set(self, contact_set):
+        pass
+
+    @abc.abstractmethod
     def visualize_rollouts(self, states):
         pass
 
     @abc.abstractmethod
     def visualize_prediction_error(self, predicted_state):
         """In GUI mode, show the difference between the predicted state and the current actual state"""
+
+    @staticmethod
+    def _make_robot_translucent(robot_id, alpha=0.4):
+        visual_data = p.getVisualShapeData(robot_id)
+        for link in visual_data:
+            link_id = link[1]
+            rgba = list(link[7])
+            rgba[3] = alpha
+            p.changeVisualShape(robot_id, link_id, rgbaColor=rgba)
 
 
 class ContactInfo(enum.IntEnum):

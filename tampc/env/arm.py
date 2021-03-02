@@ -270,15 +270,7 @@ class ArmEnv(PybulletEnv):
         # self._open_gripper()
         # self._close_gripper()
 
-        # make arm translucent
-        visual_data = p.getVisualShapeData(self.armId)
-        for link in visual_data:
-            link_id = link[1]
-            if link_id == -1:
-                continue
-            rgba = list(link[7])
-            rgba[3] = 0.4
-            p.changeVisualShape(self.armId, link_id, rgbaColor=rgba)
+        self._make_robot_translucent(self.armId)
 
     def visualize_rollouts(self, states):
         """In GUI mode, show how the sequence of states will look like"""
@@ -318,6 +310,17 @@ class ArmEnv(PybulletEnv):
             self._dd.draw_point('ts{}'.format(t), pose, (1, 0, c))
         self._dd.clear_visualization_after('ts', T)
         self._dd.clear_visualization_after('u', T + 1)
+
+    def visualize_contact_set(self, contact_set):
+        color = (1, 0.5, 0)
+        for i, c in enumerate(contact_set):
+            for j in range(len(c.points)):
+                p = self.get_ee_pos(c.points[j])
+                self._dd.draw_point('c{}{}'.format(i, j), p, color=color)
+                # draw linkage to next point
+                if j < len(c.points) - 1:
+                    diff = self.get_ee_pos(c.points[j + 1]) - p
+                    self._dd.draw_2d_line('c{}{}-{}'.format(i, j, j + 1), p.cpu(), diff.cpu(), color=color, scale=1)
 
     def visualize_prediction_error(self, predicted_state):
         """In GUI mode, show the difference between the predicted state and the current actual state"""
@@ -746,6 +749,11 @@ class PlanarArmEnv(ArmEnv):
         self.goal = np.array(tuple(goal) + (0, 0))
         self._dd.draw_point('goal', tuple(goal) + (FIXED_Z,))
 
+    def _set_init(self, init):
+        if len(init) > 2:
+            init = init[:2]
+        super(PlanarArmEnv, self)._set_init(tuple(init) + (FIXED_Z,))
+
     def _setup_experiment(self):
         # add plane to push on (slightly below the base of the robot)
         self.planeId = p.loadURDF("plane.urdf", [0, 0, 0], useFixedBase=True)
@@ -795,15 +803,7 @@ class PlanarArmEnv(ArmEnv):
         for i in self.armInds:
             p.resetJointState(self.armId, i, self.initJoints[i])
 
-        # make arm translucent
-        visual_data = p.getVisualShapeData(self.armId)
-        for link in visual_data:
-            link_id = link[1]
-            if link_id == -1:
-                continue
-            rgba = list(link[7])
-            rgba[3] = 0.4
-            p.changeVisualShape(self.armId, link_id, rgbaColor=rgba)
+        self._make_robot_translucent(self.armId)
 
     def _unpack_action(self, action):
         dx = action[0] * self.MAX_PUSH_DIST
@@ -971,6 +971,7 @@ class FloatingGripperEnv(PlanarArmEnv):
 
         self._open_gripper()
         self._close_gripper()
+        self._make_robot_translucent(self.gripperId)
 
     def _observe_single_finger(self, info, fingerId):
         joint_pos, joint_vel, joint_reaction_force, joint_applied = p.getJointState(self.gripperId, fingerId)
