@@ -146,27 +146,6 @@ class HybridDynamicsModel(abc.ABC):
 
         return local_dynamics
 
-    def create_local_model(self, x, u):
-        logger.info("Saving local model from previous escape")
-
-        config = self.ds_nominal.config
-        assert config.predict_difference
-        y = self.state_diff(x[1:], x[:-1])
-        ds_local = DirectDataSource(x[1:], u[1:], y)
-
-        if self.preprocessor:
-            ds_local.update_preprocessor(self.preprocessor)
-        else:
-            ds_local.update_preprocessor(self.ds_nominal.preprocessor)
-
-        local_model = HybridDynamicsModel.get_local_model(self.state_diff, self.pm, self.d,
-                                                          ds_local, allow_update=False)
-
-        self.dss.append(ds_local)
-        self.local_models.append(local_model)
-
-        return local_model
-
     def get_gating(self):
         return get_gating(self.dss, *self.gating_args, **self.gating_kwargs)
 
