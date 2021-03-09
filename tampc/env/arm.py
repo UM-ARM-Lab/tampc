@@ -313,10 +313,13 @@ class ArmEnv(PybulletEnv):
 
     def visualize_contact_set(self, contact_set):
         color = (1, 0.5, 0)
+        u_color = (1, 0.8, 0.4)
         for i, c in enumerate(contact_set):
             for j in range(len(c.points)):
                 p = self.get_ee_pos(c.points[j])
                 self._dd.draw_point('c{}{}'.format(i, j), p, color=color)
+                # draw action
+                self._dd.draw_2d_line('a{}{}'.format(i, j), p.cpu(), c.actions[j].cpu(), color=u_color, scale=0.1)
                 # draw linkage to next point
                 if j < len(c.points) - 1:
                     diff = self.get_ee_pos(c.points[j + 1]) - p

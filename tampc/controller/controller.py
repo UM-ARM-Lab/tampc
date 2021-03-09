@@ -201,6 +201,7 @@ class MPC(ControllerWithModelPrediction):
             self.u_min, self.u_max = tensor_utils.ensure_tensor(self.d, self.dtype, self.u_min, self.u_max)
         self.dynamics = dynamics
         self.state_dist = state_dist
+        self.u_sim = u_similarity
 
         # get error per dimension to scale our expectations of accuracy
         XU, Y, _ = ds.training_set(original=True)
@@ -222,7 +223,7 @@ class MPC(ControllerWithModelPrediction):
 
         self.trap_set_weight = 1
         if use_trap_cost:
-            self.trap_cost = cost.TrapSetCost(self.trap_set, self.compare_to_goal, self.state_dist, u_similarity,
+            self.trap_cost = cost.TrapSetCost(self.trap_set, self.compare_to_goal, self.state_dist, self.u_sim,
                                               self._trap_cost_reduce)
             self.cost = cost.ComposeCost([self.goal_cost, self.trap_cost])
         else:

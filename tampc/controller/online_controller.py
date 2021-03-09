@@ -449,7 +449,7 @@ class TAMPC(OnlineMPC):
             for cc in self.contact_set:
                 # we're using the x before contact because our estimate of the object points haven't moved yet
                 # TODO handle when multiple contact objects claim it is part of them
-                if cc.is_part_of_object(x, self.contact_max_linkage_dist, self._state_dist_two_args):
+                if cc.is_part_of_object(x, u, self.contact_max_linkage_dist, self._state_dist_two_args, self.u_sim):
                     c = cc
                     break
         # couldn't find an existing contact
