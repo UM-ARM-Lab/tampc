@@ -214,7 +214,6 @@ class OnlineLinearizeMixing(OnlineDynamicsModel):
         Fm, fv, dyn_cov = self._get_batch_dynamics(px, pu, cx, cu)
         return Fm[0].cpu().numpy(), fv[0].cpu().numpy(), dyn_cov
 
-
     def _get_batch_dynamics(self, px, pu, cx, cu):
         """
         Compute F, f - the linear dynamics where either dx or next_x = F*[curx, curu] + f
@@ -250,7 +249,7 @@ class OnlineLinearizeMixing(OnlineDynamicsModel):
 
 
 class MixingFullGP(gpytorch.models.ExactGP):
-    def __init__(self, train_x, train_y, likelihood, nominal_model, preprocessor, rank=1):
+    def __init__(self, train_x, train_y, likelihood, nominal_model=None, preprocessor=None, rank=1):
         super(MixingFullGP, self).__init__(train_x, train_y, likelihood)
         self.nominal_model = nominal_model
         self.preprocessor = preprocessor
@@ -272,11 +271,14 @@ class MixingFullGP(gpytorch.models.ExactGP):
     def forward(self, x):
         # nominal model takes input in untransformed space; so we have to wrap our transform around it
         orig_x = x
-        if self.nominal_in_orig_space:
-            orig_x = self.preprocessor.invert_x(x)
-        nominal_pred = self.nominal_model(orig_x, all_in_transformed_space=not self.nominal_in_orig_space)
-        if self.nominal_in_orig_space:
-            nominal_pred = self.preprocessor.transform_y(nominal_pred)
+        if self.nominal_model is not None:
+            if self.nominal_in_orig_space:
+                orig_x = self.preprocessor.invert_x(x)
+            nominal_pred = self.nominal_model(orig_x, all_in_transformed_space=not self.nominal_in_orig_space)
+            if self.nominal_in_orig_space:
+                nominal_pred = self.preprocessor.transform_y(nominal_pred)
+        else:
+            nominal_pred = 0
 
         mean_x = self.mean_module(x) + nominal_pred
         covar_x = self.covar_module(x)
@@ -284,10 +286,11 @@ class MixingFullGP(gpytorch.models.ExactGP):
 
 
 class MixingBatchGP(gpytorch.models.ExactGP):
-    def __init__(self, train_x, train_y, likelihood, nominal_model, preprocessor):
+    def __init__(self, train_x, train_y, likelihood, nominal_model=None, preprocessor=None):
         super().__init__(train_x, train_y, likelihood)
         self.nominal_model = nominal_model
         self.preprocessor = preprocessor
+        self.zero_mean = gpytorch.means.ZeroMean()
         try:
             self.preprocessor.invert_x(train_x)
             logger.debug("use preprocess invert in local model")
@@ -303,15 +306,19 @@ class MixingBatchGP(gpytorch.models.ExactGP):
 
     def forward(self, x):
         orig_x = x
-        if self.nominal_in_orig_space:
-            orig_x = self.preprocessor.invert_x(x)
-        nominal_pred = self.nominal_model(orig_x, all_in_transformed_space=not self.nominal_in_orig_space)
-        if self.nominal_in_orig_space:
-            nominal_pred = self.preprocessor.transform_y(nominal_pred)
+        if self.nominal_model is not None:
+            if self.nominal_in_orig_space:
+                orig_x = self.preprocessor.invert_x(x)
+            nominal_pred = self.nominal_model(orig_x, all_in_transformed_space=not self.nominal_in_orig_space)
+            if self.nominal_in_orig_space:
+                nominal_pred = self.preprocessor.transform_y(nominal_pred)
+            nominal_pred = nominal_pred.transpose(0, 1)
+        else:
+            nominal_pred = self.zero_mean(x)
 
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultitaskMultivariateNormal.from_batch_mvn(
-            gpytorch.distributions.MultivariateNormal(nominal_pred.transpose(0, 1), covar_x)
+            gpytorch.distributions.MultivariateNormal(nominal_pred, covar_x)
         )
 
 
@@ -372,12 +379,14 @@ class OnlineGPMixing(OnlineDynamicsModel):
         self._recreate_gp()
 
     def _recreate_gp(self):
-        if self.use_independent_outputs:
-            self.gp = MixingBatchGP(self.xu, self.y, self.likelihood, self.prior.get_batch_predictions,
-                                    self.ds.preprocessor)
+        if self.prior is not None:
+            nominal_model = self.prior.get_batch_predictions
         else:
-            self.gp = MixingFullGP(self.xu, self.y, self.likelihood, self.prior.get_batch_predictions,
-                                   self.ds.preprocessor, rank=1)
+            nominal_model = None
+        if self.use_independent_outputs:
+            self.gp = MixingBatchGP(self.xu, self.y, self.likelihood, nominal_model, self.ds.preprocessor)
+        else:
+            self.gp = MixingFullGP(self.xu, self.y, self.likelihood, nominal_model, self.ds.preprocessor, rank=1)
         self.gp = self.gp.to(device=self.d, dtype=self.dtype)
         self.optimizer = torch.optim.Adam([
             {'params': self.gp.parameters()},
