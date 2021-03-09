@@ -454,7 +454,8 @@ class TAMPC(OnlineMPC):
                     break
         # couldn't find an existing contact
         if c is None:
-            c = contact.ContactObject()
+            # TODO try linear model?
+            c = contact.ContactObject(self.dynamics.create_empty_local_model())
             self.contact_set.append(c)
         c.add_transition(x, u, dx)
 
