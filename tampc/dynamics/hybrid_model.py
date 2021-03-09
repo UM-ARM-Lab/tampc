@@ -165,6 +165,12 @@ class HybridDynamicsModel(abc.ABC):
     def _uses_local_model_api(model):
         return isinstance(model, online_model.OnlineDynamicsModel)
 
+    def create_empty_local_model(self, use_prior=True):
+        return HybridDynamicsModel.get_local_model(self.state_diff, self.pm if use_prior else None,
+                                                   self.d, self.ds_nominal,
+                                                   preprocessor=self.preprocessor,
+                                                   allow_update=True, train_slice=slice(0, 0))
+
     def use_temp_local_nominal_model(self):
         if self._uses_local_model_api(self.nominal_model):
             # start local model here with no previous data points
@@ -172,10 +178,7 @@ class HybridDynamicsModel(abc.ABC):
             self.nominal_model.init_y = self.nominal_model.init_y[slice(0, 0)]
             self.nominal_model.reset()
         else:
-            self.nominal_model = HybridDynamicsModel.get_local_model(self.state_diff, self.pm,
-                                                                     self.nominal_model.device(), self.ds_nominal,
-                                                                     preprocessor=self.preprocessor,
-                                                                     allow_update=True, train_slice=slice(0, 0))
+            self.nominal_model = self.create_empty_local_model()
 
     def use_normal_nominal_model(self):
         self.nominal_model = self._original_nominal_model
