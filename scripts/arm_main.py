@@ -19,6 +19,7 @@ import pprint
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.optim import get_device
 from arm_pytorch_utilities import preprocess
+from arm_pytorch_utilities import draw
 
 from tampc import cfg
 from tampc.controller import controller
@@ -301,29 +302,110 @@ def test_autonomous_recovery(*args, **kwargs):
 
 def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
     def setup(env, ctrl, ds):
-        level = kwargs['level']
-        if level is 0:
-            goal = [0.0, 0.]
-            # x = [goal[0], goal[1] - 0.6, 0, 0]
-            env.set_task_config(goal=goal, init=[1, 0])
-            ctrl.set_goal(env.goal)
+        from tampc.cost import AvoidDirectNonNomCost
+        goal = [0.0, 0.]
+        init = [1, 0]
+        # init = [0.5657+0.1, -0.0175]
+        env.set_task_config(goal=goal, init=init)
+        ctrl.set_goal(env.goal)
 
-            # add cost for avoiding pushing into contact
+        # add cost for avoiding pushing into contact
+        # ctrl.cost.add(cost_fn=AvoidDirectNonNomCost(torch.tensor(goal, dtype=ctrl.dtype, device=ctrl.d), scale=1))
 
-            # setup movable object in between straight line
-            h = 0.075
-            objId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
-                               basePosition=[goal[0] + 0.5, goal[1], h])
+        # setup movable object in between straight line
+        h = 0.075
+        objId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
+                           basePosition=[goal[0] + 0.5, goal[1], h])
 
-            # reduce mass to allow easier pushes (still doesn't directly take it up)
-            # p.changeDynamics(objId, -1, mass=0.5)
-            env.movable.append(objId)
-            env.objects = env.movable
-            env.reset()
+        # reduce mass to allow easier pushes (still doesn't directly take it up)
+        # p.changeDynamics(objId, -1, mass=0.5)
+        env.movable.append(objId)
+        env.objects = env.movable
 
-            logger.info("env setup")
+        p.resetBasePositionAndOrientation(objId, (0.3877745438935845, 0.06599132022739296, 0.07692224061451539),
+                                          (-0.0019374005104293949, -0.0025102144283983864, 0.018303218072636906,
+                                           0.999827453869402))
 
-    run_controller('tune_avoid_nonnom_action', setup, *args, num_frames=num_frames, **kwargs)
+        # previous contacts made
+        from torch import tensor
+        from tampc.contact import ContactObject
+        from tampc.dynamics import online_model
+        d = 'cuda:0'
+        dt = torch.float64
+        xs = [tensor([0.6668, -0.0734, 0.0000, 0.0000], device=d, dtype=dt),
+              tensor([0.6368, -0.0434, 9.3426, -9.3518], device=d, dtype=dt),
+              tensor([0.6159, -0.0396, 13.4982, -1.2811], device=d, dtype=dt),
+              tensor([0.5957, -0.0147, 9.8322, -6.9042], device=d, dtype=dt),
+              tensor([0.5657, -0.0175, 12.4257, -0.6292], device=d, dtype=dt)]
+        us = [tensor([-1.0000, 1.0000], device=d, dtype=dt),
+              tensor([-0.6976, 0.1258], device=d, dtype=dt),
+              tensor([-0.6750, 0.8334], device=d, dtype=dt),
+              tensor([-1.0000, -0.0950], device=d, dtype=dt),
+              tensor([-0.4818, 0.7293], device=d, dtype=dt)]
+        dxs = [tensor([-0.0300, 0.0300, 9.3426, -9.3518], device=d, dtype=dt),
+               tensor([-2.0901e-02, 3.7697e-03, 4.1557e+00, 8.0707e+00], device=d, dtype=dt),
+               tensor([-0.0202, 0.0250, -3.6660, -5.6231], device=d, dtype=dt),
+               tensor([-2.9964e-02, -2.8484e-03, 2.5935e+00, 6.2750e+00], device=d, dtype=dt),
+               tensor([-0.0144, 0.0219, -1.2938, -5.4011], device=d, dtype=dt)]
+
+        c = ContactObject(ctrl.dynamics.create_empty_local_model())
+        ctrl.contact_set = [c]
+        for i in range(len(xs)):
+            c.add_transition(xs[i], us[i], dxs[i])
+
+        env.reset()
+        env.visualize_contact_set(ctrl.contact_set)
+        env.set_state([0.5657, -0.0175, 12.4257, -0.6292], [-0.4818, 0.7293])
+
+        xs_eval = []
+        xs_eval.append([0.5657, -0.0175, 0, 0])
+        xs_eval.append([0.53, -0.0875, 0, 0])
+        xs_eval.append([0.57, 0.0575, 0, 0])
+        xs_eval.append([0.45, -0.12, 0, 0])
+
+        u_mag = 1
+        N = 100
+        t = torch.from_numpy(np.linspace(0, 2 * np.pi, N)).to(dtype=dt, device=d)
+        cu = torch.stack((torch.cos(t) * u_mag, torch.sin(t) * u_mag), dim=1)
+        dynamics_gp = c.dynamics
+        assert (isinstance(dynamics_gp, online_model.OnlineGPMixing))
+        t = t.cpu().numpy()
+        for i, x in enumerate(xs_eval):
+            pos = env.get_ee_pos(x)
+            env._dd.draw_point('state{}'.format(i), pos, label='{}'.format(i))
+            cx = torch.tensor(x, dtype=dt, device=d).repeat(N, 1)
+
+            applicable = c.is_part_of_object_batch(cx, cu, ctrl.contact_max_linkage_dist, ctrl._state_dist_two_args,
+                                                   ctrl.u_sim)
+            applicable_u = cu[applicable]
+            for k, u in enumerate(applicable_u):
+                env._draw_action(u.cpu()*0.15, old_state=x, debug=k + 1 + i * N)
+
+            applicable = applicable.cpu().numpy()
+
+            yhat = c.dynamics.predict(None, None, cx, cu)
+            yhat_mean = dynamics_gp.mean()
+            lower, upper, _ = dynamics_gp.get_last_prediction_statistics()
+
+            y_names = ['d{}'.format(x_name) for x_name in env.state_names()]
+            to_plot_y_dims = [0, 1, 2, 3]
+            num_plots = len(to_plot_y_dims)
+            f, axes = plt.subplots(num_plots, 1, sharex='all')
+            f.suptitle('dynamics at point {} ({})'.format(i, pos))
+            for j, dim in enumerate(to_plot_y_dims):
+                axes[j].plot(t, yhat_mean[:, dim].cpu().numpy(), label='mean')
+                axes[j].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, dim].cpu().numpy(), alpha=0.3)
+                axes[j].set_ylabel(y_names[dim])
+                draw.highlight_value_ranges(applicable, ax=axes[j], x_values=t)
+
+            axes[0].legend()
+            axes[-1].set_xlabel('action theta')
+
+        plt.show()
+        logger.info("env setup")
+
+    kwargs.pop('level')
+    run_controller('tune_avoid_nonnom_action', setup, *args, num_frames=num_frames, level=0, **kwargs)
 
 
 class EvaluateTask:
