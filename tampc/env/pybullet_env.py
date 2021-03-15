@@ -178,9 +178,9 @@ class DebugDrawer:
                 height = self._default_height
         return height
 
-    def draw_point(self, name, point, color=(0, 0, 0), length=0.01, height=None):
+    def draw_point(self, name, point, color=(0, 0, 0), length=0.01, height=None, label=None):
         if name not in self._debug_ids:
-            self._debug_ids[name] = [-1, -1]
+            self._debug_ids[name] = [-1, -1, -1]
         uids = self._debug_ids[name]
 
         # ignore 3rd dimension if it exists to plot everything at the same height
@@ -191,6 +191,12 @@ class DebugDrawer:
                                      replaceItemUniqueId=uids[0])
         uids[1] = p.addUserDebugLine(np.add(location, [0, length, 0]), np.add(location, [0, -length, 0]), color, 2,
                                      replaceItemUniqueId=uids[1])
+        if label is not None:
+            uids[2] = p.addUserDebugText(label,
+                                         [location[0], location[1], location[2]],
+                                         textColorRGB=color,
+                                         textSize=2,
+                                         replaceItemUniqueId=uids[2])
 
     def draw_2d_pose(self, name, pose, color=(0, 0, 0), length=0.15 / 2, height=None):
         height = self._process_point_height(pose, height)
