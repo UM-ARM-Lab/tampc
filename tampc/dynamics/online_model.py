@@ -297,11 +297,11 @@ class MixingBatchGP(gpytorch.models.ExactGP):
             self.nominal_in_orig_space = True
         except RuntimeError:
             self.nominal_in_orig_space = False
-        ny = train_y.shape[1]
+        self.ny = train_y.shape[1]
         # zero mean
         self.covar_module = gpytorch.kernels.ScaleKernel(
-            gpytorch.kernels.RBFKernel(batch_shape=torch.Size([ny])),
-            batch_shape=torch.Size([ny])
+            gpytorch.kernels.RBFKernel(batch_shape=torch.Size([self.ny])),
+            batch_shape=torch.Size([self.ny])
         )
 
     def forward(self, x):
@@ -314,7 +314,7 @@ class MixingBatchGP(gpytorch.models.ExactGP):
                 nominal_pred = self.preprocessor.transform_y(nominal_pred)
             nominal_pred = nominal_pred.transpose(0, 1)
         else:
-            nominal_pred = self.zero_mean(x)
+            nominal_pred = torch.zeros((self.ny, x.shape[0]), dtype=x.dtype, device=x.device)
 
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultitaskMultivariateNormal.from_batch_mvn(
@@ -419,8 +419,6 @@ class OnlineGPMixing(OnlineDynamicsModel):
             self._fit_params(self.training_iter)
 
     def _fit_params(self, training_iter):
-        import time
-        start = time.time()
         # tune hyperparameters to new data
         self.gp.train()
         self.likelihood.train()

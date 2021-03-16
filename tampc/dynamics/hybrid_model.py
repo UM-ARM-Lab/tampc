@@ -126,7 +126,7 @@ class HybridDynamicsModel(abc.ABC):
     def get_local_model(state_diff, pm, d, ds_local, preprocessor=None, allow_update=False,
                         online_adapt=OnlineAdapt.GP_KERNEL_INDEP_OUT,
                         train_slice=None):
-        local_dynamics = pm.dyn_net
+        local_dynamics = pm.dyn_net if pm is not None else None
         # if given a preprocessor, we will override the datasource's preprocessor
         if preprocessor:
             ds_local = copy.deepcopy(ds_local)
