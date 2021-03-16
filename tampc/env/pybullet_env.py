@@ -154,6 +154,8 @@ class DebugDrawer:
 
     def set_camera_position(self, camera_pos, yaw=0, pitch=-89):
         self._camera_pos = camera_pos
+        for _ in range(1000):
+            p.stepSimulation()
         p.resetDebugVisualizerCamera(cameraDistance=self._camera_height, cameraYaw=yaw, cameraPitch=pitch,
                                      cameraTargetPosition=[camera_pos[0], camera_pos[1], 0])
         # wait for reset
