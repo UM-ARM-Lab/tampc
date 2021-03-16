@@ -590,6 +590,7 @@ def test_local_model_sufficiency_for_escaping_wall(seed=1, level=1, plot_model_e
 
     hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, [use_tsf.name],
                                                        preprocessor=no_tsf_preprocessor(),
+                                                       device=ds.d,
                                                        local_model_kwargs={
                                                            "allow_update": allow_update or plot_online_update,
                                                            "online_adapt": OnlineAdapt.GP_KERNEL if use_gp else OnlineAdapt.LINEARIZE_LIKELIHOOD
@@ -1873,10 +1874,11 @@ if __name__ == "__main__":
             success_min_dist=0.3)
 
     else:
+        test_local_model_sufficiency_for_escaping_wall(use_tsf=UseTsf.NO_TRANSFORM)
         # for size in [16, 64]:
-        for seed in range(10):
-            BlockPushGetter.learn_invariant(UseTsf.FEEDFORWARD_BASELINE, seed=seed, name="t17",
-                                            MAX_EPOCH=4000, BATCH_SIZE=500,
-                                            dynamics_opts={'h_units': (16, 32, 32, 32, 16, 32)})
+        # for seed in range(10):
+        #     BlockPushGetter.learn_invariant(UseTsf.FEEDFORWARD_BASELINE, seed=seed, name="t17",
+        #                                     MAX_EPOCH=4000, BATCH_SIZE=500,
+        #                                     dynamics_opts={'h_units': (16, 32, 32, 32, 16, 32)})
             # BlockPushGetter.learn_invariant(UseTsf.REX_EXTRACT, seed=seed, name="t16",
             #                                 MAX_EPOCH=3000, BATCH_SIZE=2048)
