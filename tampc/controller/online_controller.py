@@ -185,10 +185,9 @@ class TAMPC(OnlineMPC):
         self.fastest_to_choose = 4
 
         # contact tracking parameters
-        self.contact_set = contact.ContactSet()
-        self.contact_force_threshold = 0.5
         # state distance between making contacts for distinguishing separate contacts
-        self.contact_max_linkage_dist = 0.1
+        self.contact_set = contact.ContactSet(0.1, self._state_dist_two_args, self.u_sim)
+        self.contact_force_threshold = 0.5
         if state_to_position is not None:
             self.contact_preprocessing = preprocess.PytorchTransformer(
                 StateToPositionTransformer(state_to_position, self.ds.nu),
@@ -352,11 +351,11 @@ class TAMPC(OnlineMPC):
 
     def _state_dist_two_args(self, xa, xb):
         diff = self.compare_to_goal(xa, xb)
-        total = self.state_dist(diff)[0]
+        total = self.state_dist(diff)
         return total
 
     def _avg_displacement(self, start, end):
-        total = self._state_dist_two_args(self.x_history[start], self.x_history[end])
+        total = self._state_dist_two_args(self.x_history[start], self.x_history[end])[0]
         return total / (end - start)
 
     def _left_local_model(self):
@@ -478,15 +477,7 @@ class TAMPC(OnlineMPC):
 
     def _update_contact_set(self, x, u, dx):
         # associate each contact to a single object (max likelihood estimate on which object it is)
-        c = None
-        if len(self.contact_set) > 0:
-            # find associated contact
-            for cc in self.contact_set:
-                # we're using the x before contact because our estimate of the object points haven't moved yet
-                # TODO handle when multiple contact objects claim it is part of them
-                if cc.is_part_of_object(x, u, self.contact_max_linkage_dist, self._state_dist_two_args, self.u_sim):
-                    c = cc
-                    break
+        c, _ = self.contact_set.check_which_object_applies(x, u)
         # couldn't find an existing contact
         if c is None:
             # TODO try linear model?
@@ -494,6 +485,7 @@ class TAMPC(OnlineMPC):
             c = contact.ContactObject(self.dynamics.create_empty_local_model(preprocessor=self.contact_preprocessing))
             self.contact_set.append(c)
         c.add_transition(x, u, dx)
+        self.contact_set.updated()
 
     def _compute_action(self, x):
         # use only state for dynamics_class selection; this way we can get dynamics_class before calculating action
@@ -563,7 +555,7 @@ class TAMPC(OnlineMPC):
                     self.last_arm_pulled = self.mab.select_arm_to_pull()
                     self.turns_since_last_pull = 0
                     logger.debug("pulled arm %d = %s", self.last_arm_pulled.item(), self.recovery_cost_weight())
-            u = self.mpc.command(x)
+            u = self.mpc.command_augmented(x, self.contact_set)
 
         if self.trap_cost is not None:
             logger.debug("trap set weight %f", self.trap_set_weight)

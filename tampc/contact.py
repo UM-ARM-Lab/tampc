@@ -1,4 +1,6 @@
 import torch
+import typing
+import copy
 from tampc.dynamics import online_model
 from arm_pytorch_utilities import tensor_utils, optim
 
@@ -19,21 +21,23 @@ class ContactObject:
         dtype = torch.float64 if not torch.is_tensor(x) else x.dtype
         x, u, dx = tensor_utils.ensure_tensor(optim.get_device(), dtype, x, u, dx)
         if self.points is None:
-            self.points = x
-            self.actions = u
+            self.points = x.view(1, -1)
+            self.actions = u.view(1, -1)
             self.center_point = x
         else:
-            self.points = torch.cat((self.points.view(-1, x.numel()), x.view(1, -1)))
-            self.actions = torch.cat((self.actions.view(-1, u.numel()), u.view(1, -1)))
+            self.points = torch.cat((self.points, x.view(1, -1)))
+            self.actions = torch.cat((self.actions, u.view(1, -1)))
 
         centered_x = x - self.center_point if self.object_centered else x
-        # move all points by dx
-        # TODO generalize the x + dx operation
-        self.points += dx
-        self.center_point = self.points.mean(dim=0)
+        self.move_all_points(dx)
 
         self.transitions.append((x, u, dx))
         self.dynamics.update(centered_x, u, centered_x + dx)
+
+    def move_all_points(self, dx):
+        # TODO generalize the x + dx operation
+        self.points += dx
+        self.center_point = self.points.mean(dim=0)
 
     def predict(self, x, u, **kwargs):
         if self.object_centered:
@@ -60,8 +64,14 @@ class ContactObject:
 
 
 class ContactSet:
-    def __init__(self):
-        self._obj = []
+    def __init__(self, contact_max_linkage_dist, state_dist, u_sim):
+        self._obj: typing.List[ContactObject] = []
+        # cached center of all points
+        self.center_points = None
+
+        self.contact_max_linkage_dist = contact_max_linkage_dist
+        self.state_dist = state_dist
+        self.u_sim = u_sim
 
     def __len__(self):
         return len(self._obj)
@@ -71,3 +81,56 @@ class ContactSet:
 
     def append(self, contact: ContactObject):
         self._obj.append(contact)
+
+    def updated(self):
+        if self._obj:
+            self.center_points = torch.stack([obj.center_point for obj in self._obj])
+
+    def move_object(self, dx, obj_index):
+        # new_set = copy.deepcopy(self)
+        # new_set._obj[obj_index].move_all_points(dx)
+        # new_set.center_points[obj_index] = new_set._obj[obj_index].center_point
+
+        new_set = copy.copy(self)
+        new_set._obj = [copy.deepcopy(self._obj[i]) if i is obj_index else self._obj[i] for i in range(len(self))]
+        new_set._obj[obj_index].move_all_points(dx)
+        new_set.center_points = new_set.center_points.clone()
+        new_set.center_points[obj_index] = new_set._obj[obj_index].center_point
+        return new_set
+
+    def check_which_object_applies(self, x, u):
+        if not self._obj:
+            return None, None
+
+        d = self.state_dist(self.center_points, x).view(-1)
+
+        for i, cc in enumerate(self._obj):
+            # first use heuristic to filter out points based on state distance to object centers
+            if d[i] > 2 * self.contact_max_linkage_dist:
+                continue
+            # we're using the x before contact because our estimate of the object points haven't moved yet
+            # TODO handle when multiple contact objects claim it is part of them
+            if cc.is_part_of_object(x, u, self.contact_max_linkage_dist, self.state_dist, self.u_sim):
+                return cc, i
+
+        return None, None
+
+    # @tensor_utils.ensure_2d_input
+    # def check_which_object_applies(self, x, u):
+    #     N = x.shape[0]
+    #     res: typing.List[typing.Optional[ContactObject]] = [None for _ in range(N)]
+    #     if not self._obj:
+    #         return res
+    #
+    #     for cc in self._obj:
+    #         # first use heuristic to filter out points based on state distance to object centers
+    #         d = self.state_dist(cc.center_point, x)
+    #         if d.min() < 2 * self.contact_max_linkage_dist:
+    #             continue
+    #         # we're using the x before contact because our estimate of the object points haven't moved yet
+    #         # TODO handle when multiple contact objects claim it is part of them
+    #         applicable = cc.is_part_of_object_batch(x, u, self.contact_max_linkage_dist, self.state_dist, self.u_sim)
+    #         for i in range(N):
+    #             if applicable[i]:
+    #                 res[i] = cc
+    #     return res
