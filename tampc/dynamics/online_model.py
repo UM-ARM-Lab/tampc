@@ -332,6 +332,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
     """Different way of mixing local and nominal model; use nominal as mean"""
 
     def __init__(self, prior: prior.OnlineDynamicsPrior, ds, state_difference, max_data_points=50, training_iter=100,
+                 training_iter_stop=1e-2,
                  slice_to_use=None, refit_strategy=RefitGPStrategy.RESET_DATA, use_independent_outputs=False,
                  allow_update=True, sample=True, **kwargs):
         super().__init__(ds, state_difference, **kwargs)
@@ -347,6 +348,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
         # allow caller to keep track of our last fit (maybe need to adjust refit strategy)
         self.last_loss = 0
         self.last_loss_diff = 0
+        self.training_iter_stop = training_iter_stop
 
         # GP parameters
         self.training_iter = training_iter
@@ -424,7 +426,8 @@ class OnlineGPMixing(OnlineDynamicsModel):
         self.likelihood.train()
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(self.likelihood, self.gp)
 
-        for i in range(training_iter):
+        i = 0
+        while True:
             self.optimizer.zero_grad()
             output = self.gp(self.xu)
             loss = -mll(output, self.y)
@@ -432,6 +435,9 @@ class OnlineGPMixing(OnlineDynamicsModel):
             self.last_loss_diff = loss.item() - self.last_loss
             self.last_loss = loss.item()
             self.optimizer.step()
+            i += 1
+            if i >= training_iter and self.last_loss_diff > -self.training_iter_stop:
+                break
 
         self.gp.eval()
         self.likelihood.eval()
