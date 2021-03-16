@@ -1,5 +1,6 @@
 import torch
 from arm_pytorch_utilities import tensor_utils
+from arm_pytorch_utilities import preprocess
 from tampc.controller import gating_function
 from tampc.dynamics import online_model
 from arm_pytorch_utilities.make_data import datasource
@@ -165,10 +166,10 @@ class HybridDynamicsModel(abc.ABC):
     def _uses_local_model_api(model):
         return isinstance(model, online_model.OnlineDynamicsModel)
 
-    def create_empty_local_model(self, use_prior=True):
+    def create_empty_local_model(self, use_prior=True, preprocessor=preprocess.NoTransform()):
         return HybridDynamicsModel.get_local_model(self.state_diff, self.pm if use_prior else None,
                                                    self.d, self.ds_nominal,
-                                                   preprocessor=self.preprocessor,
+                                                   preprocessor=preprocessor,
                                                    allow_update=True, train_slice=slice(0, 0))
 
     def use_temp_local_nominal_model(self):
@@ -178,7 +179,7 @@ class HybridDynamicsModel(abc.ABC):
             self.nominal_model.init_y = self.nominal_model.init_y[slice(0, 0)]
             self.nominal_model.reset()
         else:
-            self.nominal_model = self.create_empty_local_model()
+            self.nominal_model = self.create_empty_local_model(preprocessor=self.preprocessor)
 
     def use_normal_nominal_model(self):
         self.nominal_model = self._original_nominal_model

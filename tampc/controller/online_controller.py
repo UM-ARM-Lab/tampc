@@ -6,7 +6,7 @@ import typing
 import torch
 from tampc.controller.multi_arm_bandit import KFMANDB
 
-from arm_pytorch_utilities import tensor_utils
+from arm_pytorch_utilities import tensor_utils, preprocess
 from tampc.dynamics import hybrid_model
 from tampc.controller import controller, gating_function
 from tampc import cost
@@ -455,7 +455,8 @@ class TAMPC(OnlineMPC):
         # couldn't find an existing contact
         if c is None:
             # TODO try linear model?
-            c = contact.ContactObject(self.dynamics.create_empty_local_model())
+            # if using object-centered model, don't use preprocessor, else use default
+            c = contact.ContactObject(self.dynamics.create_empty_local_model(preprocessor=preprocess.NoTransform()))
             self.contact_set.append(c)
         c.add_transition(x, u, dx)
 

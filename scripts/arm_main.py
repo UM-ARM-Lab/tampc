@@ -349,7 +349,7 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
                tensor([-0.0144, 0.0219, -1.2938, -5.4011], device=d, dtype=dt)]
 
         # add data to the local model
-        c = ContactObject(ctrl.dynamics.create_empty_local_model())
+        c = ContactObject(ctrl.dynamics.create_empty_local_model(preprocessor=preprocess.NoTransform()))
         ctrl.contact_set = [c]
         for i in range(len(xs)):
             c.add_transition(xs[i], us[i], dxs[i])
