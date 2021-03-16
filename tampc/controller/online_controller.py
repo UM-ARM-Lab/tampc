@@ -93,6 +93,34 @@ class AutonomousRecovery(enum.IntEnum):
     MAB = 4
 
 
+class StateToPositionTransformer(preprocess.SingleTransformer):
+    def __init__(self, state_to_pos, nu):
+        self.state_to_pos = state_to_pos
+        self.nx = None
+        self.nu = nu
+        self.npos = None
+
+    def fit(self, X):
+        self.nx = X.shape[1]
+        pos = self.state_to_pos(X[0])
+        self.npos = pos.numel()
+
+    def transform(self, X):
+        pos = self.state_to_pos(X)
+        if len(pos.shape) is 1:
+            pos = pos.view(1, -1)
+        if self.nu:
+            pos = torch.cat((pos, X[:, -self.nu:]), dim=1)
+        return pos
+
+    def inverse_transform(self, X):
+        return torch.cat((X, torch.zeros((X.shape[0], self.nx + self.nu - self.npos), dtype=X.dtype, device=X.device)),
+                         dim=1)
+
+    def data_dim_change(self):
+        return self.npos - self.nx + self.nu, 0
+
+
 class TAMPC(OnlineMPC):
     def __init__(self, *args, abs_unrecognized_threshold=10,
                  trap_cost_annealing_rate=0.97, trap_cost_init_normalization=1, manual_init_trap_weight=None,
@@ -105,6 +133,7 @@ class TAMPC(OnlineMPC):
                  assume_all_nonnominal_dynamics_are_traps=False,
                  recovery_scale=1, recovery_horizon=5, R_env=None,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE,
+                 state_to_position=None,
                  reuse_escape_as_demonstration=True, **kwargs):
         super(TAMPC, self).__init__(*args, **kwargs)
         self.abs_unrecognized_threshold = abs_unrecognized_threshold
@@ -160,6 +189,12 @@ class TAMPC(OnlineMPC):
         self.contact_force_threshold = 0.5
         # state distance between making contacts for distinguishing separate contacts
         self.contact_max_linkage_dist = 0.1
+        if state_to_position is not None:
+            self.contact_preprocessing = preprocess.PytorchTransformer(
+                StateToPositionTransformer(state_to_position, self.ds.nu),
+                StateToPositionTransformer(state_to_position, 0))
+        else:
+            self.contact_preprocessing = preprocess.NoTransform()
 
     # exposed methods for MPC (not protected via _method_name)
     def register_mpc(self, mpc):
@@ -456,7 +491,7 @@ class TAMPC(OnlineMPC):
         if c is None:
             # TODO try linear model?
             # if using object-centered model, don't use preprocessor, else use default
-            c = contact.ContactObject(self.dynamics.create_empty_local_model(preprocessor=preprocess.NoTransform()))
+            c = contact.ContactObject(self.dynamics.create_empty_local_model(preprocessor=self.contact_preprocessing))
             self.contact_set.append(c)
         c.add_transition(x, u, dx)
 

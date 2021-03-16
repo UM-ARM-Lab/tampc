@@ -7,6 +7,7 @@ import torch
 import os
 
 import numpy as np
+from arm_pytorch_utilities import tensor_utils
 from tampc.env.pybullet_env import PybulletEnv, get_total_contact_force, ContactInfo
 from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource
 from tampc.env.peg_in_hole import PandaJustGripperID
@@ -68,6 +69,11 @@ class ArmEnv(PybulletEnv):
     @staticmethod
     def get_ee_pos(state):
         return state[:3]
+
+    @staticmethod
+    @tensor_utils.ensure_2d_input
+    def get_ee_pos_states(states):
+        return states[:, :3]
 
     @staticmethod
     @handle_data_format_for_state_diff
@@ -700,6 +706,11 @@ class PlanarArmEnv(ArmEnv):
         if torch.is_tensor(state):
             return torch.cat((state[:2], torch.tensor(FIXED_Z, dtype=state.dtype, device=state.device).view(1)))
         return np.r_[state[:2], FIXED_Z]
+
+    @staticmethod
+    @tensor_utils.ensure_2d_input
+    def get_ee_pos_states(states):
+        return states[:, :2]
 
     @staticmethod
     @handle_data_format_for_state_diff

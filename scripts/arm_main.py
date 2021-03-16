@@ -349,7 +349,13 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
                tensor([-0.0144, 0.0219, -1.2938, -5.4011], device=d, dtype=dt)]
 
         # add data to the local model
-        c = ContactObject(ctrl.dynamics.create_empty_local_model(preprocessor=preprocess.NoTransform()))
+        state_to_position = env.get_ee_pos_states
+        contact_preprocessing = preprocess.PytorchTransformer(
+            online_controller.StateToPositionTransformer(state_to_position, env.nu),
+            online_controller.StateToPositionTransformer(state_to_position, 0))
+
+        c = ContactObject(ctrl.dynamics.create_empty_local_model(use_prior=False, preprocessor=contact_preprocessing))
+        # c = ContactObject(ctrl.dynamics.create_empty_local_model(use_prior=True, preprocessor=preprocess.NoTransform()))
         ctrl.contact_set = [c]
         for i in range(len(xs)):
             c.add_transition(xs[i], us[i], dxs[i])
@@ -366,6 +372,7 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
         xs_eval.append([0.53, -0.0875, 0, 0])
         xs_eval.append([0.57, 0.0575, 0, 0])
         xs_eval.append([0.45, -0.12, 0, 0])
+        xs_eval.append([10., -10, 0, 0])
 
         u_mag = 1
         N = 100
@@ -392,10 +399,10 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
             yhat_mean = dynamics_gp.mean()
             lower, upper, _ = dynamics_gp.get_last_prediction_statistics()
 
-            yhat_mean, lower, upper = (ds.preprocessor.invert_transform(v, cx) for v in (yhat_mean, lower, upper))
+            # yhat_mean, lower, upper = (ds.preprocessor.invert_transform(v, cx) for v in (yhat_mean, lower, upper))
 
             y_names = ['d{}'.format(x_name) for x_name in env.state_names()]
-            to_plot_y_dims = [0, 1, 2, 3]
+            to_plot_y_dims = [0, 1]
             num_plots = len(to_plot_y_dims)
             f, axes = plt.subplots(num_plots, 1, sharex='all')
             f.suptitle('dynamics at point {} ({})'.format(i, pos))
