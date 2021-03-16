@@ -332,7 +332,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
     """Different way of mixing local and nominal model; use nominal as mean"""
 
     def __init__(self, prior: prior.OnlineDynamicsPrior, ds, state_difference, max_data_points=50, training_iter=100,
-                 training_iter_stop=1e-2,
+                 training_iter_stop=1,
                  slice_to_use=None, refit_strategy=RefitGPStrategy.RESET_DATA, use_independent_outputs=False,
                  allow_update=True, sample=True, **kwargs):
         super().__init__(ds, state_difference, **kwargs)
