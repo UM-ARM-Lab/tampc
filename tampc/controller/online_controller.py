@@ -185,7 +185,7 @@ class TAMPC(OnlineMPC):
         self.fastest_to_choose = 4
 
         # contact tracking parameters
-        self.contact_set: typing.List[contact.ContactObject] = []
+        self.contact_set = contact.ContactSet()
         self.contact_force_threshold = 0.5
         # state distance between making contacts for distinguishing separate contacts
         self.contact_max_linkage_dist = 0.1

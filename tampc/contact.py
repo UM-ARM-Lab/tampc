@@ -57,3 +57,17 @@ class ContactObject:
         for i in range(len(x)):
             res.append(self.is_part_of_object(x[i], u[i], length_parameter, dist_function, u_similarity))
         return torch.tensor(res, device=optim.get_device())
+
+
+class ContactSet:
+    def __init__(self):
+        self._obj = []
+
+    def __len__(self):
+        return len(self._obj)
+
+    def __iter__(self):
+        return self._obj.__iter__()
+
+    def append(self, contact: ContactObject):
+        self._obj.append(contact)
