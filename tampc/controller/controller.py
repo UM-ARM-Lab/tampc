@@ -320,6 +320,7 @@ class ExperimentalMPPI(mppi.MPPI):
         self.M = rollout_samples
         self.rollout_var_cost = rollout_var_cost
         self.rollout_var_discount = rollout_var_discount
+        self.contact_set = None
 
     def change_horizon(self, horizon):
         if horizon < self.T:
@@ -338,6 +339,10 @@ class ExperimentalMPPI(mppi.MPPI):
     def _running_cost(self, state, u):
         return self.running_cost(state, u)
 
+    def command_augmented(self, state, contact_set):
+        self.contact_set = contact_set
+        return super(ExperimentalMPPI, self).command(state)
+
     def _compute_rollout_costs(self, perturbed_actions):
         K, T, nu = perturbed_actions.shape
         assert nu == self.nu
@@ -355,12 +360,38 @@ class ExperimentalMPPI(mppi.MPPI):
         # rollout action trajectory M times to estimate expected cost
         state = state.repeat(self.M, 1, 1)
 
+        # map index to contact set
+        contact_sets = [self.contact_set for _ in range(self.M * K)]
+
         states = []
         actions = []
         for t in range(T):
             u = perturbed_actions[:, t].repeat(self.M, 1, 1)
-            state = self._dynamics(state, u, t)
+            batch_dims = u.shape[:-1]
+            # flatten the batch dimensions to allow easier indexing
+            u = u.view(-1, u.shape[-1])
+            state = state.view(-1, state.shape[-1])
+            without_contact = torch.ones((self.M * K), dtype=torch.bool, device=state.device)
+            for i, x in enumerate(state):
+                c, j = contact_sets[i].check_which_object_applies(x, u[i])
+                if c is not None:
+                    without_contact[i] = False
+                    # rollout state with this contact local model (also involves moving the object center)
+                    nx = c.predict(x, u[i])
+                    # replace the contact set with a new one
+                    # TODO generalize the nx - x away by taking state difference somewhere
+                    contact_sets[i] = contact_sets[i].move_object(nx - x, j)
+                    state[i] = nx
+
+            # only rollout state that's not affected by contact set normally
+            state[without_contact] = self._dynamics(state[without_contact], u[without_contact], t)
             c = self.running_cost(state, u)
+
+            # restore batch dimensions
+            c = c.view(batch_dims)
+            u = u.view(*batch_dims, u.shape[-1])
+            state = state.view(*batch_dims, state.shape[-1])
+
             cost_samples += c
             cost_var += c.var(dim=0) * (self.rollout_var_discount ** t)
 
