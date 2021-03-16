@@ -956,6 +956,11 @@ class FloatingGripperEnv(PlanarArmEnv):
             self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [xs[0], ys[0] - 0.43, h],
                                              p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
                                              globalScaling=0.5))
+        elif self.level is 4:
+            scale = 1.0
+            h = 0.075 * scale
+            self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
+                                           basePosition=[0.5, 0, h]))
 
         for objId in self.immovable:
             p.changeVisualShape(objId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])

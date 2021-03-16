@@ -45,7 +45,7 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 logger = logging.getLogger(__name__)
 
 # --- SHARED GETTERS
-task_map = {'freespace': 0, 'wall': 1, 'wall_broken_joint': 2, 'movable_cans': 3}
+task_map = {'freespace': 0, 'wall': 1, 'wall_broken_joint': 2, 'movable_cans': 3, 'straight_line': 4}
 
 
 class ArmGetter(EnvGetter):
@@ -122,6 +122,8 @@ class ArmGetter(EnvGetter):
         cls.env_dir = '{}/gripper'.format(arm.DIR)
         if level is task_map['movable_cans']:
             env.set_task_config(goal=(0.95, -0.4))
+        if level is task_map['straight_line']:
+            env.set_task_config(goal=[0.0, 0.], init=[1, 0])
         return env
 
 
@@ -302,27 +304,14 @@ def test_autonomous_recovery(*args, **kwargs):
 
 def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
     def setup(env, ctrl, ds):
-        from tampc.cost import AvoidDirectNonNomCost
         goal = [0.0, 0.]
         init = [1, 0]
         # init = [0.5657+0.1, -0.0175]
         env.set_task_config(goal=goal, init=init)
         ctrl.set_goal(env.goal)
 
-        # add cost for avoiding pushing into contact
-        # ctrl.cost.add(cost_fn=AvoidDirectNonNomCost(torch.tensor(goal, dtype=ctrl.dtype, device=ctrl.d), scale=1))
-
-        # setup movable object in between straight line
-        h = 0.075
-        objId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
-                           basePosition=[goal[0] + 0.5, goal[1], h])
-
-        # reduce mass to allow easier pushes (still doesn't directly take it up)
-        # p.changeDynamics(objId, -1, mass=0.5)
-        env.movable.append(objId)
-        env.objects = env.movable
-
-        p.resetBasePositionAndOrientation(objId, (0.3877745438935845, 0.06599132022739296, 0.07692224061451539),
+        p.resetBasePositionAndOrientation(env.objects[0],
+                                          (0.3877745438935845, 0.06599132022739296, 0.07692224061451539),
                                           (-0.0019374005104293949, -0.0025102144283983864, 0.018303218072636906,
                                            0.999827453869402))
 
@@ -355,7 +344,8 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
             online_controller.StateToPositionTransformer(state_to_position, 0))
 
         # c = ContactObject(ctrl.dynamics.create_empty_local_model(use_prior=False, preprocessor=contact_preprocessing))
-        c = ContactObject(ctrl.dynamics.create_empty_local_model(use_prior=True, preprocessor=preprocess.NoTransform()), object_centered_dynamics=False)
+        c = ContactObject(ctrl.dynamics.create_empty_local_model(use_prior=True, preprocessor=preprocess.NoTransform()),
+                          object_centered_dynamics=False)
         ctrl.contact_set = [c]
         for i in range(len(xs)):
             c.add_transition(xs[i], us[i], dxs[i])
@@ -421,7 +411,8 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
         logger.info("env setup")
 
     kwargs.pop('level')
-    run_controller('tune_avoid_nonnom_action', setup, *args, num_frames=num_frames, level=0, **kwargs)
+    run_controller('tune_avoid_nonnom_action', setup, *args, num_frames=num_frames, level=task_map['straight_line'],
+                   **kwargs)
 
 
 class EvaluateTask:
