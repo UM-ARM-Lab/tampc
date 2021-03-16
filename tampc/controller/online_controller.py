@@ -188,12 +188,17 @@ class TAMPC(OnlineMPC):
         # state distance between making contacts for distinguishing separate contacts
         self.contact_set = contact.ContactSet(0.1, self._state_dist_two_args, self.u_sim)
         self.contact_force_threshold = 0.5
+        self.contact_cost = None
         if state_to_position is not None:
             self.contact_preprocessing = preprocess.PytorchTransformer(
                 StateToPositionTransformer(state_to_position, self.ds.nu),
                 StateToPositionTransformer(state_to_position, 0))
         else:
             self.contact_preprocessing = preprocess.NoTransform()
+
+    def set_goal(self, goal):
+        super(TAMPC, self).set_goal(goal)
+        self.contact_cost = cost.AvoidContactAtGoalCost(self.goal, scale=1)
 
     # exposed methods for MPC (not protected via _method_name)
     def register_mpc(self, mpc):
@@ -555,7 +560,7 @@ class TAMPC(OnlineMPC):
                     self.last_arm_pulled = self.mab.select_arm_to_pull()
                     self.turns_since_last_pull = 0
                     logger.debug("pulled arm %d = %s", self.last_arm_pulled.item(), self.recovery_cost_weight())
-            u = self.mpc.command_augmented(x, self.contact_set)
+            u = self.mpc.command_augmented(x, self.contact_set, self.contact_cost)
 
         if self.trap_cost is not None:
             logger.debug("trap set weight %f", self.trap_set_weight)

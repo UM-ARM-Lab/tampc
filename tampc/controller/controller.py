@@ -321,6 +321,7 @@ class ExperimentalMPPI(mppi.MPPI):
         self.rollout_var_cost = rollout_var_cost
         self.rollout_var_discount = rollout_var_discount
         self.contact_set = None
+        self.contact_cost = None
 
     def change_horizon(self, horizon):
         if horizon < self.T:
@@ -339,8 +340,9 @@ class ExperimentalMPPI(mppi.MPPI):
     def _running_cost(self, state, u):
         return self.running_cost(state, u)
 
-    def command_augmented(self, state, contact_set):
+    def command_augmented(self, state, contact_set, contact_cost):
         self.contact_set = contact_set
+        self.contact_cost = contact_cost
         return super(ExperimentalMPPI, self).command(state)
 
     def _compute_rollout_costs(self, perturbed_actions):
@@ -386,6 +388,11 @@ class ExperimentalMPPI(mppi.MPPI):
             # only rollout state that's not affected by contact set normally
             state[without_contact] = self._dynamics(state[without_contact], u[without_contact], t)
             c = self.running_cost(state, u)
+            # TODO generalize this
+            c_contact = torch.zeros_like(c)
+            for i, contact_set in enumerate(contact_sets):
+                c_contact[i] = self.contact_cost(contact_set)
+            c += c_contact
 
             # restore batch dimensions
             c = c.view(batch_dims)

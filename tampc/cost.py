@@ -189,6 +189,18 @@ class TrapSetCost(Cost):
         return costs
 
 
+class AvoidContactAtGoalCost(Cost):
+    """Avoid bringing contact set close to goal"""
+
+    def __init__(self, goal, scale=1):
+        self.goal = goal
+        self.scale = scale
+
+    @tensor_utils.handle_batch_input
+    def __call__(self, contact_set, U=None, terminal=False):
+        return contact_set.goal_cost(self.goal) * self.scale
+
+
 class CostLeaveState(Cost):
     """Reward for distance away from current state"""
 
@@ -214,6 +226,9 @@ class ComposeCost(Cost):
     def __init__(self, costs, weights=None):
         self.fn = costs
         self.weights = weights
+
+    def add(self, cost_fn):
+        self.fn.append(cost_fn)
 
     @tensor_utils.handle_batch_input
     def __call__(self, X, U=None, terminal=False):
@@ -285,5 +300,5 @@ class APFHelicoid2D(Cost):
         d = self.oxy - Xxy
         angles = torch.atan2(d[:, 1], d[:, 0])
 
-        angular_diffs = math_utils.angular_diff_batch(original_angle, angles) * torch.norm(d,dim=1)
+        angular_diffs = math_utils.angular_diff_batch(original_angle, angles) * torch.norm(d, dim=1)
         return angular_diffs * (1 if self.clockwise else -1)

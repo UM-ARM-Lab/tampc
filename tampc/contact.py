@@ -98,6 +98,13 @@ class ContactSet:
         new_set.center_points[obj_index] = new_set._obj[obj_index].center_point
         return new_set
 
+    def goal_cost(self, goal_x):
+        if not self._obj:
+            return 0
+
+        d = self.state_dist(self.center_points, goal_x).view(-1)
+        return (1 / d).sum()
+
     def check_which_object_applies(self, x, u):
         if not self._obj:
             return None, None
