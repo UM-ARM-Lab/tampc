@@ -348,15 +348,19 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
                tensor([-2.9964e-02, -2.8484e-03, 2.5935e+00, 6.2750e+00], device=d, dtype=dt),
                tensor([-0.0144, 0.0219, -1.2938, -5.4011], device=d, dtype=dt)]
 
+        # add data to the local model
         c = ContactObject(ctrl.dynamics.create_empty_local_model())
         ctrl.contact_set = [c]
         for i in range(len(xs)):
             c.add_transition(xs[i], us[i], dxs[i])
+        # train dynamics for more iterations
+        c.dynamics._fit_params(100)
 
         env.reset()
         env.visualize_contact_set(ctrl.contact_set)
         env.set_state([0.5657, -0.0175, 12.4257, -0.6292], [-0.4818, 0.7293])
 
+        # evaluate the local model at certain points
         xs_eval = []
         xs_eval.append([0.5657, -0.0175, 0, 0])
         xs_eval.append([0.53, -0.0875, 0, 0])
@@ -379,13 +383,16 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
                                                    ctrl.u_sim)
             applicable_u = cu[applicable]
             for k, u in enumerate(applicable_u):
-                env._draw_action(u.cpu()*0.15, old_state=x, debug=k + 1 + i * N)
+                env._draw_action(u.cpu() * 0.15, old_state=x, debug=k + 1 + i * N)
 
             applicable = applicable.cpu().numpy()
 
-            yhat = c.dynamics.predict(None, None, cx, cu)
+            yhat = c.predict(cx, cu)
+            yhat = yhat - cx
             yhat_mean = dynamics_gp.mean()
             lower, upper, _ = dynamics_gp.get_last_prediction_statistics()
+
+            yhat_mean, lower, upper = (ds.preprocessor.invert_transform(v, cx) for v in (yhat_mean, lower, upper))
 
             y_names = ['d{}'.format(x_name) for x_name in env.state_names()]
             to_plot_y_dims = [0, 1, 2, 3]
@@ -393,9 +400,11 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
             f, axes = plt.subplots(num_plots, 1, sharex='all')
             f.suptitle('dynamics at point {} ({})'.format(i, pos))
             for j, dim in enumerate(to_plot_y_dims):
+                # axes[j].scatter(t, yhat[:, dim].cpu().numpy(), label='sample')
                 axes[j].plot(t, yhat_mean[:, dim].cpu().numpy(), label='mean')
                 axes[j].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, dim].cpu().numpy(), alpha=0.3)
                 axes[j].set_ylabel(y_names[dim])
+                # axes[j].set_ylim(bottom=-0.2, top=0.2)
                 draw.highlight_value_ranges(applicable, ax=axes[j], x_values=t)
 
             axes[0].legend()
