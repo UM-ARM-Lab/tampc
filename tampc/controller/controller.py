@@ -379,7 +379,7 @@ class ExperimentalMPPI(mppi.MPPI):
                 if c is not None:
                     without_contact[i] = False
                     # rollout state with this contact local model (also involves moving the object center)
-                    nx = c.predict(x, u[i])
+                    nx = c.predict(x, u[i])[0]
                     # replace the contact set with a new one
                     # TODO generalize the nx - x away by taking state difference somewhere
                     contact_sets[i] = contact_sets[i].move_object(nx - x, j)

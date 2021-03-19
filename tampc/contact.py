@@ -46,6 +46,7 @@ class ContactObject:
         self.points += dx
         self.center_point = self.points.mean(dim=0)
 
+    @tensor_utils.ensure_2d_input
     def predict(self, x, u, **kwargs):
         if self.object_centered:
             x = x - self.center_point
