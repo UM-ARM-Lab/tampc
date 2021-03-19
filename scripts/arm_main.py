@@ -339,17 +339,27 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
 
         # add data to the local model
         state_to_position = env.get_ee_pos_states
-        contact_preprocessing = preprocess.PytorchTransformer(
-            online_controller.StateToPositionTransformer(state_to_position, env.nu),
-            online_controller.StateToPositionTransformer(state_to_position, 0))
+        length_scale = 0.03
 
-        # c = ContactObject(ctrl.dynamics.create_empty_local_model(use_prior=False, preprocessor=contact_preprocessing))
-        c = ContactObject(ctrl.dynamics.create_empty_local_model(use_prior=True, preprocessor=preprocess.NoTransform()),
-                          object_centered_dynamics=False)
-        ctrl.contact_set = [c]
+        # TODO use prior but with new preprocessing; need to adjust how to use prior
+        position_preprocessing = preprocess.PytorchTransformer(
+            online_controller.StateToPositionTransformer(state_to_position, length_scale, env.nu),
+            online_controller.StateToPositionTransformer(state_to_position, length_scale, 0))
+        c = ContactObject(ctrl.dynamics.create_empty_local_model(use_prior=False, preprocessor=position_preprocessing))
+
+        # TODO use prior but with new preprocessing; need to adjust how to use prior
+        # state_preprocessing = preprocess.PytorchTransformer(
+        #     online_controller.DirectScaleTransformer([length_scale, length_scale, 10, 10, 1, 1]),
+        #     online_controller.DirectScaleTransformer([length_scale, length_scale, 10, 10]))
+        # c = ContactObject(ctrl.dynamics.create_empty_local_model(use_prior=True, preprocessor=ctrl.dynamics.preprocessor),
+        #                   object_centered_dynamics=True)
+
+        ctrl.contact_set.append(c)
         for i in range(len(xs)):
             c.add_transition(xs[i], us[i], dxs[i])
         # train dynamics for more iterations
+        # rand.seed(0)
+        # c.dynamics._recreate_all()
         # c.dynamics._fit_params(100)
 
         env.reset()
@@ -358,26 +368,31 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
 
         # evaluate the local model at certain points
         xs_eval = []
-        xs_eval.append([0.5657, -0.0175, 0, 0])
+        xs_eval.append(np.array([0.5657, -0.0175, 0, 0]) + np.array([-0.0144, 0.0219, -1.2938, -5.4011]))
         xs_eval.append([0.53, -0.0875, 0, 0])
         xs_eval.append([0.57, 0.0575, 0, 0])
         xs_eval.append([0.45, -0.12, 0, 0])
         xs_eval.append([10., -10, 0, 0])
 
         u_mag = 1
-        N = 100
-        t = torch.from_numpy(np.linspace(0, 2 * np.pi, N)).to(dtype=dt, device=d)
+        N = 51
+        t = torch.from_numpy(np.linspace(-3, 3, N)).to(dtype=dt, device=d)
         cu = torch.stack((torch.cos(t) * u_mag, torch.sin(t) * u_mag), dim=1)
         dynamics_gp = c.dynamics
         assert (isinstance(dynamics_gp, online_model.OnlineGPMixing))
+
+        u_train = dynamics_gp.xu[:, -2:]
+        t_train = torch.atan2(u_train[:, 1], u_train[:, 0]).cpu().numpy()
+        y_train = dynamics_gp.y
+
         t = t.cpu().numpy()
         for i, x in enumerate(xs_eval):
             pos = env.get_ee_pos(x)
             env._dd.draw_point('state{}'.format(i), pos, label='{}'.format(i))
             cx = torch.tensor(x, dtype=dt, device=d).repeat(N, 1)
 
-            applicable = c.is_part_of_object_batch(cx, cu, ctrl.contact_max_linkage_dist, ctrl._state_dist_two_args,
-                                                   ctrl.u_sim)
+            applicable = c.is_part_of_object_batch(cx, cu, ctrl.contact_set.contact_max_linkage_dist,
+                                                   ctrl.contact_set.state_dist, ctrl.contact_set.u_sim)
             applicable_u = cu[applicable]
             for k, u in enumerate(applicable_u):
                 env._draw_action(u.cpu() * 0.15, old_state=x, debug=k + 1 + i * N)
@@ -386,18 +401,18 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
 
             yhat = c.predict(cx, cu)
             yhat = yhat - cx
-            yhat_mean = dynamics_gp.mean()
-            lower, upper, _ = dynamics_gp.get_last_prediction_statistics()
+            lower, upper, yhat_mean = dynamics_gp.get_last_prediction_statistics()
 
             # yhat_mean, lower, upper = (ds.preprocessor.invert_transform(v, cx) for v in (yhat_mean, lower, upper))
 
             y_names = ['d{}'.format(x_name) for x_name in env.state_names()]
-            to_plot_y_dims = [0, 1, 2, 3]
-            num_plots = len(to_plot_y_dims)
+            to_plot_y_dims = [0, 1]
+            num_plots = min(len(to_plot_y_dims), yhat_mean.shape[1])
             f, axes = plt.subplots(num_plots, 1, sharex='all')
             f.suptitle('dynamics at point {} ({})'.format(i, pos))
             for j, dim in enumerate(to_plot_y_dims):
                 # axes[j].scatter(t, yhat[:, dim].cpu().numpy(), label='sample')
+                axes[j].scatter(t_train, y_train[:, dim].cpu().numpy(), color='k', marker='*', label='train')
                 axes[j].plot(t, yhat_mean[:, dim].cpu().numpy(), label='mean')
                 axes[j].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, dim].cpu().numpy(), alpha=0.3)
                 axes[j].set_ylabel(y_names[dim])
@@ -528,26 +543,26 @@ if __name__ == "__main__":
             ut = UseTsf.NO_TRANSFORM
 
         for seed in args.seed:
-            test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
-                                     nominal_adapt=nominal_adapt, rep_name=args.rep_name,
-                                     reuse_escape_as_demonstration=False, use_trap_cost=use_trap_cost,
-                                     assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
-                                     visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
-                                     override_tampc_params=tampc_params, override_mpc_params=mpc_params,
-                                     autonomous_recovery=autonomous_recovery,
-                                     never_estimate_error=args.never_estimate_error,
-                                     apfvo_baseline=args.apfvo_baseline,
-                                     apfsp_baseline=args.apfsp_baseline)
-            # test_avoid_nonnominal_action(seed=seed, level=level, use_tsf=ut,
-            #                              nominal_adapt=nominal_adapt, rep_name=args.rep_name,
-            #                              reuse_escape_as_demonstration=False, use_trap_cost=use_trap_cost,
-            #                              assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
-            #                              visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
-            #                              override_tampc_params=tampc_params, override_mpc_params=mpc_params,
-            #                              autonomous_recovery=autonomous_recovery,
-            #                              never_estimate_error=args.never_estimate_error,
-            #                              apfvo_baseline=args.apfvo_baseline,
-            #                              apfsp_baseline=args.apfsp_baseline)
+            # test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
+            #                          nominal_adapt=nominal_adapt, rep_name=args.rep_name,
+            #                          reuse_escape_as_demonstration=False, use_trap_cost=use_trap_cost,
+            #                          assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
+            #                          visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
+            #                          override_tampc_params=tampc_params, override_mpc_params=mpc_params,
+            #                          autonomous_recovery=autonomous_recovery,
+            #                          never_estimate_error=args.never_estimate_error,
+            #                          apfvo_baseline=args.apfvo_baseline,
+            #                          apfsp_baseline=args.apfsp_baseline)
+            test_avoid_nonnominal_action(seed=seed, level=level, use_tsf=ut,
+                                         nominal_adapt=nominal_adapt, rep_name=args.rep_name,
+                                         reuse_escape_as_demonstration=False, use_trap_cost=use_trap_cost,
+                                         assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
+                                         visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
+                                         override_tampc_params=tampc_params, override_mpc_params=mpc_params,
+                                         autonomous_recovery=autonomous_recovery,
+                                         never_estimate_error=args.never_estimate_error,
+                                         apfvo_baseline=args.apfvo_baseline,
+                                         apfsp_baseline=args.apfsp_baseline)
     elif args.command == 'evaluate':
         task_type = arm.DIR
         # get all the trials to visualize for choosing where the obstacles are

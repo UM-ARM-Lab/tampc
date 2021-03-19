@@ -94,19 +94,20 @@ class AutonomousRecovery(enum.IntEnum):
 
 
 class StateToPositionTransformer(preprocess.SingleTransformer):
-    def __init__(self, state_to_pos, nu):
+    def __init__(self, state_to_pos, length_scale, nu):
         self.state_to_pos = state_to_pos
+        self.length_scale = length_scale
         self.nx = None
         self.nu = nu
         self.npos = None
 
     def fit(self, X):
-        self.nx = X.shape[1]
+        self.nx = X.shape[1] - self.nu
         pos = self.state_to_pos(X[0])
         self.npos = pos.numel()
 
     def transform(self, X):
-        pos = self.state_to_pos(X)
+        pos = self.state_to_pos(X) / self.length_scale
         if len(pos.shape) is 1:
             pos = pos.view(1, -1)
         if self.nu:
@@ -114,11 +115,31 @@ class StateToPositionTransformer(preprocess.SingleTransformer):
         return pos
 
     def inverse_transform(self, X):
-        return torch.cat((X, torch.zeros((X.shape[0], self.nx + self.nu - self.npos), dtype=X.dtype, device=X.device)),
-                         dim=1)
+        pos = X[:, :self.npos] * self.length_scale
+        u_start_index = X.shape[1] - self.nu
+        U = X[:, u_start_index:]
+        fill_rest = torch.zeros((X.shape[0], self.nx - self.npos), dtype=X.dtype, device=X.device)
+        return torch.cat((pos, fill_rest, U), dim=1)
 
     def data_dim_change(self):
         return self.npos - self.nx + self.nu, 0
+
+
+class DirectScaleTransformer(preprocess.SingleTransformer):
+    def __init__(self, length_scale):
+        self.length_scale = length_scale
+
+    def fit(self, X):
+        if not torch.is_tensor(self.length_scale):
+            self.length_scale = torch.tensor(self.length_scale, dtype=X.dtype, device=X.device)
+            if self.length_scale.numel() == X.shape[1]:
+                self.length_scale = self.length_scale.view(1, -1)
+
+    def transform(self, X):
+        return X / self.length_scale
+
+    def inverse_transform(self, X):
+        return X * self.length_scale
 
 
 class TAMPC(OnlineMPC):
@@ -134,6 +155,7 @@ class TAMPC(OnlineMPC):
                  recovery_scale=1, recovery_horizon=5, R_env=None,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE,
                  state_to_position=None,
+                 contact_use_prior=True,
                  reuse_escape_as_demonstration=True, **kwargs):
         super(TAMPC, self).__init__(*args, **kwargs)
         self.abs_unrecognized_threshold = abs_unrecognized_threshold
@@ -189,10 +211,13 @@ class TAMPC(OnlineMPC):
         self.contact_set = contact.ContactSet(0.1, self._state_dist_two_args, self.u_sim)
         self.contact_force_threshold = 0.5
         self.contact_cost = None
+        self.contact_use_prior = contact_use_prior
         if state_to_position is not None:
+            # TODO this should come from the environment (i.e. maximum position change achieved by any single action)
+            length_scale = 0.03
             self.contact_preprocessing = preprocess.PytorchTransformer(
-                StateToPositionTransformer(state_to_position, self.ds.nu),
-                StateToPositionTransformer(state_to_position, 0))
+                StateToPositionTransformer(state_to_position, length_scale, self.nu),
+                StateToPositionTransformer(state_to_position, length_scale, 0))
         else:
             self.contact_preprocessing = preprocess.NoTransform()
 
@@ -487,7 +512,8 @@ class TAMPC(OnlineMPC):
         if c is None:
             # TODO try linear model?
             # if using object-centered model, don't use preprocessor, else use default
-            c = contact.ContactObject(self.dynamics.create_empty_local_model(preprocessor=self.contact_preprocessing))
+            c = contact.ContactObject(self.dynamics.create_empty_local_model(use_prior=self.contact_use_prior,
+                                                                             preprocessor=self.contact_preprocessing))
             self.contact_set.append(c)
         c.add_transition(x, u, dx)
         self.contact_set.updated()
