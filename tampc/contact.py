@@ -6,7 +6,8 @@ from arm_pytorch_utilities import tensor_utils, optim
 
 
 class ContactObject:
-    def __init__(self, empty_local_model: online_model.OnlineDynamicsModel, object_centered_dynamics=True):
+    def __init__(self, empty_local_model: online_model.OnlineDynamicsModel, object_centered_dynamics=True,
+                 assume_linear_scaling=True):
         # (x, u, dx) tuples associated with this object for fitting local model
         self.transitions = []
         # points on this object that are tracked
@@ -16,6 +17,7 @@ class ContactObject:
         self.dynamics = empty_local_model
 
         self.object_centered = object_centered_dynamics
+        self.assume_linear_scaling = assume_linear_scaling
 
     def add_transition(self, x, u, dx):
         dtype = torch.float64 if not torch.is_tensor(x) else x.dtype
@@ -32,6 +34,11 @@ class ContactObject:
         self.move_all_points(dx)
 
         self.transitions.append((x, u, dx))
+
+        if self.assume_linear_scaling:
+            u_scale = u.norm()
+            u /= u_scale
+            dx /= u_scale
         self.dynamics.update(centered_x, u, centered_x + dx)
 
     def move_all_points(self, dx):
@@ -42,7 +49,18 @@ class ContactObject:
     def predict(self, x, u, **kwargs):
         if self.object_centered:
             x = x - self.center_point
+
+        u_scale = 1
+        if self.assume_linear_scaling:
+            u_scale = u.norm(dim=1)
+            u /= u_scale.view(-1, 1)
+
         nx = self.dynamics.predict(None, None, x, u, **kwargs)
+        if self.assume_linear_scaling:
+            dx = nx - x
+            dx *= u_scale.view(-1, 1)
+            nx = x + dx
+
         if self.object_centered:
             nx = nx + self.center_point
         return nx
