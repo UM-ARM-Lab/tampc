@@ -15,7 +15,7 @@ MAX_EVALUATE_AT_ONCE = 10000
 class OnlineDynamicsModel(model.DynamicsBase):
     """Different way of mixing local and nominal model; use nominal as mean"""
 
-    def __init__(self, ds, state_difference, device=torch.device("cpu")):
+    def __init__(self, ds, state_difference, dtype=torch.float32, device=torch.device("cpu")):
         super(OnlineDynamicsModel, self).__init__(ds)
         self.state_difference = state_difference
 
@@ -24,7 +24,7 @@ class OnlineDynamicsModel(model.DynamicsBase):
 
         # device the prior model is on
         self.d = device
-        self.dtype = torch.double
+        self.dtype = dtype
 
     @abc.abstractmethod
     def reset(self):
@@ -254,9 +254,10 @@ class MixingFullGP(gpytorch.models.ExactGP):
         self.nominal_model = nominal_model
         self.preprocessor = preprocessor
         try:
-            self.preprocessor.invert_x(train_x)
-            self.nominal_in_orig_space = True
-            logger.debug("use preprocess invert in local model")
+            if self.preprocessor:
+                self.preprocessor.invert_x(train_x)
+                self.nominal_in_orig_space = True
+                logger.debug("use preprocess invert in local model")
         except RuntimeError:
             self.nominal_in_orig_space = False
         ny = train_y.shape[1]
@@ -290,11 +291,11 @@ class MixingBatchGP(gpytorch.models.ExactGP):
         super().__init__(train_x, train_y, likelihood)
         self.nominal_model = nominal_model
         self.preprocessor = preprocessor
-        self.zero_mean = gpytorch.means.ZeroMean()
         try:
-            self.preprocessor.invert_x(train_x)
-            logger.debug("use preprocess invert in local model")
-            self.nominal_in_orig_space = True
+            if self.preprocessor:
+                self.preprocessor.invert_x(train_x)
+                logger.debug("use preprocess invert in local model")
+                self.nominal_in_orig_space = True
         except RuntimeError:
             self.nominal_in_orig_space = False
         self.ny = train_y.shape[1]
@@ -333,7 +334,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
 
     def __init__(self, prior: prior.OnlineDynamicsPrior, ds, state_difference, max_data_points=50, training_iter=100,
                  training_iter_stop=1,
-                 slice_to_use=None, refit_strategy=RefitGPStrategy.RESET_DATA, use_independent_outputs=False,
+                 slice_to_use=None, refit_strategy=RefitGPStrategy.RESET_DATA, use_independent_outputs=True,
                  allow_update=True, sample=True, **kwargs):
         super().__init__(ds, state_difference, **kwargs)
         self.prior = prior
@@ -365,6 +366,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
         xu, y, _ = self.ds.training_set()
         self.init_xu = xu[slice_to_use]
         self.init_y = y[slice_to_use]
+        self.dtype = self.init_xu.dtype
         # Initial values
         self.reset()
 
@@ -426,6 +428,8 @@ class OnlineGPMixing(OnlineDynamicsModel):
         self.likelihood.train()
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(self.likelihood, self.gp)
 
+        logger.debug('train for %d iter with xu and y \n%s\n%s', training_iter, self.xu, self.y)
+
         i = 0
         while True:
             self.optimizer.zero_grad()
@@ -434,6 +438,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
             loss.backward()
             self.last_loss_diff = loss.item() - self.last_loss
             self.last_loss = loss.item()
+            logger.debug('iter %d last loss %.3f last loss diff %.3f', i, self.last_loss, self.last_loss_diff)
             self.optimizer.step()
             i += 1
             if i >= training_iter and self.last_loss_diff > -self.training_iter_stop:
