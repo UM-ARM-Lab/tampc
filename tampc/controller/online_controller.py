@@ -94,8 +94,9 @@ class AutonomousRecovery(enum.IntEnum):
 
 
 class StateToPositionTransformer(preprocess.SingleTransformer):
-    def __init__(self, state_to_pos, length_scale, nu):
+    def __init__(self, state_to_pos, pos_to_state, length_scale, nu):
         self.state_to_pos = state_to_pos
+        self.pos_to_state = pos_to_state
         self.length_scale = length_scale
         self.nx = None
         self.nu = nu
@@ -118,8 +119,7 @@ class StateToPositionTransformer(preprocess.SingleTransformer):
         pos = X[:, :self.npos] * self.length_scale
         u_start_index = X.shape[1] - self.nu
         U = X[:, u_start_index:]
-        fill_rest = torch.zeros((X.shape[0], self.nx - self.npos), dtype=X.dtype, device=X.device)
-        return torch.cat((pos, fill_rest, U), dim=1)
+        return torch.cat((self.pos_to_state(pos), U), dim=1)
 
     def data_dim_change(self):
         return self.npos - self.nx + self.nu, 0
@@ -155,6 +155,7 @@ class TAMPC(OnlineMPC):
                  recovery_scale=1, recovery_horizon=5, R_env=None,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE,
                  state_to_position=None,
+                 position_to_state=None,
                  contact_use_prior=True,
                  reuse_escape_as_demonstration=True, **kwargs):
         super(TAMPC, self).__init__(*args, **kwargs)
@@ -208,18 +209,20 @@ class TAMPC(OnlineMPC):
 
         # contact tracking parameters
         # state distance between making contacts for distinguishing separate contacts
-        self.contact_set = contact.ContactSet(0.1, self._state_dist_two_args, self.u_sim)
+        self.contact_set = contact.ContactSet(0.1, state_to_position, self.u_sim)
         self.contact_force_threshold = 0.5
         self.contact_cost = None
         self.contact_use_prior = contact_use_prior
-        if state_to_position is not None:
+        if state_to_position is not None and position_to_state is not None:
             # TODO this should come from the environment (i.e. maximum position change achieved by any single action)
             length_scale = 0.03
             self.contact_preprocessing = preprocess.PytorchTransformer(
-                StateToPositionTransformer(state_to_position, length_scale, self.nu),
-                StateToPositionTransformer(state_to_position, length_scale, 0))
+                StateToPositionTransformer(state_to_position, position_to_state, length_scale, self.nu),
+                StateToPositionTransformer(state_to_position, position_to_state, length_scale, 0))
+            self.state_to_pos = state_to_position
+            self.pos_to_state = position_to_state
         else:
-            self.contact_preprocessing = preprocess.NoTransform()
+            raise RuntimeError("Need to give controller state to position transform from env for contact dynamics")
 
     def set_goal(self, goal):
         super(TAMPC, self).set_goal(goal)
@@ -512,8 +515,8 @@ class TAMPC(OnlineMPC):
         if c is None:
             # TODO try linear model?
             # if using object-centered model, don't use preprocessor, else use default
-            c = contact.ContactObject(self.dynamics.create_empty_local_model(use_prior=self.contact_use_prior,
-                                                                             preprocessor=self.contact_preprocessing))
+            c = contact.ContactObject(self.dynamics.create_empty_local_model(use_prior=self.contact_use_prior),
+                                      self.state_to_pos, self.pos_to_state)
             self.contact_set.append(c)
         c.add_transition(x, u, dx)
         self.contact_set.updated()

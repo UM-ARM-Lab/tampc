@@ -6,7 +6,8 @@ from arm_pytorch_utilities import tensor_utils, optim
 
 
 class ContactObject:
-    def __init__(self, empty_local_model: online_model.OnlineDynamicsModel, object_centered_dynamics=True,
+    def __init__(self, empty_local_model: online_model.OnlineDynamicsModel, state_to_pos, pos_to_state,
+                 object_centered_dynamics=True,
                  assume_linear_scaling=True):
         # (x, u, dx) tuples associated with this object for fitting local model
         self.transitions = []
@@ -15,6 +16,8 @@ class ContactObject:
         self.center_point = None
         self.actions = None
         self.dynamics = empty_local_model
+        self.state_to_pos = state_to_pos
+        self.pos_to_state = pos_to_state
 
         self.object_centered = object_centered_dynamics
         self.assume_linear_scaling = assume_linear_scaling
@@ -22,6 +25,8 @@ class ContactObject:
     def add_transition(self, x, u, dx):
         dtype = torch.float64 if not torch.is_tensor(x) else x.dtype
         x, u, dx = tensor_utils.ensure_tensor(optim.get_device(), dtype, x, u, dx)
+        # save only positions
+        x = self.state_to_pos(x)
         if self.points is None:
             self.points = x.view(1, -1)
             self.actions = u.view(1, -1)
@@ -31,23 +36,25 @@ class ContactObject:
             self.actions = torch.cat((self.actions, u.view(1, -1)))
 
         centered_x = x - self.center_point if self.object_centered else x
-        self.move_all_points(dx)
+        self.move_all_points(self.state_to_pos(dx))
 
-        self.transitions.append((x, u, dx))
+        # self.transitions.append((x, u, dx))
 
         if self.assume_linear_scaling:
             u_scale = u.norm()
             u /= u_scale
             dx /= u_scale
+        # convert back to state
+        centered_x = self.pos_to_state(centered_x).view(-1)
         self.dynamics.update(centered_x, u, centered_x + dx)
 
     def move_all_points(self, dx):
-        # TODO generalize the x + dx operation
         self.points += dx
         self.center_point = self.points.mean(dim=0)
 
     @tensor_utils.ensure_2d_input
     def predict(self, x, u, **kwargs):
+        x = self.state_to_pos(x)
         if self.object_centered:
             x = x - self.center_point
 
@@ -56,7 +63,9 @@ class ContactObject:
             u_scale = u.norm(dim=1)
             u /= u_scale.view(-1, 1)
 
-        nx = self.dynamics.predict(None, None, x, u, **kwargs)
+        # nx here is next position relative to center point
+        nx = self.dynamics.predict(None, None, self.pos_to_state(x), u, **kwargs)
+        nx = self.state_to_pos(nx)
         if self.assume_linear_scaling:
             dx = nx - x
             dx *= u_scale.view(-1, 1)
@@ -64,33 +73,34 @@ class ContactObject:
 
         if self.object_centered:
             nx = nx + self.center_point
-        return nx
+        return self.pos_to_state(nx)
 
-    def is_part_of_object(self, x, u, length_parameter, dist_function, u_similarity):
+    def is_part_of_object(self, x, u, length_parameter, u_similarity):
         u_sim = u_similarity(u, self.actions)
         valid = u_sim != 0
         p, u = self.points[valid], u_sim[valid]
         if len(p) is 0:
             return False
-        d = dist_function(x, p) / u
+        x = self.state_to_pos(x)
+        d = (x - p).norm(dim=1) / u
         return torch.any(d < length_parameter)
 
-    def is_part_of_object_batch(self, x, u, length_parameter, dist_function, u_similarity):
+    def is_part_of_object_batch(self, x, u, length_parameter, u_similarity):
         res = []
         for i in range(len(x)):
-            res.append(self.is_part_of_object(x[i], u[i], length_parameter, dist_function, u_similarity))
+            res.append(self.is_part_of_object(x[i], u[i], length_parameter, u_similarity))
         return torch.tensor(res, device=optim.get_device())
 
 
 class ContactSet:
-    def __init__(self, contact_max_linkage_dist, state_dist, u_sim):
+    def __init__(self, contact_max_linkage_dist, state_to_pos, u_sim):
         self._obj: typing.List[ContactObject] = []
         # cached center of all points
         self.center_points = None
 
         self.contact_max_linkage_dist = contact_max_linkage_dist
-        self.state_dist = state_dist
         self.u_sim = u_sim
+        self.state_to_pos = state_to_pos
 
     def __len__(self):
         return len(self._obj)
@@ -121,14 +131,14 @@ class ContactSet:
         if not self._obj:
             return 0
 
-        d = self.state_dist(self.center_points, goal_x).view(-1)
+        d = (self.center_points - self.state_to_pos(goal_x)).norm(dim=1).view(-1)
         return (1 / d).sum()
 
     def check_which_object_applies(self, x, u):
         if not self._obj:
             return None, None
 
-        d = self.state_dist(self.center_points, x).view(-1)
+        d = (self.center_points - self.state_to_pos(x)).norm(dim=1).view(-1)
 
         for i, cc in enumerate(self._obj):
             # first use heuristic to filter out points based on state distance to object centers
@@ -136,7 +146,7 @@ class ContactSet:
                 continue
             # we're using the x before contact because our estimate of the object points haven't moved yet
             # TODO handle when multiple contact objects claim it is part of them
-            if cc.is_part_of_object(x, u, self.contact_max_linkage_dist, self.state_dist, self.u_sim):
+            if cc.is_part_of_object(x, u, self.contact_max_linkage_dist, self.u_sim):
                 return cc, i
 
         return None, None

@@ -712,6 +712,11 @@ class PlanarArmEnv(ArmEnv):
     def get_ee_pos_states(states):
         return states[:, :2]
 
+    @tensor_utils.ensure_2d_input
+    def get_state_ee_pos(self, pos):
+        return torch.cat((pos, torch.zeros(pos.shape[0], self.nx - pos.shape[1], dtype=pos.dtype, device=pos.device)),
+                         dim=1)
+
     @staticmethod
     @handle_data_format_for_state_diff
     def state_difference(state, other_state):

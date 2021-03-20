@@ -45,7 +45,7 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 logger = logging.getLogger(__name__)
 
 # --- SHARED GETTERS
-task_map = {'freespace': 0, 'wall': 1, 'wall_broken_joint': 2, 'movable_cans': 3, 'straight_line': 4}
+task_map = {'freespace': 0, 'wall': 1, 'wall_broken_joint': 2, 'movable_cans': 3, 'straight_line': 4, 'NCCB': 5}
 
 
 class ArmGetter(EnvGetter):
@@ -100,11 +100,11 @@ class ArmGetter(EnvGetter):
             'noise_sigma': torch.diag(sigma),
             'noise_mu': torch.tensor(noise_mu, dtype=torch.double, device=d),
             'lambda_': 1e-2,
-            'horizon': 8,
+            'horizon': 15,
             'u_init': torch.tensor(u_init, dtype=torch.double, device=d),
             'sample_null_action': False,
             'step_dependent_dynamics': True,
-            'rollout_samples': 10,
+            'rollout_samples': 5,
             'rollout_var_cost': 0,
         }
         return common_wrapper_opts, mpc_opts
@@ -123,6 +123,8 @@ class ArmGetter(EnvGetter):
         if level is task_map['movable_cans']:
             env.set_task_config(goal=(0.95, -0.4))
         if level is task_map['straight_line']:
+            env.set_task_config(goal=[0.0, 0.], init=[1, 0])
+        if level is task_map['NCCB']:
             env.set_task_config(goal=[0.0, 0.], init=[1, 0])
         return env
 
@@ -229,6 +231,8 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                                        assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
                                        reuse_escape_as_demonstration=reuse_escape_as_demonstration,
                                        use_trap_cost=use_trap_cost,
+                                       state_to_position=env.get_ee_pos_states,
+                                       position_to_state=env.get_state_ee_pos,
                                        never_estimate_error_dynamics=never_estimate_error,
                                        **tampc_opts, )
         mpc = controller.ExperimentalMPPI(ctrl.mpc_apply_dynamics, ctrl.mpc_running_cost, ctrl.nx,
@@ -339,13 +343,15 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
 
         # add data to the local model
         state_to_position = env.get_ee_pos_states
+        position_to_state = env.get_state_ee_pos
         length_scale = 0.03
 
         # TODO use prior but with new preprocessing; need to adjust how to use prior
         position_preprocessing = preprocess.PytorchTransformer(
-            online_controller.StateToPositionTransformer(state_to_position, length_scale, env.nu),
-            online_controller.StateToPositionTransformer(state_to_position, length_scale, 0))
-        c = ContactObject(ctrl.dynamics.create_empty_local_model(use_prior=False, preprocessor=position_preprocessing))
+            online_controller.StateToPositionTransformer(state_to_position, position_to_state, length_scale, env.nu),
+            online_controller.StateToPositionTransformer(state_to_position, position_to_state, length_scale, 0))
+        c = ContactObject(ctrl.dynamics.create_empty_local_model(use_prior=True, preprocessor=position_preprocessing),
+                          state_to_position, position_to_state)
 
         # TODO use prior but with new preprocessing; need to adjust how to use prior
         # state_preprocessing = preprocess.PytorchTransformer(
@@ -357,6 +363,15 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
         ctrl.contact_set.append(c)
         for i in range(len(xs)):
             c.add_transition(xs[i], us[i], dxs[i])
+
+        # duplicate contact point at translated location
+        import copy
+        cc = copy.deepcopy(c)
+        cc.move_all_points(torch.tensor([0.2, 0], dtype=dt, device=d))
+        ctrl.contact_set.append(cc)
+
+        ctrl.contact_set.updated()
+
         # train dynamics for more iterations
         # rand.seed(0)
         # c.dynamics._recreate_all()
@@ -392,7 +407,7 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
             cx = torch.tensor(x, dtype=dt, device=d).repeat(N, 1)
 
             applicable = c.is_part_of_object_batch(cx, cu, ctrl.contact_set.contact_max_linkage_dist,
-                                                   ctrl.contact_set.state_dist, ctrl.contact_set.u_sim)
+                                                   ctrl.contact_set.u_sim)
             applicable_u = cu[applicable]
             for k, u in enumerate(applicable_u):
                 env._draw_action(u.cpu() * 0.15, old_state=x, debug=k + 1 + i * N)
