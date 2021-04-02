@@ -961,11 +961,31 @@ class FloatingGripperEnv(PlanarArmEnv):
             self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [xs[0], ys[0] - 0.43, h],
                                              p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
                                              globalScaling=0.5))
-        elif self.level is 4:
+        elif self.level is 4 or self.level is 6:
             scale = 1.0
             h = 0.075 * scale
             self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
                                            basePosition=[0.5, 0, h]))
+            if self.level is 6:
+                self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.21, 0., h],
+                                                 p.getQuaternionFromEuler([0, 0, -np.pi / 2]), useFixedBase=True,
+                                                 globalScaling=0.5))
+        elif self.level is 5:
+            scale = 1.0
+            h = 0.075 * scale
+            y = 0
+            width = 0.85
+            self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
+                                           basePosition=[0.7, y, h]))
+            self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.3, 0, h],
+                                             p.getQuaternionFromEuler([0, 0, -np.pi / 2]), useFixedBase=True,
+                                             globalScaling=0.5))
+            self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.5, -width / 2, h],
+                                             p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
+                                             globalScaling=0.5))
+            self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.5, width / 2, h],
+                                             p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
+                                             globalScaling=0.5))
 
         for objId in self.immovable:
             p.changeVisualShape(objId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])
