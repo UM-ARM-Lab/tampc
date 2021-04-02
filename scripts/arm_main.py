@@ -45,7 +45,8 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 logger = logging.getLogger(__name__)
 
 # --- SHARED GETTERS
-task_map = {'freespace': 0, 'wall': 1, 'wall_broken_joint': 2, 'movable_cans': 3, 'straight_line': 4, 'NCCB': 5}
+task_map = {'freespace': 0, 'wall': 1, 'wall_broken_joint': 2, 'movable_cans': 3, 'straight_line': 4, 'NCCB': 5,
+            'wall_behind': 6}
 
 
 class ArmGetter(EnvGetter):
@@ -96,15 +97,15 @@ class ArmGetter(EnvGetter):
             'nonnominal_dynamics_penalty_tolerance': 0.01,
         }
         mpc_opts = {
-            'num_samples': 10,
+            'num_samples': 500,
             'noise_sigma': torch.diag(sigma),
             'noise_mu': torch.tensor(noise_mu, dtype=torch.double, device=d),
             'lambda_': 1e-2,
-            'horizon': 15,
+            'horizon': 20,
             'u_init': torch.tensor(u_init, dtype=torch.double, device=d),
             'sample_null_action': False,
             'step_dependent_dynamics': True,
-            'rollout_samples': 5,
+            'rollout_samples': 10,
             'rollout_var_cost': 0,
         }
         return common_wrapper_opts, mpc_opts
@@ -122,7 +123,7 @@ class ArmGetter(EnvGetter):
         cls.env_dir = '{}/gripper'.format(arm.DIR)
         if level is task_map['movable_cans']:
             env.set_task_config(goal=(0.95, -0.4))
-        if level is task_map['straight_line']:
+        if level in (task_map['straight_line'], task_map['wall_behind']):
             env.set_task_config(goal=[0.0, 0.], init=[1, 0])
         if level is task_map['NCCB']:
             env.set_task_config(goal=[0.0, 0.], init=[1, 0])
@@ -314,32 +315,58 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
         env.set_task_config(goal=goal, init=init)
         ctrl.set_goal(env.goal)
 
-        p.resetBasePositionAndOrientation(env.objects[0],
-                                          (0.3877745438935845, 0.06599132022739296, 0.07692224061451539),
-                                          (-0.0019374005104293949, -0.0025102144283983864, 0.018303218072636906,
-                                           0.999827453869402))
-
         # previous contacts made
         from torch import tensor
         from tampc.contact import ContactObject
         from tampc.dynamics import online_model
         d = 'cuda:0'
         dt = torch.float64
-        xs = [tensor([0.6668, -0.0734, 0.0000, 0.0000], device=d, dtype=dt),
-              tensor([0.6368, -0.0434, 9.3426, -9.3518], device=d, dtype=dt),
-              tensor([0.6159, -0.0396, 13.4982, -1.2811], device=d, dtype=dt),
-              tensor([0.5957, -0.0147, 9.8322, -6.9042], device=d, dtype=dt),
-              tensor([0.5657, -0.0175, 12.4257, -0.6292], device=d, dtype=dt)]
-        us = [tensor([-1.0000, 1.0000], device=d, dtype=dt),
-              tensor([-0.6976, 0.1258], device=d, dtype=dt),
-              tensor([-0.6750, 0.8334], device=d, dtype=dt),
-              tensor([-1.0000, -0.0950], device=d, dtype=dt),
-              tensor([-0.4818, 0.7293], device=d, dtype=dt)]
-        dxs = [tensor([-0.0300, 0.0300, 9.3426, -9.3518], device=d, dtype=dt),
-               tensor([-2.0901e-02, 3.7697e-03, 4.1557e+00, 8.0707e+00], device=d, dtype=dt),
-               tensor([-0.0202, 0.0250, -3.6660, -5.6231], device=d, dtype=dt),
-               tensor([-2.9964e-02, -2.8484e-03, 2.5935e+00, 6.2750e+00], device=d, dtype=dt),
-               tensor([-0.0144, 0.0219, -1.2938, -5.4011], device=d, dtype=dt)]
+        if level is task_map['straight_line']:
+            p.resetBasePositionAndOrientation(env.movable[0],
+                                              (0.3877745438935845, 0.06599132022739296, 0.07692224061451539),
+                                              (-0.0019374005104293949, -0.0025102144283983864, 0.018303218072636906,
+                                               0.999827453869402))
+            xs = [tensor([0.6668, -0.0734, 0.0000, 0.0000], device=d, dtype=dt),
+                  tensor([0.6368, -0.0434, 9.3426, -9.3518], device=d, dtype=dt),
+                  tensor([0.6159, -0.0396, 13.4982, -1.2811], device=d, dtype=dt),
+                  tensor([0.5957, -0.0147, 9.8322, -6.9042], device=d, dtype=dt),
+                  tensor([0.5657, -0.0175, 12.4257, -0.6292], device=d, dtype=dt)]
+            us = [tensor([-1.0000, 1.0000], device=d, dtype=dt),
+                  tensor([-0.6976, 0.1258], device=d, dtype=dt),
+                  tensor([-0.6750, 0.8334], device=d, dtype=dt),
+                  tensor([-1.0000, -0.0950], device=d, dtype=dt),
+                  tensor([-0.4818, 0.7293], device=d, dtype=dt)]
+            dxs = [tensor([-0.0300, 0.0300, 9.3426, -9.3518], device=d, dtype=dt),
+                   tensor([-2.0901e-02, 3.7697e-03, 4.1557e+00, 8.0707e+00], device=d, dtype=dt),
+                   tensor([-0.0202, 0.0250, -3.6660, -5.6231], device=d, dtype=dt),
+                   tensor([-2.9964e-02, -2.8484e-03, 2.5935e+00, 6.2750e+00], device=d, dtype=dt),
+                   tensor([-0.0144, 0.0219, -1.2938, -5.4011], device=d, dtype=dt)]
+        elif level is task_map['wall_behind']:
+            p.resetBasePositionAndOrientation(env.movable[0],
+                                              (0.4855159140630499, 0.021602734077042208, 0.07608311271110159),
+                                              (-0.00015439536921398102, -0.0003589100213072153, 0.041949776970746026,
+                                               0.9991196442657762))
+            xs = [tensor([0.6764, 0.0672, 0.0000, 0.0000], device=d, dtype=dt),
+                  tensor([0.6636, 0.0882, 10.7653, -6.6299], device=d, dtype=dt),
+                  tensor([0.6637, 0.0865, 29.9954, 3.5119], device=d, dtype=dt),
+                  tensor([0.6637, 0.0613, 30.0026, 1.7917], device=d, dtype=dt),
+                  tensor([0.6635, 0.0558, 30.0201, 1.3798], device=d, dtype=dt),
+                  tensor([0.6635, 0.0552, 30.0013, 1.4532], device=d, dtype=dt),
+                  tensor([0.6726, 0.1155, 0.0000, 0.0000], device=d, dtype=dt)]
+            us = [tensor([-0.6988, 0.7021], device=d, dtype=dt),
+                  tensor([-1.0000, -0.0576], device=d, dtype=dt),
+                  tensor([-1.0000, -0.8388], device=d, dtype=dt),
+                  tensor([-0.1927, -0.1861], device=d, dtype=dt),
+                  tensor([-1.0000, -0.0202], device=d, dtype=dt),
+                  tensor([-0.6233, 0.9467], device=d, dtype=dt),
+                  tensor([-0.9784, 0.8822], device=d, dtype=dt)]
+            dxs = [tensor([-0.0127, 0.0210, 10.7653, -6.6299], device=d, dtype=dt),
+                   tensor([8.7072e-05, -1.7250e-03, 1.9230e+01, 1.0142e+01], device=d, dtype=dt),
+                   tensor([-2.8276e-05, -2.5146e-02, 7.2015e-03, -1.7201e+00], device=d, dtype=dt),
+                   tensor([-2.2353e-04, -5.5784e-03, 1.7508e-02, -4.1194e-01], device=d, dtype=dt),
+                   tensor([4.3680e-05, -6.0653e-04, -1.8815e-02, 7.3396e-02], device=d, dtype=dt),
+                   tensor([5.1479e-04, 2.8380e-02, -3.8951e-02, -3.5810e+00], device=d, dtype=dt),
+                   tensor([-1.4298e-02, 2.6445e-02, 3.0248e+01, 1.1995e+00], device=d, dtype=dt)]
 
         # add data to the local model
         state_to_position = env.get_ee_pos_states
@@ -350,7 +377,7 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
         position_preprocessing = preprocess.PytorchTransformer(
             online_controller.StateToPositionTransformer(state_to_position, position_to_state, length_scale, env.nu),
             online_controller.StateToPositionTransformer(state_to_position, position_to_state, length_scale, 0))
-        c = ContactObject(ctrl.dynamics.create_empty_local_model(use_prior=True, preprocessor=position_preprocessing),
+        c = ContactObject(ctrl.dynamics.create_empty_local_model(use_prior=False, preprocessor=position_preprocessing),
                           state_to_position, position_to_state)
 
         # TODO use prior but with new preprocessing; need to adjust how to use prior
@@ -367,6 +394,8 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
         # duplicate contact point at translated location
         import copy
         cc = copy.deepcopy(c)
+        # add more points so that they're not the same size
+        cc.add_transition(xs[0], us[1], dxs[1])
         cc.move_all_points(torch.tensor([0.2, 0], dtype=dt, device=d))
         ctrl.contact_set.append(cc)
 
@@ -378,71 +407,82 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
         # c.dynamics._fit_params(100)
 
         env.reset()
-        env.visualize_contact_set(ctrl.contact_set)
-        env.set_state([0.5657, -0.0175, 12.4257, -0.6292], [-0.4818, 0.7293])
+        # env.visualize_contact_set(ctrl.contact_set)
 
         # evaluate the local model at certain points
         xs_eval = []
-        xs_eval.append(np.array([0.5657, -0.0175, 0, 0]) + np.array([-0.0144, 0.0219, -1.2938, -5.4011]))
-        xs_eval.append([0.53, -0.0875, 0, 0])
-        xs_eval.append([0.57, 0.0575, 0, 0])
-        xs_eval.append([0.45, -0.12, 0, 0])
-        xs_eval.append([10., -10, 0, 0])
 
-        u_mag = 1
-        N = 51
-        t = torch.from_numpy(np.linspace(-3, 3, N)).to(dtype=dt, device=d)
-        cu = torch.stack((torch.cos(t) * u_mag, torch.sin(t) * u_mag), dim=1)
-        dynamics_gp = c.dynamics
-        assert (isinstance(dynamics_gp, online_model.OnlineGPMixing))
+        if level is task_map['straight_line']:
+            last_state = np.array([0.5657, -0.0175, 0, 0]) + np.array([-0.0144, 0.0219, -1.2938, -5.4011])
+            env.set_state(last_state, [-0.4818, 0.7293])
+            xs_eval.append(last_state)
+            xs_eval.append([0.53, -0.0875, 0, 0])
+            xs_eval.append([0.57, 0.0575, 0, 0])
+            xs_eval.append([0.45, -0.12, 0, 0])
+            xs_eval.append([10., -10, 0, 0])
+        elif level is task_map['wall_behind']:
+            last_state = np.array([0.6583, 0.1419, 30.2485, 1.1995])
+            env.set_state(last_state)
+            xs_eval.append(last_state)
+            xs_eval.append(last_state + np.array([-0.04, 0.04, 0, 0]))
+            xs_eval.append(last_state + np.array([0.052, -0.1, 0, 0]))
+            xs_eval.append(last_state + np.array([-0.08, -0.28, 0, 0]))
+            xs_eval.append([10., -10, 0, 0])
+        #
+        # u_mag = 1
+        # N = 51
+        # t = torch.from_numpy(np.linspace(-3, 3, N)).to(dtype=dt, device=d)
+        # cu = torch.stack((torch.cos(t) * u_mag, torch.sin(t) * u_mag), dim=1)
+        # dynamics_gp = c.dynamics
+        # assert (isinstance(dynamics_gp, online_model.OnlineGPMixing))
+        #
+        # u_train = dynamics_gp.xu[:, -2:]
+        # t_train = torch.atan2(u_train[:, 1], u_train[:, 0]).cpu().numpy()
+        # y_train = dynamics_gp.y
+        #
+        # t = t.cpu().numpy()
+        # for i, x in enumerate(xs_eval):
+        #     pos = env.get_ee_pos(x)
+        #     env._dd.draw_point('state{}'.format(i), pos, label='{}'.format(i))
+        #     cx = torch.tensor(x, dtype=dt, device=d).repeat(N, 1)
+        #
+        #     applicable = c.is_part_of_object_batch(cx, cu, ctrl.contact_set.contact_max_linkage_dist,
+        #                                            ctrl.contact_set.u_sim)
+        #     applicable_u = cu[applicable]
+        #     for k, u in enumerate(applicable_u):
+        #         env._draw_action(u.cpu() * 0.15, old_state=x, debug=k + 1 + i * N)
+        #
+        #     applicable = applicable.cpu().numpy()
+        #
+        #     yhat = c.predict(cx, cu)
+        #     yhat = yhat - cx
+        #     lower, upper, yhat_mean = dynamics_gp.get_last_prediction_statistics()
+        #
+        #     # yhat_mean, lower, upper = (ds.preprocessor.invert_transform(v, cx) for v in (yhat_mean, lower, upper))
+        #
+        #     y_names = ['d{}'.format(x_name) for x_name in env.state_names()]
+        #     to_plot_y_dims = [0, 1]
+        #     num_plots = min(len(to_plot_y_dims), yhat_mean.shape[1])
+        #     f, axes = plt.subplots(num_plots, 1, sharex='all')
+        #     f.suptitle('dynamics at point {} ({})'.format(i, pos))
+        #     for j, dim in enumerate(to_plot_y_dims):
+        #         # axes[j].scatter(t, yhat[:, dim].cpu().numpy(), label='sample')
+        #         axes[j].scatter(t_train, y_train[:, dim].cpu().numpy(), color='k', marker='*', label='train')
+        #         axes[j].plot(t, yhat_mean[:, dim].cpu().numpy(), label='mean')
+        #         axes[j].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, dim].cpu().numpy(), alpha=0.3)
+        #         axes[j].set_ylabel(y_names[dim])
+        #         # axes[j].set_ylim(bottom=-0.2, top=0.2)
+        #         draw.highlight_value_ranges(applicable, ax=axes[j], x_values=t)
+        #
+        #     axes[0].legend()
+        #     axes[-1].set_xlabel('action theta')
+        #
+        # plt.show()
+        # logger.info("env setup")
 
-        u_train = dynamics_gp.xu[:, -2:]
-        t_train = torch.atan2(u_train[:, 1], u_train[:, 0]).cpu().numpy()
-        y_train = dynamics_gp.y
-
-        t = t.cpu().numpy()
-        for i, x in enumerate(xs_eval):
-            pos = env.get_ee_pos(x)
-            env._dd.draw_point('state{}'.format(i), pos, label='{}'.format(i))
-            cx = torch.tensor(x, dtype=dt, device=d).repeat(N, 1)
-
-            applicable = c.is_part_of_object_batch(cx, cu, ctrl.contact_set.contact_max_linkage_dist,
-                                                   ctrl.contact_set.u_sim)
-            applicable_u = cu[applicable]
-            for k, u in enumerate(applicable_u):
-                env._draw_action(u.cpu() * 0.15, old_state=x, debug=k + 1 + i * N)
-
-            applicable = applicable.cpu().numpy()
-
-            yhat = c.predict(cx, cu)
-            yhat = yhat - cx
-            lower, upper, yhat_mean = dynamics_gp.get_last_prediction_statistics()
-
-            # yhat_mean, lower, upper = (ds.preprocessor.invert_transform(v, cx) for v in (yhat_mean, lower, upper))
-
-            y_names = ['d{}'.format(x_name) for x_name in env.state_names()]
-            to_plot_y_dims = [0, 1]
-            num_plots = min(len(to_plot_y_dims), yhat_mean.shape[1])
-            f, axes = plt.subplots(num_plots, 1, sharex='all')
-            f.suptitle('dynamics at point {} ({})'.format(i, pos))
-            for j, dim in enumerate(to_plot_y_dims):
-                # axes[j].scatter(t, yhat[:, dim].cpu().numpy(), label='sample')
-                axes[j].scatter(t_train, y_train[:, dim].cpu().numpy(), color='k', marker='*', label='train')
-                axes[j].plot(t, yhat_mean[:, dim].cpu().numpy(), label='mean')
-                axes[j].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, dim].cpu().numpy(), alpha=0.3)
-                axes[j].set_ylabel(y_names[dim])
-                # axes[j].set_ylim(bottom=-0.2, top=0.2)
-                draw.highlight_value_ranges(applicable, ax=axes[j], x_values=t)
-
-            axes[0].legend()
-            axes[-1].set_xlabel('action theta')
-
-        plt.show()
-        logger.info("env setup")
-
-    kwargs.pop('level')
-    run_controller('tune_avoid_nonnom_action', setup, *args, num_frames=num_frames, level=task_map['straight_line'],
-                   **kwargs)
+    level = kwargs.pop('level')
+    assert level in [task_map['straight_line'], task_map['wall_behind']]
+    run_controller('tune_avoid_nonnom_action', setup, *args, num_frames=num_frames, level=level, **kwargs)
 
 
 class EvaluateTask:
@@ -558,26 +598,26 @@ if __name__ == "__main__":
             ut = UseTsf.NO_TRANSFORM
 
         for seed in args.seed:
-            # test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
-            #                          nominal_adapt=nominal_adapt, rep_name=args.rep_name,
-            #                          reuse_escape_as_demonstration=False, use_trap_cost=use_trap_cost,
-            #                          assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
-            #                          visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
-            #                          override_tampc_params=tampc_params, override_mpc_params=mpc_params,
-            #                          autonomous_recovery=autonomous_recovery,
-            #                          never_estimate_error=args.never_estimate_error,
-            #                          apfvo_baseline=args.apfvo_baseline,
-            #                          apfsp_baseline=args.apfsp_baseline)
-            test_avoid_nonnominal_action(seed=seed, level=level, use_tsf=ut,
-                                         nominal_adapt=nominal_adapt, rep_name=args.rep_name,
-                                         reuse_escape_as_demonstration=False, use_trap_cost=use_trap_cost,
-                                         assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
-                                         visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
-                                         override_tampc_params=tampc_params, override_mpc_params=mpc_params,
-                                         autonomous_recovery=autonomous_recovery,
-                                         never_estimate_error=args.never_estimate_error,
-                                         apfvo_baseline=args.apfvo_baseline,
-                                         apfsp_baseline=args.apfsp_baseline)
+            test_autonomous_recovery(seed=seed, level=level, use_tsf=ut,
+                                     nominal_adapt=nominal_adapt, rep_name=args.rep_name,
+                                     reuse_escape_as_demonstration=False, use_trap_cost=use_trap_cost,
+                                     assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
+                                     visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
+                                     override_tampc_params=tampc_params, override_mpc_params=mpc_params,
+                                     autonomous_recovery=autonomous_recovery,
+                                     never_estimate_error=args.never_estimate_error,
+                                     apfvo_baseline=args.apfvo_baseline,
+                                     apfsp_baseline=args.apfsp_baseline)
+            # test_avoid_nonnominal_action(seed=seed, level=level, use_tsf=ut,
+            #                              nominal_adapt=nominal_adapt, rep_name=args.rep_name,
+            #                              reuse_escape_as_demonstration=False, use_trap_cost=use_trap_cost,
+            #                              assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
+            #                              visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
+            #                              override_tampc_params=tampc_params, override_mpc_params=mpc_params,
+            #                              autonomous_recovery=autonomous_recovery,
+            #                              never_estimate_error=args.never_estimate_error,
+            #                              apfvo_baseline=args.apfvo_baseline,
+            #                              apfsp_baseline=args.apfsp_baseline)
     elif args.command == 'evaluate':
         task_type = arm.DIR
         # get all the trials to visualize for choosing where the obstacles are
