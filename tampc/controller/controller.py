@@ -362,8 +362,9 @@ class ExperimentalMPPI(mppi.MPPI):
         # rollout action trajectory M times to estimate expected cost
         state = state.repeat(self.M, 1, 1)
 
-        # map index to contact set
-        contact_sets = [self.contact_set for _ in range(self.M * K)]
+        # batch process contact
+        total_num = self.M * K
+        contact_data = self.contact_set.get_batch_data_for_dynamics(total_num)
 
         states = []
         actions = []
@@ -373,26 +374,16 @@ class ExperimentalMPPI(mppi.MPPI):
             # flatten the batch dimensions to allow easier indexing
             u = u.view(-1, u.shape[-1])
             state = state.view(-1, state.shape[-1])
-            without_contact = torch.ones((self.M * K), dtype=torch.bool, device=state.device)
-            for i, x in enumerate(state):
-                c, j = contact_sets[i].check_which_object_applies(x, u[i])
-                if c is not None:
-                    without_contact[i] = False
-                    # rollout state with this contact local model (also involves moving the object center)
-                    nx = c.predict(x, u[i])[0]
-                    # replace the contact set with a new one
-                    # TODO generalize the nx - x away by taking state difference somewhere
-                    contact_sets[i] = contact_sets[i].move_object(nx - x, j)
-                    state[i] = nx
+            state, without_contact, contact_data = self.contact_set.dynamics(state, u, contact_data)
 
             # only rollout state that's not affected by contact set normally
             state[without_contact] = self._dynamics(state[without_contact], u[without_contact], t)
             c = self.running_cost(state, u)
             # TODO generalize this
-            c_contact = torch.zeros_like(c)
-            for i, contact_set in enumerate(contact_sets):
-                c_contact[i] = self.contact_cost(contact_set)
-            c += c_contact
+            # c_contact = torch.zeros_like(c)
+            # for i, contact_set in enumerate(contact_sets):
+            #     c_contact[i] = self.contact_cost(contact_set)
+            # c += c_contact
 
             # restore batch dimensions
             c = c.view(batch_dims)

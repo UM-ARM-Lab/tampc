@@ -7,7 +7,6 @@ from arm_pytorch_utilities import tensor_utils, optim
 
 class ContactObject:
     def __init__(self, empty_local_model: online_model.OnlineDynamicsModel, state_to_pos, pos_to_state,
-                 object_centered_dynamics=True,
                  assume_linear_scaling=True):
         # (x, u, dx) tuples associated with this object for fitting local model
         self.transitions = []
@@ -19,7 +18,6 @@ class ContactObject:
         self.state_to_pos = state_to_pos
         self.pos_to_state = pos_to_state
 
-        self.object_centered = object_centered_dynamics
         self.assume_linear_scaling = assume_linear_scaling
 
     def add_transition(self, x, u, dx):
@@ -35,7 +33,7 @@ class ContactObject:
             self.points = torch.cat((self.points, x.view(1, -1)))
             self.actions = torch.cat((self.actions, u.view(1, -1)))
 
-        centered_x = x - self.center_point if self.object_centered else x
+        centered_x = x - self.center_point
         self.move_all_points(self.state_to_pos(dx))
 
         # self.transitions.append((x, u, dx))
@@ -53,27 +51,30 @@ class ContactObject:
         self.center_point = self.points.mean(dim=0)
 
     @tensor_utils.ensure_2d_input
-    def predict(self, x, u, **kwargs):
-        x = self.state_to_pos(x)
-        if self.object_centered:
-            x = x - self.center_point
-
+    def predict_dpos(self, pos, u, **kwargs):
         u_scale = 1
         if self.assume_linear_scaling:
             u_scale = u.norm(dim=1)
             u /= u_scale.view(-1, 1)
 
         # nx here is next position relative to center point
-        nx = self.dynamics.predict(None, None, self.pos_to_state(x), u, **kwargs)
-        nx = self.state_to_pos(nx)
+        nx = self.dynamics.predict(None, None, self.pos_to_state(pos), u, **kwargs)
+        npos = self.state_to_pos(nx)
+        dpos = npos - pos
         if self.assume_linear_scaling:
-            dx = nx - x
-            dx *= u_scale.view(-1, 1)
-            nx = x + dx
+            dpos *= u_scale.view(-1, 1)
+        return dpos
 
-        if self.object_centered:
-            nx = nx + self.center_point
-        return self.pos_to_state(nx)
+    @tensor_utils.ensure_2d_input
+    def predict(self, x, u, **kwargs):
+        x = self.state_to_pos(x)
+        x = x - self.center_point
+
+        dpos = self.predict_dpos(x, u, **kwargs)
+        npos = x + dpos
+
+        npos = npos + self.center_point
+        return self.pos_to_state(npos), dpos
 
     def is_part_of_object(self, x, u, length_parameter, u_similarity):
         u_sim = u_similarity(u, self.actions)
@@ -116,10 +117,6 @@ class ContactSet:
             self.center_points = torch.stack([obj.center_point for obj in self._obj])
 
     def move_object(self, dx, obj_index):
-        # new_set = copy.deepcopy(self)
-        # new_set._obj[obj_index].move_all_points(dx)
-        # new_set.center_points[obj_index] = new_set._obj[obj_index].center_point
-
         new_set = copy.copy(self)
         new_set._obj = [copy.deepcopy(self._obj[i]) if i is obj_index else self._obj[i] for i in range(len(self))]
         new_set._obj[obj_index].move_all_points(dx)
@@ -151,22 +148,54 @@ class ContactSet:
 
         return None, None
 
-    # @tensor_utils.ensure_2d_input
-    # def check_which_object_applies(self, x, u):
-    #     N = x.shape[0]
-    #     res: typing.List[typing.Optional[ContactObject]] = [None for _ in range(N)]
-    #     if not self._obj:
-    #         return res
-    #
-    #     for cc in self._obj:
-    #         # first use heuristic to filter out points based on state distance to object centers
-    #         d = self.state_dist(cc.center_point, x)
-    #         if d.min() < 2 * self.contact_max_linkage_dist:
-    #             continue
-    #         # we're using the x before contact because our estimate of the object points haven't moved yet
-    #         # TODO handle when multiple contact objects claim it is part of them
-    #         applicable = cc.is_part_of_object_batch(x, u, self.contact_max_linkage_dist, self.state_dist, self.u_sim)
-    #         for i in range(N):
-    #             if applicable[i]:
-    #                 res[i] = cc
-    #     return res
+    def get_batch_data_for_dynamics(self, total_num):
+        if not self._obj:
+            return None, None, None
+        center_points = self.center_points.repeat(total_num, 1, 1).transpose(0, 1)
+        points = [c.points.repeat(total_num, 1, 1).transpose(0, -2) for c in self._obj]
+        actions = [c.actions.repeat(total_num, 1, 1).transpose(0, -2) for c in self._obj]
+        return center_points, points, actions
+
+    def dynamics(self, x, u, contact_data):
+        center_points, points, actions = contact_data
+        assert len(x.shape) == 2 and len(x.shape) == len(u.shape)
+        total_num = x.shape[0]
+        without_contact = torch.ones(total_num, dtype=torch.bool, device=x.device)
+
+        # all of t
+        if center_points is not None:
+            pos = self.state_to_pos(x)
+            rel_pos = pos - center_points
+            d = rel_pos.norm(dim=-1)
+
+            # loop over objects (can't batch over this since each one has a different dynamics function)
+            for i in range(len(self._obj)):
+                c = self._obj[i]
+                pts = points[i]
+                act = actions[i]
+                dd = d[i]
+                # first filter on distance to center of this object
+                # disallow multiple contact interactions
+                candidates = without_contact & (dd < 2 * self.contact_max_linkage_dist)
+                if not torch.any(candidates):
+                    continue
+
+                # u_sim[stored action index (# points of object), total_num], sim of stored action and sampled action
+                u_sim = self.u_sim(u[candidates], act[:, candidates]) + 1e-8  # avoid divide by 0
+                dd = (pos[candidates] - pts[:, candidates]).norm(dim=-1) / u_sim
+                accepted = torch.any(dd < self.contact_max_linkage_dist, dim=0)
+                if not torch.any(accepted):
+                    continue
+                candidates[candidates] = accepted
+
+                # now the candidates are fully filtered, can apply dynamics to those
+                dpos = c.predict_dpos(rel_pos[i, candidates], u[candidates])
+                # pos is already rel_pos + center_points
+                npos = pos[candidates] + dpos
+                x[candidates] = c.pos_to_state(npos)
+                without_contact[candidates] = False
+                # move the center points of those states
+                center_points[i, candidates] += dpos
+                pts[:, candidates] += dpos
+
+        return x, without_contact, (center_points, points, actions)
