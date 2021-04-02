@@ -124,12 +124,14 @@ class ContactSet:
         new_set.center_points[obj_index] = new_set._obj[obj_index].center_point
         return new_set
 
-    def goal_cost(self, goal_x):
+    def goal_cost(self, goal_x, contact_data):
         if not self._obj:
             return 0
 
-        d = (self.center_points - self.state_to_pos(goal_x)).norm(dim=1).view(-1)
-        return (1 / d).sum()
+        center_points, points, actions = contact_data
+        # norm across spacial dimension, sum across each object
+        d = (center_points - self.state_to_pos(goal_x)).norm(dim=-1)
+        return (1 / d).sum(dim=0)
 
     def check_which_object_applies(self, x, u):
         if not self._obj:

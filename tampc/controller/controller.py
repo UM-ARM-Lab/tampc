@@ -380,10 +380,8 @@ class ExperimentalMPPI(mppi.MPPI):
             state[without_contact] = self._dynamics(state[without_contact], u[without_contact], t)
             c = self.running_cost(state, u)
             # TODO generalize this
-            # c_contact = torch.zeros_like(c)
-            # for i, contact_set in enumerate(contact_sets):
-            #     c_contact[i] = self.contact_cost(contact_set)
-            # c += c_contact
+            c_contact = self.contact_cost(self.contact_set, contact_data)
+            c += c_contact
 
             # restore batch dimensions
             c = c.view(batch_dims)

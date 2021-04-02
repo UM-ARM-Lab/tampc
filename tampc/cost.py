@@ -197,8 +197,8 @@ class AvoidContactAtGoalCost(Cost):
         self.scale = scale
 
     @tensor_utils.handle_batch_input
-    def __call__(self, contact_set, U=None, terminal=False):
-        return contact_set.goal_cost(self.goal) * self.scale
+    def __call__(self, contact_set, contact_data, U=None, terminal=False):
+        return contact_set.goal_cost(self.goal, contact_data) * self.scale
 
 
 class CostLeaveState(Cost):
