@@ -226,7 +226,7 @@ class TAMPC(OnlineMPC):
 
     def set_goal(self, goal):
         super(TAMPC, self).set_goal(goal)
-        self.contact_cost = cost.AvoidContactAtGoalCost(self.goal, scale=1)
+        self.contact_cost = cost.AvoidContactAtGoalCost(self.goal, scale=0.1)
 
     # exposed methods for MPC (not protected via _method_name)
     def register_mpc(self, mpc):

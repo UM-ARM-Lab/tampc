@@ -131,7 +131,7 @@ class ContactSet:
         center_points, points, actions = contact_data
         # norm across spacial dimension, sum across each object
         d = (center_points - self.state_to_pos(goal_x)).norm(dim=-1)
-        return (1 / d).sum(dim=0)
+        return (1 / d).square().sum(dim=0)
 
     def check_which_object_applies(self, x, u):
         if not self._obj:
