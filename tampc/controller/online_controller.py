@@ -510,15 +510,20 @@ class TAMPC(OnlineMPC):
 
     def _update_contact_set(self, x, u, dx):
         # associate each contact to a single object (max likelihood estimate on which object it is)
-        c, _ = self.contact_set.check_which_object_applies(x, u)
+        cc, ii = self.contact_set.check_which_object_applies(x, u)
         # couldn't find an existing contact
-        if c is None:
+        if not len(cc):
             # TODO try linear model?
             # if using object-centered model, don't use preprocessor, else use default
             c = contact.ContactObject(self.dynamics.create_empty_local_model(use_prior=self.contact_use_prior,
                                                                              preprocessor=self.contact_preprocessing),
                                       self.state_to_pos, self.pos_to_state)
             self.contact_set.append(c)
+        # matches more than 1 contact set, combine them
+        elif len(cc) > 1:
+            c = self.contact_set.merge_objects(ii)
+        else:
+            c = cc[0]
         c.add_transition(x, u, dx)
         self.contact_set.updated()
 

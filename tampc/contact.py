@@ -50,6 +50,11 @@ class ContactObject:
         self.points += dx
         self.center_point = self.points.mean(dim=0)
 
+    def merge_objects(self, other_objects):
+        self.points = torch.cat([self.points] + [obj.points for obj in other_objects])
+        self.actions = torch.cat([self.actions] + [obj.actions for obj in other_objects])
+        self.center_point = self.points.mean(dim=0)
+
     @tensor_utils.ensure_2d_input
     def predict_dpos(self, pos, u, **kwargs):
         u_scale = 1
@@ -124,6 +129,14 @@ class ContactSet:
         new_set.center_points[obj_index] = new_set._obj[obj_index].center_point
         return new_set
 
+    def merge_objects(self, obj_indices):
+        obj_to_combine = [self._obj[i] for i in obj_indices]
+        self._obj = [obj for obj in self._obj if obj not in obj_to_combine]
+        c = copy.deepcopy(obj_to_combine[0])
+        c.merge_objects(obj_to_combine[1:])
+        self.append(c)
+        return c
+
     def goal_cost(self, goal_x, contact_data):
         if not self._obj:
             return 0
@@ -134,8 +147,10 @@ class ContactSet:
         return (1 / d).square().sum(dim=0)
 
     def check_which_object_applies(self, x, u):
+        res_c = []
+        res_i = []
         if not self._obj:
-            return None, None
+            return res_c, res_i
 
         d = (self.center_points - self.state_to_pos(x)).norm(dim=1).view(-1)
 
@@ -146,9 +161,10 @@ class ContactSet:
             # we're using the x before contact because our estimate of the object points haven't moved yet
             # TODO handle when multiple contact objects claim it is part of them
             if cc.is_part_of_object(x, u, self.contact_max_linkage_dist, self.u_sim):
-                return cc, i
+                res_c.append(cc)
+                res_i.append(i)
 
-        return None, None
+        return res_c, res_i
 
     def get_batch_data_for_dynamics(self, total_num):
         if not self._obj:
