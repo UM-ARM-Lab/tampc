@@ -515,7 +515,8 @@ class TAMPC(OnlineMPC):
         if c is None:
             # TODO try linear model?
             # if using object-centered model, don't use preprocessor, else use default
-            c = contact.ContactObject(self.dynamics.create_empty_local_model(use_prior=self.contact_use_prior),
+            c = contact.ContactObject(self.dynamics.create_empty_local_model(use_prior=self.contact_use_prior,
+                                                                             preprocessor=self.contact_preprocessing),
                                       self.state_to_pos, self.pos_to_state)
             self.contact_set.append(c)
         c.add_transition(x, u, dx)
