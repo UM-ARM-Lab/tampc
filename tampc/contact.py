@@ -163,6 +163,8 @@ class ContactSet:
             if cc.is_part_of_object(x, u, self.contact_max_linkage_dist, self.u_sim):
                 res_c.append(cc)
                 res_i.append(i)
+                # still can't deal with merging very well, so revert back to returning a single object
+                break
 
         return res_c, res_i
 
