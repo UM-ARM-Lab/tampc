@@ -199,6 +199,7 @@ class DebugDrawer:
                                          textColorRGB=color,
                                          textSize=2,
                                          replaceItemUniqueId=uids[2])
+        return uids
 
     def draw_2d_pose(self, name, pose, color=(0, 0, 0), length=0.15 / 2, height=None):
         height = self._process_point_height(pose, height)
@@ -215,6 +216,15 @@ class DebugDrawer:
         uids[1] = p.addUserDebugLine(np.add(location, [0, 0, 0]),
                                      np.add(location, [pointer[0], pointer[1], 0]),
                                      color, 2, replaceItemUniqueId=uids[1])
+        return uids
+
+    def clear_visualizations(self, names):
+        for name in names:
+            uids = self._debug_ids.pop(name)
+            if type(uids) is int:
+                uids = [uids]
+            for id in uids:
+                p.removeUserDebugItem(id)
 
     def clear_visualization_after(self, prefix, index):
         name = "{}{}".format(prefix, index)
@@ -235,6 +245,7 @@ class DebugDrawer:
         self._debug_ids[name] = p.addUserDebugLine(start, np.add(start, [diff[0] * scale, diff[1] * scale,
                                                                          diff[2] * scale if len(diff) is 3 else 0]),
                                                    color, lineWidth=size, replaceItemUniqueId=uid)
+        return self._debug_ids[name]
 
     def draw_contact_point(self, name, contact, flip=True):
         start = contact[ContactInfo.POS_A]
@@ -252,8 +263,9 @@ class DebugDrawer:
         scale = 0.1
         c = (1, 0.4, 0.7)
         fyd, fxd = get_lateral_friction_forces(contact, flip)
-        self.draw_2d_line('{}y'.format(name), start, fyd, size=np.linalg.norm(fyd), scale=scale, color=c)
-        self.draw_2d_line('{}x'.format(name), start, fxd, size=np.linalg.norm(fxd), scale=scale, color=c)
+        uidsx = self.draw_2d_line('{}y'.format(name), start, fyd, size=np.linalg.norm(fyd), scale=scale, color=c)
+        uidsy = self.draw_2d_line('{}x'.format(name), start, fxd, size=np.linalg.norm(fxd), scale=scale, color=c)
+        return uidsx + uidsy
 
     def draw_transition(self, prev_block, new_block, height=None):
         name = 't'
@@ -290,6 +302,7 @@ class DebugDrawer:
                                                    textColorRGB=[0.5, 0.1, 0.1],
                                                    textSize=2,
                                                    replaceItemUniqueId=uid)
+        return self._debug_ids[name]
 
     def draw_screen_text(self, name, text, camera_frame_pos):
         if name not in self._debug_ids:
@@ -305,3 +318,4 @@ class DebugDrawer:
                                                    textColorRGB=[0.5, 0.1, 0.1],
                                                    textSize=2,
                                                    replaceItemUniqueId=uid)
+        return self._debug_ids[name]

@@ -147,6 +147,7 @@ class ArmEnv(PybulletEnv):
         }
         if debug_visualizations is not None:
             self._debug_visualizations.update(debug_visualizations)
+        self._contact_debug_names = []
 
         # avoid the spike at the start of each mini step from rapid acceleration
         self._steps_since_start_to_get_reaction = 5
@@ -321,15 +322,27 @@ class ArmEnv(PybulletEnv):
         color = (1, 0.5, 0)
         u_color = (1, 0.8, 0.4)
         for i, c in enumerate(contact_set):
+            if i >= len(self._contact_debug_names):
+                self._contact_debug_names.append(set())
             for j in range(len(c.points)):
                 p = self.get_ee_pos(c.points[j])
-                self._dd.draw_point('c{}{}'.format(i, j), p, color=color)
+                name = 'c{}{}'.format(i, j)
+                self._dd.draw_point(name, p, color=color)
+                self._contact_debug_names[i].add(name)
                 # draw action
-                self._dd.draw_2d_line('a{}{}'.format(i, j), p.cpu(), c.actions[j].cpu(), color=u_color, scale=0.1)
+                name = 'a{}{}'.format(i, j)
+                self._dd.draw_2d_line(name, p.cpu(), c.actions[j].cpu(), color=u_color, scale=0.1)
+                self._contact_debug_names[i].add(name)
                 # draw linkage to next point
                 if j < len(c.points) - 1:
                     diff = self.get_ee_pos(c.points[j + 1]) - p
-                    self._dd.draw_2d_line('c{}{}-{}'.format(i, j, j + 1), p.cpu(), diff.cpu(), color=color, scale=1)
+                    name = 'c{}{}-{}'.format(i, j, j + 1)
+                    self._dd.draw_2d_line(name, p.cpu(), diff.cpu(), color=color, scale=1)
+                    self._contact_debug_names[i].add(name)
+        # clean up any old visualization
+        for i in range(len(contact_set), len(self._contact_debug_names)):
+            self._dd.clear_visualizations(self._contact_debug_names[i])
+        self._contact_debug_names = self._contact_debug_names[:len(contact_set)]
 
     def visualize_prediction_error(self, predicted_state):
         """In GUI mode, show the difference between the predicted state and the current actual state"""
@@ -540,6 +553,7 @@ class ArmEnv(PybulletEnv):
 
     def reset(self):
         # self._setup_ee()
+        self._contact_debug_names = []
 
         for i in self.armInds:
             p.resetJointState(self.armId, i, self.initJoints[i])
