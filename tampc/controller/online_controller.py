@@ -157,7 +157,11 @@ class TAMPC(OnlineMPC):
                  state_to_position=None,
                  position_to_state=None,
                  contact_use_prior=True,
+                 known_immovable_obstacles=None,
                  reuse_escape_as_demonstration=True, **kwargs):
+        self.known_immovable_obstacles = known_immovable_obstacles
+        self.state_to_pos = None
+        self.pos_to_state = None
         super(TAMPC, self).__init__(*args, **kwargs)
         self.abs_unrecognized_threshold = abs_unrecognized_threshold
         self.never_estimate_error_dynamics = never_estimate_error_dynamics
@@ -213,20 +217,70 @@ class TAMPC(OnlineMPC):
         self.contact_force_threshold = 0.5
         self.contact_cost = None
         self.contact_use_prior = contact_use_prior
+        self.state_to_pos = state_to_position
+        self.pos_to_state = position_to_state
         if state_to_position is not None and position_to_state is not None:
             # TODO this should come from the environment (i.e. maximum position change achieved by any single action)
             length_scale = 0.03
             self.contact_preprocessing = preprocess.PytorchTransformer(
                 StateToPositionTransformer(state_to_position, position_to_state, length_scale, self.nu),
                 StateToPositionTransformer(state_to_position, position_to_state, length_scale, 0))
-            self.state_to_pos = state_to_position
-            self.pos_to_state = position_to_state
         else:
             raise RuntimeError("Need to give controller state to position transform from env for contact dynamics")
 
     def set_goal(self, goal):
         super(TAMPC, self).set_goal(goal)
-        self.contact_cost = cost.AvoidContactAtGoalCost(self.goal, scale=0.1)
+        self.contact_cost = cost.AvoidContactAtGoalCost(self.goal, scale=0.5)
+
+    # contact methods
+    @tensor_utils.ensure_2d_input
+    def _known_immovable_obstacle_collision_check(self, next_state):
+        """Checks collision against known immovable obstacles, returning (in collision, corrected next state)"""
+        # TODO generalize this contact checker
+        if self.known_immovable_obstacles and type(self.known_immovable_obstacles[0]) == int:
+            import pybullet as p
+            self.known_immovable_obstacles = [p.getAABB(objId) for objId in self.known_immovable_obstacles]
+            # inflate by robot half-width
+            inflation = 0.09
+            self.known_immovable_obstacles = [(torch.tensor(min_bb, device=self.d, dtype=self.dtype) - inflation,
+                                               torch.tensor(max_bb, device=self.d, dtype=self.dtype) + inflation) for
+                                              min_bb, max_bb in self.known_immovable_obstacles]
+        if not self.state_to_pos:
+            return False, next_state
+        pos = self.state_to_pos(next_state)
+        # assume rectilinear obstacles
+        in_collision = False
+        for obj in self.known_immovable_obstacles:
+            min_bb, max_bb = obj
+            xlviol = pos[:, 0] - min_bb[0]
+            xrviol = max_bb[0] - pos[:, 0]
+            ylviol = pos[:, 1] - min_bb[1]
+            yrviol = max_bb[1] - pos[:, 1]
+            violations = torch.stack((xlviol, xrviol, ylviol, yrviol))
+            intersecting = torch.all(violations > 0, dim=0)
+            if torch.any(intersecting):
+                in_collision = True
+                violations[violations < 0] = 100
+                _, min_violation_dir = violations.min(dim=0)
+                xlfix = (min_violation_dir == 0) & intersecting
+                # project by finding direction of minimum violation
+                pos[xlfix, 0] = min_bb[0]
+                xrfix = (min_violation_dir == 1) & intersecting
+                pos[xrfix, 0] = max_bb[0]
+                ylfix = (min_violation_dir == 2) & intersecting
+                pos[ylfix, 1] = min_bb[1]
+                yrfix = (min_violation_dir == 3) & intersecting
+                pos[yrfix, 1] = max_bb[1]
+
+        reaction = next_state[:, :-2]
+        next_state = self.pos_to_state(pos)
+        next_state[:, :-2] = reaction
+        return in_collision, next_state
+
+    def _apply_dynamics(self, state, action, t=0):
+        next_state = super()._apply_dynamics(state, action, t)
+        _, next_state = self._known_immovable_obstacle_collision_check(next_state)
+        return next_state
 
     # exposed methods for MPC (not protected via _method_name)
     def register_mpc(self, mpc):
@@ -509,6 +563,11 @@ class TAMPC(OnlineMPC):
                 self.nominal_dynamic_states[-1].insert(0, self.x_history[i])
 
     def _update_contact_set(self, x, u, dx):
+        next_state = torch.tensor(self.predicted_next_state, dtype=self.dtype, device=self.d)
+        collision_with_known_obstacle, _ = self._known_immovable_obstacle_collision_check(next_state)
+        # only update if we're making contact with unknown object
+        if collision_with_known_obstacle:
+            return
         # associate each contact to a single object (max likelihood estimate on which object it is)
         cc, ii = self.contact_set.check_which_object_applies(x, u)
         # couldn't find an existing contact

@@ -101,7 +101,7 @@ class ArmGetter(EnvGetter):
             'noise_sigma': torch.diag(sigma),
             'noise_mu': torch.tensor(noise_mu, dtype=torch.double, device=d),
             'lambda_': 1e-2,
-            'horizon': 20,
+            'horizon': 25,
             'u_init': torch.tensor(u_init, dtype=torch.double, device=d),
             'sample_null_action': False,
             'step_dependent_dynamics': True,
@@ -235,6 +235,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                                        state_to_position=env.get_ee_pos_states,
                                        position_to_state=env.get_state_ee_pos,
                                        never_estimate_error_dynamics=never_estimate_error,
+                                       known_immovable_obstacles=env.immovable,
                                        **tampc_opts, )
         mpc = controller.ExperimentalMPPI(ctrl.mpc_apply_dynamics, ctrl.mpc_running_cost, ctrl.nx,
                                           u_min=ctrl.u_min, u_max=ctrl.u_max,
@@ -377,7 +378,7 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
         position_preprocessing = preprocess.PytorchTransformer(
             online_controller.StateToPositionTransformer(state_to_position, position_to_state, length_scale, env.nu),
             online_controller.StateToPositionTransformer(state_to_position, position_to_state, length_scale, 0))
-        c = ContactObject(ctrl.dynamics.create_empty_local_model(use_prior=False, preprocessor=position_preprocessing),
+        c = ContactObject(ctrl.dynamics.create_empty_local_model(use_prior=True, preprocessor=position_preprocessing),
                           state_to_position, position_to_state)
 
         # TODO use prior but with new preprocessing; need to adjust how to use prior
@@ -407,7 +408,7 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
         # c.dynamics._fit_params(100)
 
         env.reset()
-        # env.visualize_contact_set(ctrl.contact_set)
+        env.visualize_contact_set(ctrl.contact_set)
 
         # evaluate the local model at certain points
         xs_eval = []
@@ -428,57 +429,57 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
             xs_eval.append(last_state + np.array([0.052, -0.1, 0, 0]))
             xs_eval.append(last_state + np.array([-0.08, -0.28, 0, 0]))
             xs_eval.append([10., -10, 0, 0])
-        #
-        # u_mag = 1
-        # N = 51
-        # t = torch.from_numpy(np.linspace(-3, 3, N)).to(dtype=dt, device=d)
-        # cu = torch.stack((torch.cos(t) * u_mag, torch.sin(t) * u_mag), dim=1)
-        # dynamics_gp = c.dynamics
-        # assert (isinstance(dynamics_gp, online_model.OnlineGPMixing))
-        #
-        # u_train = dynamics_gp.xu[:, -2:]
-        # t_train = torch.atan2(u_train[:, 1], u_train[:, 0]).cpu().numpy()
-        # y_train = dynamics_gp.y
-        #
-        # t = t.cpu().numpy()
-        # for i, x in enumerate(xs_eval):
-        #     pos = env.get_ee_pos(x)
-        #     env._dd.draw_point('state{}'.format(i), pos, label='{}'.format(i))
-        #     cx = torch.tensor(x, dtype=dt, device=d).repeat(N, 1)
-        #
-        #     applicable = c.is_part_of_object_batch(cx, cu, ctrl.contact_set.contact_max_linkage_dist,
-        #                                            ctrl.contact_set.u_sim)
-        #     applicable_u = cu[applicable]
-        #     for k, u in enumerate(applicable_u):
-        #         env._draw_action(u.cpu() * 0.15, old_state=x, debug=k + 1 + i * N)
-        #
-        #     applicable = applicable.cpu().numpy()
-        #
-        #     yhat = c.predict(cx, cu)
-        #     yhat = yhat - cx
-        #     lower, upper, yhat_mean = dynamics_gp.get_last_prediction_statistics()
-        #
-        #     # yhat_mean, lower, upper = (ds.preprocessor.invert_transform(v, cx) for v in (yhat_mean, lower, upper))
-        #
-        #     y_names = ['d{}'.format(x_name) for x_name in env.state_names()]
-        #     to_plot_y_dims = [0, 1]
-        #     num_plots = min(len(to_plot_y_dims), yhat_mean.shape[1])
-        #     f, axes = plt.subplots(num_plots, 1, sharex='all')
-        #     f.suptitle('dynamics at point {} ({})'.format(i, pos))
-        #     for j, dim in enumerate(to_plot_y_dims):
-        #         # axes[j].scatter(t, yhat[:, dim].cpu().numpy(), label='sample')
-        #         axes[j].scatter(t_train, y_train[:, dim].cpu().numpy(), color='k', marker='*', label='train')
-        #         axes[j].plot(t, yhat_mean[:, dim].cpu().numpy(), label='mean')
-        #         axes[j].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, dim].cpu().numpy(), alpha=0.3)
-        #         axes[j].set_ylabel(y_names[dim])
-        #         # axes[j].set_ylim(bottom=-0.2, top=0.2)
-        #         draw.highlight_value_ranges(applicable, ax=axes[j], x_values=t)
-        #
-        #     axes[0].legend()
-        #     axes[-1].set_xlabel('action theta')
-        #
-        # plt.show()
-        # logger.info("env setup")
+
+        u_mag = 1
+        N = 51
+        t = torch.from_numpy(np.linspace(-3, 3, N)).to(dtype=dt, device=d)
+        cu = torch.stack((torch.cos(t) * u_mag, torch.sin(t) * u_mag), dim=1)
+        dynamics_gp = c.dynamics
+        assert (isinstance(dynamics_gp, online_model.OnlineGPMixing))
+
+        u_train = dynamics_gp.xu[:, -2:]
+        t_train = torch.atan2(u_train[:, 1], u_train[:, 0]).cpu().numpy()
+        y_train = dynamics_gp.y
+
+        t = t.cpu().numpy()
+        for i, x in enumerate(xs_eval):
+            pos = env.get_ee_pos(x)
+            env._dd.draw_point('state{}'.format(i), pos, label='{}'.format(i))
+            cx = torch.tensor(x, dtype=dt, device=d).repeat(N, 1)
+
+            applicable = c.is_part_of_object_batch(cx, cu, ctrl.contact_set.contact_max_linkage_dist,
+                                                   ctrl.contact_set.u_sim)
+            applicable_u = cu[applicable]
+            for k, u in enumerate(applicable_u):
+                env._draw_action(u.cpu() * 0.15, old_state=x, debug=k + 1 + i * N)
+
+            applicable = applicable.cpu().numpy()
+
+            yhat, _ = c.predict(cx, cu)
+            yhat = yhat - cx
+            lower, upper, yhat_mean = dynamics_gp.get_last_prediction_statistics()
+
+            # yhat_mean, lower, upper = (ds.preprocessor.invert_transform(v, cx) for v in (yhat_mean, lower, upper))
+
+            y_names = ['d{}'.format(x_name) for x_name in env.state_names()]
+            to_plot_y_dims = [0, 1]
+            num_plots = min(len(to_plot_y_dims), yhat_mean.shape[1])
+            f, axes = plt.subplots(num_plots, 1, sharex='all')
+            f.suptitle('dynamics at point {} ({})'.format(i, pos))
+            for j, dim in enumerate(to_plot_y_dims):
+                # axes[j].scatter(t, yhat[:, dim].cpu().numpy(), label='sample')
+                axes[j].scatter(t_train, y_train[:, dim].cpu().numpy(), color='k', marker='*', label='train')
+                axes[j].plot(t, yhat_mean[:, dim].cpu().numpy(), label='mean')
+                axes[j].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, dim].cpu().numpy(), alpha=0.3)
+                axes[j].set_ylabel(y_names[dim])
+                # axes[j].set_ylim(bottom=-0.2, top=0.2)
+                draw.highlight_value_ranges(applicable, ax=axes[j], x_values=t)
+
+            axes[0].legend()
+            axes[-1].set_xlabel('action theta')
+
+        plt.show()
+        logger.info("env setup")
 
     level = kwargs.pop('level')
     assert level in [task_map['straight_line'], task_map['wall_behind']]
