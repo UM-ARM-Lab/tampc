@@ -14,6 +14,8 @@ class ContactObject:
         self.points = None
         self.center_point = None
         self.actions = None
+        self.probability = 1
+
         self.dynamics = empty_local_model
         self.state_to_pos = state_to_pos
         self.pos_to_state = pos_to_state
@@ -21,6 +23,7 @@ class ContactObject:
         self.assume_linear_scaling = assume_linear_scaling
 
     def add_transition(self, x, u, dx):
+        self.probability = -1  # dummy value to indicate for updated to set it to 1
         dtype = torch.float64 if not torch.is_tensor(x) else x.dtype
         x, u, dx = tensor_utils.ensure_tensor(optim.get_device(), dtype, x, u, dx)
         # save only positions
@@ -99,7 +102,8 @@ class ContactObject:
 
 
 class ContactSet:
-    def __init__(self, contact_max_linkage_dist, state_to_pos, u_sim):
+    def __init__(self, contact_max_linkage_dist, state_to_pos, u_sim, fade_per_contact=0.8, fade_per_no_contact=0.95,
+                 ignore_below_probability=0.25):
         self._obj: typing.List[ContactObject] = []
         # cached center of all points
         self.center_points = None
@@ -107,6 +111,9 @@ class ContactSet:
         self.contact_max_linkage_dist = contact_max_linkage_dist
         self.u_sim = u_sim
         self.state_to_pos = state_to_pos
+        self.fade_per_contact = fade_per_contact
+        self.fade_per_no_contact = fade_per_no_contact
+        self.ignore_below_probability = ignore_below_probability
 
     def __len__(self):
         return len(self._obj)
@@ -117,9 +124,31 @@ class ContactSet:
     def append(self, contact: ContactObject):
         self._obj.append(contact)
 
+    def _keep_high_prob_contacts(self):
+        if self._obj:
+            init_len = len(self._obj)
+            self._obj = [c for c in self._obj if c.probability > self.ignore_below_probability]
+            if len(self._obj) != init_len:
+                if len(self._obj):
+                    self.center_points = torch.stack([obj.center_point for obj in self._obj])
+                else:
+                    self.center_points = None
+
     def updated(self):
         if self._obj:
+            for c in self._obj:
+                if c.probability is -1:
+                    c.probability = 1
+                else:
+                    c.probability *= self.fade_per_contact
+            self._keep_high_prob_contacts()
+        if self._obj:
             self.center_points = torch.stack([obj.center_point for obj in self._obj])
+
+    def stepped_without_contact(self):
+        for c in self._obj:
+            c.probability *= self.fade_per_no_contact
+        self._keep_high_prob_contacts()
 
     def move_object(self, dx, obj_index):
         new_set = copy.copy(self)
@@ -144,7 +173,9 @@ class ContactSet:
         center_points, points, actions = contact_data
         # norm across spacial dimension, sum across each object
         d = (center_points - self.state_to_pos(goal_x)).norm(dim=-1)
-        return (1 / d).square().sum(dim=0)
+        # modify by probability of contact object existing
+        prob = torch.tensor([c.probability for c in self._obj], dtype=d.dtype, device=d.device)
+        return (1 / d * prob.view(-1, 1)).sum(dim=0)
 
     def check_which_object_applies(self, x, u):
         res_c = []
