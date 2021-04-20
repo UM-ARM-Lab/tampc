@@ -561,7 +561,7 @@ class EnvGetter(abc.ABC):
         return d, env, ds.current_config(), ds
 
     @classmethod
-    def prior(cls, env, use_tsf=UseTsf.COORD, prior_class=prior.NNPrior, rep_name=None):
+    def prior(cls, env, use_tsf=UseTsf.COORD, prior_class=prior.NNPrior, rep_name=None, **kwargs):
         """Get dynamics prior in transformed space, along with the datasource used for fitting the transform"""
         if use_tsf in [UseTsf.SKIP, UseTsf.REX_SKIP]:
             prior_class = prior.PassthroughLatentDynamicsPrior
@@ -570,7 +570,7 @@ class EnvGetter(abc.ABC):
                                                                                 cls.pre_invariant_preprocessor,
                                                                                 evaluate_transform=False,
                                                                                 rep_name=rep_name)
-        pm = cls.loaded_prior(prior_class, ds, tsf_name, False)
+        pm = cls.loaded_prior(prior_class, ds, tsf_name, False, **kwargs)
 
         return ds, pm
 
@@ -580,13 +580,13 @@ class EnvGetter(abc.ABC):
         """Return the prefix of dynamics functions corresponding to this environment"""
 
     @classmethod
-    def loaded_prior(cls, prior_class, ds, tsf_name, relearn_dynamics, seed=0):
+    def loaded_prior(cls, prior_class, ds, tsf_name, relearn_dynamics, name="", seed=0):
         """Directly get loaded dynamics prior, training it if necessary on some datasource"""
         d = get_device()
         if prior_class is prior.NNPrior:
             mw = TranslationNetworkWrapper(
                 model.DeterministicUser(make.make_sequential_network(ds.config).to(device=d)),
-                ds, name="{}_{}_{}".format(cls.dynamics_prefix(), tsf_name, seed))
+                ds, name="{}_{}{}_{}".format(cls.dynamics_prefix(), tsf_name, name, seed))
 
             train_epochs = 500
             pm = prior.NNPrior.from_data(mw, checkpoint=None if relearn_dynamics else mw.get_last_checkpoint(
