@@ -392,7 +392,7 @@ class ExperimentalMPPI(mppi.MPPI):
             cost_var += c.var(dim=0) * (self.rollout_var_discount ** t)
 
             # Save total states/actions
-            states.append(state)
+            states.append(state.clone())
             actions.append(u)
 
         # Actions is K x T x nu
