@@ -63,7 +63,8 @@ class ContactObject:
         u_scale = 1
         if self.assume_linear_scaling:
             u_scale = u.norm(dim=1)
-            u /= u_scale.view(-1, 1)
+            to_scale = u_scale != 0
+            u[to_scale] /= u_scale[to_scale].view(-1, 1)
 
         # nx here is next position relative to center point
         nx = self.dynamics.predict(None, None, self.pos_to_state(pos), u, **kwargs)
