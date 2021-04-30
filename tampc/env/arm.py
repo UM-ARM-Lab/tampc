@@ -279,7 +279,7 @@ class ArmEnv(PybulletEnv):
 
         self._make_robot_translucent(self.armId)
 
-    def visualize_rollouts(self, states):
+    def visualize_rollouts(self, states, rollout_R=0, max_other_color=1):
         """In GUI mode, show how the sequence of states will look like"""
         if states is None:
             return
@@ -287,9 +287,9 @@ class ArmEnv(PybulletEnv):
         T = len(states)
         for t in range(T):
             pos = self.get_ee_pos(states[t])
-            c = (t + 1) / (T + 1)
-            self._dd.draw_point('rx{}'.format(t), pos, (0, c, c))
-        self._dd.clear_visualization_after('rx', T)
+            c = (t + 1) / (T + 1) * max_other_color
+            self._dd.draw_point('rx{}{}'.format(rollout_R, t), pos, (rollout_R, c, c))
+        self._dd.clear_visualization_after('rx{}'.format(rollout_R), T)
 
     def visualize_goal_set(self, states):
         if states is None:
@@ -321,6 +321,12 @@ class ArmEnv(PybulletEnv):
     def visualize_contact_set(self, contact_set):
         color = (1, 0.5, 0)
         u_color = (1, 0.8, 0.4)
+        # clear all previous markers because we don't know which one was removed
+        if len(self._contact_debug_names) > len(contact_set):
+            for name in self._contact_debug_names:
+                self._dd.clear_visualizations(name)
+            self._contact_debug_names = []
+
         for i, c in enumerate(contact_set):
             if i >= len(self._contact_debug_names):
                 self._contact_debug_names.append(set())
@@ -331,7 +337,7 @@ class ArmEnv(PybulletEnv):
                 self._contact_debug_names[i].add(name)
                 # draw action
                 name = 'a{}{}'.format(i, j)
-                self._dd.draw_2d_line(name, p.cpu(), c.actions[j].cpu(), color=u_color, scale=0.1)
+                self._dd.draw_2d_line(name, p.cpu(), c.actions[j].cpu(), color=u_color, scale=0.1 * c.probability)
                 self._contact_debug_names[i].add(name)
                 # draw linkage to next point
                 if j < len(c.points) - 1:
@@ -340,9 +346,9 @@ class ArmEnv(PybulletEnv):
                     self._dd.draw_2d_line(name, p.cpu(), diff.cpu(), color=color, scale=1)
                     self._contact_debug_names[i].add(name)
         # clean up any old visualization
-        for i in range(len(contact_set), len(self._contact_debug_names)):
-            self._dd.clear_visualizations(self._contact_debug_names[i])
-        self._contact_debug_names = self._contact_debug_names[:len(contact_set)]
+        # for i in range(len(contact_set), len(self._contact_debug_names)):
+        #     self._dd.clear_visualizations(self._contact_debug_names[i])
+        # self._contact_debug_names = self._contact_debug_names[:len(contact_set)]
 
     def visualize_prediction_error(self, predicted_state):
         """In GUI mode, show the difference between the predicted state and the current actual state"""

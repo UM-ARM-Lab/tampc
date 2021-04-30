@@ -2,7 +2,7 @@ import time
 import torch
 
 import numpy as np
-from arm_pytorch_utilities import simulation
+from arm_pytorch_utilities import simulation, math_utils, rand
 from matplotlib import pyplot as plt
 from tampc import cfg, cost as control_cost
 from tampc.controller import controller, online_controller
@@ -12,7 +12,7 @@ from tampc.env.pybullet_env import PybulletEnv, logger
 class PybulletSim(simulation.Simulation):
     def __init__(self, env: PybulletEnv, ctrl: controller.Controller, num_frames=1000, save_dir="base",
                  terminal_cost_multiplier=1, stop_when_done=True,
-                 visualize_rollouts=False,
+                 visualize_rollouts=True,
                  visualize_action_sample=False,
                  visualize_prediction_error=False,
                  reaction_dim=2,
@@ -97,9 +97,20 @@ class PybulletSim(simulation.Simulation):
 
             # visualizations before taking action
             if self._predicts_dynamics_cls():
+                if self.ctrl.projected_x is not None:
+                    self.env.draw_user_text(
+                        "x {} projected to {}".format(obs.round(decimals=2),
+                                                      self.ctrl.projected_x.cpu().numpy().round(decimals=2)),
+                        xy=(-1., -0., -1))
+
                 self.pred_cls[simTime] = self.ctrl.dynamics_class
                 self.env.draw_user_text("dyn cls {}".format(self.ctrl.dynamics_class), location_index=2,
                                         xy=(0.5, 0.6, -1))
+
+                # if self.ctrl.dynamics_class != 0:
+                #     self.ctrl.dynamics.nominal_model.plot_dynamics_at_state(
+                #         torch.tensor(obs, dtype=self.ctrl.dtype, device=self.ctrl.d),
+                #         'update at t={} ({})'.format(simTime, obs))
 
                 if self.ctrl.trap_set and self.ctrl.trap_cost is not None:
                     self.env.visualize_trap_set(self.ctrl.trap_set)
@@ -132,6 +143,40 @@ class PybulletSim(simulation.Simulation):
             rollouts = self.ctrl.get_rollouts(obs)
             if self.visualize_rollouts:
                 self.env.visualize_rollouts(rollouts)
+
+            # with rand.SavedRNG():
+            #     nom_actions = self.ctrl.mpc.U
+            #     can_actions = torch.zeros_like(nom_actions)
+            #     cur_state = torch.tensor(obs, dtype=nom_actions.dtype, device=nom_actions.device)
+            #     scale = self.env.MAX_PUSH_DIST
+            #     for t in range(nom_actions.shape[0]):
+            #         d = self.ctrl.goal - cur_state
+            #         straight_action = d[:2] / scale
+            #         straight_action = math_utils.clip(straight_action, self.ctrl.u_min, self.ctrl.u_max)
+            #         cur_state[:2] += straight_action * scale
+            #         can_actions[t] = straight_action
+            #     actions = torch.stack((nom_actions, can_actions))
+            #     cost_total, states, _, center_points = self.ctrl.mpc._compute_rollout_costs(actions)
+            #     colors = [0.6, 0.8, 0.2, 0.4]
+            #     visualized = 0
+            #     # if self.visualize_rollouts:
+            #     #     self.env.visualize_rollouts(states[0, 1].cpu().numpy(), rollout_R=1)
+            #     if center_points[0] is not None:
+            #         # only consider the first sample (m = 0)
+            #         center_points = [pt[:, 0] for pt in center_points]
+            #         center_points = torch.stack(center_points)
+            #         num_objs = center_points.shape[1]
+            #         for j in range(num_objs):
+            #             visualized += 1
+            #             rollout = center_points[:, j]
+            #             c = colors[j % len(colors)]
+            #             self.env.visualize_rollouts(rollout.cpu().numpy(), rollout_R=c, max_other_color=1 - c)
+            #     if self.visualize_rollouts:
+            #         for j in range(visualized, len(colors)):
+            #             self.env.visualize_rollouts([], rollout_R=colors[j % len(colors)])
+            #     self.env.draw_user_text(
+            #         "straight cost {:.2f} sampled cost {:.2f}".format(cost_total[1], cost_total[0]),
+            #         location_index=5, xy=(-0.5, 0.3, -1))
 
             # sanitize action
             if torch.is_tensor(action):
