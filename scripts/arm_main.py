@@ -306,10 +306,16 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
         ds_local.update_preprocessor(ds.preprocessor)
         dss.append(ds_local)
 
+    ensemble = []
+    for seed in range(10):
+        _, pp = ArmGetter.prior(env, ut, rep_name=rep_name, seed=seed)
+        ensemble.append(pp.dyn_net)
+
     hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, [use_tsf.name],
                                                        device=get_device(),
                                                        preprocessor=no_tsf_preprocessor(),
                                                        nominal_model_kwargs={'online_adapt': nominal_adapt},
+                                                       ensemble=ensemble,
                                                        local_model_kwargs=kwargs)
 
     # we're always going to be in the nominal mode in this case; might as well speed up testing
@@ -367,6 +373,11 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
         else:
             raise RuntimeError("Invalid low level MPC specified")
         ctrl.register_mpc(mpc)
+
+    # x = torch.tensor([[0, 0, 10, 10], [0.7, -0.4, -6, 8], [-0.2, 0.6, 6, -5], [0.3, 0.4, -8, -3], [0.55, 0.1, 30, -30]],
+    #                  dtype=ctrl.dtype, device=ctrl.d)
+    # u = torch.tensor([-1, 0], dtype=ctrl.dtype, device=ctrl.d).repeat(x.shape[0], 1)
+    # hybrid_dynamics.project_input_to_training_distribution(x, u, ctrl._state_dist_two_args, plot=True)
 
     env.draw_user_text("run seed {}".format(seed), xy=(0.5, 0.8, -1))
     ctrl.set_goal(env.goal)

@@ -211,8 +211,10 @@ class TAMPC(OnlineMPC):
         # return fastest properties
         self.fastest_to_choose = 4
 
+        self.projected_x = None
         # contact tracking parameters
         # state distance between making contacts for distinguishing separate contacts
+        self.in_contact_with_known_immovable = False
         self.contact_set = contact.ContactSet(0.1, state_to_position, self.u_sim)
         self.contact_force_threshold = 0.5
         self.contact_cost = None
@@ -241,7 +243,7 @@ class TAMPC(OnlineMPC):
             import pybullet as p
             self.known_immovable_obstacles = [p.getAABB(objId) for objId in self.known_immovable_obstacles]
             # inflate by robot half-width
-            inflation = 0.09
+            inflation = 0.1
             self.known_immovable_obstacles = [(torch.tensor(min_bb, device=self.d, dtype=self.dtype) - inflation,
                                                torch.tensor(max_bb, device=self.d, dtype=self.dtype) + inflation) for
                                               min_bb, max_bb in self.known_immovable_obstacles]
@@ -272,9 +274,10 @@ class TAMPC(OnlineMPC):
                 yrfix = (min_violation_dir == 3) & intersecting
                 pos[yrfix, 1] = max_bb[1]
 
-        reaction = next_state[:, :-2]
+        reaction = next_state[:, -2:]
         next_state = self.pos_to_state(pos)
-        next_state[:, :-2] = reaction
+        # assume zero dynamics in reaction forces
+        next_state[:, -2:] = reaction
         return in_collision, next_state
 
     def _apply_dynamics(self, state, action, t=0):
@@ -303,7 +306,7 @@ class TAMPC(OnlineMPC):
     def get_rollouts(self, obs):
         try:
             return self.mpc.get_rollouts(torch.from_numpy(obs).to(dtype=self.dtype, device=self.d))[0].cpu().numpy()
-        except AttributeError:
+        except (AttributeError, TypeError):
             logger.warning("MPC has no get_rollouts(state) method")
 
     # internal reasoning methods
@@ -329,6 +332,7 @@ class TAMPC(OnlineMPC):
 
     def _in_non_nominal_dynamics(self):
         return self.diff_predicted is not None and \
+               not self.in_contact_with_known_immovable and \
                self.dynamics_class == gating_function.DynamicsClass.NOMINAL and \
                self.diff_predicted.norm() > self.abs_unrecognized_threshold and \
                self.autonomous_recovery is not AutonomousRecovery.NONE and \
@@ -563,10 +567,8 @@ class TAMPC(OnlineMPC):
                 self.nominal_dynamic_states[-1].insert(0, self.x_history[i])
 
     def _update_contact_set(self, x, u, dx):
-        next_state = torch.tensor(self.predicted_next_state, dtype=self.dtype, device=self.d)
-        collision_with_known_obstacle, _ = self._known_immovable_obstacle_collision_check(next_state)
         # only update if we're making contact with unknown object
-        if collision_with_known_obstacle:
+        if self.in_contact_with_known_immovable:
             return
         # associate each contact to a single object (max likelihood estimate on which object it is)
         cc, ii = self.contact_set.check_which_object_applies(x, u)
@@ -587,6 +589,11 @@ class TAMPC(OnlineMPC):
         self.contact_set.updated()
 
     def _compute_action(self, x):
+        if self.predicted_next_state is not None:
+            self.in_contact_with_known_immovable, _ = self._known_immovable_obstacle_collision_check(
+                torch.tensor(self.predicted_next_state, dtype=self.dtype, device=self.d))
+        else:
+            self.in_contact_with_known_immovable = False
         # use only state for dynamics_class selection; this way we can get dynamics_class before calculating action
         a = torch.zeros((1, self.nu), device=self.d, dtype=x.dtype)
         self.dynamics_class = self.gating.sample_class(x.view(1, -1), a).item()
@@ -608,6 +615,8 @@ class TAMPC(OnlineMPC):
             # get previous x, u, dx
             px = self.x_history[-2]  # note that x is already latest in list
             self._update_contact_set(px, self.u_history[-1], self.compare_to_goal(x, px)[0])
+        else:
+            self.contact_set.stepped_without_contact()
 
         # in non-nominal dynamics
         if self._in_non_nominal_dynamics():
@@ -654,7 +663,16 @@ class TAMPC(OnlineMPC):
                     self.last_arm_pulled = self.mab.select_arm_to_pull()
                     self.turns_since_last_pull = 0
                     logger.debug("pulled arm %d = %s", self.last_arm_pulled.item(), self.recovery_cost_weight())
-            u = self.mpc.command_augmented(x, self.contact_set, self.contact_cost)
+            if len(self.u_history) > 1:
+                x_known = self.dynamics.project_input_to_training_distribution(x, self.u_history[-1],
+                                                                               state_distance=self._state_dist_two_args)
+                self.projected_x = x_known[0]
+            else:
+                x_known = x
+                self.projected_x = None
+            logger.debug("observed x %s projected to %s", x.cpu().numpy().round(decimals=2),
+                         x_known.cpu().numpy().round(decimals=2))
+            u = self.mpc.command_augmented(x_known, self.contact_set, self.contact_cost)
 
         if self.trap_cost is not None:
             logger.debug("trap set weight %f", self.trap_set_weight)

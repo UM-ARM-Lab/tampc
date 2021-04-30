@@ -92,11 +92,15 @@ def get_gating(dss, tsf_name, use_gating=UseGating.TREE, *args, **kwargs):
     return gating
 
 
+def _one_norm_dist(x, x_new):
+    return (x_new - x).abs().sum(dim=1)
+
+
 class HybridDynamicsModel(abc.ABC):
     """Different way of mixing local and nominal model; use nominal as mean"""
 
     def __init__(self, dss, pm, state_diff, gating_args, gating_kwargs=None, nominal_model_kwargs=None,
-                 local_model_kwargs=None, device='cpu', preprocessor=None):
+                 local_model_kwargs=None, device='cpu', preprocessor=None, ensemble=[]):
         self.dss = dss
         self.preprocessor = preprocessor
         self.pm = pm
@@ -106,6 +110,17 @@ class HybridDynamicsModel(abc.ABC):
         self.gating_kwargs = gating_kwargs or {}
         self.local_model_kwargs = local_model_kwargs or {}
         self.d = device
+        self.ensemble = ensemble
+
+        # consider expected variation
+        # get error per dimension to scale our expectations of accuracy
+        XU, Y, _ = dss[0].training_set(original=True)
+        predictions = []
+        for model in self.ensemble:
+            predictions.append(model.predict(XU))
+        predictions = torch.stack(predictions)
+        var = predictions.var(dim=0)
+        self.expected_variance = var.mean(dim=0)
 
         nominal_model_kwargs = nominal_model_kwargs or {}
         self.nominal_model = HybridDynamicsModel.get_local_model(self.state_diff, self.pm, device, self.ds_nominal,
@@ -202,3 +217,88 @@ class HybridDynamicsModel(abc.ABC):
                 next_state[local_cls] = self.local_models[s].predict(None, None, x[local_cls], u[local_cls])
 
         return next_state
+
+    @tensor_utils.ensure_2d_input
+    def epistemic_uncertainty(self, x, u):
+        xu = torch.cat((x, u), dim=1)
+        predictions = []
+        for model in self.ensemble:
+            predictions.append(model.predict(xu))
+        predictions = torch.stack(predictions)
+        var = predictions.var(dim=0) / self.expected_variance
+        return var.mean(dim=1)
+
+    @tensor_utils.ensure_2d_input
+    def project_input_to_training_distribution(self, x, u, state_distance=_one_norm_dist, dist_weight=10,
+                                               delta_loss_threshold=0.01, lr=0.1, plot=False):
+        x_new = x.clone()
+        x_new.requires_grad = True
+        uncertainties = []
+        xs = [x_new.detach().cpu().numpy()]
+
+        optimizer = torch.optim.Adam([x_new], lr=lr)
+        steps = 0
+
+        delta_l = 0
+        last_l = None
+        while True:
+            steps += 1
+            optimizer.zero_grad()
+
+            e = self.epistemic_uncertainty(x_new, u)
+
+            dist = state_distance(x, x_new)
+            loss = e.abs() + dist_weight * dist
+            loss.mean().backward()
+            optimizer.step()
+
+            with torch.no_grad():
+                l = loss.max()
+                if last_l is not None:
+                    delta_l = delta_l * 0.9 + (last_l - l) * 0.1
+                    last_l = l
+                else:
+                    delta_l = l
+                    last_l = l
+                if delta_l < delta_loss_threshold:
+                    break
+
+                if plot:
+                    logger.debug('%f %s', delta_l, e.cpu().numpy())
+                    xs.append(x_new.cpu().numpy())
+                    uncertainties.append(e.cpu().numpy())
+        x_new.requires_grad = False
+
+        if plot:
+            import matplotlib.pyplot as plt
+
+            iters = range(len(uncertainties))
+            xs = xs[:-1]
+            f, axes = plt.subplots(4 + 1, 1, sharex='all', figsize=(8, 9))
+            axes[0].set_ylabel('epistemic uncertainty')
+            axes[1].set_ylabel('diff x value')
+            axes[2].set_ylabel('diff y value')
+            axes[3].set_ylabel('rx value')
+            axes[4].set_ylabel('ry value')
+            axes[-1].set_xlabel('iterations')
+
+            axes[0].set_yscale('log')
+            for j in range(5):
+                axes[j].set_xscale('log')
+
+            for i in range(x.shape[0]):
+                axes[0].plot(iters, [e[i] for e in uncertainties],
+                             label='init {}'.format(x[i].cpu().numpy().round(decimals=2)))
+                axes[0].grid('y')
+                for j in range(4):
+                    if j < 2:
+                        axes[j + 1].plot(iters, [v[i, j] - x[i, j] for v in xs])
+                    else:
+                        axes[j + 1].plot(iters, [v[i, j] for v in xs])
+                    axes[j + 1].grid('y')
+
+            axes[0].legend()
+            f.tight_layout(rect=[0, 0.03, 1, 0.95])
+            plt.show()
+
+        return x_new
