@@ -160,6 +160,124 @@ class OfflineDataCollection:
         plt.show()
 
 
+from pytorch_rrt import UniformActionSpace, ActionDescription, \
+    UniformStateSpace, State, StateDescription, \
+    KinodynamicRRT, Visualizer
+from typing import Iterable
+
+
+class MyAS(UniformActionSpace):
+    MAX_ACTION = 1
+
+    @classmethod
+    def description(cls) -> Iterable[ActionDescription]:
+        return [ActionDescription("dx", -cls.MAX_ACTION, cls.MAX_ACTION),
+                ActionDescription("dy", -cls.MAX_ACTION, cls.MAX_ACTION)]
+
+
+class MySS(UniformStateSpace):
+    MAX_STATE = 1
+
+    @classmethod
+    def description(cls) -> Iterable[StateDescription]:
+        return [StateDescription("x", -cls.MAX_STATE, cls.MAX_STATE),
+                StateDescription("y", -cls.MAX_STATE, cls.MAX_STATE),
+                StateDescription("rx", 0, 0),
+                StateDescription("ry", 0, 0)]
+
+    def distance(self, s1: State, s2: State) -> torch.tensor:
+        return (s1 - s2).view(-1, self.dim()).norm(dim=1)
+
+
+class RRTMPCWrapper:
+    def __init__(self, dynamics, running_cost, goal, batch_size=512, dtype=torch.float32, device='cpu'):
+        # not horizon based
+        self.T = 0
+        self.batch_size = batch_size
+        self.state_space = MySS(dtype=dtype, device=device)
+        self.action_space = MyAS(dtype=dtype, device=device)
+        self.last_traj = None
+        self.F = dynamics
+        self.running_cost = running_cost
+        self.goal = torch.tensor(goal, dtype=dtype, device=device)
+
+        self.contact_set = None
+        self.contact_data = None
+        self.contact_cost = None
+        self.action_id = None
+
+        self.rrt = KinodynamicRRT(self.state_space, self.action_space, self._dynamics, self.traj_cost,
+                                  update_environment=self._update_contact_data)
+
+    def change_horizon(self, horizon):
+        pass
+
+    def _update_contact_data(self, state_id, action_id):
+        center_points, points, actions = self.contact_data
+        self.action_id = action_id
+        if center_points is not None:
+            center_points[:, :, :] = center_points[:, self.action_id, :]
+            new_points = []
+            new_actions = []
+            for pt in points:
+                pt[:, :] = pt[:, self.action_id]
+                new_points.append(pt)
+            for act in actions:
+                act[:, :, :] = act[:, self.action_id, :]
+                new_actions.append(act)
+            points = new_points
+            actions = new_actions
+
+            self.contact_data = center_points, points, actions
+
+    def _dynamics(self, state, u, environment):
+        # batch process contact
+        state, without_contact, self.contact_data = self.contact_set.dynamics(state, u, self.contact_data)
+        # only rollout state that's not affected by contact set normally
+        state[without_contact] = self.F(state[without_contact], u[without_contact])
+        return state
+
+    def command_augmented(self, state, contact_set, contact_cost):
+        self.contact_set = contact_set
+        self.contact_data = self.contact_set.get_batch_data_for_dynamics(self.batch_size)
+        self.contact_cost = contact_cost
+        res = self.rrt.plan(state, self.goal_check, goal=self.goal)
+        self.last_traj = res.trajectory
+        action = res.trajectory.actions[0]
+
+        return action
+
+    def traj_cost(self, trajectory, goal):
+        states = torch.stack(trajectory.states[1:])
+        actions = torch.stack(trajectory.actions)
+        c = self.running_cost(states, actions)
+        c = c.sum()
+        # d = self.state_space.distance(states, goal)
+        # return d.min()
+        c_contact = self.contact_cost(self.contact_set, self.contact_data)
+        if torch.is_tensor(c_contact) and self.action_id is not None:
+            c_contact = c_contact[self.action_id]
+        return c + c_contact
+
+    def goal_check(self, trajectory):
+        states = torch.stack(trajectory.states)
+        d = self.state_space.distance(states, self.goal)
+        return d.min() < 0.01
+
+    def get_rollouts(self, state, num_rollouts=1):
+        """
+            :param state: either (nx) vector or (num_rollouts x nx) for sampled initial states
+            :param num_rollouts: Number of rollouts with same action sequence - for generating samples with stochastic
+                                 dynamics
+            :returns states: num_rollouts x T x nx vector of trajectories
+
+        """
+        if self.last_traj is None or len(self.last_traj.states) < 3:
+            return None
+        states = torch.stack(self.last_traj.states[1:])
+        return [states.view(-1, self.state_space.dim())]
+
+
 def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=None,
                    use_tsf=UseTsf.COORD, nominal_adapt=OnlineAdapt.NONE,
                    autonomous_recovery=online_controller.AutonomousRecovery.RETURN_STATE,
@@ -174,6 +292,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                    never_estimate_error=False,
                    apfvo_baseline=False,
                    apfsp_baseline=False,
+                   low_level_mpc=controller.ExperimentalMPPI,
                    **kwargs):
     env = ArmGetter.env(level=level, mode=p.GUI)
     logger.info("initial random seed %d", rand.seed(seed))
@@ -237,10 +356,16 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                                        never_estimate_error_dynamics=never_estimate_error,
                                        known_immovable_obstacles=env.immovable,
                                        **tampc_opts, )
-        mpc = controller.ExperimentalMPPI(ctrl.mpc_apply_dynamics, ctrl.mpc_running_cost, ctrl.nx,
-                                          u_min=ctrl.u_min, u_max=ctrl.u_max,
-                                          terminal_state_cost=ctrl.mpc_terminal_cost,
-                                          device=ctrl.d, **mpc_opts)
+        if low_level_mpc is controller.ExperimentalMPPI:
+            mpc = controller.ExperimentalMPPI(ctrl.mpc_apply_dynamics, ctrl.mpc_running_cost, ctrl.nx,
+                                              u_min=ctrl.u_min, u_max=ctrl.u_max,
+                                              terminal_state_cost=ctrl.mpc_terminal_cost,
+                                              device=ctrl.d, **mpc_opts)
+        elif low_level_mpc is RRTMPCWrapper:
+            mpc = RRTMPCWrapper(ctrl.mpc_apply_dynamics, ctrl.mpc_running_cost, env.goal, dtype=ctrl.dtype,
+                                device=ctrl.d)
+        else:
+            raise RuntimeError("Invalid low level MPC specified")
         ctrl.register_mpc(mpc)
 
     env.draw_user_text("run seed {}".format(seed), xy=(0.5, 0.8, -1))

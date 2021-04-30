@@ -368,6 +368,7 @@ class ExperimentalMPPI(mppi.MPPI):
 
         states = []
         actions = []
+        center_points = []
         for t in range(T):
             u = perturbed_actions[:, t].repeat(self.M, 1, 1)
             batch_dims = u.shape[:-1]
@@ -392,6 +393,7 @@ class ExperimentalMPPI(mppi.MPPI):
             cost_var += c.var(dim=0) * (self.rollout_var_discount ** t)
 
             # Save total states/actions
+            center_points.append(contact_data[0].clone() if contact_data[0] is not None else None)
             states.append(state.clone())
             actions.append(u)
 
@@ -406,7 +408,7 @@ class ExperimentalMPPI(mppi.MPPI):
             cost_samples += c
         cost_total += cost_samples.mean(dim=0)
         cost_total += cost_var * self.rollout_var_cost
-        return cost_total, states, actions
+        return cost_total, states, actions, center_points
 
     def _compute_total_cost_batch(self):
         # parallelize sampling across trajectories
@@ -422,7 +424,7 @@ class ExperimentalMPPI(mppi.MPPI):
         self.noise = self.perturbed_action - self.U
         action_cost = self.lambda_ * self.noise @ self.noise_sigma_inv
 
-        self.cost_total, self.states, self.actions = self._compute_rollout_costs(self.perturbed_action)
+        self.cost_total, self.states, self.actions, _ = self._compute_rollout_costs(self.perturbed_action)
 
         # action perturbation cost
         perturbation_cost = torch.sum(self.perturbed_action * action_cost, dim=(1, 2))
