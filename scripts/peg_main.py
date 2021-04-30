@@ -929,16 +929,55 @@ if __name__ == "__main__":
             task_names=task_names, success_min_dist=0.05)
 
     else:
-        for seed in range(2):
-            PegGetter.learn_invariant(UseTsf.FEEDFORWARD_BASELINE, seed=seed, name="t12",
-                                      MAX_EPOCH=3000, BATCH_SIZE=500,
-                                      dynamics_opts={'h_units': (16, 32, 32, 32)})
-            # PegGetter.learn_invariant(UseTsf.FEEDFORWARD_BASELINE, seed=seed, name="t9",
-            #                           MAX_EPOCH=500, BATCH_SIZE=500,
-            #                           dynamics_opts={'h_units': (32, 32)})
-        # # for seed in range(10):
-        #     PegGetter.learn_invariant(UseTsf.REX_EXTRACT, seed=seed, name="t8",
-        #                               MAX_EPOCH=500, BATCH_SIZE=2048)
-        # # for seed in range(10):
-        #     PegGetter.learn_invariant(UseTsf.SEP_DEC, seed=seed, name="ral",
-        #                               MAX_EPOCH=500, BATCH_SIZE=500)
+        ut = UseTsf.NO_TRANSFORM
+        name = "conditioning_check"
+        d, env, config, ds = PegGetter.free_space_env_init(0)
+        XU, Y, _ = ds.training_set(original=True)
+        X, U = torch.split(XU, config.nx, dim=1)
+        dt = XU.dtype
+        state = torch.tensor([0, 0, X[0, 2], 0, 0], dtype=dt, device=d)
+
+        u_mag = 1
+        N = 51
+        t = torch.from_numpy(np.linspace(-3, 3, N)).to(dtype=dt, device=d)
+        cu = torch.stack((torch.cos(t) * u_mag, torch.sin(t) * u_mag), dim=1)
+
+        u_train = U
+        t_train = torch.atan2(u_train[:, 1], u_train[:, 0]).cpu().numpy()
+        u_mag_train = u_train.norm(dim=1)
+        y_train = Y / u_mag_train.view(-1, 1)
+
+        t = t.cpu().numpy()
+        cx = torch.tensor(state, dtype=dt, device=d).repeat(N, 1)
+
+        y_names = ['$dx_{}$'.format(i) for i in range(len(state))]
+        to_plot_y_dims = [0, 1]
+        num_plots = min(len(to_plot_y_dims), y_train.shape[1])
+        f, axes = plt.subplots(num_plots, 1, sharex='all')
+        for j, dim in enumerate(to_plot_y_dims):
+            axes[j].scatter(t_train, y_train[:, dim].cpu().numpy(), color='k', marker='*', label='train')
+            axes[j].set_ylabel(y_names[dim])
+
+        for seed in range(1, 6):
+            # PegGetter.learn_model(ut, seed=seed, name=name, rep_name=args.rep_name, train_epochs=1000)
+            _, pm = PegGetter.prior(env, ut, rep_name=args.rep_name, name=name, seed=seed)
+
+            # load each model and plot predictions for training data
+            dss = [ds]
+            hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, [ut.name],
+                                                               device=get_device(),
+                                                               preprocessor=no_tsf_preprocessor(),
+                                                               nominal_model_kwargs={'online_adapt': OnlineAdapt.NONE})
+
+            cls = torch.zeros(N)
+            yhat = hybrid_dynamics(cx, cu, cls)
+            yhat = yhat - cx
+
+            for j, dim in enumerate(to_plot_y_dims):
+                axes[j].scatter(t, yhat[:, dim].cpu().numpy(), label='seed={}'.format(seed))
+
+        axes[0].legend()
+        axes[-1].set_xlabel('action theta')
+        f.suptitle('evaluated at state={}'.format(state.cpu().numpy()))
+
+        plt.show()
