@@ -230,7 +230,7 @@ class HybridDynamicsModel(abc.ABC):
 
     @tensor_utils.ensure_2d_input
     def project_input_to_training_distribution(self, x, u, state_distance=_one_norm_dist, dist_weight=10,
-                                               delta_loss_threshold=0.01, lr=0.1, plot=False):
+                                               delta_loss_threshold=0.0005, lr=0.5, plot=False):
         x_new = x.clone()
         x_new.requires_grad = True
         uncertainties = []
