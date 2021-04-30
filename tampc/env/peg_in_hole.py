@@ -88,9 +88,9 @@ class PegInHoleEnv(PybulletEnv):
     def get_ee_pos(state):
         return state[:3]
 
-    @staticmethod
+    @classmethod
     @handle_data_format_for_state_diff
-    def state_difference(state, other_state):
+    def state_difference(cls, state, other_state):
         """Get state - other_state in state space"""
         dpos = state[:, :3] - other_state[:, :3]
         dreaction = state[:, 3:5] - other_state[:, 3:5]
@@ -100,8 +100,8 @@ class PegInHoleEnv(PybulletEnv):
     def state_cost(cls):
         return np.diag([1, 1, 0, 0, 0])
 
-    @staticmethod
-    def state_distance(state_difference):
+    @classmethod
+    def state_distance(cls, state_difference):
         return state_difference[:, :2].norm(dim=1)
 
     @staticmethod
@@ -114,9 +114,9 @@ class PegInHoleEnv(PybulletEnv):
         u_max = np.array([1, 1])
         return u_min, u_max
 
-    @staticmethod
+    @classmethod
     @handle_data_format_for_state_diff
-    def control_similarity(u1, u2):
+    def control_similarity(cls, u1, u2):
         # TODO should probably keep the API numpy only
         return torch.cosine_similarity(u1, u2, dim=-1).clamp(0, 1)
 

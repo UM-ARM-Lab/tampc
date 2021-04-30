@@ -97,17 +97,21 @@ class Env:
         """Get list of names, one for each state corresponding to the index"""
         return []
 
-    @staticmethod
+    @classmethod
     @abc.abstractmethod
-    def state_difference(state, other_state):
+    def state_difference(cls, state, other_state):
         """Get state - other_state in state space"""
         return np.array([])
 
-    @staticmethod
+    @classmethod
     @abc.abstractmethod
-    def state_distance(state_difference):
+    def state_distance(cls, state_difference):
         """Get a measure of distance in the state space"""
         return 0
+
+    @classmethod
+    def state_distance_two_arg(cls, state, other_state):
+        return cls.state_distance(cls.state_difference(state, other_state))
 
     @staticmethod
     @abc.abstractmethod
@@ -120,9 +124,9 @@ class Env:
         """Get lower and upper bounds for control"""
         return np.array([]), np.array([])
 
-    @staticmethod
+    @classmethod
     @abc.abstractmethod
-    def control_similarity(u1, u2):
+    def control_similarity(cls, u1, u2):
         """Get similarity between 0 - 1 of two controls"""
 
     @classmethod
@@ -172,12 +176,12 @@ class Mode:
 
 def handle_data_format_for_state_diff(state_diff):
     @functools.wraps(state_diff)
-    def data_format_handler(state, other_state):
+    def data_format_handler(cls, state, other_state):
         if len(state.shape) == 1:
             state = state.reshape(1, -1)
         if len(other_state.shape) == 1:
             other_state = other_state.reshape(1, -1)
-        diff = state_diff(state, other_state)
+        diff = state_diff(cls, state, other_state)
         if type(diff) is tuple:
             if torch.is_tensor(state):
                 diff = torch.cat(diff, dim=1)

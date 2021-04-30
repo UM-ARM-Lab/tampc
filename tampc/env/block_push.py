@@ -198,9 +198,9 @@ class PushAgainstWallEnv(PybulletEnv):
     def get_pusher_pos(state, action=None):
         return state[0:2]
 
-    @staticmethod
+    @classmethod
     @handle_data_format_for_state_diff
-    def state_difference(state, other_state):
+    def state_difference(cls, state, other_state):
         """Get state - other_state in state space"""
         dyaw = math_utils.angular_diff_batch(state[:, 4], other_state[:, 4])
         dpos = state[:, :4] - other_state[:, :4]
@@ -652,16 +652,16 @@ class PushAgainstWallStickyEnv(PushAgainstWallEnv):
                                       along_face=along * _MAX_ALONG)
         return pos
 
-    @staticmethod
+    @classmethod
     @handle_data_format_for_state_diff
-    def state_difference(state, other_state):
+    def state_difference(cls, state, other_state):
         dyaw = math_utils.angular_diff_batch(state[:, 2], other_state[:, 2])
         dpos = state[:, :2] - other_state[:, :2]
         dalong = state[:, 3] - other_state[:, 3]
         return dpos, dyaw.reshape(-1, 1), dalong.reshape(-1, 1)
 
-    @staticmethod
-    def state_distance(state_difference):
+    @classmethod
+    def state_distance(cls, state_difference):
         state_difference[:, 2] *= _RADIUS_GYRATION
         return state_difference[:, :3].norm(dim=1)
 
@@ -890,9 +890,9 @@ class PushWithForceDirectlyReactionInStateEnv(PushWithForceDirectlyEnv):
     def state_names():
         return ['$x_b$ (m)', '$y_b$ (m)', '$\\theta$ (rads)', '$p$ (m)', '$r_x$ (N)', '$r_y$ (N)']
 
-    @staticmethod
+    @classmethod
     @handle_data_format_for_state_diff
-    def state_difference(state, other_state):
+    def state_difference(cls, state, other_state):
         dyaw = math_utils.angular_diff_batch(state[:, 2], other_state[:, 2])
         dpos = state[:, :2] - other_state[:, :2]
         dalong = state[:, 3] - other_state[:, 3]
@@ -951,9 +951,9 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
                                       along_face=along * _MAX_ALONG)
         return pos
 
-    @staticmethod
+    @classmethod
     @handle_data_format_for_state_diff
-    def state_difference(state, other_state):
+    def state_difference(cls, state, other_state):
         dyaw = math_utils.angular_diff_batch(state[:, 2], other_state[:, 2])
         dpos = state[:, :2] - other_state[:, :2]
         dreaction = state[:, 3:5] - other_state[:, 3:5]
@@ -977,9 +977,9 @@ class PushPhysicallyAnyAlongEnv(PushAgainstWallStickyEnv):
         u_max = np.array([1, 1, 1])
         return u_min, u_max
 
-    @staticmethod
+    @classmethod
     @handle_data_format_for_state_diff
-    def control_similarity(u1, u2):
+    def control_similarity(cls, u1, u2):
         # TODO should probably keep the API numpy only
         u1 = torch.stack((u1[:, 0], u1[:, 2]), dim=1)
         u2 = torch.stack((u2[:, 0], u2[:, 2]), dim=1)

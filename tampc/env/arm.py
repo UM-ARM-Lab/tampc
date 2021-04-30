@@ -75,9 +75,9 @@ class ArmEnv(PybulletEnv):
     def get_ee_pos_states(states):
         return states[:, :3]
 
-    @staticmethod
+    @classmethod
     @handle_data_format_for_state_diff
-    def state_difference(state, other_state):
+    def state_difference(cls, state, other_state):
         """Get state - other_state in state space"""
         dpos = state[:, :3] - other_state[:, :3]
         dreaction = state[:, 3:] - other_state[:, 3:]
@@ -87,8 +87,8 @@ class ArmEnv(PybulletEnv):
     def state_cost(cls):
         return np.diag([1, 1, 1, 0, 0, 0])
 
-    @staticmethod
-    def state_distance(state_difference):
+    @classmethod
+    def state_distance(cls, state_difference):
         return state_difference[:, :3].norm(dim=1)
 
     @staticmethod
@@ -101,9 +101,9 @@ class ArmEnv(PybulletEnv):
         u_max = np.array([1, 1, 1])
         return u_min, u_max
 
-    @staticmethod
+    @classmethod
     @handle_data_format_for_state_diff
-    def control_similarity(u1, u2):
+    def control_similarity(cls, u1, u2):
         return torch.cosine_similarity(u1, u2, dim=-1).clamp(0, 1)
 
     @classmethod
@@ -631,9 +631,9 @@ class ArmJointEnv(ArmEnv):
     def get_joints(state):
         return state[:6]
 
-    @staticmethod
+    @classmethod
     @handle_data_format_for_state_diff
-    def state_difference(state, other_state):
+    def state_difference(cls, state, other_state):
         """Get state - other_state in state space"""
         dpos = state[:, :6] - other_state[:, :6]
         dreaction = state[:, 6:] - other_state[:, 6:]
@@ -643,8 +643,8 @@ class ArmJointEnv(ArmEnv):
     def state_cost(cls):
         return np.diag([1, 1, 1, 1, 1, 0, 0, 0, 0])
 
-    @staticmethod
-    def state_distance(state_difference):
+    @classmethod
+    def state_distance(cls, state_difference):
         return state_difference[:, :6].norm(dim=1)
 
     @staticmethod
@@ -737,9 +737,9 @@ class PlanarArmEnv(ArmEnv):
         return torch.cat((pos, torch.zeros(pos.shape[0], self.nx - pos.shape[1], dtype=pos.dtype, device=pos.device)),
                          dim=1)
 
-    @staticmethod
+    @classmethod
     @handle_data_format_for_state_diff
-    def state_difference(state, other_state):
+    def state_difference(cls, state, other_state):
         """Get state - other_state in state space"""
         dpos = state[:, :2] - other_state[:, :2]
         dreaction = state[:, 2:] - other_state[:, 2:]
@@ -749,8 +749,8 @@ class PlanarArmEnv(ArmEnv):
     def state_cost(cls):
         return np.diag([1, 1, 0, 0])
 
-    @staticmethod
-    def state_distance(state_difference):
+    @classmethod
+    def state_distance(cls, state_difference):
         return state_difference[:, :2].norm(dim=1)
 
     @staticmethod
