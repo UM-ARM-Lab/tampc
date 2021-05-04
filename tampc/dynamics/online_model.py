@@ -15,9 +15,11 @@ MAX_EVALUATE_AT_ONCE = 10000
 class OnlineDynamicsModel(model.DynamicsBase):
     """Different way of mixing local and nominal model; use nominal as mean"""
 
-    def __init__(self, ds, state_difference, dtype=torch.float32, device=torch.device("cpu")):
+    def __init__(self, ds, state_difference, dtype=torch.float32, device=torch.device("cpu"),
+                 nominal_state_projection=None):
         super(OnlineDynamicsModel, self).__init__(ds)
         self.state_difference = state_difference
+        self.nom_x_project = nominal_state_projection
 
         self.nx = ds.config.nx
         self.nu = ds.config.nu
@@ -287,10 +289,12 @@ class MixingFullGP(gpytorch.models.ExactGP):
 
 
 class MixingBatchGP(gpytorch.models.ExactGP):
-    def __init__(self, train_x, train_y, likelihood, nominal_model=None, preprocessor=None):
+    def __init__(self, train_x, train_y, likelihood, nominal_model=None, preprocessor=None,
+                 nominal_state_projection=None):
         super().__init__(train_x, train_y, likelihood)
         self.nominal_model = nominal_model
         self.preprocessor = preprocessor
+        self.nom_x_project = nominal_state_projection
         try:
             if self.preprocessor:
                 self.preprocessor.invert_x(train_x)
@@ -310,6 +314,11 @@ class MixingBatchGP(gpytorch.models.ExactGP):
         if self.nominal_model is not None:
             if self.nominal_in_orig_space:
                 orig_x = self.preprocessor.invert_x(x)
+            if self.nom_x_project is not None:
+                orig_x = self.nom_x_project(orig_x)
+                logger.debug("observed x %s projected to %s", x.cpu().numpy().round(decimals=2),
+                             orig_x.cpu().numpy().round(decimals=2))
+
             nominal_pred = self.nominal_model(orig_x, all_in_transformed_space=not self.nominal_in_orig_space)
             if self.nominal_in_orig_space:
                 nominal_pred = self.preprocessor.transform_y(nominal_pred)
@@ -388,7 +397,8 @@ class OnlineGPMixing(OnlineDynamicsModel):
         else:
             nominal_model = None
         if self.use_independent_outputs:
-            self.gp = MixingBatchGP(self.xu, self.y, self.likelihood, nominal_model, self.ds.preprocessor)
+            self.gp = MixingBatchGP(self.xu, self.y, self.likelihood, nominal_model, self.ds.preprocessor,
+                                    nominal_state_projection=self.nom_x_project)
         else:
             self.gp = MixingFullGP(self.xu, self.y, self.likelihood, nominal_model, self.ds.preprocessor, rank=1)
         self.gp = self.gp.to(device=self.d, dtype=self.dtype)

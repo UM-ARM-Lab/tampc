@@ -307,11 +307,12 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
         dss.append(ds_local)
 
     ensemble = []
-    for seed in range(10):
-        _, pp = ArmGetter.prior(env, ut, rep_name=rep_name, seed=seed)
+    for s in range(10):
+        _, pp = ArmGetter.prior(env, ut, rep_name=rep_name, seed=s)
         ensemble.append(pp.dyn_net)
 
-    hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, [use_tsf.name],
+    hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, env.state_distance_two_arg,
+                                                       [use_tsf.name],
                                                        device=get_device(),
                                                        preprocessor=no_tsf_preprocessor(),
                                                        nominal_model_kwargs={'online_adapt': nominal_adapt},
@@ -813,7 +814,8 @@ if __name__ == "__main__":
 
             # load each model and plot predictions for training data
             dss = [ds]
-            hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, [ut.name],
+            hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference,
+                                                               env.state_distance_two_arg, [ut.name],
                                                                device=get_device(),
                                                                preprocessor=no_tsf_preprocessor(),
                                                                nominal_model_kwargs={'online_adapt': OnlineAdapt.NONE})

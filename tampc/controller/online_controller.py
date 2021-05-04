@@ -73,7 +73,7 @@ class OnlineMPC(controller.MPC):
         # self.dynamics_class_prediction[t] = cls
 
         # hybrid dynamics
-        next_state = self.dynamics(x, u, cls)
+        next_state = self.dynamics(x, u, cls, t=t)
 
         next_state = self.constrain_state(next_state)
         next_state[bad_states] = state[bad_states]
@@ -663,16 +663,7 @@ class TAMPC(OnlineMPC):
                     self.last_arm_pulled = self.mab.select_arm_to_pull()
                     self.turns_since_last_pull = 0
                     logger.debug("pulled arm %d = %s", self.last_arm_pulled.item(), self.recovery_cost_weight())
-            if len(self.u_history) > 1:
-                x_known = self.dynamics.project_input_to_training_distribution(x, self.u_history[-1],
-                                                                               state_distance=self._state_dist_two_args)
-                self.projected_x = x_known[0]
-            else:
-                x_known = x
-                self.projected_x = None
-            logger.debug("observed x %s projected to %s", x.cpu().numpy().round(decimals=2),
-                         x_known.cpu().numpy().round(decimals=2))
-            u = self.mpc.command_augmented(x_known, self.contact_set, self.contact_cost)
+            u = self.mpc.command_augmented(x, self.contact_set, self.contact_cost)
 
         if self.trap_cost is not None:
             logger.debug("trap set weight %f", self.trap_set_weight)

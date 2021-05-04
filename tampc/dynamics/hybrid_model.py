@@ -99,16 +99,18 @@ def _one_norm_dist(x, x_new):
 class HybridDynamicsModel(abc.ABC):
     """Different way of mixing local and nominal model; use nominal as mean"""
 
-    def __init__(self, dss, pm, state_diff, gating_args, gating_kwargs=None, nominal_model_kwargs=None,
-                 local_model_kwargs=None, device='cpu', preprocessor=None, ensemble=[]):
+    def __init__(self, dss, pm, state_diff, state_dist, gating_args, gating_kwargs=None, nominal_model_kwargs=None,
+                 local_model_kwargs=None, device='cpu', preprocessor=None, ensemble=(), residual_model_trust_horizon=1):
         self.dss = dss
         self.preprocessor = preprocessor
         self.pm = pm
         self.ds_nominal = dss[0]
         self.state_diff = state_diff
+        self.state_dist = state_dist
         self.gating_args = gating_args
         self.gating_kwargs = gating_kwargs or {}
         self.local_model_kwargs = local_model_kwargs or {}
+        self.residual_model_trust_horizon = residual_model_trust_horizon
         self.d = device
         self.ensemble = ensemble
 
@@ -119,26 +121,23 @@ class HybridDynamicsModel(abc.ABC):
         for model in self.ensemble:
             predictions.append(model.predict(XU))
         predictions = torch.stack(predictions)
-        var = predictions.var(dim=0)
+        var = predictions.std(dim=0)
         self.expected_variance = var.mean(dim=0)
 
         nominal_model_kwargs = nominal_model_kwargs or {}
-        self.nominal_model = HybridDynamicsModel.get_local_model(self.state_diff, self.pm, device, self.ds_nominal,
-                                                                 allow_update=True,
-                                                                 **nominal_model_kwargs)
+        self.nominal_model = self.get_local_model(self.state_diff, self.pm, device, self.ds_nominal, allow_update=True,
+                                                  **nominal_model_kwargs)
         self._original_nominal_model = self.nominal_model
 
         self.local_models = []
         for i, ds_local in enumerate(self.dss):
             if i == 0:
                 continue
-            local_model = HybridDynamicsModel.get_local_model(self.state_diff, self.pm, self.d, ds_local,
-                                                              preprocessor=self.preprocessor,
-                                                              **self.local_model_kwargs)
+            local_model = self.get_local_model(self.state_diff, self.pm, self.d, ds_local,
+                                               preprocessor=self.preprocessor, **self.local_model_kwargs)
             self.local_models.append(local_model)
 
-    @staticmethod
-    def get_local_model(state_diff, pm, d, ds_local, preprocessor=None, allow_update=False,
+    def get_local_model(self, state_diff, pm, d, ds_local, preprocessor=None, allow_update=False,
                         online_adapt=OnlineAdapt.GP_KERNEL_INDEP_OUT,
                         train_slice=None):
         local_dynamics = pm.dyn_net if pm is not None else None
@@ -152,13 +151,15 @@ class HybridDynamicsModel(abc.ABC):
                                                                 state_diff,
                                                                 local_mix_weight_scale=50, xu_characteristic_length=10,
                                                                 const_local_mix_weight=False, sigreg=1e-10,
-                                                                slice_to_use=train_slice, device=d)
+                                                                slice_to_use=train_slice, device=d,
+                                                                nominal_state_projection=self._bound_state_projection)
         elif online_adapt in [OnlineAdapt.GP_KERNEL, OnlineAdapt.GP_KERNEL_INDEP_OUT]:
             local_dynamics = online_model.OnlineGPMixing(pm, ds_local, state_diff, slice_to_use=train_slice,
                                                          allow_update=allow_update, sample=True,
                                                          refit_strategy=online_model.RefitGPStrategy.RESET_DATA,
                                                          device=d, training_iter=150,
-                                                         use_independent_outputs=online_adapt is OnlineAdapt.GP_KERNEL_INDEP_OUT)
+                                                         use_independent_outputs=online_adapt is OnlineAdapt.GP_KERNEL_INDEP_OUT,
+                                                         nominal_state_projection=self._bound_state_projection)
 
         return local_dynamics
 
@@ -182,10 +183,10 @@ class HybridDynamicsModel(abc.ABC):
         return isinstance(model, online_model.OnlineDynamicsModel)
 
     def create_empty_local_model(self, use_prior=True, preprocessor=preprocess.NoTransform()):
-        return HybridDynamicsModel.get_local_model(self.state_diff, self.pm if use_prior else None,
-                                                   self.d, self.ds_nominal,
-                                                   preprocessor=preprocessor,
-                                                   allow_update=True, train_slice=slice(0, 0))
+        return self.get_local_model(self.state_diff, self.pm if use_prior else None,
+                                    self.d, self.ds_nominal,
+                                    preprocessor=preprocessor,
+                                    allow_update=True, train_slice=slice(0, 0))
 
     def use_temp_local_nominal_model(self):
         if self._uses_local_model_api(self.nominal_model):
@@ -200,21 +201,29 @@ class HybridDynamicsModel(abc.ABC):
         self.nominal_model = self._original_nominal_model
 
     @tensor_utils.handle_batch_input
-    def __call__(self, x, u, cls):
+    def __call__(self, x, u, cls, t=0):
         next_state = torch.zeros_like(x)
 
-        # nominal model
-        nominal_cls = cls == 0
-        if torch.any(nominal_cls):
-            if self._uses_local_model_api(self.nominal_model):
-                next_state[nominal_cls] = self.nominal_model.predict(None, None, x[nominal_cls], u[nominal_cls])
-            else:
-                next_state[nominal_cls] = self.nominal_model.predict(torch.cat((x[nominal_cls], u[nominal_cls]), dim=1))
-        # local models
-        for s in range(self.num_local_models()):
-            local_cls = cls == (s + 1)
-            if torch.any(local_cls):
-                next_state[local_cls] = self.local_models[s].predict(None, None, x[local_cls], u[local_cls])
+        # while we trust the residual model
+        if t < self.residual_model_trust_horizon:
+            nominal_cls = cls == 0
+            if torch.any(nominal_cls):
+                if self._uses_local_model_api(self.nominal_model):
+                    next_state[nominal_cls] = self.nominal_model.predict(None, None, x[nominal_cls], u[nominal_cls])
+                else:
+                    next_state[nominal_cls] = self.nominal_model.predict(
+                        torch.cat((x[nominal_cls], u[nominal_cls]), dim=1))
+            # local models
+            for s in range(self.num_local_models()):
+                local_cls = cls == (s + 1)
+                if torch.any(local_cls):
+                    next_state[local_cls] = self.local_models[s].predict(None, None, x[local_cls], u[local_cls])
+        else:
+            # after stop using residual model we project input once again so the nominal model gets known input
+            if t == self.residual_model_trust_horizon:
+                x_known = self.project_input_to_training_distribution(x, u, state_distance=self.state_dist)
+                x = x_known
+            next_state = self._original_nominal_model.predict(torch.cat((x, u), dim=1))
 
         return next_state
 
@@ -225,12 +234,14 @@ class HybridDynamicsModel(abc.ABC):
         for model in self.ensemble:
             predictions.append(model.predict(xu))
         predictions = torch.stack(predictions)
-        var = predictions.var(dim=0) / self.expected_variance
+        var = predictions.std(dim=0) / self.expected_variance
         return var.mean(dim=1)
 
     @tensor_utils.ensure_2d_input
     def project_input_to_training_distribution(self, x, u, state_distance=_one_norm_dist, dist_weight=10,
-                                               delta_loss_threshold=0.0005, lr=0.5, plot=False):
+                                               delta_loss_threshold=0.0005, lr=0.01, plot=False):
+        if x.shape[0] is 0:
+            return x
         x_new = x.clone()
         x_new.requires_grad = True
         uncertainties = []
@@ -260,7 +271,7 @@ class HybridDynamicsModel(abc.ABC):
                 else:
                     delta_l = l
                     last_l = l
-                if delta_l < delta_loss_threshold:
+                if delta_l < delta_loss_threshold and delta_l > 0:
                     break
 
                 if plot:
@@ -286,7 +297,7 @@ class HybridDynamicsModel(abc.ABC):
             for j in range(5):
                 axes[j].set_xscale('log')
 
-            for i in range(x.shape[0]):
+            for i in range(min(x.shape[0], 5)):
                 axes[0].plot(iters, [e[i] for e in uncertainties],
                              label='init {}'.format(x[i].cpu().numpy().round(decimals=2)))
                 axes[0].grid('y')
@@ -302,3 +313,9 @@ class HybridDynamicsModel(abc.ABC):
             plt.show()
 
         return x_new
+
+    def _bound_state_projection(self, xu):
+        config = self.ds_nominal.original_config()
+        x, u = xu[:, :config.nx], xu[:, config.nx:]
+        x_known = self.project_input_to_training_distribution(x, u, state_distance=self.state_dist)
+        return torch.cat((x_known, u), dim=1)
