@@ -128,6 +128,7 @@ class HybridDynamicsModel(abc.ABC):
         self.nominal_model = self.get_local_model(self.state_diff, self.pm, device, self.ds_nominal, allow_update=True,
                                                   **nominal_model_kwargs)
         self._original_nominal_model = self.nominal_model
+        self.using_residual_model = False
 
         self.local_models = []
         for i, ds_local in enumerate(self.dss):
@@ -188,7 +189,7 @@ class HybridDynamicsModel(abc.ABC):
                                     preprocessor=preprocessor,
                                     allow_update=True, train_slice=slice(0, 0))
 
-    def use_temp_local_nominal_model(self):
+    def use_residual_model(self):
         if self._uses_local_model_api(self.nominal_model):
             # start local model here with no previous data points
             self.nominal_model.init_xu = self.nominal_model.init_xu[slice(0, 0)]
@@ -196,9 +197,11 @@ class HybridDynamicsModel(abc.ABC):
             self.nominal_model.reset()
         else:
             self.nominal_model = self.create_empty_local_model(preprocessor=self.preprocessor)
+        self.using_residual_model = True
 
     def use_normal_nominal_model(self):
         self.nominal_model = self._original_nominal_model
+        self.using_residual_model = False
 
     @tensor_utils.handle_batch_input
     def __call__(self, x, u, cls, t=0):
@@ -220,7 +223,7 @@ class HybridDynamicsModel(abc.ABC):
                     next_state[local_cls] = self.local_models[s].predict(None, None, x[local_cls], u[local_cls])
         else:
             # after stop using residual model we project input once again so the nominal model gets known input
-            if t == self.residual_model_trust_horizon:
+            if t == self.residual_model_trust_horizon and self.using_residual_model:
                 x_known = self.project_input_to_training_distribution(x, u, state_distance=self.state_dist)
                 x = x_known
             next_state = self._original_nominal_model.predict(torch.cat((x, u), dim=1))

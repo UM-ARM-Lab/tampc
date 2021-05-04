@@ -474,7 +474,7 @@ class TAMPC(OnlineMPC):
         self.nonnominal_dynamics_start_index = len(self.x_history) - 1
 
         if not self.never_estimate_error_dynamics:
-            self.dynamics.use_temp_local_nominal_model()
+            self.dynamics.use_residual_model()
             # update the local model with the last transition for entering the mode
             self.dynamics.update(self.x_history[-2], self.u_history[-1], x)
 
