@@ -68,6 +68,7 @@ class ContactObject:
 
         # nx here is next position relative to center point
         nx = self.dynamics.predict(None, None, self.pos_to_state(pos), u, **kwargs)
+
         npos = self.state_to_pos(nx)
         dpos = npos - pos
         if self.assume_linear_scaling:
@@ -104,7 +105,7 @@ class ContactObject:
 
 class ContactSet:
     def __init__(self, contact_max_linkage_dist, state_to_pos, u_sim, fade_per_contact=0.8, fade_per_no_contact=0.95,
-                 ignore_below_probability=0.25):
+                 ignore_below_probability=0.25, immovable_collision_checker=None):
         self._obj: typing.List[ContactObject] = []
         # cached center of all points
         self.center_points = None
@@ -115,6 +116,9 @@ class ContactSet:
         self.fade_per_contact = fade_per_contact
         self.fade_per_no_contact = fade_per_no_contact
         self.ignore_below_probability = ignore_below_probability
+
+        self.immovable_collision_checker = immovable_collision_checker
+
 
     def __len__(self):
         return len(self._obj)
@@ -243,8 +247,15 @@ class ContactSet:
                 # now the candidates are fully filtered, can apply dynamics to those
                 dpos = c.predict_dpos(rel_pos[i, candidates], u[candidates])
                 # pos is already rel_pos + center_points
-                npos = pos[candidates] + dpos
+                ppos = pos[candidates]
+                npos = ppos + dpos
                 x[candidates] = c.pos_to_state(npos)
+
+                if self.immovable_collision_checker is not None:
+                    _, nx = self.immovable_collision_checker(x[candidates])
+                    dpos = c.state_to_pos(nx) - ppos
+                    x[candidates] = nx
+
                 without_contact[candidates] = False
                 # move the center points of those states
                 center_points[i, candidates] += dpos

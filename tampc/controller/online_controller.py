@@ -215,7 +215,8 @@ class TAMPC(OnlineMPC):
         # contact tracking parameters
         # state distance between making contacts for distinguishing separate contacts
         self.in_contact_with_known_immovable = False
-        self.contact_set = contact.ContactSet(0.1, state_to_position, self.u_sim)
+        self.contact_set = contact.ContactSet(0.1, state_to_position, self.u_sim,
+                                              immovable_collision_checker=self._known_immovable_obstacle_collision_check)
         self.contact_force_threshold = 0.5
         self.contact_cost = None
         self.contact_use_prior = contact_use_prior
