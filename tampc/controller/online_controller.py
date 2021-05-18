@@ -467,7 +467,7 @@ class TAMPC(OnlineMPC):
 
     def _start_local_model(self, x):
         logger.debug("Entering non nominal dynamics")
-        logger.debug(self.diff_predicted.norm())
+        logger.debug(self.diff_predicted)
 
         self.using_local_model_for_nonnominal_dynamics = True
         # includes the current observation
@@ -577,7 +577,8 @@ class TAMPC(OnlineMPC):
             # TODO try linear model?
             # if using object-centered model, don't use preprocessor, else use default
             c = contact.ContactObject(self.dynamics.create_empty_local_model(use_prior=self.contact_use_prior,
-                                                                             preprocessor=self.contact_preprocessing),
+                                                                             preprocessor=self.contact_preprocessing,
+                                                                             nom_projection=False),
                                       self.state_to_pos, self.pos_to_state)
             self.contact_set.append(c)
         # matches more than 1 contact set, combine them

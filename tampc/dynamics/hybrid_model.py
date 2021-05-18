@@ -140,7 +140,8 @@ class HybridDynamicsModel(abc.ABC):
 
     def get_local_model(self, state_diff, pm, d, ds_local, preprocessor=None, allow_update=False,
                         online_adapt=OnlineAdapt.GP_KERNEL_INDEP_OUT,
-                        train_slice=None):
+                        train_slice=None, nom_projection=True):
+        nominal_state_projection = self._bound_state_projection if nom_projection else None
         local_dynamics = pm.dyn_net if pm is not None else None
         # if given a preprocessor, we will override the datasource's preprocessor
         if preprocessor:
@@ -153,14 +154,14 @@ class HybridDynamicsModel(abc.ABC):
                                                                 local_mix_weight_scale=50, xu_characteristic_length=10,
                                                                 const_local_mix_weight=False, sigreg=1e-10,
                                                                 slice_to_use=train_slice, device=d,
-                                                                nominal_state_projection=self._bound_state_projection)
+                                                                nominal_state_projection=nominal_state_projection)
         elif online_adapt in [OnlineAdapt.GP_KERNEL, OnlineAdapt.GP_KERNEL_INDEP_OUT]:
             local_dynamics = online_model.OnlineGPMixing(pm, ds_local, state_diff, slice_to_use=train_slice,
                                                          allow_update=allow_update, sample=True,
                                                          refit_strategy=online_model.RefitGPStrategy.RESET_DATA,
                                                          device=d, training_iter=150,
                                                          use_independent_outputs=online_adapt is OnlineAdapt.GP_KERNEL_INDEP_OUT,
-                                                         nominal_state_projection=self._bound_state_projection)
+                                                         nominal_state_projection=nominal_state_projection)
 
         return local_dynamics
 
@@ -183,11 +184,11 @@ class HybridDynamicsModel(abc.ABC):
     def _uses_local_model_api(model):
         return isinstance(model, online_model.OnlineDynamicsModel)
 
-    def create_empty_local_model(self, use_prior=True, preprocessor=preprocess.NoTransform()):
+    def create_empty_local_model(self, use_prior=True, preprocessor=preprocess.NoTransform(), **kwargs):
         return self.get_local_model(self.state_diff, self.pm if use_prior else None,
                                     self.d, self.ds_nominal,
                                     preprocessor=preprocessor,
-                                    allow_update=True, train_slice=slice(0, 0))
+                                    allow_update=True, train_slice=slice(0, 0), **kwargs)
 
     def use_residual_model(self):
         if self._uses_local_model_api(self.nominal_model):
