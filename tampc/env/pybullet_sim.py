@@ -138,11 +138,12 @@ class PybulletSim(simulation.Simulation):
                     #     self.env.draw_user_text(" ".join(text), 4 + self.ctrl.num_costs,
                     #                             left_offset=1 - (self.ctrl.num_costs - 3) * 0.1)
 
-            if self.visualize_action_sample and isinstance(self.ctrl, controller.MPPI_MPC):
-                self._plot_action_sample(self.ctrl.mpc.perturbed_action)
-            rollouts = self.ctrl.get_rollouts(obs)
-            if self.visualize_rollouts:
-                self.env.visualize_rollouts(rollouts)
+            with rand.SavedRNG():
+                if self.visualize_action_sample and isinstance(self.ctrl, controller.MPPI_MPC):
+                    self._plot_action_sample(self.ctrl.mpc.perturbed_action)
+                if self.visualize_rollouts:
+                    rollouts = self.ctrl.get_rollouts(obs)
+                    self.env.visualize_rollouts(rollouts)
 
             # with rand.SavedRNG():
             #     nom_actions = self.ctrl.mpc.U
@@ -157,10 +158,10 @@ class PybulletSim(simulation.Simulation):
             #         can_actions[t] = straight_action
             #     actions = torch.stack((nom_actions, can_actions))
             #     cost_total, states, _, center_points = self.ctrl.mpc._compute_rollout_costs(actions)
-            #     colors = [0.6, 0.8, 0.2, 0.4]
+            #     colors = ['copper', 'cool', 'spring']
             #     visualized = 0
             #     # if self.visualize_rollouts:
-            #     #     self.env.visualize_rollouts(states[0, 1].cpu().numpy(), rollout_R=1)
+            #     #     self.env.visualize_rollouts(states[0, 1].cpu().numpy(), state_cmap='summer')
             #     if center_points[0] is not None:
             #         # only consider the first sample (m = 0)
             #         center_points = [pt[:, 0] for pt in center_points]
@@ -170,10 +171,10 @@ class PybulletSim(simulation.Simulation):
             #             visualized += 1
             #             rollout = center_points[:, j]
             #             c = colors[j % len(colors)]
-            #             self.env.visualize_rollouts(rollout.cpu().numpy(), rollout_R=c, max_other_color=1 - c)
+            #             self.env.visualize_rollouts(rollout.cpu().numpy(), state_cmap=c)
             #     if self.visualize_rollouts:
             #         for j in range(visualized, len(colors)):
-            #             self.env.visualize_rollouts([], rollout_R=colors[j % len(colors)])
+            #             self.env.visualize_rollouts([], state_cmap=colors[j % len(colors)])
             #     self.env.draw_user_text(
             #         "straight cost {:.2f} sampled cost {:.2f}".format(cost_total[1], cost_total[0]),
             #         location_index=5, xy=(-0.5, 0.3, -1))
