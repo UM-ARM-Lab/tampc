@@ -45,6 +45,7 @@ class OnlineAdapt(enum.IntEnum):
     LINEARIZE_LIKELIHOOD = 1
     GP_KERNEL = 2
     GP_KERNEL_INDEP_OUT = 3
+    GP_KERNEL_TOTALLY_INDEP_OUT = 4
 
 
 class UseGating:
@@ -155,13 +156,17 @@ class HybridDynamicsModel(abc.ABC):
                                                                 const_local_mix_weight=False, sigreg=1e-10,
                                                                 slice_to_use=train_slice, device=d,
                                                                 nominal_state_projection=nominal_state_projection)
-        elif online_adapt in [OnlineAdapt.GP_KERNEL, OnlineAdapt.GP_KERNEL_INDEP_OUT]:
-            local_dynamics = online_model.OnlineGPMixing(pm, ds_local, state_diff, slice_to_use=train_slice,
-                                                         allow_update=allow_update, sample=True,
-                                                         refit_strategy=online_model.RefitGPStrategy.RESET_DATA,
-                                                         device=d, training_iter=150,
-                                                         use_independent_outputs=online_adapt is OnlineAdapt.GP_KERNEL_INDEP_OUT,
-                                                         nominal_state_projection=nominal_state_projection)
+        elif online_adapt in [OnlineAdapt.GP_KERNEL, OnlineAdapt.GP_KERNEL_INDEP_OUT,
+                              OnlineAdapt.GP_KERNEL_TOTALLY_INDEP_OUT]:
+            model_class = online_model.OnlineGPMixing
+            if online_adapt is OnlineAdapt.GP_KERNEL_TOTALLY_INDEP_OUT:
+                model_class = online_model.OnlineGPMixingModelList
+            local_dynamics = model_class(pm, ds_local, state_diff, slice_to_use=train_slice,
+                                         allow_update=allow_update, sample=True,
+                                         refit_strategy=online_model.RefitGPStrategy.RESET_DATA,
+                                         device=d, training_iter=150,
+                                         use_independent_outputs=online_adapt is OnlineAdapt.GP_KERNEL_INDEP_OUT,
+                                         nominal_state_projection=nominal_state_projection)
 
         return local_dynamics
 

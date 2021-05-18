@@ -1,5 +1,5 @@
 import torch
-from arm_pytorch_utilities import linalg
+from arm_pytorch_utilities import linalg, rand
 from tampc.dynamics import model, prior
 from torch.distributions.multivariate_normal import MultivariateNormal
 from torch import distributions
@@ -314,10 +314,11 @@ class MixingBatchGP(gpytorch.models.ExactGP):
         if self.nominal_model is not None:
             if self.nominal_in_orig_space:
                 orig_x = self.preprocessor.invert_x(x)
-            if self.nom_x_project is not None:
-                orig_x = self.nom_x_project(orig_x)
-                logger.debug("observed x %s projected to %s", x.cpu().numpy().round(decimals=2),
-                             orig_x.cpu().numpy().round(decimals=2))
+            # if self.nom_x_project is not None:
+            #     projected_x = self.nom_x_project(orig_x)
+            #     logger.debug("observed xu %s projected to %s", orig_x.cpu().numpy().round(decimals=2),
+            #                  projected_x.cpu().numpy().round(decimals=2))
+            #     orig_x = projected_x
 
             nominal_pred = self.nominal_model(orig_x, all_in_transformed_space=not self.nominal_in_orig_space)
             if self.nominal_in_orig_space:
@@ -330,6 +331,67 @@ class MixingBatchGP(gpytorch.models.ExactGP):
         return gpytorch.distributions.MultitaskMultivariateNormal.from_batch_mvn(
             gpytorch.distributions.MultivariateNormal(nominal_pred, covar_x)
         )
+
+
+class NominalModelManager:
+    def __init__(self, train_x, train_y, nominal_model=None, preprocessor=None,
+                 nominal_state_projection=None):
+        self.nominal_model = nominal_model
+        self.preprocessor = preprocessor
+        self.nom_x_project = nominal_state_projection
+        self.ny = train_y.shape[1]
+        self.last_pred = None
+
+        self.nom_preds = {}
+
+        try:
+            if self.preprocessor:
+                self.preprocessor.invert_x(train_x)
+                logger.debug("use preprocess invert in local model")
+                self.nominal_in_orig_space = True
+        except RuntimeError:
+            self.nominal_in_orig_space = False
+
+    def forward(self, x, dim):
+        if dim is 0 or self.last_pred is None or self.last_pred.shape[1] != x.shape[0]:
+            orig_x = x
+            if self.nominal_model is not None:
+                input_key = x.sum().item()
+                prev_pred = self.nom_preds.get(input_key, None)
+                # see if we cached this result
+                if prev_pred is not None:
+                    nominal_pred = prev_pred
+                else:
+                    if self.nominal_in_orig_space:
+                        orig_x = self.preprocessor.invert_x(x)
+                    if self.nom_x_project is not None:
+                        projected_x = self.nom_x_project(orig_x)
+                        logger.debug("observed xu %s projected to %s", orig_x.cpu().numpy().round(decimals=2),
+                                     projected_x.cpu().numpy().round(decimals=2))
+                        orig_x = projected_x
+
+                    nominal_pred = self.nominal_model(orig_x, all_in_transformed_space=not self.nominal_in_orig_space)
+                    if self.nominal_in_orig_space:
+                        nominal_pred = self.preprocessor.transform_y(nominal_pred)
+                    nominal_pred = nominal_pred.transpose(0, 1)
+                    self.nom_preds[input_key] = nominal_pred
+            else:
+                nominal_pred = torch.zeros((self.ny, x.shape[0]), dtype=x.dtype, device=x.device)
+            self.last_pred = nominal_pred
+        return self.last_pred[dim, :]
+
+
+class ModelListGP(gpytorch.models.ExactGP):
+    def __init__(self, train_x, train_y, likelihood, dim, nominal_model_manager: NominalModelManager):
+        super().__init__(train_x, train_y[:, dim], likelihood)
+        self.dim = dim
+        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
+        self.nominal_model_manager = nominal_model_manager
+
+    def forward(self, x):
+        nominal_pred = self.nominal_model_manager.forward(x, self.dim)
+        covar_x = self.covar_module(x)
+        return gpytorch.distributions.MultivariateNormal(nominal_pred, covar_x)
 
 
 class RefitGPStrategy:
@@ -422,6 +484,9 @@ class OnlineGPMixing(OnlineDynamicsModel):
             self.y = torch.roll(self.y, -1, dims=0)
             self.y[-1] = y
 
+        self._refit()
+
+    def _refit(self):
         if self.refit_strategy is RefitGPStrategy.RESET_DATA:
             self.gp.set_train_data(self.xu, self.y, strict=False)
             self._fit_params(self.training_iter // 10)
@@ -445,6 +510,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
             self.optimizer.zero_grad()
             output = self.gp(self.xu)
             loss = -mll(output, self.y)
+
             loss.backward()
             self.last_loss_diff = loss.item() - self.last_loss
             self.last_loss = loss.item()
@@ -461,7 +527,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
         #              self.last_loss, self.last_loss_diff)
 
     def _make_prediction(self, cx, cu):
-        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+        with gpytorch.settings.fast_pred_var():
             xu = torch.cat((cx, cu), dim=1)
             self.last_prediction = self.likelihood(self.gp(xu))
 
@@ -470,6 +536,55 @@ class OnlineGPMixing(OnlineDynamicsModel):
         self._make_prediction(cx, cu)
         y = self.sample() if self.sample_dynamics else self.mean()
         return y
+
+    def plot_dynamics_at_state(self, state, title=None):
+        import matplotlib.pyplot as plt
+        import numpy as np
+        with rand.SavedRNG():
+            dt = state.dtype
+            d = state.device
+
+            u_mag = 1
+            N = 51
+            t = torch.from_numpy(np.linspace(-3, 3, N)).to(dtype=dt, device=d)
+            cu = torch.stack((torch.cos(t) * u_mag, torch.sin(t) * u_mag), dim=1)
+            dynamics_gp = self
+
+            xu = self.ds.preprocessor.invert_x(dynamics_gp.xu)
+            u_train = xu[:, -2:]
+            t_train = torch.atan2(u_train[:, 1], u_train[:, 0]).cpu().numpy()
+            y_train = dynamics_gp.y
+            # normalize output by control magnitude
+            y_train = y_train / u_train.norm(dim=1).view(-1, 1)
+
+            t = t.cpu().numpy()
+            cx = torch.tensor(state, dtype=dt, device=d).repeat(N, 1)
+
+            yhat = self.predict(None, None, cx, cu)
+            yhat = yhat - cx
+            # yhat = self.ds.preprocessor.transform_y(yhat)
+            lower, upper, yhat_mean = dynamics_gp.get_last_prediction_statistics()
+
+            # yhat_mean, lower, upper = (ds.preprocessor.invert_transform(v, cx) for v in (yhat_mean, lower, upper))
+
+            y_names = ['$dx_{}$'.format(i) for i in range(len(state))]
+            to_plot_y_dims = [0, 1]
+            num_plots = min(len(to_plot_y_dims), yhat_mean.shape[1])
+            f, axes = plt.subplots(num_plots, 1, sharex='all')
+            for j, dim in enumerate(to_plot_y_dims):
+                # axes[j].scatter(t, yhat[:, dim].cpu().numpy(), label='sample')
+                axes[j].scatter(t_train, y_train[:, dim].cpu().numpy(), color='k', marker='*', label='train')
+                axes[j].plot(t, yhat_mean[:, dim].cpu().numpy(), label='mean')
+                axes[j].fill_between(t, lower[:, dim].cpu().numpy(), upper[:, dim].cpu().numpy(), alpha=0.3)
+                axes[j].set_ylabel(y_names[dim])
+                # axes[j].set_ylim(bottom=-0.2, top=0.2)
+
+            axes[0].legend()
+            axes[-1].set_xlabel('action theta')
+            if title is not None:
+                f.suptitle(title)
+
+            plt.show()
 
     def sample(self, sample_shape=torch.Size([])):
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
@@ -482,6 +597,96 @@ class OnlineGPMixing(OnlineDynamicsModel):
     def get_last_prediction_statistics(self):
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
             lower, upper = self.last_prediction.confidence_region()
+            return lower, upper, self.mean()
+
+
+class OnlineGPMixingModelList(OnlineGPMixing):
+    """Online GP with ModelList GPs"""
+
+    def _recreate_all(self):
+        self._recreate_gp()
+
+    def _recreate_gp(self):
+        if self.prior is not None:
+            nominal_model = self.prior.get_batch_predictions
+        else:
+            nominal_model = None
+        self.nom_model_manager = NominalModelManager(self.xu, self.y, nominal_model, preprocessor=self.ds.preprocessor,
+                                                     nominal_state_projection=self.nom_x_project)
+        models = []
+        for dim in range(self.y.shape[1]):
+            l = gpytorch.likelihoods.GaussianLikelihood()
+            models.append(ModelListGP(self.xu, self.y, l, dim, self.nom_model_manager))
+        self.gp = gpytorch.models.IndependentModelList(*models)
+        self.likelihood = gpytorch.likelihoods.LikelihoodList(*[m.likelihood for m in models]).to(device=self.d,
+                                                                                                  dtype=self.dtype)
+
+        self.gp = self.gp.to(device=self.d, dtype=self.dtype)
+        self.optimizer = torch.optim.Adam([
+            {'params': self.gp.parameters()},
+        ], lr=0.1)
+
+    def _refit(self):
+        if self.refit_strategy is RefitGPStrategy.RESET_DATA:
+            for dim in range(self.y.shape[1]):
+                self.gp.models[dim].set_train_data(self.xu, self.y[:, dim], strict=False)
+            self._fit_params(self.training_iter // 10)
+        elif self.refit_strategy is RefitGPStrategy.RECREATE_GP:
+            self._recreate_gp()
+            self._fit_params(self.training_iter // 3)
+        else:
+            self._recreate_all()
+            self._fit_params(self.training_iter)
+
+    def _fit_params(self, training_iter):
+        # tune hyperparameters to new data
+        self.gp.train()
+        self.likelihood.train()
+        mll = gpytorch.mlls.SumMarginalLogLikelihood(self.likelihood, self.gp)
+
+        logger.debug('train for %d iter with xu and y \n%s\n%s', training_iter, self.xu, self.y)
+
+        i = 0
+        while True:
+            self.optimizer.zero_grad()
+            output = self.gp(*self.gp.train_inputs)
+            loss = -mll(output, self.gp.train_targets)
+
+            loss.backward()
+            self.last_loss_diff = loss.item() - self.last_loss
+            self.last_loss = loss.item()
+            logger.debug('iter %d last loss %.3f last loss diff %.3f', i, self.last_loss, self.last_loss_diff)
+            self.optimizer.step()
+            i += 1
+            if i >= training_iter and self.last_loss_diff > -self.training_iter_stop:
+                break
+
+        self.gp.eval()
+        self.likelihood.eval()
+
+    def _make_prediction(self, cx, cu):
+        xu = torch.cat((cx, cu), dim=1)
+        input = [xu for _ in range(self.y.shape[1])]
+        # cache input
+        self.nom_model_manager.forward(xu, 0)
+        self.last_prediction = self.likelihood(*self.gp(*input))
+
+    def sample(self, sample_shape=torch.Size([])):
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            m = self.mean()
+            stddev = torch.stack([p.stddev for p in self.last_prediction], dim=1)
+            p = distributions.Normal(m, stddev)
+            return p.sample(sample_shape)
+
+    def mean(self):
+        return torch.stack([p.mean for p in self.last_prediction], dim=1)
+
+    def get_last_prediction_statistics(self):
+        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+            confidence_regions = [p.confidence_region() for p in self.last_prediction]
+            lower = torch.stack([lu[0] for lu in confidence_regions], dim=1)
+            upper = torch.stack([lu[1] for lu in confidence_regions], dim=1)
+
             return lower, upper, self.mean()
 
 
