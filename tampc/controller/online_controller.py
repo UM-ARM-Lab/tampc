@@ -305,7 +305,9 @@ class TAMPC(OnlineMPC):
 
     def get_rollouts(self, obs):
         try:
-            return self.mpc.get_rollouts(torch.from_numpy(obs).to(dtype=self.dtype, device=self.d))[0].cpu().numpy()
+            states, contact_model_active, center_points = self.mpc.get_rollouts(
+                torch.from_numpy(obs).to(dtype=self.dtype, device=self.d))
+            return states[0].cpu().numpy(), contact_model_active[0].cpu().numpy(), center_points
         except (AttributeError, TypeError):
             logger.warning("MPC has no get_rollouts(state) method")
 

@@ -7,6 +7,9 @@ import torch
 import os
 
 import numpy as np
+import matplotlib.colors as colors
+import matplotlib.cm as cmx
+
 from arm_pytorch_utilities import tensor_utils
 from tampc.env.pybullet_env import PybulletEnv, get_total_contact_force, ContactInfo
 from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource
@@ -279,17 +282,25 @@ class ArmEnv(PybulletEnv):
 
         self._make_robot_translucent(self.armId)
 
-    def visualize_rollouts(self, states, rollout_R=0, max_other_color=1):
+    def visualize_rollouts(self, rollout, state_cmap='Blues_r', contact_cmap='Reds_r'):
         """In GUI mode, show how the sequence of states will look like"""
-        if states is None:
+        if rollout is None:
             return
+        if type(rollout) is tuple and len(rollout) is 3:
+            states, contact_model_active, center_points = rollout
+        else:
+            states = rollout
+            contact_model_active = np.zeros(len(states))
+            center_points = [None]
         # assume states is iterable, so could be a bunch of row vectors
         T = len(states)
+        smap = cmx.ScalarMappable(norm=colors.Normalize(vmin=0, vmax=T), cmap=state_cmap)
+        cmap = cmx.ScalarMappable(norm=colors.Normalize(vmin=0, vmax=T), cmap=contact_cmap)
         for t in range(T):
             pos = self.get_ee_pos(states[t])
-            c = (t + 1) / (T + 1) * max_other_color
-            self._dd.draw_point('rx{}{}'.format(rollout_R, t), pos, (rollout_R, c, c))
-        self._dd.clear_visualization_after('rx{}'.format(rollout_R), T)
+            rgba = cmap.to_rgba(t) if contact_model_active[t] else smap.to_rgba(t)
+            self._dd.draw_point('rx{}{}'.format(state_cmap, t), pos, rgba[:-1])
+        self._dd.clear_visualization_after('rx{}'.format(state_cmap), T)
 
     def visualize_goal_set(self, states):
         if states is None:

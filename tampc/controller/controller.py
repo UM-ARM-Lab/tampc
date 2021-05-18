@@ -431,6 +431,34 @@ class ExperimentalMPPI(mppi.MPPI):
         self.cost_total += perturbation_cost
         return self.cost_total
 
+    def get_rollouts(self, state, num_rollouts=1):
+        # modified from original to include contact dynamics and contact info
+        state = state.view(-1, self.nx)
+        if state.size(0) == 1:
+            state = state.repeat(num_rollouts, 1)
+
+        T = self.U.shape[0]
+        # batch process contact
+        contact_data = self.contact_set.get_batch_data_for_dynamics(num_rollouts)
+
+        states = torch.zeros((num_rollouts, T + 1, self.nx), dtype=self.U.dtype, device=self.U.device)
+        contact_model_active = torch.zeros((num_rollouts, T), device=self.U.device)
+        center_points = []
+
+        states[:, 0] = state
+        for t in range(T):
+            u = self.u_scale * self.U[t].repeat(num_rollouts, 1)
+            state = states[:, t].clone().view(num_rollouts, -1)
+            state, without_contact, contact_data = self.contact_set.dynamics(state, u, contact_data)
+
+            # only rollout state that's not affected by contact set normally
+            state[without_contact] = self._dynamics(state[without_contact], u[without_contact], t)
+            states[:, t + 1] = state
+            contact_model_active[:, t] = ~without_contact
+            center_points.append(contact_data[0].clone() if contact_data[0] is not None else None)
+
+        return states[:, 1:], contact_model_active, center_points
+
 
 class MPPI_MPC(MPC):
     def __init__(self, *args, mpc_opts=None, **kwargs):
