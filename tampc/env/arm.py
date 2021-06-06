@@ -330,8 +330,10 @@ class ArmEnv(PybulletEnv):
         self._dd.clear_visualization_after('u', T + 1)
 
     def visualize_contact_set(self, contact_set):
-        color = (1, 0.5, 0)
-        u_color = (1, 0.8, 0.4)
+        color_pairs = [[(1, 0.5, 0), (1, 0.8, 0.4)],
+                       [(28 / 255, 237 / 255, 143 / 255), (22 / 255, 186 / 255, 112 / 255)],
+                       [(172 / 255, 17 / 255, 237 / 255), (136 / 255, 13 / 255, 189 / 256)],
+                       [(181 / 255, 237 / 255, 28 / 255), (148 / 255, 194 / 255, 23 / 255)]]
         # clear all previous markers because we don't know which one was removed
         if len(self._contact_debug_names) > len(contact_set):
             for name in self._contact_debug_names:
@@ -339,6 +341,7 @@ class ArmEnv(PybulletEnv):
             self._contact_debug_names = []
 
         for i, c in enumerate(contact_set):
+            color, u_color = color_pairs[i % len(color_pairs)]
             if i >= len(self._contact_debug_names):
                 self._contact_debug_names.append(set())
             for j in range(len(c.points)):
