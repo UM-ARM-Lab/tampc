@@ -294,19 +294,34 @@ class ArmEnv(PybulletEnv):
             center_points = [None]
         # assume states is iterable, so could be a bunch of row vectors
         T = len(states)
-        smap = cmx.ScalarMappable(norm=colors.Normalize(vmin=0, vmax=T), cmap=state_cmap)
-        cmap = cmx.ScalarMappable(norm=colors.Normalize(vmin=0, vmax=T), cmap=contact_cmap)
-        prev_pos = None
-        for t in range(T):
-            pos = self.get_ee_pos(states[t])
-            rgba = cmap.to_rgba(t) if contact_model_active[t] else smap.to_rgba(t)
-            self._dd.draw_point('rx{}{}'.format(state_cmap, t), pos, rgba[:-1])
-            if t > 0:
-                self._dd.draw_2d_line('tx{}{}'.format(state_cmap, t), prev_pos, pos - prev_pos, scale=1,
-                                      color=rgba[:-1])
-            prev_pos = pos
+        if T > 0:
+            smap = cmx.ScalarMappable(norm=colors.Normalize(vmin=0, vmax=T), cmap=state_cmap)
+            cmap = cmx.ScalarMappable(norm=colors.Normalize(vmin=0, vmax=T), cmap=contact_cmap)
+            prev_pos = None
+            for t in range(T):
+                pos = self.get_ee_pos(states[t])
+                rgba = cmap.to_rgba(t) if contact_model_active[t] else smap.to_rgba(t)
+                self._dd.draw_point('rx{}{}'.format(state_cmap, t), pos, rgba[:-1])
+                if t > 0:
+                    self._dd.draw_2d_line('tx{}{}'.format(state_cmap, t), prev_pos, pos - prev_pos, scale=1,
+                                          color=rgba[:-1])
+                prev_pos = pos
         self._dd.clear_visualization_after('rx{}'.format(state_cmap), T)
         self._dd.clear_visualization_after('tx{}'.format(state_cmap), T)
+
+        if center_points[0] is not None:
+            obj_center_color_maps = ['viridis', 'magma', 'cividis']
+            # only consider the first sample (m = 0)
+            center_points = [pt[:, 0] for pt in center_points]
+            center_points = torch.stack(center_points)
+            num_objs = center_points.shape[1]
+            for j in range(num_objs):
+                rollout = center_points[:, j]
+                self.visualize_rollouts(rollout.cpu().numpy(),
+                                        state_cmap=obj_center_color_maps[j % len(obj_center_color_maps)])
+            # clear the other colors
+            for j in range(num_objs, len(obj_center_color_maps)):
+                self.visualize_rollouts([], state_cmap=obj_center_color_maps[j % len(obj_center_color_maps)])
 
     def visualize_goal_set(self, states):
         if states is None:
