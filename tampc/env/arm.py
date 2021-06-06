@@ -296,11 +296,17 @@ class ArmEnv(PybulletEnv):
         T = len(states)
         smap = cmx.ScalarMappable(norm=colors.Normalize(vmin=0, vmax=T), cmap=state_cmap)
         cmap = cmx.ScalarMappable(norm=colors.Normalize(vmin=0, vmax=T), cmap=contact_cmap)
+        prev_pos = None
         for t in range(T):
             pos = self.get_ee_pos(states[t])
             rgba = cmap.to_rgba(t) if contact_model_active[t] else smap.to_rgba(t)
             self._dd.draw_point('rx{}{}'.format(state_cmap, t), pos, rgba[:-1])
+            if t > 0:
+                self._dd.draw_2d_line('tx{}{}'.format(state_cmap, t), prev_pos, pos - prev_pos, scale=1,
+                                      color=rgba[:-1])
+            prev_pos = pos
         self._dd.clear_visualization_after('rx{}'.format(state_cmap), T)
+        self._dd.clear_visualization_after('tx{}'.format(state_cmap), T)
 
     def visualize_goal_set(self, states):
         if states is None:
