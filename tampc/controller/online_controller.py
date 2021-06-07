@@ -335,7 +335,6 @@ class TAMPC(OnlineMPC):
 
     def _in_non_nominal_dynamics(self):
         return self.diff_predicted is not None and \
-               not self.in_contact_with_known_immovable and \
                self.dynamics_class == gating_function.DynamicsClass.NOMINAL and \
                self.diff_predicted.norm() > self.abs_unrecognized_threshold and \
                self.autonomous_recovery is not AutonomousRecovery.NONE and \
