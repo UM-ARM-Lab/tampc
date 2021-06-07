@@ -6,6 +6,7 @@ from torch import distributions
 import logging
 import gpytorch
 import abc
+from timeit import default_timer as timer
 
 logger = logging.getLogger(__name__)
 
@@ -311,7 +312,7 @@ class NominalModelManager:
         if dim is 0 or dim is None or self.last_pred is None or self.last_pred.shape[1] != x.shape[0]:
             orig_x = x
             if self.nominal_model is not None:
-                input_key = x.sum().item()
+                input_key = x.sum().item() * x.numel()
                 prev_pred = self.nom_preds.get(input_key, None)
                 # see if we cached this result
                 if prev_pred is not None:
@@ -320,9 +321,12 @@ class NominalModelManager:
                     if self.nominal_in_orig_space:
                         orig_x = self.preprocessor.invert_x(x)
                     if self.nom_x_project is not None:
+                        start = timer()
                         projected_x = self.nom_x_project(orig_x)
-                        logger.debug("observed xu %s projected to %s", orig_x.cpu().numpy().round(decimals=2),
-                                     projected_x.cpu().numpy().round(decimals=2))
+                        elapsed = timer() - start
+                        logger.debug("observed xu %s projected to %s\nspent %f seconds",
+                                     orig_x.cpu().numpy().round(decimals=2),
+                                     projected_x.cpu().numpy().round(decimals=2), elapsed)
                         orig_x = projected_x
 
                     nominal_pred = self.nominal_model(orig_x, all_in_transformed_space=not self.nominal_in_orig_space)
