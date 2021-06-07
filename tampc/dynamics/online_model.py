@@ -1,4 +1,5 @@
 import torch
+import os.path
 from arm_pytorch_utilities import linalg, rand
 from tampc.dynamics import model, prior
 from torch.distributions.multivariate_normal import MultivariateNormal
@@ -32,6 +33,14 @@ class OnlineDynamicsModel(model.DynamicsBase):
     @abc.abstractmethod
     def reset(self):
         """Clear state of model"""
+
+    @abc.abstractmethod
+    def save(self, filename):
+        """Save parameters of model"""
+
+    @abc.abstractmethod
+    def load(self, filename):
+        """Load parameters of model"""
 
     def update(self, px, pu, cx):
         """Update local model with new (x,u,x') data point in original space"""
@@ -421,6 +430,41 @@ class OnlineGPMixing(OnlineDynamicsModel):
         # Initial values
         self.reset()
 
+    def state_dict(self):
+        state = {'init_xu': self.init_xu, 'init_y': self.init_y, 'xu': self.xu, 'y': self.y}
+        if self.optimizer is not None:
+            state.update(
+                {'optimizer': self.optimizer.state_dict(),
+                 'likelihood': self.likelihood.state_dict(),
+                 'gp': self.gp.state_dict(),
+                 })
+        return state
+
+    def save(self, filename):
+        torch.save(self.state_dict(), filename)
+
+    def load(self, filename):
+        if not os.path.isfile(filename):
+            return False
+        try:
+            checkpoint = torch.load(filename)
+        except RuntimeError as e:
+            logger.warning(e)
+            checkpoint = torch.load(filename, map_location=torch.device('cpu'))
+        self.init_xu = checkpoint['init_xu']
+        self.init_y = checkpoint['init_y']
+        self.xu = checkpoint['xu']
+        self.y = checkpoint['y']
+        if self.optimizer is not None and 'optimizer' in checkpoint:
+            self.optimizer.load_state_dict(checkpoint['optimizer'])
+            self.likelihood.load_state_dict(checkpoint['likelihood'])
+            self.gp.load_state_dict(checkpoint['gp'])
+            self._set_gp_train_data()
+        return True
+
+    def _set_gp_train_data(self):
+        self.gp.set_train_data(self.xu, self.y, strict=False)
+
     def reset(self):
         self.xu = self.init_xu.clone()
         self.y = self.init_y.clone()
@@ -469,7 +513,7 @@ class OnlineGPMixing(OnlineDynamicsModel):
 
     def _refit(self):
         if self.refit_strategy is RefitGPStrategy.RESET_DATA:
-            self.gp.set_train_data(self.xu, self.y, strict=False)
+            self._set_gp_train_data()
             self._fit_params(self.training_iter // 10)
         elif self.refit_strategy is RefitGPStrategy.RECREATE_GP:
             self._recreate_gp()
@@ -587,6 +631,10 @@ class OnlineGPMixingModelList(OnlineGPMixing):
     def _recreate_all(self):
         self._recreate_gp()
 
+    def _set_gp_train_data(self):
+        for dim in range(self.y.shape[1]):
+            self.gp.models[dim].set_train_data(self.xu, self.y[:, dim], strict=False)
+
     def _recreate_gp(self):
         if self.prior is not None:
             nominal_model = self.prior.get_batch_predictions
@@ -606,18 +654,6 @@ class OnlineGPMixingModelList(OnlineGPMixing):
         self.optimizer = torch.optim.Adam([
             {'params': self.gp.parameters()},
         ], lr=0.1)
-
-    def _refit(self):
-        if self.refit_strategy is RefitGPStrategy.RESET_DATA:
-            for dim in range(self.y.shape[1]):
-                self.gp.models[dim].set_train_data(self.xu, self.y[:, dim], strict=False)
-            self._fit_params(self.training_iter // 10)
-        elif self.refit_strategy is RefitGPStrategy.RECREATE_GP:
-            self._recreate_gp()
-            self._fit_params(self.training_iter // 3)
-        else:
-            self._recreate_all()
-            self._fit_params(self.training_iter)
 
     def _fit_params(self, training_iter):
         # tune hyperparameters to new data
