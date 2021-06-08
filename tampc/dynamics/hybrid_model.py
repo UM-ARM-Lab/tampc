@@ -245,6 +245,7 @@ class HybridDynamicsModel(serialization.Serializable):
         else:
             # after stop using residual model we project input once again so the nominal model gets known input
             if t == self.residual_model_trust_horizon and self.using_residual_model:
+                logger.info("projecting output of residual model for future nominal model rollouts")
                 x_known = self.project_input_to_training_distribution(x, u, state_distance=self.state_dist)
                 x = x_known
             next_state = self._original_nominal_model.predict(torch.cat((x, u), dim=1))
