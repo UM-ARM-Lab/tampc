@@ -310,7 +310,7 @@ class ArmEnv(PybulletEnv):
         self._dd.clear_visualization_after('tx{}'.format(state_cmap), T)
 
         if center_points[0] is not None:
-            obj_center_color_maps = ['Oranges', 'Purples', 'Greens']
+            obj_center_color_maps = ['Purples_r', 'Greens_r', 'Greys_r']
             # only consider the first sample (m = 0)
             center_points = [pt[:, 0] for pt in center_points]
             center_points = torch.stack(center_points)
