@@ -264,7 +264,7 @@ class HybridDynamicsModel(serialization.Serializable):
 
     @tensor_utils.ensure_2d_input
     def project_input_to_training_distribution(self, x, u, state_distance=_one_norm_dist, dist_weight=10,
-                                               delta_loss_threshold=0.0005, lr=0.01, plot=False):
+                                               delta_loss_threshold=0.005, lr=0.1, plot=False):
         if x.shape[0] is 0:
             return x
         x_new = x.clone()
