@@ -37,6 +37,26 @@ class OnlineMPC(controller.MPC):
         super().__init__(*args, **kwargs)
         assert isinstance(self.dynamics, hybrid_model.HybridDynamicsModel)
 
+    def state_dict(self):
+        state = super().state_dict()
+        try:
+            state.update({'mpc_u': self.mpc.U})
+        except AttributeError as e:
+            pass
+        state.update({'dynamics_class_history': self.dynamics_class_history, 'mpc_cost_history': self.mpc_cost_history})
+        return state
+
+    def load_state_dict(self, state):
+        if not super(OnlineMPC, self).load_state_dict(state):
+            return False
+        try:
+            self.mpc.U = state['mpc_u']
+        except (AttributeError, KeyError):
+            pass
+        self.dynamics_history = state['dynamics_class_history']
+        self.mpc_cost_history = state['mpc_cost_history']
+        return True
+
     def update_prior(self, prior):
         self.dynamics.prior = prior
 
@@ -216,7 +236,8 @@ class TAMPC(OnlineMPC):
         # state distance between making contacts for distinguishing separate contacts
         self.in_contact_with_known_immovable = False
         self.contact_set = contact.ContactSet(0.1, state_to_position, self.u_sim,
-                                              immovable_collision_checker=self._known_immovable_obstacle_collision_check)
+                                              immovable_collision_checker=self._known_immovable_obstacle_collision_check,
+                                              contact_object_factory=self._create_contact_object)
         self.contact_force_threshold = 0.5
         self.contact_cost = None
         self.contact_use_prior = contact_use_prior
@@ -234,6 +255,56 @@ class TAMPC(OnlineMPC):
     def set_goal(self, goal):
         super(TAMPC, self).set_goal(goal)
         self.contact_cost = cost.AvoidContactAtGoalCost(self.goal, scale=0.5)
+
+    def state_dict(self):
+        state = super(TAMPC, self).state_dict()
+        state.update({'trap_set_weight': self.trap_set_weight, 'nominal_dynamic_states': self.nominal_dynamic_states,
+                      'single_step_move_dist': self.single_step_move_dist,
+                      'using_local_model_for_nonnominal_dynamics': self.using_local_model_for_nonnominal_dynamics,
+                      'nonnominal_dynamics_start_index': self.nonnominal_dynamics_start_index,
+                      'nominal_max_velocity': self.nominal_max_velocity,
+                      'autonomous_recovery_mode': self.autonomous_recovery_mode,
+                      'autonomous_recovery_start_index': self.autonomous_recovery_start_index,
+                      'autonomous_recovery_end_index': self.autonomous_recovery_end_index,
+                      })
+        return state
+
+    def _get_auxiliary_filenames(self, filename):
+        local_dynamics_filename = "{}.local_dynamics".format(filename)
+        contact_set_filename = "{}.contact_set".format(filename)
+        return local_dynamics_filename, contact_set_filename
+
+    def save(self, filename):
+        super(TAMPC, self).save(filename)
+        lfn, cfn = self._get_auxiliary_filenames(filename)
+        if self.using_local_model_for_nonnominal_dynamics:
+            self.dynamics.save(lfn)
+        self.contact_set.save(cfn)
+
+    def load_state_dict(self, state):
+        if not super(TAMPC, self).load_state_dict(state):
+            return False
+        self.trap_set_weight = state['trap_set_weight']
+        self.nominal_dynamic_states = state['nominal_dynamic_states']
+        self.single_step_move_dist = state['single_step_move_dist']
+        self.using_local_model_for_nonnominal_dynamics = state['using_local_model_for_nonnominal_dynamics']
+        self.nonnominal_dynamics_start_index = state['nonnominal_dynamics_start_index']
+        self.nominal_max_velocity = state['nominal_max_velocity']
+        self.autonomous_recovery_mode = state['autonomous_recovery_mode']
+        self.autonomous_recovery_start_index = state['autonomous_recovery_start_index']
+        self.autonomous_recovery_end_index = state['autonomous_recovery_end_index']
+        return True
+
+    def load(self, filename) -> bool:
+        if not super(TAMPC, self).load(filename):
+            return False
+        lfn, cfn = self._get_auxiliary_filenames(filename)
+        if self.using_local_model_for_nonnominal_dynamics:
+            if not self.dynamics.load(lfn):
+                return False
+        if not self.contact_set.load(cfn):
+            return False
+        return True
 
     # contact methods
     @tensor_utils.ensure_2d_input
@@ -568,6 +639,13 @@ class TAMPC(OnlineMPC):
             elif self._control_effort(self.u_history[i]) > 0:
                 self.nominal_dynamic_states[-1].insert(0, self.x_history[i])
 
+    def _create_contact_object(self):
+        c = contact.ContactObject(self.dynamics.create_empty_local_model(use_prior=self.contact_use_prior,
+                                                                         preprocessor=self.contact_preprocessing,
+                                                                         nom_projection=False),
+                                  self.state_to_pos, self.pos_to_state)
+        return c
+
     def _update_contact_set(self, x, u, dx):
         # only update if we're making contact with unknown object
         if self.in_contact_with_known_immovable:
@@ -576,12 +654,8 @@ class TAMPC(OnlineMPC):
         cc, ii = self.contact_set.check_which_object_applies(x, u)
         # couldn't find an existing contact
         if not len(cc):
-            # TODO try linear model?
             # if using object-centered model, don't use preprocessor, else use default
-            c = contact.ContactObject(self.dynamics.create_empty_local_model(use_prior=self.contact_use_prior,
-                                                                             preprocessor=self.contact_preprocessing,
-                                                                             nom_projection=False),
-                                      self.state_to_pos, self.pos_to_state)
+            c = self._create_contact_object()
             self.contact_set.append(c)
         # matches more than 1 contact set, combine them
         elif len(cc) > 1:

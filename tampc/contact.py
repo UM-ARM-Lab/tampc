@@ -1,11 +1,14 @@
 import torch
 import typing
 import copy
+import logging
 from tampc.dynamics import online_model
-from arm_pytorch_utilities import tensor_utils, optim
+from arm_pytorch_utilities import tensor_utils, optim, serialization
+
+logger = logging.getLogger(__name__)
 
 
-class ContactObject:
+class ContactObject(serialization.Serializable):
     def __init__(self, empty_local_model: online_model.OnlineDynamicsModel, state_to_pos, pos_to_state,
                  assume_linear_scaling=True):
         # (x, u, dx) tuples associated with this object for fitting local model
@@ -21,6 +24,24 @@ class ContactObject:
         self.pos_to_state = pos_to_state
 
         self.assume_linear_scaling = assume_linear_scaling
+
+    def state_dict(self) -> dict:
+        state = {'points': self.points,
+                 'center_point': self.center_point,
+                 'actions': self.actions,
+                 'probability': self.probability,
+                 'dynamics': self.dynamics.state_dict()
+                 }
+        return state
+
+    def load_state_dict(self, state: dict) -> bool:
+        self.points = state['points']
+        self.center_point = state['center_point']
+        self.actions = state['actions']
+        self.probability = state['probability']
+        if not self.dynamics.load_state_dict(state['dynamics']):
+            return False
+        return True
 
     def add_transition(self, x, u, dx):
         self.probability = -1  # dummy value to indicate for updated to set it to 1
@@ -103,9 +124,11 @@ class ContactObject:
         return torch.tensor(res, device=optim.get_device())
 
 
-class ContactSet:
-    def __init__(self, contact_max_linkage_dist, state_to_pos, u_sim, fade_per_contact=0.8, fade_per_no_contact=0.95,
-                 ignore_below_probability=0.25, immovable_collision_checker=None):
+class ContactSet(serialization.Serializable):
+    def __init__(self, contact_max_linkage_dist, state_to_pos, u_sim, fade_per_contact=0.8,
+                 fade_per_no_contact=0.95,
+                 ignore_below_probability=0.25, immovable_collision_checker=None,
+                 contact_object_factory=None):
         self._obj: typing.List[ContactObject] = []
         # cached center of all points
         self.center_points = None
@@ -118,7 +141,28 @@ class ContactSet:
         self.ignore_below_probability = ignore_below_probability
 
         self.immovable_collision_checker = immovable_collision_checker
+        # used to produce contact objects during loading
+        self.contact_object_factory = contact_object_factory
 
+    def state_dict(self) -> dict:
+        state = {'center_points': self.center_points, 'num_obj': len(self._obj)}
+        for i, obj in enumerate(self._obj):
+            state.update({'o{}'.format(i): obj.state_dict()})
+        return state
+
+    def load_state_dict(self, state: dict) -> bool:
+        self.center_points = state['center_points']
+        if self.contact_object_factory is None:
+            logger.error("Need contact object factory in contact set to create contact objects during loading")
+            return False
+        n = state['num_obj']
+        self._obj = []
+        for i in range(n):
+            c = self.contact_object_factory()
+            if not c.load_state_dict(state['o{}'.format(i)]):
+                return False
+            self._obj.append(c)
+        return True
 
     def __len__(self):
         return len(self._obj)

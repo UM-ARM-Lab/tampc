@@ -1,11 +1,13 @@
 import abc
 import logging
+import os.path
 
 import numpy as np
 import torch
 
 from arm_pytorch_utilities import math_utils
 from arm_pytorch_utilities import tensor_utils
+from arm_pytorch_utilities import serialization
 from pytorch_mppi import mppi
 
 from tampc import cost
@@ -13,7 +15,7 @@ from tampc import cost
 logger = logging.getLogger(__name__)
 
 
-class Controller(abc.ABC):
+class Controller(serialization.Serializable):
     """
     Controller that gives a command for a given observation (public API is ndarrays)
     Internally may keep state represented as ndarrays or tensors
@@ -25,6 +27,13 @@ class Controller(abc.ABC):
         """
         self.goal = None
         self.compare_to_goal = compare_to_goal
+
+    def state_dict(self) -> dict:
+        return {'goal': self.goal}
+
+    def load_state_dict(self, state: dict) -> bool:
+        self.goal = state['goal']
+        return True
 
     def reset(self):
         """Clear any controller state to be reused in another trial"""
@@ -132,6 +141,13 @@ class ControllerWithModelPrediction(Controller):
         # give the predicted state from the last u output from command, or None if command wasn't called yet
         self.predicted_next_state = None
 
+    def state_dict(self):
+        return {'predicted_next_state': self.predicted_next_state}
+
+    def load_state_dict(self, state: dict):
+        self.predicted_next_state = state['predicted_next_state']
+        return True
+
     def prediction_error(self, observed_x):
         if self.predicted_next_state is None:
             return None
@@ -237,6 +253,34 @@ class MPC(ControllerWithModelPrediction):
         self.u_history = []
         self.orig_cost_history = []
         self.context = None
+
+    def state_dict(self):
+        # excludes data given at construction time for simplicity
+        state = super().state_dict()
+        state.update(
+            {'pred_error_log': self.pred_error_log, 'diff_predicted': self.diff_predicted, 'x_history': self.x_history,
+             'u_history': self.u_history, 'orig_cost_history': self.orig_cost_history, 'context': self.context,
+             'trap_set': self.trap_set})
+        return state
+
+    def load_state_dict(self, state):
+        if not super().load_state_dict(state):
+            return False
+        self.pred_error_log = state['pred_error_log']
+        self.diff_predicted = state['diff_predicted']
+        self.x_history = state['x_history']
+        self.u_history = state['u_history']
+        self.orig_cost_history = state['orig_cost_history']
+        self.context = state['context']
+        self.trap_set = state['trap_set']
+
+        self.goal_cost = cost.CostQROnlineTorch(self.goal, self.Q, self.R, self.compare_to_goal)
+        if self.trap_cost is not None:
+            self.trap_cost = cost.TrapSetCost(self.trap_set, self.compare_to_goal, self.state_dist, self.u_sim,
+                                              self._trap_cost_reduce)
+            self.cost = cost.ComposeCost([self.goal_cost, self.trap_cost])
+
+        return True
 
     def set_goal(self, goal):
         goal = torch.tensor(goal, dtype=self.dtype, device=self.d)

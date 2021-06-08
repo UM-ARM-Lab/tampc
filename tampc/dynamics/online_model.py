@@ -1,6 +1,6 @@
 import torch
 import os.path
-from arm_pytorch_utilities import linalg, rand
+from arm_pytorch_utilities import linalg, rand, serialization
 from tampc.dynamics import model, prior
 from torch.distributions.multivariate_normal import MultivariateNormal
 from torch import distributions
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 MAX_EVALUATE_AT_ONCE = 10000
 
 
-class OnlineDynamicsModel(model.DynamicsBase):
+class OnlineDynamicsModel(model.DynamicsBase, serialization.Serializable):
     """Different way of mixing local and nominal model; use nominal as mean"""
 
     def __init__(self, ds, state_difference, dtype=torch.float32, device=torch.device("cpu"),
@@ -33,14 +33,6 @@ class OnlineDynamicsModel(model.DynamicsBase):
     @abc.abstractmethod
     def reset(self):
         """Clear state of model"""
-
-    @abc.abstractmethod
-    def save(self, filename):
-        """Save parameters of model"""
-
-    @abc.abstractmethod
-    def load(self, filename):
-        """Load parameters of model"""
 
     def update(self, px, pu, cx):
         """Update local model with new (x,u,x') data point in original space"""
@@ -440,25 +432,15 @@ class OnlineGPMixing(OnlineDynamicsModel):
                  })
         return state
 
-    def save(self, filename):
-        torch.save(self.state_dict(), filename)
-
-    def load(self, filename):
-        if not os.path.isfile(filename):
-            return False
-        try:
-            checkpoint = torch.load(filename)
-        except RuntimeError as e:
-            logger.warning(e)
-            checkpoint = torch.load(filename, map_location=torch.device('cpu'))
-        self.init_xu = checkpoint['init_xu']
-        self.init_y = checkpoint['init_y']
-        self.xu = checkpoint['xu']
-        self.y = checkpoint['y']
-        if self.optimizer is not None and 'optimizer' in checkpoint:
-            self.optimizer.load_state_dict(checkpoint['optimizer'])
-            self.likelihood.load_state_dict(checkpoint['likelihood'])
-            self.gp.load_state_dict(checkpoint['gp'])
+    def load_state_dict(self, state: dict) -> bool:
+        self.init_xu = state['init_xu']
+        self.init_y = state['init_y']
+        self.xu = state['xu']
+        self.y = state['y']
+        if self.optimizer is not None and 'optimizer' in state:
+            self.optimizer.load_state_dict(state['optimizer'])
+            self.likelihood.load_state_dict(state['likelihood'])
+            self.gp.load_state_dict(state['gp'])
             self._set_gp_train_data()
         return True
 

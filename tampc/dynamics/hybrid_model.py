@@ -1,6 +1,7 @@
 import torch
 from arm_pytorch_utilities import tensor_utils
 from arm_pytorch_utilities import preprocess
+from arm_pytorch_utilities import serialization
 from tampc.controller import gating_function
 from tampc.dynamics import online_model
 from arm_pytorch_utilities.make_data import datasource
@@ -97,7 +98,7 @@ def _one_norm_dist(x, x_new):
     return (x_new - x).abs().sum(dim=1)
 
 
-class HybridDynamicsModel(abc.ABC):
+class HybridDynamicsModel(serialization.Serializable):
     """Different way of mixing local and nominal model; use nominal as mean"""
 
     def __init__(self, dss, pm, state_diff, state_dist, gating_args, gating_kwargs=None, nominal_model_kwargs=None,
@@ -139,8 +140,22 @@ class HybridDynamicsModel(abc.ABC):
                                                preprocessor=self.preprocessor, **self.local_model_kwargs)
             self.local_models.append(local_model)
 
+    def state_dict(self) -> dict:
+        state = {'using_residual_model': self.using_residual_model}
+        if self.using_residual_model:
+            state['nominal_model'] = self.nominal_model.state_dict()
+        return state
+
+    def load_state_dict(self, state: dict) -> bool:
+        self.using_residual_model = state['using_residual_model']
+        if self.using_residual_model:
+            self.use_residual_model()
+            if not self.nominal_model.load_state_dict(state['nominal_model']):
+                return False
+        return True
+
     def get_local_model(self, state_diff, pm, d, ds_local, preprocessor=None, allow_update=False,
-                        online_adapt=OnlineAdapt.GP_KERNEL_INDEP_OUT,
+                        online_adapt=OnlineAdapt.GP_KERNEL_TOTALLY_INDEP_OUT,
                         train_slice=None, nom_projection=True):
         nominal_state_projection = self._bound_state_projection if nom_projection else None
         local_dynamics = pm.dyn_net if pm is not None else None
