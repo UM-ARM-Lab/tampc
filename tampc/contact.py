@@ -25,6 +25,8 @@ class ContactObject(serialization.Serializable):
 
         self.assume_linear_scaling = assume_linear_scaling
 
+        # UKF stuff
+
     def state_dict(self) -> dict:
         state = {'points': self.points,
                  'center_point': self.center_point,
@@ -58,6 +60,7 @@ class ContactObject(serialization.Serializable):
             self.actions = torch.cat((self.actions, u.view(1, -1)))
 
         centered_x = x - self.center_point
+        # TODO change existing data to be relative to new data center point
         self.move_all_points(self.state_to_pos(dx))
 
         # self.transitions.append((x, u, dx))
@@ -81,6 +84,7 @@ class ContactObject(serialization.Serializable):
 
     @tensor_utils.ensure_2d_input
     def predict_dpos(self, pos, u, **kwargs):
+        # pos is relative to the object center
         u_scale = 1
         if self.assume_linear_scaling:
             u_scale = u.norm(dim=1)
@@ -107,28 +111,47 @@ class ContactObject(serialization.Serializable):
         npos = npos + self.center_point
         return self.pos_to_state(npos), dpos
 
-    def is_part_of_object(self, x, u, length_parameter, u_similarity):
+    def is_part_of_object(self, x, u, length_parameter, u_similarity, x_is_pos=False):
         u_sim = u_similarity(u, self.actions)
         valid = u_sim != 0
         p, u = self.points[valid], u_sim[valid]
         if len(p) is 0:
             return False
-        x = self.state_to_pos(x)
+        if not x_is_pos:
+            x = self.state_to_pos(x)
         d = (x - p).norm(dim=1) / u
         return torch.any(d < length_parameter)
 
-    def is_part_of_object_batch(self, x, u, length_parameter, u_similarity):
-        res = []
-        for i in range(len(x)):
-            res.append(self.is_part_of_object(x[i], u[i], length_parameter, u_similarity))
-        return torch.tensor(res, device=optim.get_device())
+    def is_part_of_object_batch(self, x, u, length_parameter, u_similarity, candidates=None, act=None, pts=None,
+                                x_is_pos=False):
+        total_num = x.shape[0]
+        if x_is_pos:
+            pos = x
+        else:
+            pos = self.state_to_pos(x)
+
+        if candidates is None:
+            candidates = torch.ones(total_num, dtype=torch.bool, device=x.device)
+        if act is None:
+            act = self.actions
+        if pts is None:
+            pts = self.points
+
+        u_sim = u_similarity(u[candidates], act[:, candidates]) + 1e-8  # avoid divide by 0
+        dd = (pos[candidates] - pts[:, candidates]).norm(dim=-1) / u_sim
+        accepted = torch.any(dd < length_parameter, dim=0)
+        if not torch.any(accepted):
+            return candidates, True
+        candidates[candidates] = accepted
+        return candidates, False
 
 
 class ContactSet(serialization.Serializable):
     def __init__(self, contact_max_linkage_dist, state_to_pos, u_sim, fade_per_contact=0.8,
                  fade_per_no_contact=0.95,
                  ignore_below_probability=0.25, immovable_collision_checker=None,
-                 contact_object_factory=None):
+                 contact_object_factory=None,
+                 contact_force_threshold=0.5):
         self._obj: typing.List[ContactObject] = []
         # cached center of all points
         self.center_points = None
@@ -143,6 +166,8 @@ class ContactSet(serialization.Serializable):
         self.immovable_collision_checker = immovable_collision_checker
         # used to produce contact objects during loading
         self.contact_object_factory = contact_object_factory
+        # process and measurement model uses this to decide when force is high or low magnitude
+        self.contact_force_threshold = contact_force_threshold
 
     def state_dict(self) -> dict:
         state = {'center_points': self.center_points, 'num_obj': len(self._obj)}
@@ -248,6 +273,27 @@ class ContactSet(serialization.Serializable):
 
         return res_c, res_i
 
+    def update(self, x, u, dx, reaction):
+        # TODO move this inside the measurement and process model of the UKFs?
+        if reaction.norm() < self.contact_force_threshold:
+            self.stepped_without_contact()
+            return
+
+        # associate each contact to a single object (max likelihood estimate on which object it is)
+        cc, ii = self.check_which_object_applies(x, u)
+        # couldn't find an existing contact
+        if not len(cc):
+            # if using object-centered model, don't use preprocessor, else use default
+            c = self.contact_object_factory()
+            self.append(c)
+        # matches more than 1 contact set, combine them
+        elif len(cc) > 1:
+            c = self.merge_objects(ii)
+        else:
+            c = cc[0]
+        c.add_transition(x, u, dx)
+        self.updated()
+
     def get_batch_data_for_dynamics(self, total_num):
         if not self._obj:
             return None, None, None
@@ -281,12 +327,10 @@ class ContactSet(serialization.Serializable):
                     continue
 
                 # u_sim[stored action index (# points of object), total_num], sim of stored action and sampled action
-                u_sim = self.u_sim(u[candidates], act[:, candidates]) + 1e-8  # avoid divide by 0
-                dd = (pos[candidates] - pts[:, candidates]).norm(dim=-1) / u_sim
-                accepted = torch.any(dd < self.contact_max_linkage_dist, dim=0)
-                if not torch.any(accepted):
+                candidates, none = c.is_part_of_object_batch(pos, u, self.contact_max_linkage_dist, self.u_sim,
+                                                             candidates=candidates, act=act, pts=pts, x_is_pos=True)
+                if none:
                     continue
-                candidates[candidates] = accepted
 
                 # now the candidates are fully filtered, can apply dynamics to those
                 dpos = c.predict_dpos(rel_pos[i, candidates], u[candidates])

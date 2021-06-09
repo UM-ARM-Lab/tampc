@@ -238,8 +238,8 @@ class TAMPC(OnlineMPC):
         self.in_contact_with_known_immovable = False
         self.contact_set = contact.ContactSet(0.1, state_to_position, self.u_sim,
                                               immovable_collision_checker=self._known_immovable_obstacle_collision_check,
-                                              contact_object_factory=self._create_contact_object)
-        self.contact_force_threshold = 0.5
+                                              contact_object_factory=self._create_contact_object,
+                                              contact_force_threshold=0.5)
         self.contact_cost = None
         self.contact_use_prior = contact_use_prior
         self.state_to_pos = state_to_position
@@ -653,25 +653,7 @@ class TAMPC(OnlineMPC):
         if self.in_contact_with_known_immovable:
             return
 
-        # TODO move this inside the measurement and process model of the UKFs?
-        if reaction.norm() < self.contact_force_threshold:
-            self.contact_set.stepped_without_contact()
-            return
-
-        # associate each contact to a single object (max likelihood estimate on which object it is)
-        cc, ii = self.contact_set.check_which_object_applies(x, u)
-        # couldn't find an existing contact
-        if not len(cc):
-            # if using object-centered model, don't use preprocessor, else use default
-            c = self._create_contact_object()
-            self.contact_set.append(c)
-        # matches more than 1 contact set, combine them
-        elif len(cc) > 1:
-            c = self.contact_set.merge_objects(ii)
-        else:
-            c = cc[0]
-        c.add_transition(x, u, dx)
-        self.contact_set.updated()
+        self.contact_set.update(x, u, dx, reaction)
 
     def _compute_action(self, x):
         if self.predicted_next_state is not None:
