@@ -111,19 +111,8 @@ class ContactObject(serialization.Serializable):
         npos = npos + self.center_point
         return self.pos_to_state(npos), dpos
 
-    def is_part_of_object(self, x, u, length_parameter, u_similarity, x_is_pos=False):
-        u_sim = u_similarity(u, self.actions)
-        valid = u_sim != 0
-        p, u = self.points[valid], u_sim[valid]
-        if len(p) is 0:
-            return False
-        if not x_is_pos:
-            x = self.state_to_pos(x)
-        d = (x - p).norm(dim=1) / u
-        return torch.any(d < length_parameter)
-
-    def is_part_of_object_batch(self, x, u, length_parameter, u_similarity, candidates=None, act=None, pts=None,
-                                x_is_pos=False):
+    def clusters_to_object(self, x, u, length_parameter, u_similarity, candidates=None, act=None, pts=None,
+                           x_is_pos=False):
         total_num = x.shape[0]
         if x_is_pos:
             pos = x
@@ -133,9 +122,9 @@ class ContactObject(serialization.Serializable):
         if candidates is None:
             candidates = torch.ones(total_num, dtype=torch.bool, device=x.device)
         if act is None:
-            act = self.actions
+            act = self.actions.repeat(total_num, 1, 1).transpose(0, -2)
         if pts is None:
-            pts = self.points
+            pts = self.points.repeat(total_num, 1, 1).transpose(0, -2)
 
         u_sim = u_similarity(u[candidates], act[:, candidates]) + 1e-8  # avoid divide by 0
         dd = (pos[candidates] - pts[:, candidates]).norm(dim=-1) / u_sim
@@ -265,7 +254,9 @@ class ContactSet(serialization.Serializable):
                 continue
             # we're using the x before contact because our estimate of the object points haven't moved yet
             # TODO handle when multiple contact objects claim it is part of them
-            if cc.is_part_of_object(x, u, self.contact_max_linkage_dist, self.u_sim):
+            clustered, _ = cc.clusters_to_object(x.view(1, -1), u.view(1, -1), self.contact_max_linkage_dist,
+                                                 self.u_sim)
+            if clustered[0]:
                 res_c.append(cc)
                 res_i.append(i)
                 # still can't deal with merging very well, so revert back to returning a single object
@@ -327,8 +318,8 @@ class ContactSet(serialization.Serializable):
                     continue
 
                 # u_sim[stored action index (# points of object), total_num], sim of stored action and sampled action
-                candidates, none = c.is_part_of_object_batch(pos, u, self.contact_max_linkage_dist, self.u_sim,
-                                                             candidates=candidates, act=act, pts=pts, x_is_pos=True)
+                candidates, none = c.clusters_to_object(pos, u, self.contact_max_linkage_dist, self.u_sim,
+                                                        candidates=candidates, act=act, pts=pts, x_is_pos=True)
                 if none:
                     continue
 
