@@ -648,13 +648,6 @@ class TAMPC(OnlineMPC):
                                   self.state_to_pos, self.pos_to_state)
         return c
 
-    def _update_contact_set(self, x, u, dx, reaction):
-        # only update if we're making contact with unknown object
-        if self.in_contact_with_known_immovable:
-            return
-
-        self.contact_set.update(x, u, dx, reaction)
-
     def _compute_action(self, x):
         if self.predicted_next_state is not None:
             self.in_contact_with_known_immovable, _ = self._known_immovable_obstacle_collision_check(
@@ -679,7 +672,9 @@ class TAMPC(OnlineMPC):
         if len(self.x_history) > 1:
             reaction = self.state_to_reaction(x)
             px = self.x_history[-2]  # note that x is already latest in list
-            self._update_contact_set(px, self.u_history[-1], self.compare_to_goal(x, px)[0], reaction)
+            # only update if we're making contact with unknown object
+            if not self.in_contact_with_known_immovable:
+                self.contact_set.update(px, self.u_history[-1], self.compare_to_goal(x, px)[0], reaction)
 
         # in non-nominal dynamics
         if self._in_non_nominal_dynamics():
