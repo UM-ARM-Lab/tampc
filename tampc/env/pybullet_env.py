@@ -5,6 +5,7 @@ import random
 import time
 import numpy as np
 import enum
+import math
 
 from datetime import datetime
 
@@ -180,7 +181,8 @@ class DebugDrawer:
                 height = self._default_height
         return height
 
-    def draw_point(self, name, point, color=(0, 0, 0), length=0.01, height=None, label=None):
+    def draw_point(self, name, point, color=(0, 0, 0), length=0.01, length_ratio=1, rot=0, height=None, label=None,
+                   scale=2):
         if name not in self._debug_ids:
             self._debug_ids[name] = [-1, -1, -1]
         uids = self._debug_ids[name]
@@ -189,9 +191,14 @@ class DebugDrawer:
         height = self._process_point_height(point, height)
 
         location = (point[0], point[1], height)
-        uids[0] = p.addUserDebugLine(np.add(location, [length, 0, 0]), np.add(location, [-length, 0, 0]), color, 2,
+        c = math.cos(rot)
+        s = math.sin(rot)
+        uids[0] = p.addUserDebugLine(np.add(location, [length * c, 0 + s, 0]),
+                                     np.add(location, [-length * c, 0 - s, 0]), color, scale,
                                      replaceItemUniqueId=uids[0])
-        uids[1] = p.addUserDebugLine(np.add(location, [0, length, 0]), np.add(location, [0, -length, 0]), color, 2,
+        uids[1] = p.addUserDebugLine(np.add(location, [0 + s * length_ratio, length * length_ratio * c, 0]),
+                                     np.add(location, [0 - s * length_ratio, -length * length_ratio * c, 0]), color,
+                                     scale,
                                      replaceItemUniqueId=uids[1])
         if label is not None:
             uids[2] = p.addUserDebugText(label,
