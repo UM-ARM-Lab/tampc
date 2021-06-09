@@ -175,6 +175,7 @@ class TAMPC(OnlineMPC):
                  recovery_scale=1, recovery_horizon=5, R_env=None,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE,
                  state_to_position=None,
+                 state_to_reaction=None,
                  position_to_state=None,
                  contact_use_prior=True,
                  known_immovable_obstacles=None,
@@ -242,6 +243,7 @@ class TAMPC(OnlineMPC):
         self.contact_cost = None
         self.contact_use_prior = contact_use_prior
         self.state_to_pos = state_to_position
+        self.state_to_reaction = state_to_reaction
         self.pos_to_state = position_to_state
         if state_to_position is not None and position_to_state is not None:
             # TODO this should come from the environment (i.e. maximum position change achieved by any single action)
@@ -646,10 +648,16 @@ class TAMPC(OnlineMPC):
                                   self.state_to_pos, self.pos_to_state)
         return c
 
-    def _update_contact_set(self, x, u, dx):
+    def _update_contact_set(self, x, u, dx, reaction):
         # only update if we're making contact with unknown object
         if self.in_contact_with_known_immovable:
             return
+
+        # TODO move this inside the measurement and process model of the UKFs?
+        if reaction.norm() < self.contact_force_threshold:
+            self.contact_set.stepped_without_contact()
+            return
+
         # associate each contact to a single object (max likelihood estimate on which object it is)
         cc, ii = self.contact_set.check_which_object_applies(x, u)
         # couldn't find an existing contact
@@ -686,14 +694,10 @@ class TAMPC(OnlineMPC):
             self.single_step_move_dist.append((x_index, last_step_dist, predicted_step_dist))
 
         # update tracked contact objects
-        # TODO generalize extract reaction forces
-        reaction = x[-2:]
-        if reaction.norm() > self.contact_force_threshold:
-            # get previous x, u, dx
+        if len(self.x_history) > 1:
+            reaction = self.state_to_reaction(x)
             px = self.x_history[-2]  # note that x is already latest in list
-            self._update_contact_set(px, self.u_history[-1], self.compare_to_goal(x, px)[0])
-        else:
-            self.contact_set.stepped_without_contact()
+            self._update_contact_set(px, self.u_history[-1], self.compare_to_goal(x, px)[0], reaction)
 
         # in non-nominal dynamics
         if self._in_non_nominal_dynamics():

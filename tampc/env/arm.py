@@ -74,6 +74,10 @@ class ArmEnv(PybulletEnv):
         return state[:3]
 
     @staticmethod
+    def get_ee_reaction(state):
+        return state[-2:]
+
+    @staticmethod
     @tensor_utils.ensure_2d_input
     def get_ee_pos_states(states):
         return states[:, :3]
