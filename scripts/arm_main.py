@@ -359,6 +359,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                                        reuse_escape_as_demonstration=reuse_escape_as_demonstration,
                                        use_trap_cost=use_trap_cost,
                                        state_to_position=env.get_ee_pos_states,
+                                       state_to_reaction=env.get_ee_reaction,
                                        position_to_state=env.get_state_ee_pos,
                                        never_estimate_error_dynamics=never_estimate_error,
                                        known_immovable_obstacles=env.immovable,
@@ -584,8 +585,8 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
             env._dd.draw_point('state{}'.format(i), pos, label='{}'.format(i))
             cx = torch.tensor(x, dtype=dt, device=d).repeat(N, 1)
 
-            applicable = c.is_part_of_object_batch(cx, cu, ctrl.contact_set.contact_max_linkage_dist,
-                                                   ctrl.contact_set.u_sim)
+            applicable, _ = c.clusters_to_object(cx, cu, ctrl.contact_set.contact_max_linkage_dist,
+                                                 ctrl.contact_set.u_sim)
             applicable_u = cu[applicable]
             for k, u in enumerate(applicable_u):
                 env._draw_action(u.cpu() * 0.15, old_state=x, debug=k + 1 + i * N)
@@ -621,6 +622,141 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
     level = kwargs.pop('level')
     assert level in [task_map['straight_line'], task_map['wall_behind']]
     run_controller('tune_avoid_nonnom_action', setup, *args, num_frames=num_frames, level=level, **kwargs)
+
+
+def test_residual_model_batching(*args, **kwargs):
+    def setup(env, ctrl, ds):
+        goal = [0.0, 0.]
+        init = [1, 0]
+        # init = [0.5657+0.1, -0.0175]
+        env.set_task_config(goal=goal, init=init)
+        ctrl.set_goal(env.goal)
+
+        # previous contacts made
+        from torch import tensor
+        from tampc.contact import ContactObject
+        from tampc.dynamics import online_model
+        d = 'cuda:0'
+        dt = torch.float64
+        if level is task_map['straight_line']:
+            p.resetBasePositionAndOrientation(env.movable[0],
+                                              (0.3877745438935845, 0.06599132022739296, 0.07692224061451539),
+                                              (-0.0019374005104293949, -0.0025102144283983864, 0.018303218072636906,
+                                               0.999827453869402))
+            xs = [tensor([0.6668, -0.0734, 0.0000, 0.0000], device=d, dtype=dt),
+                  tensor([0.6368, -0.0434, 9.3426, -9.3518], device=d, dtype=dt),
+                  tensor([0.6159, -0.0396, 13.4982, -1.2811], device=d, dtype=dt),
+                  tensor([0.5957, -0.0147, 9.8322, -6.9042], device=d, dtype=dt),
+                  tensor([0.5657, -0.0175, 12.4257, -0.6292], device=d, dtype=dt)]
+            us = [tensor([-1.0000, 1.0000], device=d, dtype=dt),
+                  tensor([-0.6976, 0.1258], device=d, dtype=dt),
+                  tensor([-0.6750, 0.8334], device=d, dtype=dt),
+                  tensor([-1.0000, -0.0950], device=d, dtype=dt),
+                  tensor([-0.4818, 0.7293], device=d, dtype=dt)]
+            dxs = [tensor([-0.0300, 0.0300, 9.3426, -9.3518], device=d, dtype=dt),
+                   tensor([-2.0901e-02, 3.7697e-03, 4.1557e+00, 8.0707e+00], device=d, dtype=dt),
+                   tensor([-0.0202, 0.0250, -3.6660, -5.6231], device=d, dtype=dt),
+                   tensor([-2.9964e-02, -2.8484e-03, 2.5935e+00, 6.2750e+00], device=d, dtype=dt),
+                   tensor([-0.0144, 0.0219, -1.2938, -5.4011], device=d, dtype=dt)]
+        elif level is task_map['wall_behind']:
+            p.resetBasePositionAndOrientation(env.movable[0],
+                                              (0.4855159140630499, 0.021602734077042208, 0.07608311271110159),
+                                              (-0.00015439536921398102, -0.0003589100213072153, 0.041949776970746026,
+                                               0.9991196442657762))
+            xs = [tensor([0.6764, 0.0672, 0.0000, 0.0000], device=d, dtype=dt),
+                  tensor([0.6636, 0.0882, 10.7653, -6.6299], device=d, dtype=dt),
+                  tensor([0.6637, 0.0865, 29.9954, 3.5119], device=d, dtype=dt),
+                  tensor([0.6637, 0.0613, 30.0026, 1.7917], device=d, dtype=dt),
+                  tensor([0.6635, 0.0558, 30.0201, 1.3798], device=d, dtype=dt),
+                  tensor([0.6635, 0.0552, 30.0013, 1.4532], device=d, dtype=dt),
+                  tensor([0.6726, 0.1155, 0.0000, 0.0000], device=d, dtype=dt)]
+            us = [tensor([-0.6988, 0.7021], device=d, dtype=dt),
+                  tensor([-1.0000, -0.0576], device=d, dtype=dt),
+                  tensor([-1.0000, -0.8388], device=d, dtype=dt),
+                  tensor([-0.1927, -0.1861], device=d, dtype=dt),
+                  tensor([-1.0000, -0.0202], device=d, dtype=dt),
+                  tensor([-0.6233, 0.9467], device=d, dtype=dt),
+                  tensor([-0.9784, 0.8822], device=d, dtype=dt)]
+            dxs = [tensor([-0.0127, 0.0210, 10.7653, -6.6299], device=d, dtype=dt),
+                   tensor([8.7072e-05, -1.7250e-03, 1.9230e+01, 1.0142e+01], device=d, dtype=dt),
+                   tensor([-2.8276e-05, -2.5146e-02, 7.2015e-03, -1.7201e+00], device=d, dtype=dt),
+                   tensor([-2.2353e-04, -5.5784e-03, 1.7508e-02, -4.1194e-01], device=d, dtype=dt),
+                   tensor([4.3680e-05, -6.0653e-04, -1.8815e-02, 7.3396e-02], device=d, dtype=dt),
+                   tensor([5.1479e-04, 2.8380e-02, -3.8951e-02, -3.5810e+00], device=d, dtype=dt),
+                   tensor([-1.4298e-02, 2.6445e-02, 3.0248e+01, 1.1995e+00], device=d, dtype=dt)]
+        else:
+            raise RuntimeError("Unsupported level {}".format(level))
+
+        # add data to the local model
+        ctrl.dynamics.use_residual_model()
+        for i in range(len(xs) - 1):
+            next_x = xs[i + 1].clone()
+            # don't try to predict next state reaction forces
+            next_x[-2:] = xs[i][-2:]
+            ctrl.dynamics.update(xs[i], us[i], next_x)
+
+        ctrl.dynamics.nominal_model.plot_dynamics_at_state(xs[-1])
+        # train dynamics for more iterations
+        # rand.seed(0)
+        # c.dynamics._recreate_all()
+        # c.dynamics._fit_params(100)
+
+        env.reset()
+        env.visualize_contact_set(ctrl.contact_set)
+
+        plt.show()
+        logger.info("env setup")
+
+    level = kwargs.pop('level')
+    assert level in [task_map['straight_line'], task_map['wall_behind']]
+    run_controller('tune_avoid_nonnom_action', setup, *args, level=level, **kwargs)
+
+
+def replay_trajectory(traj_data_name, upto_index, *args, **kwargs):
+    def setup(env, ctrl, ds):
+        env.reset()
+        ds_eval = ArmGetter.ds(env, traj_data_name, validation_ratio=0.)
+        ds_eval.update_preprocessor(ds.preprocessor)
+
+        # evaluate on a non-recovery dataset to see if rolling out the actions from the recovery set is helpful
+        XU, Y, info = ds_eval.training_set(original=True)
+        X, U = torch.split(XU, env.nx, dim=1)
+
+        saved_ctrl_filename = os.path.join(cfg.ROOT_DIR, 'checkpoints', '{}{}'.format(traj_data_name, upto_index))
+        # import copy
+        # orig_ctrl = copy.deepcopy(ctrl)
+
+        # need_to_compute_commands = True
+        # if ctrl.load(saved_ctrl_filename):
+        #     need_to_compute_commands = False
+
+        # put the state right before the evaluated action
+        x = X[upto_index].cpu().numpy()
+        logger.info(np.array2string(x, separator=', '))
+        # only need to do rollouts
+        T = ctrl.mpc.T
+        ctrl.original_horizon = 1
+        for i in range(upto_index):
+            env.draw_user_text(str(i), 1)
+            # if need_to_compute_commands:
+            #     ctrl.command(X[i].cpu().numpy())
+            if i > 1:
+                # will do worse than actual execution because we don't protect against immovable obstacle contact here
+                ctrl.contact_set.update(X[i - 1], U[i - 1], ctrl.compare_to_goal(X[i], X[i - 1])[0], X[i, -2:])
+                env.visualize_contact_set(ctrl.contact_set)
+            env.step(U[i].cpu().numpy())
+            # env.set_state(X[i].cpu().numpy(), U[i].cpu().numpy())
+            ctrl.mpc.change_horizon(1)
+
+        ctrl.original_horizon = T
+        ctrl.mpc.change_horizon(T)
+
+        ctrl.save(saved_ctrl_filename)
+        env.set_task_config(init=X[upto_index, :2])
+
+        logger.info("env played up to desired index")
+
+    run_controller('replay_{}'.format(traj_data_name), setup, *args, **kwargs)
 
 
 class EvaluateTask:
@@ -779,61 +915,7 @@ if __name__ == "__main__":
             task_names=task_names, success_min_dist=0.04)
 
     else:
-        ut = UseTsf.NO_TRANSFORM
-        name = "conditioning_check"
-        d, env, config, ds = ArmGetter.free_space_env_init(0)
-        XU, Y, _ = ds.training_set(original=True)
-        X, U = torch.split(XU, config.nx, dim=1)
-        dt = XU.dtype
-        state = torch.tensor([0, 0, -10, -10], dtype=dt, device=d)
-
-        u_mag = 1
-        N = 51
-        t = torch.from_numpy(np.linspace(-3, 3, N)).to(dtype=dt, device=d)
-        cu = torch.stack((torch.cos(t) * u_mag, torch.sin(t) * u_mag), dim=1)
-
-        u_train = U
-        t_train = torch.atan2(u_train[:, 1], u_train[:, 0]).cpu().numpy()
-        u_mag_train = u_train.norm(dim=1)
-        y_train = Y / u_mag_train.view(-1, 1)
-
-        t = t.cpu().numpy()
-        cx = torch.tensor(state, dtype=dt, device=d).repeat(N, 1)
-
-        y_names = ['$dx_{}$'.format(i) for i in range(len(state))]
-        to_plot_y_dims = [0, 1]
-        num_plots = min(len(to_plot_y_dims), y_train.shape[1])
-        f, axes = plt.subplots(num_plots, 1, sharex='all')
-        for j, dim in enumerate(to_plot_y_dims):
-            axes[j].scatter(t_train, y_train[:, dim].cpu().numpy(), color='k', marker='*', label='train')
-            axes[j].set_ylabel(y_names[dim])
-
-        for seed in range(1, 6):
-            #     ArmGetter.learn_model(ut, seed=seed, name=name, rep_name=args.rep_name, train_epochs=1000)
-            ds, pm = ArmGetter.prior(env, ut, rep_name=args.rep_name, name=name, seed=seed)
-
-            # load each model and plot predictions for training data
-            dss = [ds]
-            hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference,
-                                                               env.state_distance_two_arg, [ut.name],
-                                                               device=get_device(),
-                                                               preprocessor=no_tsf_preprocessor(),
-                                                               nominal_model_kwargs={'online_adapt': OnlineAdapt.NONE})
-
-            cls = torch.zeros(N)
-            yhat = hybrid_dynamics(cx, cu, cls)
-            yhat = yhat - cx
-
-            for j, dim in enumerate(to_plot_y_dims):
-                axes[j].scatter(t, yhat[:, dim].cpu().numpy(), label='seed={}'.format(seed))
-
-        axes[0].legend()
-        axes[-1].set_xlabel('action theta')
-        f.suptitle('evaluated at state={}'.format(state.cpu().numpy()))
-
-        plt.show()
-
-        # test_avoid_nonnominal_action(seed=0, level=level, use_tsf=ut,
+        # test_residual_model_batching(seed=0, level=task_map['straight_line'], use_tsf=ut,
         #                              assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
         #                              visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
         #                              override_tampc_params=tampc_params, override_mpc_params=mpc_params,
@@ -841,6 +923,17 @@ if __name__ == "__main__":
         #                              never_estimate_error=args.never_estimate_error,
         #                              apfvo_baseline=args.apfvo_baseline,
         #                              apfsp_baseline=args.apfsp_baseline)
+        replay_trajectory(
+            'arm/auto_recover__NONE__MAB__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST____2__500.mat',
+            63,
+            seed=2, level=5, use_tsf=ut,
+            assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
+            visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
+            override_tampc_params=tampc_params, override_mpc_params=mpc_params,
+            autonomous_recovery=online_controller.AutonomousRecovery.MAB,
+            never_estimate_error=args.never_estimate_error,
+            apfvo_baseline=args.apfvo_baseline,
+            apfsp_baseline=args.apfsp_baseline)
 
         # d, env, config, ds = ArmGetter.free_space_env_init(0)
         # ds.update_preprocessor(ArmGetter.pre_invariant_preprocessor(use_tsf=use_tsf))
