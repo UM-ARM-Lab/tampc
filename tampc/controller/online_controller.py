@@ -911,3 +911,134 @@ class APFSP(OnlineMPC):
         c = this_cost(next_state)
         ui = c.argmin()
         return u[ui]
+
+
+class TAMPCContactPolicyBaseline(TAMPC):
+    """Baseline where our strategy upon making contact is to take a local action"""
+
+    def _compute_action(self, x):
+        if self.predicted_next_state is not None:
+            self.in_contact_with_known_immovable, _ = self._known_immovable_obstacle_collision_check(
+                torch.tensor(self.predicted_next_state, dtype=self.dtype, device=self.d))
+        else:
+            self.in_contact_with_known_immovable = False
+        # use only state for dynamics_class selection; this way we can get dynamics_class before calculating action
+        a = torch.zeros((1, self.nu), device=self.d, dtype=x.dtype)
+        self.dynamics_class = self.gating.sample_class(x.view(1, -1), a).item()
+
+        if len(self.x_history) > 1:
+            x_index = len(self.x_history) - 2
+            last_step_dist = self._avg_displacement(x_index, x_index + 1)
+            # also hold the x index to reduce implicit bookkeeping
+            # note that these x index is 1 greater than the u index/time index
+            predicted_diff = self.compare_to_goal(self.x_history[x_index],
+                                                  torch.from_numpy(self.predicted_next_state).to(device=self.d))
+            predicted_step_dist = self.state_dist(predicted_diff)[0]
+            self.single_step_move_dist.append((x_index, last_step_dist, predicted_step_dist))
+
+        # in non-nominal dynamics
+        if self._in_non_nominal_dynamics():
+            self.dynamics_class = gating_function.DynamicsClass.UNRECOGNIZED
+
+            if not self.using_local_model_for_nonnominal_dynamics:
+                self._start_local_model(x)
+
+        self.dynamics_class_history.append(self.dynamics_class)
+
+        if not self.using_local_model_for_nonnominal_dynamics:
+            self.trap_set_weight = max(self.trap_set_weight * self.trap_cost_annealing_rate, self.min_trap_weight)
+
+        if self._entering_trap():
+            self._start_recovery_mode()
+
+        if self._left_trap():
+            self._end_recovery_mode()
+            if self.trap_cost is not None and len(self.trap_set):
+                if self.max_trap_weight is not None:
+                    self.trap_set_weight = self.max_trap_weight
+                elif self.auto_init_trap_cost:
+                    normalized_weights = [self.normalize_trapset_cost_to_state(prev_state) for prev_state in
+                                          self.nominal_dynamic_states[-1][-6:]]
+                    self.trap_set_weight = statistics.median(normalized_weights) * self.trap_cost_init_normalization
+                else:
+                    self.trap_set_weight *= (1 / self.trap_cost_annealing_rate) * 5
+                logger.debug("tune trap cost weight %f", self.trap_set_weight)
+
+        if self._left_local_model():
+            self._end_local_model()
+
+        reaction = self.state_to_reaction(x)
+        if self.autonomous_recovery_mode and self.autonomous_recovery is AutonomousRecovery.RANDOM:
+            u = torch.rand(self.nu, device=self.d).cuda() * (self.u_max - self.u_min) + self.u_min
+        else:
+            if self.autonomous_recovery_mode and self.autonomous_recovery is AutonomousRecovery.MAB:
+                self.turns_since_last_pull += 1
+                if self.last_arm_pulled is None or self.turns_since_last_pull >= self.pull_arm_every_n_steps:
+                    # update arms if we've pulled before
+                    if self.last_arm_pulled is not None:
+                        self._update_mab_arm(self.last_arm_pulled.item())
+
+                    # pull an arm and assign cost weight
+                    self.last_arm_pulled = self.mab.select_arm_to_pull()
+                    self.turns_since_last_pull = 0
+                    logger.debug("pulled arm %d = %s", self.last_arm_pulled.item(), self.recovery_cost_weight())
+
+            if len(self.x_history) > 1 and reaction.norm() > self.contact_set.contact_force_threshold:
+                u = self._action_when_in_contact(reaction)
+            else:
+                u = self.mpc.command_augmented(x, self.contact_set, self.contact_cost)
+
+        if self.trap_cost is not None:
+            logger.debug("trap set weight %f", self.trap_set_weight)
+
+        # in nominal dynamics
+        if not self.using_local_model_for_nonnominal_dynamics:
+            self.nominal_dynamic_states[-1].append(x)
+            num_states = len(self.nominal_dynamic_states[-1])
+            # update our estimate of max state velocity in nominal dynamics
+            if num_states >= 2:
+                cur_index = len(self.x_history) - 1
+                start = cur_index - min(num_states, self.nonnominal_dynamics_trend_len) + 1
+                vel = self._avg_displacement(start, cur_index)
+                if vel > self.nominal_max_velocity:
+                    self.nominal_max_velocity = vel
+                    logger.debug("nominal max state velocity updated to be %f", self.nominal_max_velocity)
+
+        return u
+
+    def _action_when_in_contact(self, reaction):
+        """Return control when in contact with given reaction force"""
+        raise NotImplementedError()
+
+
+class TAMPCRandomActionOnContact(TAMPCContactPolicyBaseline):
+    """Baseline where our strategy upon making contact is to take a random action"""
+
+    def _action_when_in_contact(self, reaction):
+        return torch.rand(self.nu, device=self.d) * (self.u_max - self.u_min) + self.u_min
+
+
+class TAMPCMoveAwayFromContact(TAMPCContactPolicyBaseline):
+    """Baseline where our strategy upon making contact is to take an action moving along reaction force direction"""
+
+    def _action_when_in_contact(self, reaction: torch.tensor):
+        return reaction / reaction.norm()
+
+
+class TAMPCMoveTangentToContact(TAMPCContactPolicyBaseline):
+    """Baseline where our strategy upon making contact is to take an action moving tangent to the reaction force
+    minimizing cost to goal"""
+
+    def _action_when_in_contact(self, reaction: torch.tensor):
+        x = self.x_history[-1]
+        # TODO generalize this (via sampling) to when we don't have a direct action -> action direction in R^3 mapping
+        # in 2D just 2 options, first get perpendicular vector
+        perp_direction = torch.tensor([reaction[1], -reaction[0]], device=reaction.device, dtype=reaction.dtype)
+        perp_direction /= perp_direction.norm()
+        a1 = perp_direction
+        a2 = -perp_direction
+        actions = torch.cat((a1.view(1, -1), a2.view(1, -1)), dim=0)
+        nx = self._apply_dynamics(x.repeat(2, 1), actions, t=0)
+        costs = self.cost(nx)
+        min_i = torch.argmin(costs)
+        return actions[min_i]

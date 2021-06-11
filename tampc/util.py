@@ -469,6 +469,10 @@ class UseTsf(enum.Enum):
     FEEDFORWARD_BASELINE = 17
 
 
+tsf_map = {'none': UseTsf.NO_TRANSFORM, 'coordinate_transform': UseTsf.COORD, 'learned_rex': UseTsf.REX_EXTRACT,
+           'rex_ablation': UseTsf.EXTRACT, 'extractor_ablation': UseTsf.SEP_DEC, 'skip_z': UseTsf.SKIP}
+
+
 def get_transform(env, ds, use_tsf, override_name=None):
     # add in invariant transform here
     d = get_device()
@@ -620,3 +624,25 @@ class EnvGetter(abc.ABC):
         mw = TranslationNetworkWrapper(model.DeterministicUser(make.make_sequential_network(config).to(device=d)), ds,
                                        name="{}_{}{}_{}".format(cls.dynamics_prefix(), tsf_name, name, seed))
         mw.learn_model(train_epochs, batch_N=batch_N)
+
+
+# baseline definitions
+class Baseline(enum.Enum):
+    NONE = 0
+    RANDOM_ON_CONTACT = 1
+    AWAY_FROM_CONTACT = 2
+    TANGENT_TO_CONTACT = 3
+    APFVO = 4
+    APFSP = 5
+    ADAPTIVE = 6
+    NON_ADAPTIVE = 7
+
+
+baseline_map = {'none': Baseline.NONE,
+                'random_contact': Baseline.RANDOM_ON_CONTACT,
+                'move_away': Baseline.AWAY_FROM_CONTACT,
+                'tangent': Baseline.TANGENT_TO_CONTACT,
+                'apfvo': Baseline.APFVO,
+                'apfsp': Baseline.APFSP,
+                'adaptive': Baseline.ADAPTIVE,
+                'non_adaptive': Baseline.NON_ADAPTIVE}

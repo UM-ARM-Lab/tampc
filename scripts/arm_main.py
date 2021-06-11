@@ -5,6 +5,7 @@ try:
 except:
     pass
 
+import enum
 import torch
 import pybullet as p
 import typing
@@ -31,7 +32,7 @@ from tampc.dynamics.hybrid_model import OnlineAdapt
 from tampc.controller import online_controller
 from tampc.controller.gating_function import AlwaysSelectNominal
 from tampc import util
-from tampc.util import no_tsf_preprocessor, UseTsf, EnvGetter
+from tampc.util import no_tsf_preprocessor, UseTsf, EnvGetter, Baseline
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
@@ -290,9 +291,8 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                    override_tampc_params=None,
                    override_mpc_params=None,
                    never_estimate_error=False,
-                   apfvo_baseline=False,
-                   apfsp_baseline=False,
                    project_state=True,
+                   baseline=Baseline.NONE,
                    low_level_mpc=controller.ExperimentalMPPI,
                    **kwargs):
     env = ArmGetter.env(level=level, mode=p.GUI)
@@ -336,12 +336,12 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
     logger.debug("running with parameters\nhigh level controller: %s\nlow level MPC: %s",
                  pprint.pformat(tampc_opts), pprint.pformat(mpc_opts))
 
-    if apfvo_baseline or apfsp_baseline:
+    if baseline in (Baseline.APFVO, Baseline.APFSP):
         tampc_opts.pop('trap_cost_annealing_rate')
         tampc_opts.pop('abs_unrecognized_threshold')
         tampc_opts.pop('dynamics_minimum_window')
         tampc_opts.pop('max_trap_weight')
-        if apfvo_baseline:
+        if baseline == Baseline.APFVO:
             rho = 0.4
             ctrl = online_controller.APFVO(ds, hybrid_dynamics, ds.original_config(), gating=gating,
                                            local_min_threshold=0.03, trap_max_dist_influence=rho, repulsion_gain=0.5,
@@ -355,17 +355,24 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                                            **tampc_opts)
             env.draw_user_text("APF-SP baseline", xy=(0.5, 0.7, -1))
     else:
-        ctrl = online_controller.TAMPC(ds, hybrid_dynamics, ds.original_config(), gating=gating,
-                                       autonomous_recovery=autonomous_recovery,
-                                       assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
-                                       reuse_escape_as_demonstration=reuse_escape_as_demonstration,
-                                       use_trap_cost=use_trap_cost,
-                                       state_to_position=env.get_ee_pos_states,
-                                       state_to_reaction=env.get_ee_reaction,
-                                       position_to_state=env.get_state_ee_pos,
-                                       never_estimate_error_dynamics=never_estimate_error,
-                                       known_immovable_obstacles=env.immovable,
-                                       **tampc_opts, )
+        ctrl_cls = online_controller.TAMPC
+        if baseline == Baseline.RANDOM_ON_CONTACT:
+            ctrl_cls = online_controller.TAMPCRandomActionOnContact
+        elif baseline == Baseline.AWAY_FROM_CONTACT:
+            ctrl_cls = online_controller.TAMPCMoveAwayFromContact
+        elif baseline == Baseline.TANGENT_TO_CONTACT:
+            ctrl_cls = online_controller.TAMPCMoveTangentToContact
+        ctrl = ctrl_cls(ds, hybrid_dynamics, ds.original_config(), gating=gating,
+                        autonomous_recovery=autonomous_recovery,
+                        assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
+                        reuse_escape_as_demonstration=reuse_escape_as_demonstration,
+                        use_trap_cost=use_trap_cost,
+                        state_to_position=env.get_ee_pos_states,
+                        state_to_reaction=env.get_ee_reaction,
+                        position_to_state=env.get_state_ee_pos,
+                        never_estimate_error_dynamics=never_estimate_error,
+                        known_immovable_obstacles=env.immovable,
+                        **tampc_opts, )
         if low_level_mpc is controller.ExperimentalMPPI:
             mpc = controller.ExperimentalMPPI(ctrl.mpc_apply_dynamics, ctrl.mpc_running_cost, ctrl.nx,
                                               u_min=ctrl.u_min, u_max=ctrl.u_max,
@@ -409,14 +416,13 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
             return tsf_name
 
         run_name = default_run_prefix
-        if apfvo_baseline:
-            affix_run_name('APFVO')
-        elif apfsp_baseline:
-            affix_run_name('APFSP')
+        if baseline != Baseline.NONE:
+            baseline_name = str(baseline).split('.')[1]
+            affix_run_name(baseline_name)
         if run_prefix is not None:
             affix_run_name(run_prefix)
         affix_run_name(nominal_adapt.name)
-        if not apfvo_baseline and not apfsp_baseline:
+        if not baseline in (Baseline.APFVO, Baseline.APFSP):
             affix_run_name(autonomous_recovery.name + ("_WITHDEMO" if use_demo else ""))
         if not project_state:
             affix_run_name("NO_PROJ")
@@ -791,10 +797,8 @@ parser.add_argument('command',
 parser.add_argument('--seed', metavar='N', type=int, nargs='+',
                     default=[0],
                     help='random seed(s) to run')
-tsf_map = {'none': UseTsf.NO_TRANSFORM, 'coordinate_transform': UseTsf.COORD, 'learned_rex': UseTsf.REX_EXTRACT,
-           'rex_ablation': UseTsf.EXTRACT, 'extractor_ablation': UseTsf.SEP_DEC, 'skip_z': UseTsf.SKIP}
 parser.add_argument('--representation', default='none',
-                    choices=tsf_map.keys(),
+                    choices=util.tsf_map.keys(),
                     help='representation to use for nominal dynamics')
 parser.add_argument('--rep_name', default=None, type=str,
                     help='name and seed of a learned representation to use')
@@ -818,13 +822,11 @@ parser.add_argument('--no_trap_cost', action='store_true', help='run parameter: 
 parser.add_argument('--no_projection', action='store_true',
                     help='run parameter: turn off state projection before passing in to nominal model')
 
-parser.add_argument('--nonadaptive_baseline', action='store_true',
-                    help='run parameter: use non-adaptive baseline options')
-parser.add_argument('--adaptive_baseline', action='store_true', help='run parameter: use adaptive baseline options')
-parser.add_argument('--apfvo_baseline', action='store_true',
-                    help='run parameter: use artificial potential field virtual obstacles baseline')
-parser.add_argument('--apfsp_baseline', action='store_true',
-                    help='run parameter: use artificial potential field switched potential baseline')
+parser.add_argument('--baseline', default='none',
+                    choices=util.baseline_map.keys(),
+                    help='run parameter: use some other baseline such as (random action when in contact, '
+                         'move along reaction force direction when in contact, '
+                         'and move tangent to reaction force when in contact)')
 
 parser.add_argument('--random_ablation', action='store_true', help='run parameter: use random recovery policy options')
 parser.add_argument('--visualize_rollout', action='store_true',
@@ -843,8 +845,9 @@ parser.add_argument('--eval_run_prefix', default=None, type=str,
 args = parser.parse_args()
 
 if __name__ == "__main__":
-    ut = tsf_map[args.representation]
+    ut = util.tsf_map[args.representation]
     level = task_map[args.task]
+    baseline = util.baseline_map[args.baseline]
     task_names = {v: k for k, v in task_map.items()}
     tampc_params = {}
     for d in args.tampc_param:
@@ -867,14 +870,14 @@ if __name__ == "__main__":
 
         if args.always_estimate_error:
             nominal_adapt = OnlineAdapt.GP_KERNEL_INDEP_OUT
-        if args.adaptive_baseline:
+        if baseline is Baseline.ADAPTIVE:
             nominal_adapt = OnlineAdapt.GP_KERNEL_INDEP_OUT
             autonomous_recovery = online_controller.AutonomousRecovery.NONE
             use_trap_cost = False
             ut = UseTsf.NO_TRANSFORM
         elif args.random_ablation:
             autonomous_recovery = online_controller.AutonomousRecovery.RANDOM
-        elif args.nonadaptive_baseline:
+        elif baseline is Baseline.NON_ADAPTIVE:
             autonomous_recovery = online_controller.AutonomousRecovery.NONE
             use_trap_cost = False
             ut = UseTsf.NO_TRANSFORM
@@ -889,8 +892,7 @@ if __name__ == "__main__":
                                      autonomous_recovery=autonomous_recovery,
                                      never_estimate_error=args.never_estimate_error,
                                      project_state=not args.no_projection,
-                                     apfvo_baseline=args.apfvo_baseline,
-                                     apfsp_baseline=args.apfsp_baseline)
+                                     baseline=baseline)
             # test_avoid_nonnominal_action(seed=seed, level=level, use_tsf=ut,
             #                              nominal_adapt=nominal_adapt, rep_name=args.rep_name,
             #                              reuse_escape_as_demonstration=False, use_trap_cost=use_trap_cost,
@@ -941,8 +943,7 @@ if __name__ == "__main__":
             override_tampc_params=tampc_params, override_mpc_params=mpc_params,
             autonomous_recovery=online_controller.AutonomousRecovery.MAB,
             never_estimate_error=args.never_estimate_error,
-            apfvo_baseline=args.apfvo_baseline,
-            apfsp_baseline=args.apfsp_baseline)
+            other_baseline=baseline)
 
         # d, env, config, ds = ArmGetter.free_space_env_init(0)
         # ds.update_preprocessor(ArmGetter.pre_invariant_preprocessor(use_tsf=use_tsf))
