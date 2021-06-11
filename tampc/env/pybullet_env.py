@@ -186,6 +186,7 @@ class DebugDrawer:
         if name not in self._debug_ids:
             self._debug_ids[name] = [-1, -1, -1]
         uids = self._debug_ids[name]
+        l = length
 
         # ignore 3rd dimension if it exists to plot everything at the same height
         height = self._process_point_height(point, height)
@@ -193,11 +194,11 @@ class DebugDrawer:
         location = (point[0], point[1], height)
         c = math.cos(rot)
         s = math.sin(rot)
-        uids[0] = p.addUserDebugLine(np.add(location, [length * c, 0 + s, 0]),
-                                     np.add(location, [-length * c, 0 - s, 0]), color, scale,
+        uids[0] = p.addUserDebugLine(np.add(location, [l * c, l * s, 0]),
+                                     np.add(location, [-l * c, - l * s, 0]), color, scale,
                                      replaceItemUniqueId=uids[0])
-        uids[1] = p.addUserDebugLine(np.add(location, [0 + s * length_ratio, length * length_ratio * c, 0]),
-                                     np.add(location, [0 - s * length_ratio, -length * length_ratio * c, 0]), color,
+        uids[1] = p.addUserDebugLine(np.add(location, [l * s * length_ratio, l * length_ratio * c, 0]),
+                                     np.add(location, [- l * s * length_ratio, -l * length_ratio * c, 0]), color,
                                      scale,
                                      replaceItemUniqueId=uids[1])
         if label is not None:
