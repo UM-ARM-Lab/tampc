@@ -292,6 +292,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                    never_estimate_error=False,
                    apfvo_baseline=False,
                    apfsp_baseline=False,
+                   project_state=True,
                    low_level_mpc=controller.ExperimentalMPPI,
                    **kwargs):
     env = ArmGetter.env(level=level, mode=p.GUI)
@@ -317,6 +318,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                                                        preprocessor=no_tsf_preprocessor(),
                                                        nominal_model_kwargs={'online_adapt': nominal_adapt},
                                                        ensemble=ensemble,
+                                                       project_by_default=project_state,
                                                        local_model_kwargs=kwargs)
 
     # we're always going to be in the nominal mode in this case; might as well speed up testing
@@ -416,6 +418,8 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
         affix_run_name(nominal_adapt.name)
         if not apfvo_baseline and not apfsp_baseline:
             affix_run_name(autonomous_recovery.name + ("_WITHDEMO" if use_demo else ""))
+        if not project_state:
+            affix_run_name("NO_PROJ")
         if never_estimate_error:
             affix_run_name('NO_E')
         affix_run_name(level)
@@ -805,11 +809,15 @@ parser.add_argument('--run_prefix', default=None, type=str,
                     help='run parameter: prefix to save the run under')
 parser.add_argument('--num_frames', metavar='N', type=int, default=500,
                     help='run parameter: number of simulation frames to run')
+
 parser.add_argument('--always_estimate_error', action='store_true',
                     help='run parameter: always online estimate error dynamics using a GP')
 parser.add_argument('--never_estimate_error', action='store_true',
                     help='run parameter: never online estimate error dynamics using a GP (always use e=0)')
 parser.add_argument('--no_trap_cost', action='store_true', help='run parameter: turn off trap set cost')
+parser.add_argument('--no_projection', action='store_true',
+                    help='run parameter: turn off state projection before passing in to nominal model')
+
 parser.add_argument('--nonadaptive_baseline', action='store_true',
                     help='run parameter: use non-adaptive baseline options')
 parser.add_argument('--adaptive_baseline', action='store_true', help='run parameter: use adaptive baseline options')
@@ -880,6 +888,7 @@ if __name__ == "__main__":
                                      override_tampc_params=tampc_params, override_mpc_params=mpc_params,
                                      autonomous_recovery=autonomous_recovery,
                                      never_estimate_error=args.never_estimate_error,
+                                     project_state=not args.no_projection,
                                      apfvo_baseline=args.apfvo_baseline,
                                      apfsp_baseline=args.apfsp_baseline)
             # test_avoid_nonnominal_action(seed=seed, level=level, use_tsf=ut,

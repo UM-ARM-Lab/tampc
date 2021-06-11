@@ -102,7 +102,8 @@ class HybridDynamicsModel(serialization.Serializable):
     """Different way of mixing local and nominal model; use nominal as mean"""
 
     def __init__(self, dss, pm, state_diff, state_dist, gating_args, gating_kwargs=None, nominal_model_kwargs=None,
-                 local_model_kwargs=None, device='cpu', preprocessor=None, ensemble=(), residual_model_trust_horizon=1):
+                 local_model_kwargs=None, device='cpu', preprocessor=None, ensemble=(), residual_model_trust_horizon=1,
+                 project_by_default=True):
         self.dss = dss
         self.preprocessor = preprocessor
         self.pm = pm
@@ -115,6 +116,7 @@ class HybridDynamicsModel(serialization.Serializable):
         self.residual_model_trust_horizon = residual_model_trust_horizon
         self.d = device
         self.ensemble = ensemble
+        self.project_by_default = project_by_default
 
         # consider expected variation
         # get error per dimension to scale our expectations of accuracy
@@ -205,6 +207,8 @@ class HybridDynamicsModel(serialization.Serializable):
         return isinstance(model, online_model.OnlineDynamicsModel)
 
     def create_empty_local_model(self, use_prior=True, preprocessor=preprocess.NoTransform(), **kwargs):
+        if 'nom_projection' not in kwargs:
+            kwargs['nom_projection'] = self.project_by_default
         return self.get_local_model(self.state_diff, self.pm if use_prior else None,
                                     self.d, self.ds_nominal,
                                     preprocessor=preprocessor,
@@ -244,7 +248,7 @@ class HybridDynamicsModel(serialization.Serializable):
                     next_state[local_cls] = self.local_models[s].predict(None, None, x[local_cls], u[local_cls])
         else:
             # after stop using residual model we project input once again so the nominal model gets known input
-            if t == self.residual_model_trust_horizon and self.using_residual_model:
+            if t == self.residual_model_trust_horizon and self.using_residual_model and self.project_by_default:
                 logger.info("projecting output of residual model for future nominal model rollouts")
                 x_known = self.project_input_to_training_distribution(x, u, state_distance=self.state_dist)
                 x = x_known
