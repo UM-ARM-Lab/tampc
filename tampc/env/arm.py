@@ -16,6 +16,7 @@ from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, E
 from tampc.env.peg_in_hole import PandaJustGripperID
 from tampc.env.pybullet_sim import PybulletSim
 from tampc import cfg
+from tampc import contact
 
 logger = logging.getLogger(__name__)
 
@@ -354,7 +355,7 @@ class ArmEnv(PybulletEnv):
         self._dd.clear_visualization_after('ts', T)
         self._dd.clear_visualization_after('u', T + 1)
 
-    def visualize_contact_set(self, contact_set):
+    def visualize_contact_set(self, contact_set: contact.ContactSet):
         color_pairs = [[(1, 0.5, 0), (1, 0.8, 0.4)],
                        [(28 / 255, 237 / 255, 143 / 255), (22 / 255, 186 / 255, 112 / 255)],
                        [(172 / 255, 17 / 255, 237 / 255), (136 / 255, 13 / 255, 189 / 256)],
@@ -369,6 +370,17 @@ class ArmEnv(PybulletEnv):
             color, u_color = color_pairs[i % len(color_pairs)]
             if i >= len(self._contact_debug_names):
                 self._contact_debug_names.append(set())
+            # represent the uncertainty of the center point
+            name = 'cp{}'.format(i)
+            eigval, eigvec = torch.eig(c.cov[0], eigenvectors=True)
+            yx_ratio = eigval[1, 0] / eigval[0, 0]
+            rot = math.atan2(eigvec[1, 0], eigvec[0, 0])
+            l = eigval[0, 0] * 100
+            # l = 0.02 / c.probability
+            self._dd.draw_point(name, self.get_ee_pos(c.mu[0]), length=l.item(), length_ratio=yx_ratio, rot=rot,
+                                color=color)
+            self._contact_debug_names[i].add(name)
+
             for j in range(len(c.points)):
                 p = self.get_ee_pos(c.points[j])
                 name = 'c{}{}'.format(i, j)

@@ -236,7 +236,8 @@ class TAMPC(OnlineMPC):
         # contact tracking parameters
         # state distance between making contacts for distinguishing separate contacts
         self.in_contact_with_known_immovable = False
-        self.contact_set = contact.ContactSet(0.1, state_to_position, self.u_sim,
+        self.contact_max_linkage_dist = 0.1
+        self.contact_set = contact.ContactSet(self.contact_max_linkage_dist, state_to_position, self.u_sim,
                                               immovable_collision_checker=self._known_immovable_obstacle_collision_check,
                                               contact_object_factory=self._create_contact_object,
                                               contact_force_threshold=0.5)
@@ -645,7 +646,7 @@ class TAMPC(OnlineMPC):
         c = contact.ContactObject(self.dynamics.create_empty_local_model(use_prior=self.contact_use_prior,
                                                                          preprocessor=self.contact_preprocessing,
                                                                          nom_projection=False),
-                                  self.state_to_pos, self.pos_to_state)
+                                  self.state_to_pos, self.pos_to_state, self.contact_max_linkage_dist, self.u_sim)
         return c
 
     def _compute_action(self, x):

@@ -4,12 +4,14 @@ import copy
 import logging
 from tampc.dynamics import online_model
 from arm_pytorch_utilities import tensor_utils, optim, serialization
+from tampc.filters.ukf import EnvConditionedUKF
 
 logger = logging.getLogger(__name__)
 
 
 class ContactObject(serialization.Serializable):
     def __init__(self, empty_local_model: online_model.OnlineDynamicsModel, state_to_pos, pos_to_state,
+                 length_parameter, u_similarity,
                  assume_linear_scaling=True):
         # (x, u, dx) tuples associated with this object for fitting local model
         self.transitions = []
@@ -26,13 +28,34 @@ class ContactObject(serialization.Serializable):
         self.assume_linear_scaling = assume_linear_scaling
 
         # UKF stuff
+        self.length_parameter = length_parameter
+        self.u_similarity = u_similarity
+        self.n_x = 2  # state is center point
+        self.n_y = 2  # observe reaction force
+        self.n_u = 2
+        # process and observation noise, respectively
+        self.device = optim.get_device()
+        Q = torch.eye(self.n_x, device=self.device).view(1, self.n_x, self.n_x) * 0.0002
+        R = torch.eye(self.n_y, device=self.device).view(1, self.n_y, self.n_y) * 0.0001
+        # kwargs for sigma point selector
+        self.ukf = EnvConditionedUKF(self.n_x, self.n_y, self.n_u, Q, R, self.device, kappa=0, alpha=0.3)
+        # posterior gaussian of position
+        self.mu = None
+        self.cov = None
+        # prior gaussian of position
+        self.mu_bar = None
+        self.cov_bar = torch.eye(self.n_x, device=self.device).repeat(1, 1, 1) * 0.0005
 
     def state_dict(self) -> dict:
         state = {'points': self.points,
                  'center_point': self.center_point,
                  'actions': self.actions,
                  'probability': self.probability,
-                 'dynamics': self.dynamics.state_dict()
+                 'dynamics': self.dynamics.state_dict(),
+                 'mu': self.mu,
+                 'cov': self.cov,
+                 'mu_bar': self.mu_bar,
+                 'cov_bar': self.cov_bar
                  }
         return state
 
@@ -41,6 +64,11 @@ class ContactObject(serialization.Serializable):
         self.center_point = state['center_point']
         self.actions = state['actions']
         self.probability = state['probability']
+
+        self.mu = state['mu']
+        self.cov = state['cov']
+        self.mu_bar = state['mu_bar']
+        self.cov_bar = state['cov_bar']
         if not self.dynamics.load_state_dict(state['dynamics']):
             return False
         return True
@@ -63,8 +91,6 @@ class ContactObject(serialization.Serializable):
         # TODO change existing data to be relative to new data center point
         self.move_all_points(self.state_to_pos(dx))
 
-        # self.transitions.append((x, u, dx))
-
         if self.assume_linear_scaling:
             u_scale = u.norm()
             u /= u_scale
@@ -75,7 +101,11 @@ class ContactObject(serialization.Serializable):
 
     def move_all_points(self, dx):
         self.points += dx
+        # TODO estimate center point using UKF instead of taking the mean
         self.center_point = self.points.mean(dim=0)
+        if self.mu_bar is None:
+            # first time init prior with mean of points
+            self.mu_bar = self.center_point.clone().view(1, -1)
 
     def merge_objects(self, other_objects):
         self.points = torch.cat([self.points] + [obj.points for obj in other_objects])
@@ -129,17 +159,93 @@ class ContactObject(serialization.Serializable):
         u_sim = u_similarity(u[candidates], act[:, candidates]) + 1e-8  # avoid divide by 0
         dd = (pos[candidates] - pts[:, candidates]).norm(dim=-1) / u_sim
         accepted = torch.any(dd < length_parameter, dim=0)
+        candidates[candidates] = accepted
         if not torch.any(accepted):
             return candidates, True
-        candidates[candidates] = accepted
         return candidates, False
+
+    def measurement_fn(self, state, environment):
+        """Measurement of [reaction magnitude in [0,1] * reaction direction]
+        given state (object position) and [robot position, action] in environment
+
+        Measurement needs to be continuous, and ideally in R^n to facilitate innovation calculations.
+        Should only be used in update calls to the object that is in contact."""
+
+        # # reaction force based measurement
+        # # this is the robot position before movement
+        # robot_position, action, _ = environment
+        #
+        # # represent direction as unit vector
+        # measurement = torch.zeros((state.shape[0], self.n_y), device=state.device, dtype=state.dtype)
+        #
+        # # if obj pos not in the direction of the push
+        # # vector from robot to object center
+        # rob_to_obj = state - robot_position
+        # rob_to_obj_norm = rob_to_obj.norm(dim=1)
+        # # anything too far is disqualified (based on maximum distance we expect robot to move in 1 action)
+        # too_far = rob_to_obj_norm > 0.05
+        # # anything too angled is disqualified
+        # # TODO generalize function for getting predicted ee movement direction from actions
+        # unit_pos_diff = (rob_to_obj / rob_to_obj_norm.view(-1, 1))
+        # unit_action_dir = (action / action.norm())
+        # # dot product between position diff and action
+        # dot_pos_diff_action = unit_pos_diff @ unit_action_dir
+        # too_angled = dot_pos_diff_action < 0.5
+        #
+        # # those that are not too far or too angled should feel some force
+        # # uncertainty over contact surface, assume both are spheres so average between them
+        # # in_contact = torch.ones(state.shape[0]).to(dtype=torch.bool)
+        # in_contact = ~(too_far | too_angled)
+        # measurement[in_contact, :2] = -(unit_action_dir + unit_pos_diff[in_contact]) / 2
+        # measurement[in_contact, :2] /= measurement[in_contact, :2].norm(dim=1).view(-1, 1)
+
+        measurement = state
+
+        return measurement
+
+    def dynamics_fn(self, state, action, environment):
+        """Predict change in object center position"""
+        new_state = state.clone()
+        robot_position, _, dx = environment
+        # first check if we cluster into it
+        # only relative position matters, so instead of translating the contact points, we translate the robot position
+        # assume first element is mean, so we get relative translation
+        dpos_input = state - state[0]
+        # to get the same effect, we translate the robot in the opposite direction and magnitude
+        robot_translated_pos = robot_position - dpos_input
+        in_contact, none = self.clusters_to_object(robot_translated_pos, action, self.length_parameter,
+                                                   self.u_similarity, x_is_pos=True)
+        if none:
+            return new_state
+
+        # x = robot_translated_pos[in_contact] - state[0]
+        # dpos = self.predict_dpos(x, action[in_contact])
+        # new_state[in_contact] += dpos
+        new_state[in_contact] += self.state_to_pos(dx)
+        return new_state
+
+    def dynamics_no_movement_fn(self, state, action, environment):
+        return state
+
+    def ukf_update(self, measurement, environment):
+        """Update with a force measurement; only call on the object in contact"""
+        self.mu, self.cov = self.ukf.update(measurement, self.mu_bar, self.cov_bar, self.measurement_fn,
+                                            environment=environment)
+
+    def ukf_update_no_contact(self):
+        self.mu, self.cov = self.mu_bar, self.cov_bar
+
+    def ukf_predict(self, control, environment, expect_movement=True):
+        self.mu_bar, self.cov_bar, _ = self.ukf.predict(control, self.mu, self.cov,
+                                                        self.dynamics_fn if expect_movement else self.dynamics_no_movement_fn,
+                                                        environment=environment)
 
 
 class ContactSet(serialization.Serializable):
     def __init__(self, contact_max_linkage_dist, state_to_pos, u_sim, fade_per_contact=0.8,
                  fade_per_no_contact=0.95,
                  ignore_below_probability=0.25, immovable_collision_checker=None,
-                 contact_object_factory=None,
+                 contact_object_factory: typing.Callable[[], ContactObject] = None,
                  contact_force_threshold=0.5):
         self._obj: typing.List[ContactObject] = []
         # cached center of all points
@@ -208,9 +314,12 @@ class ContactSet(serialization.Serializable):
         if self._obj:
             self.center_points = torch.stack([obj.center_point for obj in self._obj])
 
-    def stepped_without_contact(self):
+    def stepped_without_contact(self, u, environment):
         for c in self._obj:
             c.probability *= self.fade_per_no_contact
+        for ci in self._obj:
+            ci.ukf_update_no_contact()
+            ci.ukf_predict(u, environment, expect_movement=False)
         self._keep_high_prob_contacts()
 
     def move_object(self, dx, obj_index):
@@ -221,7 +330,7 @@ class ContactSet(serialization.Serializable):
         new_set.center_points[obj_index] = new_set._obj[obj_index].center_point
         return new_set
 
-    def merge_objects(self, obj_indices):
+    def merge_objects(self, obj_indices) -> ContactObject:
         obj_to_combine = [self._obj[i] for i in obj_indices]
         self._obj = [obj for obj in self._obj if obj not in obj_to_combine]
         c = copy.deepcopy(obj_to_combine[0])
@@ -240,7 +349,7 @@ class ContactSet(serialization.Serializable):
         prob = torch.tensor([c.probability for c in self._obj], dtype=d.dtype, device=d.device)
         return (1 / d * prob.view(-1, 1)).sum(dim=0)
 
-    def check_which_object_applies(self, x, u):
+    def check_which_object_applies(self, x, u) -> typing.Tuple[typing.List[ContactObject], typing.List[int]]:
         res_c = []
         res_i = []
         if not self._obj:
@@ -265,9 +374,9 @@ class ContactSet(serialization.Serializable):
         return res_c, res_i
 
     def update(self, x, u, dx, reaction):
-        # TODO move this inside the measurement and process model of the UKFs?
+        environment = [self.state_to_pos(x), u, dx]
         if reaction.norm() < self.contact_force_threshold:
-            self.stepped_without_contact()
+            self.stepped_without_contact(u, environment)
             return
 
         # associate each contact to a single object (max likelihood estimate on which object it is)
@@ -283,6 +392,18 @@ class ContactSet(serialization.Serializable):
         else:
             c = cc[0]
         c.add_transition(x, u, dx)
+        # update c with observation (only this one; other UFKs didn't receive an observation)
+        unit_reaction = reaction / reaction.norm()
+        # also do prediction
+        for ci in self._obj:
+            if ci is not c:
+                ci.ukf_update_no_contact()
+                ci.ukf_predict(u, environment, expect_movement=False)
+            else:
+                # c.ukf_update(unit_reaction, environment)
+                c.ukf_update(c.center_point, environment)
+                ci.ukf_predict(u, environment, expect_movement=True)
+
         self.updated()
 
     def get_batch_data_for_dynamics(self, total_num):
