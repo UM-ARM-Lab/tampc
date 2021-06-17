@@ -376,7 +376,7 @@ class ArmEnv(PybulletEnv):
             yx_ratio = eigval[1, 0] / eigval[0, 0]
             rot = math.atan2(eigvec[1, 0], eigvec[0, 0])
             l = eigval[0, 0] * 100
-            # l = 0.02 / c.probability
+            w = c.weight
             self._dd.draw_point(name, self.get_ee_pos(c.mu[0]), length=l.item(), length_ratio=yx_ratio, rot=rot,
                                 color=color)
             self._contact_debug_names[i].add(name)
@@ -388,7 +388,7 @@ class ArmEnv(PybulletEnv):
                 self._contact_debug_names[i].add(name)
                 # draw action
                 name = 'a{}{}'.format(i, j)
-                self._dd.draw_2d_line(name, p.cpu(), c.actions[j].cpu(), color=u_color, scale=0.1 * c.probability)
+                self._dd.draw_2d_line(name, p.cpu(), c.actions[j].cpu(), color=u_color, scale=0.1 * w)
                 self._contact_debug_names[i].add(name)
                 # draw linkage to next point
                 if j < len(c.points) - 1:

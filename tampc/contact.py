@@ -3,7 +3,7 @@ import typing
 import copy
 import logging
 from tampc.dynamics import online_model
-from arm_pytorch_utilities import tensor_utils, optim, serialization
+from arm_pytorch_utilities import tensor_utils, optim, serialization, math_utils
 from tampc.filters.ukf import EnvConditionedUKF
 
 logger = logging.getLogger(__name__)
@@ -12,13 +12,13 @@ logger = logging.getLogger(__name__)
 class ContactObject(serialization.Serializable):
     def __init__(self, empty_local_model: online_model.OnlineDynamicsModel, state_to_pos, pos_to_state,
                  length_parameter, u_similarity,
+                 weight_multiplier = 0.1,
                  assume_linear_scaling=True):
         # (x, u, dx) tuples associated with this object for fitting local model
         self.transitions = []
         # points on this object that are tracked
         self.points = None
         self.actions = None
-        self.probability = 1
 
         self.dynamics = empty_local_model
         self.state_to_pos = state_to_pos
@@ -30,29 +30,38 @@ class ContactObject(serialization.Serializable):
         self.length_parameter = length_parameter
         self.u_similarity = u_similarity
         self.n_x = 2  # state is center point
-        self.n_y = 2  # observe reaction force
+        self.n_y = 2  # observe robot position
         self.n_u = 2
         # process and observation noise, respectively
         self.device = optim.get_device()
-        Q = torch.eye(self.n_x, device=self.device).view(1, self.n_x, self.n_x) * 0.0002
-        R = torch.eye(self.n_y, device=self.device).view(1, self.n_y, self.n_y) * 0.0001
+        self.sigma = 0.0001
+        Q = torch.eye(self.n_x, device=self.device).view(1, self.n_x, self.n_x) * self.sigma
+        R = torch.eye(self.n_y, device=self.device).view(1, self.n_y, self.n_y) * self.sigma
         # kwargs for sigma point selector
         self.ukf = EnvConditionedUKF(self.n_x, self.n_y, self.n_u, Q, R, self.device, kappa=0, alpha=0.3)
         # posterior gaussian of position (init to prior)
         self.mu = None
-        self.cov = torch.eye(self.n_x, device=self.device).repeat(1, 1, 1) * 0.0005
+        self.cov = torch.eye(self.n_x, device=self.device).repeat(1, 1, 1) * self.sigma * 2
         # prior gaussian of position
         self.mu_bar = None
         self.cov_bar = None
+        self.weight_multiplier = weight_multiplier / (self.sigma * self.n_x)
 
     @property
     def center_point(self):
-        return self.mu
+        return self.mu[0]
+
+    @property
+    def weight(self):
+        tr = self.cov[0].trace()
+        # convert to (0, 1)
+        weight_exp = torch.exp(- self.weight_multiplier * tr)
+        # weight = self.n_x * self.sigma / tr.item()
+        return weight_exp
 
     def state_dict(self) -> dict:
         state = {'points': self.points,
                  'actions': self.actions,
-                 'probability': self.probability,
                  'dynamics': self.dynamics.state_dict(),
                  'mu': self.mu,
                  'cov': self.cov,
@@ -64,7 +73,6 @@ class ContactObject(serialization.Serializable):
     def load_state_dict(self, state: dict) -> bool:
         self.points = state['points']
         self.actions = state['actions']
-        self.probability = state['probability']
 
         self.mu = state['mu']
         self.cov = state['cov']
@@ -75,7 +83,6 @@ class ContactObject(serialization.Serializable):
         return True
 
     def add_transition(self, x, u, dx):
-        self.probability = -1  # dummy value to indicate for updated to set it to 1
         dtype = torch.float64 if not torch.is_tensor(x) else x.dtype
         x, u, dx = tensor_utils.ensure_tensor(optim.get_device(), dtype, x, u, dx)
         # save only positions
@@ -248,7 +255,7 @@ class ContactObject(serialization.Serializable):
 class ContactSet(serialization.Serializable):
     def __init__(self, contact_max_linkage_dist, state_to_pos, u_sim, fade_per_contact=0.8,
                  fade_per_no_contact=0.95,
-                 ignore_below_probability=0.25, immovable_collision_checker=None,
+                 ignore_below_weight=0.25, immovable_collision_checker=None,
                  contact_object_factory: typing.Callable[[], ContactObject] = None,
                  contact_force_threshold=0.5):
         self._obj: typing.List[ContactObject] = []
@@ -260,7 +267,7 @@ class ContactSet(serialization.Serializable):
         self.state_to_pos = state_to_pos
         self.fade_per_contact = fade_per_contact
         self.fade_per_no_contact = fade_per_no_contact
-        self.ignore_below_probability = ignore_below_probability
+        self.ignore_below_weight = ignore_below_weight
 
         self.immovable_collision_checker = immovable_collision_checker
         # used to produce contact objects during loading
@@ -297,10 +304,10 @@ class ContactSet(serialization.Serializable):
     def append(self, contact: ContactObject):
         self._obj.append(contact)
 
-    def _keep_high_prob_contacts(self):
+    def _keep_high_weight_contacts(self):
         if self._obj:
             init_len = len(self._obj)
-            self._obj = [c for c in self._obj if c.probability > self.ignore_below_probability]
+            self._obj = [c for c in self._obj if c.weight > self.ignore_below_weight]
             if len(self._obj) != init_len:
                 if len(self._obj):
                     self.center_points = torch.stack([obj.center_point for obj in self._obj])
@@ -309,22 +316,15 @@ class ContactSet(serialization.Serializable):
 
     def updated(self):
         if self._obj:
-            for c in self._obj:
-                if c.probability is -1:
-                    c.probability = 1
-                else:
-                    c.probability *= self.fade_per_contact
-            self._keep_high_prob_contacts()
+            self._keep_high_weight_contacts()
         if self._obj:
             self.center_points = torch.stack([obj.center_point for obj in self._obj])
 
     def stepped_without_contact(self, u, environment):
-        for c in self._obj:
-            c.probability *= self.fade_per_no_contact
         for ci in self._obj:
-            ci.ukf_update_no_contact()
             ci.ukf_predict(u, environment, expect_movement=False)
-        self._keep_high_prob_contacts()
+            ci.ukf_update_no_contact()
+        self._keep_high_weight_contacts()
 
     def merge_objects(self, obj_indices) -> ContactObject:
         obj_to_combine = [self._obj[i] for i in obj_indices]
@@ -341,9 +341,9 @@ class ContactSet(serialization.Serializable):
         center_points, points, actions = contact_data
         # norm across spacial dimension, sum across each object
         d = (center_points - self.state_to_pos(goal_x)).norm(dim=-1)
-        # modify by probability of contact object existing
-        prob = torch.tensor([c.probability for c in self._obj], dtype=d.dtype, device=d.device)
-        return (1 / d * prob.view(-1, 1)).sum(dim=0)
+        # modify by weight of contact object existing
+        weights = torch.tensor([c.weight for c in self._obj], dtype=d.dtype, device=d.device)
+        return (1 / d * weights.view(-1, 1)).sum(dim=0)
 
     def check_which_object_applies(self, x, u) -> typing.Tuple[typing.List[ContactObject], typing.List[int]]:
         res_c = []
