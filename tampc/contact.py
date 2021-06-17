@@ -17,7 +17,6 @@ class ContactObject(serialization.Serializable):
         self.transitions = []
         # points on this object that are tracked
         self.points = None
-        self.center_point = None
         self.actions = None
         self.probability = 1
 
@@ -46,9 +45,12 @@ class ContactObject(serialization.Serializable):
         self.mu_bar = None
         self.cov_bar = None
 
+    @property
+    def center_point(self):
+        return self.mu
+
     def state_dict(self) -> dict:
         state = {'points': self.points,
-                 'center_point': self.center_point,
                  'actions': self.actions,
                  'probability': self.probability,
                  'dynamics': self.dynamics.state_dict(),
@@ -61,7 +63,6 @@ class ContactObject(serialization.Serializable):
 
     def load_state_dict(self, state: dict) -> bool:
         self.points = state['points']
-        self.center_point = state['center_point']
         self.actions = state['actions']
         self.probability = state['probability']
 
@@ -82,7 +83,6 @@ class ContactObject(serialization.Serializable):
         if self.points is None:
             self.points = x.view(1, -1)
             self.actions = u.view(1, -1)
-            self.center_point = x
             # first time init prior
             self.mu = x.clone().view(1, -1)
         else:
@@ -101,14 +101,13 @@ class ContactObject(serialization.Serializable):
 
     def move_all_points(self, dpos):
         self.points += dpos
-        # TODO remove this extra computation and have everything relative to mu
-        self.center_point = self.points.mean(dim=0)
         # TODO may need to change the training input points for dynamics to be self.points - self.mu
 
     def merge_objects(self, other_objects):
-        self.points = torch.cat([self.points] + [obj.points for obj in other_objects])
-        self.actions = torch.cat([self.actions] + [obj.actions for obj in other_objects])
-        self.center_point = self.points.mean(dim=0)
+        # self.points = torch.cat([self.points] + [obj.points for obj in other_objects])
+        # self.actions = torch.cat([self.actions] + [obj.actions for obj in other_objects])
+        # self.center_point = self.points.mean(dim=0)
+        raise NotImplementedError("Currently merging the estimates of the two objects is not handled")
 
     @tensor_utils.ensure_2d_input
     def predict_dpos(self, pos, u, **kwargs):
