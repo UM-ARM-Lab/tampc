@@ -90,8 +90,6 @@ class ContactObject(serialization.Serializable):
             self.actions = torch.cat((self.actions, u.view(1, -1)))
 
         centered_x = x - self.center_point
-        # TODO change existing data to be relative to new data center point
-        self.move_all_points(self.state_to_pos(dx))
 
         if self.assume_linear_scaling:
             u_scale = u.norm()
@@ -101,10 +99,11 @@ class ContactObject(serialization.Serializable):
         centered_x = self.pos_to_state(centered_x).view(-1)
         self.dynamics.update(centered_x, u, centered_x + dx)
 
-    def move_all_points(self, dx):
-        self.points += dx
-        # TODO estimate center point using UKF instead of taking the mean
+    def move_all_points(self, dpos):
+        self.points += dpos
+        # TODO remove this extra computation and have everything relative to mu
         self.center_point = self.points.mean(dim=0)
+        # TODO may need to change the training input points for dynamics to be self.points - self.mu
 
     def merge_objects(self, other_objects):
         self.points = torch.cat([self.points] + [obj.points for obj in other_objects])
@@ -164,42 +163,42 @@ class ContactObject(serialization.Serializable):
         return candidates, False
 
     def measurement_fn(self, state, environment):
-        """Measurement of [reaction magnitude in [0,1] * reaction direction]
-        given state (object position) and [robot position, action] in environment
+        """Measurement that would be seen given state (object position) and [robot position, action] in environment
 
         Measurement needs to be continuous, and ideally in R^n to facilitate innovation calculations.
         Should only be used in update calls to the object that is in contact."""
-
-        # # reaction force based measurement
-        # # this is the robot position before movement
-        # robot_position, action, _ = environment
-        #
-        # # represent direction as unit vector
-        # measurement = torch.zeros((state.shape[0], self.n_y), device=state.device, dtype=state.dtype)
-        #
-        # # if obj pos not in the direction of the push
-        # # vector from robot to object center
-        # rob_to_obj = state - robot_position
-        # rob_to_obj_norm = rob_to_obj.norm(dim=1)
-        # # anything too far is disqualified (based on maximum distance we expect robot to move in 1 action)
-        # too_far = rob_to_obj_norm > 0.05
-        # # anything too angled is disqualified
-        # # TODO generalize function for getting predicted ee movement direction from actions
-        # unit_pos_diff = (rob_to_obj / rob_to_obj_norm.view(-1, 1))
-        # unit_action_dir = (action / action.norm())
-        # # dot product between position diff and action
-        # dot_pos_diff_action = unit_pos_diff @ unit_action_dir
-        # too_angled = dot_pos_diff_action < 0.5
-        #
-        # # those that are not too far or too angled should feel some force
-        # # uncertainty over contact surface, assume both are spheres so average between them
-        # # in_contact = torch.ones(state.shape[0]).to(dtype=torch.bool)
-        # in_contact = ~(too_far | too_angled)
-        # measurement[in_contact, :2] = -(unit_action_dir + unit_pos_diff[in_contact]) / 2
-        # measurement[in_contact, :2] /= measurement[in_contact, :2].norm(dim=1).view(-1, 1)
-
         measurement = state
+        return measurement
 
+    def measurement_fn_reaction_force(self, state, environment):
+        # version of measurement function where measurement space is unit reaction force
+        # NOTE this is an alternative measurement function that more directly uses directionality
+        # this is the robot position before movement
+        robot_position, action, _ = environment
+
+        # represent direction as unit vector
+        measurement = torch.zeros((state.shape[0], self.n_y), device=state.device, dtype=state.dtype)
+
+        # if obj pos not in the direction of the push
+        # vector from robot to object center
+        rob_to_obj = state - robot_position
+        rob_to_obj_norm = rob_to_obj.norm(dim=1)
+        # anything too far is disqualified (based on maximum distance we expect robot to move in 1 action)
+        too_far = rob_to_obj_norm > 0.05
+        # anything too angled is disqualified
+        # TODO generalize function for getting predicted ee movement direction from actions
+        unit_pos_diff = (rob_to_obj / rob_to_obj_norm.view(-1, 1))
+        unit_action_dir = (action / action.norm())
+        # dot product between position diff and action
+        dot_pos_diff_action = unit_pos_diff @ unit_action_dir
+        too_angled = dot_pos_diff_action < 0.5
+
+        # those that are not too far or too angled should feel some force
+        # uncertainty over contact surface, assume both are spheres so average between them
+        # in_contact = torch.ones(state.shape[0]).to(dtype=torch.bool)
+        in_contact = ~(too_far | too_angled)
+        measurement[in_contact, :2] = -(unit_action_dir + unit_pos_diff[in_contact]) / 2
+        measurement[in_contact, :2] /= measurement[in_contact, :2].norm(dim=1).view(-1, 1)
         return measurement
 
     def dynamics_fn(self, state, action, environment):
@@ -207,30 +206,36 @@ class ContactObject(serialization.Serializable):
         robot_position, _, dx = environment
         return state + self.state_to_pos(dx)
 
-        # new_state = state.clone()
-        # # first check if we cluster into it
-        # # only relative position matters, so instead of translating the contact points, we translate the robot position
-        # # assume first element is mean, so we get relative translation
-        # dpos_input = state - state[0]
-        # # to get the same effect, we translate the robot in the opposite direction and magnitude
-        # robot_translated_pos = robot_position - dpos_input
-        # in_contact, none = self.clusters_to_object(robot_translated_pos, action, self.length_parameter,
-        #                                            self.u_similarity, x_is_pos=True)
-        # if none:
-        #     return new_state
-        #
-        # x = robot_translated_pos[in_contact] - state[0]
-        # dpos = self.predict_dpos(x, action[in_contact])
-        # new_state[in_contact] += dpos
-        # return new_state
+    def dynamics_fn_cluster_per_sample(self, state, action, environment):
+        # version of dynamics function where instead of assuming all input is clustered/expected movement, we cluster
+        # each input sample
+        robot_position, _, dx = environment
+        new_state = state.clone()
+        # first check if we cluster into it
+        # only relative position matters, so instead of translating the contact points, we translate the robot position
+        # assume first element is mean, so we get relative translation
+        dpos_input = state - state[0]
+        # to get the same effect, we translate the robot in the opposite direction and magnitude
+        robot_translated_pos = robot_position - dpos_input
+        in_contact, none = self.clusters_to_object(robot_translated_pos, action, self.length_parameter,
+                                                   self.u_similarity, x_is_pos=True)
+        if none:
+            return new_state
+
+        x = robot_translated_pos[in_contact] - state[0]
+        dpos = self.predict_dpos(x, action[in_contact])
+        new_state[in_contact] += dpos
+        return new_state
 
     def dynamics_no_movement_fn(self, state, action, environment):
         return state
 
     def ukf_update(self, measurement, environment):
         """Update with a force measurement; only call on the object in contact"""
+        center_point_before = self.mu.clone()
         self.mu, self.cov = self.ukf.update(measurement, self.mu_bar, self.cov_bar, self.measurement_fn,
                                             environment=environment)
+        self.move_all_points(self.mu - center_point_before)
 
     def ukf_update_no_contact(self):
         self.mu, self.cov = self.mu_bar, self.cov_bar
@@ -321,14 +326,6 @@ class ContactSet(serialization.Serializable):
             ci.ukf_update_no_contact()
             ci.ukf_predict(u, environment, expect_movement=False)
         self._keep_high_prob_contacts()
-
-    def move_object(self, dx, obj_index):
-        new_set = copy.copy(self)
-        new_set._obj = [copy.deepcopy(self._obj[i]) if i is obj_index else self._obj[i] for i in range(len(self))]
-        new_set._obj[obj_index].move_all_points(dx)
-        new_set.center_points = new_set.center_points.clone()
-        new_set.center_points[obj_index] = new_set._obj[obj_index].center_point
-        return new_set
 
     def merge_objects(self, obj_indices) -> ContactObject:
         obj_to_combine = [self._obj[i] for i in obj_indices]
