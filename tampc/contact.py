@@ -39,12 +39,12 @@ class ContactObject(serialization.Serializable):
         R = torch.eye(self.n_y, device=self.device).view(1, self.n_y, self.n_y) * 0.0001
         # kwargs for sigma point selector
         self.ukf = EnvConditionedUKF(self.n_x, self.n_y, self.n_u, Q, R, self.device, kappa=0, alpha=0.3)
-        # posterior gaussian of position
+        # posterior gaussian of position (init to prior)
         self.mu = None
-        self.cov = None
+        self.cov = torch.eye(self.n_x, device=self.device).repeat(1, 1, 1) * 0.0005
         # prior gaussian of position
         self.mu_bar = None
-        self.cov_bar = torch.eye(self.n_x, device=self.device).repeat(1, 1, 1) * 0.0005
+        self.cov_bar = None
 
     def state_dict(self) -> dict:
         state = {'points': self.points,
@@ -83,6 +83,8 @@ class ContactObject(serialization.Serializable):
             self.points = x.view(1, -1)
             self.actions = u.view(1, -1)
             self.center_point = x
+            # first time init prior
+            self.mu = x.clone().view(1, -1)
         else:
             self.points = torch.cat((self.points, x.view(1, -1)))
             self.actions = torch.cat((self.actions, u.view(1, -1)))
@@ -103,9 +105,6 @@ class ContactObject(serialization.Serializable):
         self.points += dx
         # TODO estimate center point using UKF instead of taking the mean
         self.center_point = self.points.mean(dim=0)
-        if self.mu_bar is None:
-            # first time init prior with mean of points
-            self.mu_bar = self.center_point.clone().view(1, -1)
 
     def merge_objects(self, other_objects):
         self.points = torch.cat([self.points] + [obj.points for obj in other_objects])
@@ -205,24 +204,25 @@ class ContactObject(serialization.Serializable):
 
     def dynamics_fn(self, state, action, environment):
         """Predict change in object center position"""
-        new_state = state.clone()
         robot_position, _, dx = environment
-        # first check if we cluster into it
-        # only relative position matters, so instead of translating the contact points, we translate the robot position
-        # assume first element is mean, so we get relative translation
-        dpos_input = state - state[0]
-        # to get the same effect, we translate the robot in the opposite direction and magnitude
-        robot_translated_pos = robot_position - dpos_input
-        in_contact, none = self.clusters_to_object(robot_translated_pos, action, self.length_parameter,
-                                                   self.u_similarity, x_is_pos=True)
-        if none:
-            return new_state
+        return state + self.state_to_pos(dx)
 
+        # new_state = state.clone()
+        # # first check if we cluster into it
+        # # only relative position matters, so instead of translating the contact points, we translate the robot position
+        # # assume first element is mean, so we get relative translation
+        # dpos_input = state - state[0]
+        # # to get the same effect, we translate the robot in the opposite direction and magnitude
+        # robot_translated_pos = robot_position - dpos_input
+        # in_contact, none = self.clusters_to_object(robot_translated_pos, action, self.length_parameter,
+        #                                            self.u_similarity, x_is_pos=True)
+        # if none:
+        #     return new_state
+        #
         # x = robot_translated_pos[in_contact] - state[0]
         # dpos = self.predict_dpos(x, action[in_contact])
         # new_state[in_contact] += dpos
-        new_state[in_contact] += self.state_to_pos(dx)
-        return new_state
+        # return new_state
 
     def dynamics_no_movement_fn(self, state, action, environment):
         return state
@@ -397,12 +397,12 @@ class ContactSet(serialization.Serializable):
         # also do prediction
         for ci in self._obj:
             if ci is not c:
-                ci.ukf_update_no_contact()
                 ci.ukf_predict(u, environment, expect_movement=False)
+                ci.ukf_update_no_contact()
             else:
-                # c.ukf_update(unit_reaction, environment)
-                c.ukf_update(c.center_point, environment)
                 ci.ukf_predict(u, environment, expect_movement=True)
+                # c.ukf_update(unit_reaction, environment)
+                c.ukf_update(self.state_to_pos(x + dx), environment)
 
         self.updated()
 
