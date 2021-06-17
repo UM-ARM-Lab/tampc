@@ -197,8 +197,8 @@ class DebugDrawer:
         uids[0] = p.addUserDebugLine(np.add(location, [l * c, l * s, 0]),
                                      np.add(location, [-l * c, - l * s, 0]), color, scale,
                                      replaceItemUniqueId=uids[0])
-        uids[1] = p.addUserDebugLine(np.add(location, [l * s * length_ratio, l * length_ratio * c, 0]),
-                                     np.add(location, [- l * s * length_ratio, -l * length_ratio * c, 0]), color,
+        uids[1] = p.addUserDebugLine(np.add(location, [- l * s * length_ratio, l * length_ratio * c, 0]),
+                                     np.add(location, [l * s * length_ratio, -l * length_ratio * c, 0]), color,
                                      scale,
                                      replaceItemUniqueId=uids[1])
         if label is not None:
