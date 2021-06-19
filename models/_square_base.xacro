@@ -1,16 +1,16 @@
 <?xml version="1.0"?>
-<robot name="wall" xmlns:xacro="http://www.ros.org/wiki/xacro">
-<xacro:macro name="wall" params="w l h">
+<robot name="square" xmlns:xacro="http://www.ros.org/wiki/xacro">
+<xacro:macro name="square" params="s h m">
 
-<xacro:property name="m" value="10" />
-<xacro:property name="Ih" value="${1/12*m*(w*w + l*l)}" />
-<xacro:property name="Iw" value="${1/12*m*(h*h + l*l)}" />
-<xacro:property name="Il" value="${1/12*m*(w*w + h*h)}" />
+<xacro:property name="Ih" value="${1/12*m*(s*s + s*s)}" />
+<xacro:property name="Iw" value="${1/12*m*(h*h + s*s)}" />
+<xacro:property name="Il" value="${1/12*m*(s*s + h*h)}" />
 
   <link name="base_link">
     <contact>
-      <lateral_friction value="0.7"/>
-      <spinning_friction value=".001"/>
+      <lateral_friction value="0.8"/>
+      <spinning_friction value=".05"/>
+      <rolling_friction value=".01"/>
     </contact>
     <inertial>
       <origin rpy="0 0 0" xyz="0 0 0"/>
@@ -20,16 +20,16 @@
     <visual>
       <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
       <geometry>
-        <box size="${l} ${w} ${h}"/>
+        <box size="${s} ${s} ${h}"/>
       </geometry>
       <material name="blockmat">
-        <color rgba="0.5 0.5 0.5 0.8"/>
+        <color rgba="0.1 0.7 0.1 0.8"/>
       </material>
     </visual>
     <collision>
       <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
       <geometry>
-        <box size="${l} ${w} ${h}"/>
+        <box size="${s} ${s} ${h}"/>
       </geometry>
     </collision>
  </link>

@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="block_tall">
+
+<xacro:include filename="_square_base.xacro"/>
+<square s="0.2" h="0.15" m="1"/>
+</robot>
