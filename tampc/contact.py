@@ -255,7 +255,7 @@ class ContactObject(serialization.Serializable):
 class ContactSet(serialization.Serializable):
     def __init__(self, contact_max_linkage_dist, state_to_pos, u_sim, fade_per_contact=0.8,
                  fade_per_no_contact=0.95,
-                 ignore_below_weight=0.25, immovable_collision_checker=None,
+                 ignore_below_weight=0.2, immovable_collision_checker=None,
                  contact_object_factory: typing.Callable[[], ContactObject] = None,
                  contact_force_threshold=0.5):
         self._obj: typing.List[ContactObject] = []

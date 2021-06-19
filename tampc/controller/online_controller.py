@@ -257,7 +257,7 @@ class TAMPC(OnlineMPC):
 
     def set_goal(self, goal):
         super(TAMPC, self).set_goal(goal)
-        self.contact_cost = cost.AvoidContactAtGoalCost(self.goal, scale=0.5)
+        self.contact_cost = cost.AvoidContactAtGoalCost(self.goal, scale=0.6)
 
     def state_dict(self):
         state = super(TAMPC, self).state_dict()
