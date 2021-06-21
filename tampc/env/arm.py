@@ -1079,6 +1079,10 @@ class FloatingGripperEnv(PlanarArmEnv):
                 self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "block_tall.urdf"), useFixedBase=False,
                                                basePosition=[0.7, y, h]))
                 p.changeVisualShape(self.movable[-1], -1, rgbaColor=DEFAULT_MOVABLE_RGBA)
+            elif self.level == Levels.NCB_T:
+                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "topple_cylinder.urdf"), useFixedBase=False,
+                                               basePosition=[0.7, y, h + 0.02],
+                                               baseOrientation=p.getQuaternionFromEuler([0, np.pi / 2, np.pi / 2])))
 
         for objId in self.immovable:
             p.changeVisualShape(objId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])

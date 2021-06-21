@@ -46,6 +46,7 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 
 logger = logging.getLogger(__name__)
 
+
 # --- SHARED GETTERS
 class ArmGetter(EnvGetter):
     @staticmethod
@@ -124,8 +125,10 @@ class ArmGetter(EnvGetter):
             env.set_task_config(goal=(0.95, -0.4))
         if level in (Levels.STRAIGHT_LINE, Levels.WALL_BEHIND):
             env.set_task_config(goal=[0.0, 0.], init=[1, 0])
-        if level in (Levels.NCB_C, Levels.NCB_S, Levels.NCB_T):
+        if level in (Levels.NCB_C, Levels.NCB_S):
             env.set_task_config(goal=[0.0, 0.], init=[1, 0])
+        if level is Levels.NCB_T:
+            env.set_task_config(goal=[-0.05, 0.], init=[1, 0])
         return env
 
 
@@ -456,6 +459,7 @@ def test_autonomous_recovery(*args, **kwargs):
 
 def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
     """Visualize clustering results"""
+
     def setup(env, ctrl, ds):
         goal = [0.0, 0.]
         init = [1, 0]
@@ -635,6 +639,7 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
 
 def test_residual_model_batching(*args, **kwargs):
     """Visualize residual model GP uncertainties"""
+
     def setup(env, ctrl, ds):
         goal = [0.0, 0.]
         init = [1, 0]
