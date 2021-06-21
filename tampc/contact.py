@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 class ContactObject(serialization.Serializable):
     def __init__(self, empty_local_model: online_model.OnlineDynamicsModel, state_to_pos, pos_to_state,
                  length_parameter, u_similarity,
-                 weight_multiplier = 0.1,
+                 weight_multiplier=0.1,
                  assume_linear_scaling=True):
         # (x, u, dx) tuples associated with this object for fitting local model
         self.transitions = []
@@ -398,7 +398,8 @@ class ContactSet(serialization.Serializable):
             else:
                 ci.ukf_predict(u, environment, expect_movement=True)
                 # c.ukf_update(unit_reaction, environment)
-                c.ukf_update(self.state_to_pos(x + dx), environment)
+                # where the contact point center would be taking last point into account
+                c.ukf_update(c.points.mean(dim=0) + self.state_to_pos(dx), environment)
 
         self.updated()
 
