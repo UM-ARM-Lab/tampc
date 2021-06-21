@@ -26,6 +26,23 @@ kukaEndEffectorIndex = 6
 pandaNumDofs = 7
 
 
+class Levels(enum.IntEnum):
+    FREESPACE = 0
+    WALL = 1
+    WALL_BROKEN_JOINT = 2
+    MOVEABLE_CANS = 3
+    STRAIGHT_LINE = 4
+    NCB_C = 5
+    WALL_BEHIND = 6
+    NCB_S = 7
+    NCB_T = 8
+
+
+task_map = {str(c).split('.')[1]: c for c in Levels}
+
+DEFAULT_MOVABLE_RGBA = [0.8, 0.7, 0.3, 0.8]
+
+
 class ArmLoader(TrajectoryLoader):
     @staticmethod
     def _info_names():
@@ -135,7 +152,7 @@ class ArmEnv(PybulletEnv):
         """
         super().__init__(**kwargs, default_debug_height=0.1, camera_dist=camera_dist)
         self._dd.toggle_3d(True)
-        self.level = environment_level
+        self.level = Levels(environment_level)
         self.sim_step_wait = sim_step_wait
         # as long as this is above a certain amount we won't exceed it in freespace pushing if we have many mini steps
         self.mini_steps = mini_steps
@@ -993,9 +1010,9 @@ class FloatingGripperEnv(PlanarArmEnv):
 
         self.immovable = []
         self.movable = []
-        if self.level == 0:
+        if self.level == Levels.FREESPACE:
             pass
-        elif self.level in [1]:
+        elif self.level in [Levels.WALL]:
             # drop movable obstacles
             h = 0.075
             xs = [0.3, 0.8]
@@ -1013,7 +1030,7 @@ class FloatingGripperEnv(PlanarArmEnv):
             objId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=True,
                                basePosition=[xs[0], ys[1], h])
             self.immovable.append(objId)
-        elif self.level is 3:
+        elif self.level == Levels.MOVEABLE_CANS:
             scale = 1.0
             h = 0.075 * scale
             xs = [0.3, 0.7]
@@ -1032,22 +1049,20 @@ class FloatingGripperEnv(PlanarArmEnv):
             self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [xs[0], ys[0] - 0.43, h],
                                              p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
                                              globalScaling=0.5))
-        elif self.level is 4 or self.level is 6:
+        elif self.level in [Levels.STRAIGHT_LINE, Levels.WALL_BEHIND]:
             scale = 1.0
             h = 0.075 * scale
             self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
                                            basePosition=[0.5, 0, h]))
-            if self.level is 6:
+            if self.level == Levels.WALL_BEHIND:
                 self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.21, 0., h],
                                                  p.getQuaternionFromEuler([0, 0, -np.pi / 2]), useFixedBase=True,
                                                  globalScaling=0.5))
-        elif self.level is 5:
+        elif self.level in [Levels.NCB_C, Levels.NCB_S, Levels.NCB_T]:
             scale = 1.0
             h = 0.075 * scale
             y = 0
             width = 0.85
-            self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
-                                           basePosition=[0.7, y, h]))
             self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.3, 0, h],
                                              p.getQuaternionFromEuler([0, 0, -np.pi / 2]), useFixedBase=True,
                                              globalScaling=0.5))
@@ -1057,6 +1072,13 @@ class FloatingGripperEnv(PlanarArmEnv):
             self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.5, width / 2, h],
                                              p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
                                              globalScaling=0.5))
+            if self.level == Levels.NCB_C:
+                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
+                                               basePosition=[0.7, y, h]))
+            elif self.level == Levels.NCB_S:
+                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "block_tall.urdf"), useFixedBase=False,
+                                               basePosition=[0.7, y, h]))
+                p.changeVisualShape(self.movable[-1], -1, rgbaColor=DEFAULT_MOVABLE_RGBA)
 
         for objId in self.immovable:
             p.changeVisualShape(objId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])

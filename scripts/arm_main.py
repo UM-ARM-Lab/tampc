@@ -27,6 +27,7 @@ from tampc.controller import controller
 from tampc.transform import invariant
 from tampc.dynamics import hybrid_model
 from tampc.env import arm
+from tampc.env.arm import task_map, Levels
 
 from tampc.dynamics.hybrid_model import OnlineAdapt
 from tampc.controller import online_controller
@@ -46,10 +47,6 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 logger = logging.getLogger(__name__)
 
 # --- SHARED GETTERS
-task_map = {'freespace': 0, 'wall': 1, 'wall_broken_joint': 2, 'movable_cans': 3, 'straight_line': 4, 'NCCB': 5,
-            'wall_behind': 6}
-
-
 class ArmGetter(EnvGetter):
     @staticmethod
     def dynamics_prefix() -> str:
@@ -113,6 +110,7 @@ class ArmGetter(EnvGetter):
 
     @classmethod
     def env(cls, level=0, log_video=True, **kwargs):
+        level = Levels(level)
         # env = arm.ArmEnv(environment_level=level, log_video=log_video, **kwargs)
         # cls.env_dir = '{}/raw'.format(arm.DIR)
         # env = arm.ArmJointEnv(environment_level=level, log_video=log_video, **kwargs)
@@ -122,11 +120,11 @@ class ArmGetter(EnvGetter):
         # cls.env_dir = '{}/planar'.format(arm.DIR)
         env = arm.FloatingGripperEnv(environment_level=level, log_video=log_video, **kwargs)
         cls.env_dir = '{}/gripper'.format(arm.DIR)
-        if level is task_map['movable_cans']:
+        if level is Levels.MOVEABLE_CANS:
             env.set_task_config(goal=(0.95, -0.4))
-        if level in (task_map['straight_line'], task_map['wall_behind']):
+        if level in (Levels.STRAIGHT_LINE, Levels.WALL_BEHIND):
             env.set_task_config(goal=[0.0, 0.], init=[1, 0])
-        if level is task_map['NCCB']:
+        if level in (Levels.NCB_C, Levels.NCB_S, Levels.NCB_T):
             env.set_task_config(goal=[0.0, 0.], init=[1, 0])
         return env
 
@@ -457,6 +455,7 @@ def test_autonomous_recovery(*args, **kwargs):
 
 
 def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
+    """Visualize clustering results"""
     def setup(env, ctrl, ds):
         goal = [0.0, 0.]
         init = [1, 0]
@@ -470,7 +469,7 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
         from tampc.dynamics import online_model
         d = 'cuda:0'
         dt = torch.float64
-        if level is task_map['straight_line']:
+        if level is Levels.STRAIGHT_LINE:
             p.resetBasePositionAndOrientation(env.movable[0],
                                               (0.3877745438935845, 0.06599132022739296, 0.07692224061451539),
                                               (-0.0019374005104293949, -0.0025102144283983864, 0.018303218072636906,
@@ -490,7 +489,7 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
                    tensor([-0.0202, 0.0250, -3.6660, -5.6231], device=d, dtype=dt),
                    tensor([-2.9964e-02, -2.8484e-03, 2.5935e+00, 6.2750e+00], device=d, dtype=dt),
                    tensor([-0.0144, 0.0219, -1.2938, -5.4011], device=d, dtype=dt)]
-        elif level is task_map['wall_behind']:
+        elif level is Levels.WALL_BEHIND:
             p.resetBasePositionAndOrientation(env.movable[0],
                                               (0.4855159140630499, 0.021602734077042208, 0.07608311271110159),
                                               (-0.00015439536921398102, -0.0003589100213072153, 0.041949776970746026,
@@ -561,7 +560,7 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
         # evaluate the local model at certain points
         xs_eval = []
 
-        if level is task_map['straight_line']:
+        if level is Levels.STRAIGHT_LINE:
             last_state = np.array([0.5657, -0.0175, 0, 0]) + np.array([-0.0144, 0.0219, -1.2938, -5.4011])
             env.set_state(last_state, [-0.4818, 0.7293])
             xs_eval.append(last_state)
@@ -569,7 +568,7 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
             xs_eval.append([0.57, 0.0575, 0, 0])
             xs_eval.append([0.45, -0.12, 0, 0])
             xs_eval.append([10., -10, 0, 0])
-        elif level is task_map['wall_behind']:
+        elif level is Levels.WALL_BEHIND:
             last_state = np.array([0.6583, 0.1419, 30.2485, 1.1995])
             env.set_state(last_state)
             xs_eval.append(last_state)
@@ -629,12 +628,13 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
         plt.show()
         logger.info("env setup")
 
-    level = kwargs.pop('level')
-    assert level in [task_map['straight_line'], task_map['wall_behind']]
+    level = Levels(kwargs.pop('level'))
+    assert level in [Levels.STRAIGHT_LINE, Levels.WALL_BEHIND]
     run_controller('tune_avoid_nonnom_action', setup, *args, num_frames=num_frames, level=level, **kwargs)
 
 
 def test_residual_model_batching(*args, **kwargs):
+    """Visualize residual model GP uncertainties"""
     def setup(env, ctrl, ds):
         goal = [0.0, 0.]
         init = [1, 0]
@@ -648,7 +648,7 @@ def test_residual_model_batching(*args, **kwargs):
         from tampc.dynamics import online_model
         d = 'cuda:0'
         dt = torch.float64
-        if level is task_map['straight_line']:
+        if level is Levels.STRAIGHT_LINE:
             p.resetBasePositionAndOrientation(env.movable[0],
                                               (0.3877745438935845, 0.06599132022739296, 0.07692224061451539),
                                               (-0.0019374005104293949, -0.0025102144283983864, 0.018303218072636906,
@@ -668,7 +668,7 @@ def test_residual_model_batching(*args, **kwargs):
                    tensor([-0.0202, 0.0250, -3.6660, -5.6231], device=d, dtype=dt),
                    tensor([-2.9964e-02, -2.8484e-03, 2.5935e+00, 6.2750e+00], device=d, dtype=dt),
                    tensor([-0.0144, 0.0219, -1.2938, -5.4011], device=d, dtype=dt)]
-        elif level is task_map['wall_behind']:
+        elif level is Levels.WALL_BEHIND:
             p.resetBasePositionAndOrientation(env.movable[0],
                                               (0.4855159140630499, 0.021602734077042208, 0.07608311271110159),
                                               (-0.00015439536921398102, -0.0003589100213072153, 0.041949776970746026,
@@ -717,8 +717,8 @@ def test_residual_model_batching(*args, **kwargs):
         plt.show()
         logger.info("env setup")
 
-    level = kwargs.pop('level')
-    assert level in [task_map['straight_line'], task_map['wall_behind']]
+    level = Levels(kwargs.pop('level'))
+    assert level in [Levels.STRAIGHT_LINE, Levels.WALL_BEHIND]
     run_controller('tune_avoid_nonnom_action', setup, *args, level=level, **kwargs)
 
 
@@ -935,9 +935,9 @@ if __name__ == "__main__":
         #                              apfvo_baseline=args.apfvo_baseline,
         #                              apfsp_baseline=args.apfsp_baseline)
         replay_trajectory(
-            'arm/auto_recover__NONE__MAB__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST____2__500.mat',
-            63,
-            seed=2, level=5, use_tsf=ut,
+            'arm/auto_recover__NONE__MAB__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST____0__500.mat',
+            45,
+            seed=0, level=5, use_tsf=ut,
             assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
             visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
             override_tampc_params=tampc_params, override_mpc_params=mpc_params,
