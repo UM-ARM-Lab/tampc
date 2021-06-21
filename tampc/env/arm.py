@@ -160,6 +160,10 @@ class ArmEnv(PybulletEnv):
         self.reaction_force_strategy = reaction_force_strategy
         self.dist_for_done = dist_for_done
 
+        # object IDs
+        self.immovable = []
+        self.movable = []
+
         # initial config
         self.goal = None
         self.init = None
@@ -234,7 +238,7 @@ class ArmEnv(PybulletEnv):
 
         self._setup_gripper()
 
-        self.walls = []
+        self.immovable = []
         if self.level == 0:
             pass
         elif self.level in [1, 2]:
@@ -244,9 +248,9 @@ class ArmEnv(PybulletEnv):
             wallId = p.createMultiBody(0, colId, visId, basePosition=[0.6, 0.30, 0.2],
                                        baseOrientation=p.getQuaternionFromEuler([0, 0, 1.1]))
             p.changeDynamics(wallId, -1, lateralFriction=1)
-            self.walls.append(wallId)
+            self.immovable.append(wallId)
 
-        for wallId in self.walls:
+        for wallId in self.immovable:
             p.changeVisualShape(wallId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])
 
         self.set_camera_position([0, 0], yaw=113, pitch=-40)
@@ -868,7 +872,7 @@ class PlanarArmEnv(ArmEnv):
         self._setup_gripper()
 
         # TODO set up cylindral obstacles, some of which can be moved
-        self.walls = []
+        self.immovable = []
         if self.level == 0:
             pass
         elif self.level in [1, 2]:
@@ -878,9 +882,9 @@ class PlanarArmEnv(ArmEnv):
             wallId = p.createMultiBody(0, colId, visId, basePosition=[0.6, 0.30, 0.2],
                                        baseOrientation=p.getQuaternionFromEuler([0, 0, 1.1]))
             p.changeDynamics(wallId, -1, lateralFriction=1)
-            self.walls.append(wallId)
+            self.immovable.append(wallId)
 
-        for wallId in self.walls:
+        for wallId in self.immovable:
             p.changeVisualShape(wallId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])
 
         self.set_camera_position([0.5, 0.3], yaw=-75, pitch=-80)
