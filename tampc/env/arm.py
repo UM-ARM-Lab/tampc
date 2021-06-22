@@ -5,6 +5,7 @@ import time
 import enum
 import torch
 import os
+import random
 
 import numpy as np
 import matplotlib.colors as colors
@@ -36,6 +37,7 @@ class Levels(enum.IntEnum):
     WALL_BEHIND = 6
     NCB_S = 7
     NCB_T = 8
+    RANDOM = 9
 
 
 task_map = {str(c).split('.')[1]: c for c in Levels}
@@ -192,7 +194,8 @@ class ArmEnv(PybulletEnv):
     # --- initialization and task configuration
     def _clear_state_between_control_steps(self):
         self._sim_step = 0
-        self._mini_step_contact = {'full': np.zeros((self.mini_steps, 3)), 'mag': np.zeros(self.mini_steps)}
+        self._mini_step_contact = {'full': np.zeros((self.mini_steps, 3)), 'mag': np.zeros(self.mini_steps),
+                                   'id': np.ones(self.mini_steps) * -1}
         self._contact_info = {}
         self._largest_contact = {}
         self._reaction_force = np.zeros(2)
@@ -486,21 +489,6 @@ class ArmEnv(PybulletEnv):
         r, t = p.multiplyTransforms(world_link_position, world_link_orientation, joint_reaction_force[:3], [0, 0, 0, 0])
         reaction_force = r
 
-        # compute contact force between end effector and all bodies in the world
-        # reaction_force = [0, 0, 0]
-        # bodies = [self.planeId] + self.walls
-        # for bodyId in bodies:
-        #     contactInfo = p.getContactPoints(bodyId, self.armId, linkIndexB=self.endEffectorIndex)
-        #     info['npb'] = len(contactInfo)
-        #     for i, contact in enumerate(contactInfo):
-        #         f_contact = get_total_contact_force(contact, False)
-        #         reaction_force = [sum(i) for i in zip(reaction_force, f_contact)]
-        #
-        #         name = 'r{}_{}'.format(bodyId, i)
-        #         if abs(contact[ContactInfo.NORMAL_MAG]) > abs(self._largest_contact.get(name, 0)):
-        #             self._largest_contact[name] = contact[ContactInfo.NORMAL_MAG]
-        #             self._dd.draw_contact_point(name, contact, False)
-
         self._observe_raw_reaction_force(info, reaction_force, visualize)
 
     def _observe_info(self, visualize=True):
@@ -514,6 +502,10 @@ class ArmEnv(PybulletEnv):
                 self._contact_info[key] = []
             self._contact_info[key].append(value)
 
+    def _get_ee_contact_info(self, bodyId):
+        # changes when end effector type changes
+        return p.getContactPoints(bodyId, self.armId, linkIndexB=self.endEffectorIndex)
+
     def _observe_raw_reaction_force(self, info, reaction_force, visualize=True):
         # save reaction force
         name = 'r'
@@ -521,6 +513,15 @@ class ArmEnv(PybulletEnv):
         reaction_force_size = np.linalg.norm(reaction_force)
         # see if we should save it as the reaction force for this mini-step
         mini_step, step_since_start = divmod(self._sim_step, self.wait_sim_step_per_mini_step)
+
+        # detect what we are in contact with
+        for bodyId in self.movable + self.immovable:
+            contactInfo = self._get_ee_contact_info(bodyId)
+            # assume at most single body in contact
+            if len(contactInfo):
+                self._mini_step_contact['id'][mini_step] = bodyId
+                break
+
         if step_since_start is self._steps_since_start_to_get_reaction:
             self._mini_step_contact['full'][mini_step] = reaction_force
             self._mini_step_contact['mag'][mini_step] = reaction_force_size
@@ -539,6 +540,7 @@ class ArmEnv(PybulletEnv):
         info = {key: np.stack(value, axis=0) for key, value in self._contact_info.items() if len(value)}
         info['reaction'] = self._observe_reaction_force()
         info['wall_contact'] = -1
+        info['contact_id'] = int(self._mini_step_contact['id'].max())
         return info
 
     # --- control helpers (rarely overridden)
@@ -1136,18 +1138,21 @@ class FloatingGripperEnv(PlanarArmEnv):
         r, t = p.multiplyTransforms(world_link_position, world_link_orientation, joint_reaction_force[:3], [0, 0, 0, 0])
         return r
 
+    def _get_ee_contact_info(self, bodyId):
+        return p.getContactPoints(self.gripperId, bodyId)
+
     def _observe_additional_info(self, info, visualize=True):
         reaction_force = [0, 0, 0]
 
         for objectId in self.objects:
-            contactInfo = p.getContactPoints(self.gripperId, objectId)
+            contactInfo = self._get_ee_contact_info(objectId)
             for i, contact in enumerate(contactInfo):
                 f_contact = get_total_contact_force(contact, False)
                 reaction_force = [sum(i) for i in zip(reaction_force, f_contact)]
 
-                name = 'r{}'.format(i)
-                if abs(contact[ContactInfo.NORMAL_MAG]) > abs(self._largest_contact.get(name, 0)):
-                    self._largest_contact[name] = contact[ContactInfo.NORMAL_MAG]
+                # name = 'r{}'.format(i)
+                # if abs(contact[ContactInfo.NORMAL_MAG]) > abs(self._largest_contact.get(name, 0)):
+                #     self._largest_contact[name] = contact[ContactInfo.NORMAL_MAG]
 
         self._observe_raw_reaction_force(info, reaction_force, visualize)
 

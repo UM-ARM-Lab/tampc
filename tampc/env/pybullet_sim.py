@@ -58,6 +58,7 @@ class PybulletSim(simulation.Simulation):
         self.u = np.zeros((self.num_frames, self.env.nu))
         self.reaction_force = np.zeros((self.num_frames, self.reaction_dim))
         self.wall_contact = np.zeros((self.num_frames,))
+        self.contact_id = np.ones((self.num_frames,), dtype=np.int) * -1
         self.model_error = np.zeros_like(self.traj)
         self.time = np.arange(0, self.num_frames * self.sim_step_s, self.sim_step_s)
         self.pred_cls = np.zeros_like(self.wall_contact)
@@ -70,6 +71,7 @@ class PybulletSim(simulation.Simulation):
             in
             (self.traj, self.u,
              self.reaction_force,
+             self.contact_id,
              self.wall_contact,
              self.model_error,
              self.time, self.pred_cls))
@@ -196,6 +198,7 @@ class PybulletSim(simulation.Simulation):
             # reaction force felt as we apply this action, as observed at the start of the next time step
             self.reaction_force[simTime + 1, :] = info['reaction']
             self.wall_contact[simTime + 1] = info['wall_contact']
+            self.contact_id[simTime] = info['contact_id']
             additional_info = info.get('additional_info', None)
             if additional_info is not None:
                 self.additional_info.append(additional_info)
@@ -237,6 +240,7 @@ class PybulletSim(simulation.Simulation):
             additional_info = None
         return {'X': X, 'U': self.u, 'reaction': self.reaction_force, 'model error': self.model_error,
                 'scaled model error': scaled_model_error, 'wall contact': self.wall_contact.reshape(-1, 1),
+                'contact_id': self.contact_id.reshape(-1, 1),
                 'mask': mask.reshape(-1, 1), 'predicted dynamics_class': self.pred_cls.reshape(-1, 1),
                 'additional_info': additional_info}
 
