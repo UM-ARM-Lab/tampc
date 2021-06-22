@@ -61,6 +61,7 @@ class PybulletSim(simulation.Simulation):
         self.model_error = np.zeros_like(self.traj)
         self.time = np.arange(0, self.num_frames * self.sim_step_s, self.sim_step_s)
         self.pred_cls = np.zeros_like(self.wall_contact)
+        self.additional_info = []
         return simulation.ReturnMeaning.SUCCESS
 
     def _truncate_data(self, frame):
@@ -195,6 +196,10 @@ class PybulletSim(simulation.Simulation):
             # reaction force felt as we apply this action, as observed at the start of the next time step
             self.reaction_force[simTime + 1, :] = info['reaction']
             self.wall_contact[simTime + 1] = info['wall_contact']
+            additional_info = info.get('additional_info', None)
+            if additional_info is not None:
+                self.additional_info.append(additional_info)
+
             if self._predicts_state():
                 self.pred_traj[simTime + 1, :] = self.ctrl.predicted_next_state
                 # model error from the previous prediction step (can only evaluate it at the current step)
@@ -226,9 +231,14 @@ class PybulletSim(simulation.Simulation):
         # shift by 1 since the control at t-1 affects the model error at t
         u_norm = np.roll(u_norm, 1).reshape(-1, 1)
         scaled_model_error = np.divide(self.model_error, u_norm, out=np.zeros_like(self.model_error), where=u_norm != 0)
+        if len(self.additional_info):
+            additional_info = np.stack(self.additional_info)
+        else:
+            additional_info = None
         return {'X': X, 'U': self.u, 'reaction': self.reaction_force, 'model error': self.model_error,
                 'scaled model error': scaled_model_error, 'wall contact': self.wall_contact.reshape(-1, 1),
-                'mask': mask.reshape(-1, 1), 'predicted dynamics_class': self.pred_cls.reshape(-1, 1)}
+                'mask': mask.reshape(-1, 1), 'predicted dynamics_class': self.pred_cls.reshape(-1, 1),
+                'additional_info': additional_info}
 
     def _start_plot_action_sample(self):
         self.fu_sample, self.au_sample = plt.subplots(self.env.nu, 1)
