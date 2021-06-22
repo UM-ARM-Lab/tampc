@@ -783,7 +783,7 @@ class EvaluateTask:
         X, U = torch.split(XU, ds.original_config().nx, dim=1)
 
         reached_states = X.cpu().numpy()
-        goal_pos = env.goal_pos
+        goal_pos = env.get_ee_pos(env.goal)
         reached_ee = np.stack(env.get_ee_pos(s) for s in reached_states)
 
         dists = np.linalg.norm((reached_ee - goal_pos), axis=1)
