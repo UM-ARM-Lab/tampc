@@ -128,7 +128,7 @@ class ArmGetter(EnvGetter):
         if level in (Levels.NCB_C, Levels.NCB_S):
             env.set_task_config(goal=[0.0, 0.], init=[1, 0])
         if level is Levels.NCB_T:
-            env.set_task_config(goal=[-0.05, 0.], init=[1, 0])
+            env.set_task_config(goal=[-0.02, 0.], init=[1, 0])
         return env
 
 
@@ -457,7 +457,7 @@ def test_autonomous_recovery(*args, **kwargs):
     run_controller('auto_recover', default_setup, *args, **kwargs)
 
 
-def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
+def visualize_clustering_sets(*args, num_frames=100, **kwargs):
     """Visualize clustering results"""
 
     def setup(env, ctrl, ds):
@@ -529,8 +529,10 @@ def test_avoid_nonnominal_action(*args, num_frames=100, **kwargs):
         position_preprocessing = preprocess.PytorchTransformer(
             online_controller.StateToPositionTransformer(state_to_position, position_to_state, length_scale, env.nu),
             online_controller.StateToPositionTransformer(state_to_position, position_to_state, length_scale, 0))
-        c = ContactObject(ctrl.dynamics.create_empty_local_model(use_prior=True, preprocessor=position_preprocessing),
-                          state_to_position, position_to_state)
+        c = ContactObject(ctrl.dynamics.create_empty_local_model(use_prior=ctrl.contact_use_prior,
+                                                                 preprocessor=ctrl.contact_preprocessing,
+                                                                 nom_projection=False),
+                          ctrl.state_to_pos, ctrl.pos_to_state, ctrl.contact_max_linkage_dist, ctrl.u_sim)
 
         # TODO use prior but with new preprocessing; need to adjust how to use prior
         # state_preprocessing = preprocess.PytorchTransformer(
@@ -898,16 +900,7 @@ if __name__ == "__main__":
                                      never_estimate_error=args.never_estimate_error,
                                      project_state=not args.no_projection,
                                      baseline=baseline)
-            # test_avoid_nonnominal_action(seed=seed, level=level, use_tsf=ut,
-            #                              nominal_adapt=nominal_adapt, rep_name=args.rep_name,
-            #                              reuse_escape_as_demonstration=False, use_trap_cost=use_trap_cost,
-            #                              assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
-            #                              visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
-            #                              override_tampc_params=tampc_params, override_mpc_params=mpc_params,
-            #                              autonomous_recovery=autonomous_recovery,
-            #                              never_estimate_error=args.never_estimate_error,
-            #                              apfvo_baseline=args.apfvo_baseline,
-            #                              apfsp_baseline=args.apfsp_baseline)
+
     elif args.command == 'evaluate':
         task_type = arm.DIR
         # get all the trials to visualize for choosing where the obstacles are
@@ -915,40 +908,45 @@ if __name__ == "__main__":
                                                 args.eval_run_prefix, task_type=task_type)
     elif args.command == 'visualize':
         util.plot_task_res_dist({
-            # 'auto_recover__NONE__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'non-adapative', 'color': 'purple', 'label': True},
-            # 'auto_recover__GP_KERNEL_INDEP_OUT__NONE__3__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__NOTRAPCOST': {
-            #     'name': 'adaptive MPC++', 'color': 'red', 'label': True},
-            # 'auto_recover__APFVO__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-            #     'name': 'APF-VO', 'color': 'black', 'label': True},
-            'auto_recover__APFVO__rho04__NONE__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'APF-VO', 'color': 'black', 'label': True},
-            'auto_recover__NONE__MAB__NO_E__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC e=0', 'color': [0.8, 0.5, 0], 'label': True},
-            'auto_recover__fixed_max_weight2__NONE__MAB__1__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
-                'name': 'TAMPC', 'color': 'green', 'label': True},
+            # 'auto_recover__NONE__MAB__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'ours V1', 'color': 'green', 'label': True},
+            # 'auto_recover__NONE__MAB__NO_PROJ__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'ours no projection', 'color': [0.8, 0.5, 0], 'label': True},
+            # 'auto_recover__RANDOM_ON_CONTACT__NONE__MAB__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'random on contact', 'color': 'red', 'label': True},
+            # 'auto_recover__AWAY_FROM_CONTACT__NONE__MAB__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'away from contact', 'color': 'purple', 'label': True},
+            # 'auto_recover__TANGENT_TO_CONTACT__NONE__MAB__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'tangent to contact', 'color': 'cyan', 'label': True},
+
+            'auto_recover__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'ours V1', 'color': 'green'},
+            'auto_recover__NONE__MAB__NO_PROJ__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'ours no projection', 'color': [0.8, 0.5, 0]},
+            'auto_recover__RANDOM_ON_CONTACT__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'random on contact', 'color': 'red'},
+            'auto_recover__AWAY_FROM_CONTACT__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'away from contact', 'color': 'purple'},
+            'auto_recover__TANGENT_TO_CONTACT__NONE__MAB__7__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+                'name': 'tangent to contact', 'color': 'cyan'},
+
+            # 'auto_recover__NONE__MAB__8__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST': {
+            #     'name': 'ours V1', 'color': 'green'},
         }, 'arm_task_res.pkl', task_type='arm', figsize=(5, 7), set_y_label=True,
-            task_names=task_names, success_min_dist=0.04)
+            task_names=task_names, success_min_dist=0.04, plot_success_vs_steps=True, plot_min_scatter=False)
 
     else:
-        # test_residual_model_batching(seed=0, level=task_map['straight_line'], use_tsf=ut,
-        #                              assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
-        #                              visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
-        #                              override_tampc_params=tampc_params, override_mpc_params=mpc_params,
-        #                              autonomous_recovery=online_controller.AutonomousRecovery.MAB,
-        #                              never_estimate_error=args.never_estimate_error,
-        #                              apfvo_baseline=args.apfvo_baseline,
-        #                              apfsp_baseline=args.apfsp_baseline)
-        replay_trajectory(
-            'arm/auto_recover__NONE__MAB__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST____0__500.mat',
-            45,
-            seed=0, level=5, use_tsf=ut,
-            assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
-            visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
-            override_tampc_params=tampc_params, override_mpc_params=mpc_params,
-            autonomous_recovery=online_controller.AutonomousRecovery.MAB,
-            never_estimate_error=args.never_estimate_error,
-            other_baseline=baseline)
+        # replay_trajectory(
+        #     'arm/auto_recover__NONE__MAB__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST____0__500.mat',
+        #     45,
+        #     seed=0, level=5, use_tsf=ut,
+        #     assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
+        #     visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
+        #     override_tampc_params=tampc_params, override_mpc_params=mpc_params,
+        #     autonomous_recovery=online_controller.AutonomousRecovery.MAB,
+        #     never_estimate_error=args.never_estimate_error,
+        #     other_baseline=baseline)
+        visualize_clustering_sets(seed=0, level=Levels.NCB_C, use_tsf=ut)
 
         # d, env, config, ds = ArmGetter.free_space_env_init(0)
         # ds.update_preprocessor(ArmGetter.pre_invariant_preprocessor(use_tsf=use_tsf))

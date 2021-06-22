@@ -118,6 +118,7 @@ def plot_task_res_dist(series_to_plot, res_file,
                        plot_cumulative_distribution=False,
                        plot_min_distribution=False,
                        plot_min_scatter=True,
+                       plot_success_vs_steps=False,
                        store_min_up_to_now=False,
                        success_min_dist=None):
     fullname = os.path.join(cfg.DATA_DIR, res_file)
@@ -286,6 +287,44 @@ def plot_task_res_dist(series_to_plot, res_file,
             if set_y_label:
                 ax[j].set_ylabel('closest dist to goal')
         ax[-1].set_xlabel('control step for closest dist')
+        f.tight_layout(rect=[0, 0.03, 1, 0.95])
+    if plot_success_vs_steps:
+        f, ax = plt.subplots(len(all_series), figsize=figsize)
+        if isinstance(ax, plt.Axes):
+            ax = [ax]
+        for j, (level, series) in enumerate(all_series.items()):
+            task_name = "{} task {}".format(task_type, level)
+            if task_names is not None:
+                task_name = task_names[level]
+            ax[j].set_title(task_name)
+            for i, data in enumerate(series):
+                series_name, tk, dists, successes = data
+                plot_info = series_to_plot[series_name]
+                logger.info("%s\nsuccess percent %f%% %d trials", series_name, successes * 100, dists.shape[0])
+
+                steps = []
+                for d in dists:
+                    last_val = d[-1]
+                    # we pad the end of early termination, so use this as proxy for success/number of steps
+                    repeats = np.sum(d == last_val)
+                    if repeats > 1:
+                        steps.append(len(d) - repeats)
+
+                t = torch.tensor(steps)
+                # returns first occurrence if repeated
+                c = plot_info['color']
+                tm = t.median()
+                # offset in y to prevent overlaps
+                ax[j].errorbar(tm, successes + np.random.randn() * 0.002,
+                               xerr=[[tm - np.percentile(t, 20)], [np.percentile(t, 80) - tm]], color=c,
+                               label=plot_info['name'] if 'label' in plot_info else '_nolegend_', fmt='o')
+
+            ax[j].legend(**legend_props)
+            ax[j].set_xlim(0, max_t)
+            ax[j].set_ylim(bottom=0)
+            if set_y_label:
+                ax[j].set_ylabel('success rate')
+        ax[-1].set_xlabel('control step until success')
         f.tight_layout(rect=[0, 0.03, 1, 0.95])
 
     plt.show()
