@@ -253,8 +253,7 @@ class ContactObject(serialization.Serializable):
 
 
 class ContactSet(serialization.Serializable):
-    def __init__(self, contact_max_linkage_dist, state_to_pos, u_sim, fade_per_contact=0.8,
-                 fade_per_no_contact=0.95,
+    def __init__(self, contact_max_linkage_dist, state_to_pos, u_sim,
                  ignore_below_weight=0.2, immovable_collision_checker=None,
                  contact_object_factory: typing.Callable[[], ContactObject] = None,
                  contact_force_threshold=0.5):
@@ -265,8 +264,6 @@ class ContactSet(serialization.Serializable):
         self.contact_max_linkage_dist = contact_max_linkage_dist
         self.u_sim = u_sim
         self.state_to_pos = state_to_pos
-        self.fade_per_contact = fade_per_contact
-        self.fade_per_no_contact = fade_per_no_contact
         self.ignore_below_weight = ignore_below_weight
 
         self.immovable_collision_checker = immovable_collision_checker
