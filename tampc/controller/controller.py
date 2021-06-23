@@ -1,6 +1,7 @@
 import abc
 import logging
 import os.path
+from typing import Dict
 
 import numpy as np
 import torch
@@ -114,6 +115,65 @@ class FullRandomController(Controller):
     def command(self, obs, info=None):
         u = np.random.uniform(low=self.u_min, high=self.u_max, size=self.nu)
         # logger.debug(obs)
+        return u
+
+
+from tampc import contact
+
+
+class GreedyControllerWithRandomWalkOnContact(Controller):
+    """Sample actions then take one that leads to lowest cost; take a random action after experiencing contact"""
+
+    def __init__(self, nu, dynamics, cost_to_go, contact_set: contact.ContactSet, u_min, u_max, num_samples=100,
+                 force_threshold=4, walk_length=3):
+        super().__init__()
+        self.nu = nu
+        self.u_min = u_min
+        self.u_max = u_max
+        self.dynamics = dynamics
+        self.cost = cost_to_go
+        self.num_samples = num_samples
+        self.force_threshold = force_threshold
+
+        self.max_walk_length = walk_length
+        self.remaining_random_actions = 0
+
+        self.x_history = []
+        self.u_history = []
+
+        self.contact_set = contact_set
+        self.ground_truth_contact_map: Dict[int, contact.ContactObject] = {}
+
+    def command(self, obs, info=None):
+        d = self.dynamics.device
+        dtype = self.dynamics.dtype
+
+        self.x_history.append(obs)
+
+        if info is not None and np.linalg.norm(info['reaction']) > self.force_threshold:
+            self.remaining_random_actions = self.max_walk_length
+            contact_id = info['contact_id']
+            if contact_id not in self.ground_truth_contact_map and self.contact_set is not None:
+                self.ground_truth_contact_map[contact_id] = self.contact_set.contact_object_factory()
+                self.contact_set.append(self.ground_truth_contact_map[contact_id])
+            self.ground_truth_contact_map[contact_id].add_transition(self.x_history[-2], self.u_history[-1],
+                                                                     self.x_history[-1] - self.x_history[-2])
+
+        if self.remaining_random_actions > 0:
+            u = np.random.uniform(low=self.u_min, high=self.u_max, size=self.nu)
+            self.remaining_random_actions -= 1
+        else:
+            # take greedy action if not in contact
+            state = torch.from_numpy(obs).to(device=d, dtype=dtype).repeat(self.num_samples, 1)
+            u = np.random.uniform(low=self.u_min, high=self.u_max, size=(self.num_samples, self.nu))
+            u = torch.from_numpy(u).to(device=d, dtype=dtype)
+
+            next_state = self.dynamics(state, u)
+            costs = self.cost(torch.from_numpy(self.goal).to(device=d, dtype=dtype), next_state)
+            min_i = torch.argmin(costs)
+            u = u[min_i].cpu().numpy()
+
+        self.u_history.append(u)
         return u
 
 
