@@ -6,6 +6,7 @@ import enum
 import torch
 import os
 import random
+import scipy.stats
 
 import numpy as np
 import matplotlib.colors as colors
@@ -540,7 +541,8 @@ class ArmEnv(PybulletEnv):
         info = {key: np.stack(value, axis=0) for key, value in self._contact_info.items() if len(value)}
         info['reaction'] = self._observe_reaction_force()
         info['wall_contact'] = -1
-        info['contact_id'] = int(self._mini_step_contact['id'].max())
+        most_frequent_contact = scipy.stats.mode(self._mini_step_contact['id'])
+        info['contact_id'] = int(most_frequent_contact[0])
         return info
 
     # --- control helpers (rarely overridden)
@@ -1101,7 +1103,8 @@ class FloatingGripperEnv(PlanarArmEnv):
         elif self.level is Levels.RANDOM:
             # first move end effector out of the way
             p.resetBasePositionAndOrientation(self.gripperId, [0, 0, 100], self.endEffectorOrientation)
-            p.removeConstraint(self.gripperConstraint)
+            if self.gripperConstraint:
+                p.removeConstraint(self.gripperConstraint)
             bound = 0.7
             obj_types = ["tester.urdf", "topple_cylinder.urdf", "block_tall.urdf", "wall.urdf"]
             # randomize number of objects, type of object, and size of object
