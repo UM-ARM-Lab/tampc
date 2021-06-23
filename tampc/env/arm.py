@@ -1112,18 +1112,16 @@ class FloatingGripperEnv(PlanarArmEnv):
             bound = 0.7
             obj_types = ["tester.urdf", "topple_cylinder.urdf", "block_tall.urdf", "wall.urdf"]
             # randomize number of objects, type of object, and size of object
-            num_obj = random.randint(1, 4)
+            num_obj = random.randint(2, 5)
             for _ in range(num_obj):
                 obj_type = random.choice(obj_types)
                 # TODO start with making everything immovable
-                moveable = False
-                # moveable = obj_type != "wall.urdf"
+                # moveable = False
+                moveable = obj_type != "wall.urdf"
                 global_scale = random.uniform(0.5, 1.5)
                 yaw = random.uniform(0, 2 * math.pi)
                 h = 0.1 * global_scale
-                obj = None
-                out_of_bounds = True
-                while out_of_bounds:
+                while True:
                     # randomly sample start location and yaw
                     # convert yaw to quaternion
                     if obj_type == "topple_cylinder.urdf":
@@ -1133,7 +1131,7 @@ class FloatingGripperEnv(PlanarArmEnv):
                     position = [random.uniform(-bound, bound), random.uniform(-bound, bound), h]
                     # even if immovable have to initialize as having movable base to enable collision checks
                     obj = p.loadURDF(os.path.join(cfg.ROOT_DIR, obj_type), useFixedBase=False,
-                                     globalScaling=global_scale,
+                                     globalScaling=global_scale * 0.7 if obj_type == "wall.urdf" else global_scale,
                                      basePosition=position,
                                      baseOrientation=orientation)
                     # let settle
@@ -1141,10 +1139,24 @@ class FloatingGripperEnv(PlanarArmEnv):
                         p.stepSimulation()
                     # retry positioning if we teleported out of bounds
                     pos = p.getBasePositionAndOrientation(obj)[0]
-                    if bound > pos[0] > -bound and bound > pos[1] > -bound:
-                        out_of_bounds = False
-                    else:
+                    in_bounds = bound > pos[0] > -bound and bound > pos[1] > -bound
+                    if not in_bounds:
                         p.removeBody(obj)
+                        continue
+                    # don't want objects leaning on each other
+                    in_contact = False
+                    for other_obj in self.movable + self.immovable:
+                        c = p.getContactPoints(obj, other_obj)
+                        if len(c):
+                            in_contact = True
+                            break
+                    if in_contact:
+                        p.removeBody(obj)
+                        continue
+
+                    if in_bounds and not in_contact:
+                        break
+
                 if moveable:
                     self.movable.append(obj)
                 else:
@@ -1152,7 +1164,7 @@ class FloatingGripperEnv(PlanarArmEnv):
                     pose = p.getBasePositionAndOrientation(obj)
                     p.removeBody(obj)
                     obj = p.loadURDF(os.path.join(cfg.ROOT_DIR, obj_type), useFixedBase=True,
-                                     globalScaling=global_scale,
+                                     globalScaling=global_scale * 0.7 if obj_type == "wall.urdf" else global_scale,
                                      basePosition=pose[0],
                                      baseOrientation=pose[1])
                     self.immovable.append(obj)
@@ -1163,7 +1175,8 @@ class FloatingGripperEnv(PlanarArmEnv):
             p.changeVisualShape(objId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])
         self.objects = self.immovable + self.movable
 
-        self.set_camera_position([0.5, 0.3], yaw=-75, pitch=-80)
+        if self.level is not Levels.RANDOM:
+            self.set_camera_position([0.5, 0.3], yaw=-75, pitch=-80)
 
         self.state = self._obs()
         self._draw_state()
