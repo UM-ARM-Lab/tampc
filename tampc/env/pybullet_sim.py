@@ -58,7 +58,7 @@ class PybulletSim(simulation.Simulation):
         self.u = np.zeros((self.num_frames, self.env.nu))
         self.reaction_force = np.zeros((self.num_frames, self.reaction_dim))
         self.wall_contact = np.zeros((self.num_frames,))
-        self.contact_id = np.ones((self.num_frames,), dtype=np.int) * -1
+        self.contact_id = np.ones((self.num_frames,), dtype=np.intc) * -1
         self.model_error = np.zeros_like(self.traj)
         self.time = np.arange(0, self.num_frames * self.sim_step_s, self.sim_step_s)
         self.pred_cls = np.zeros_like(self.wall_contact)
@@ -66,7 +66,7 @@ class PybulletSim(simulation.Simulation):
         return simulation.ReturnMeaning.SUCCESS
 
     def _truncate_data(self, frame):
-        self.traj, self.u, self.reaction_force, self.wall_contact, self.model_error, self.time, self.pred_cls = (
+        self.traj, self.u, self.reaction_force, self.contact_id, self.wall_contact, self.model_error, self.time, self.pred_cls = (
             data[:frame] for data
             in
             (self.traj, self.u,
@@ -98,6 +98,10 @@ class PybulletSim(simulation.Simulation):
 
             action = self.ctrl.command(obs, info)
 
+            contact_set = getattr(self.ctrl, 'contact_set', None)
+            if contact_set is not None:
+                self.env.visualize_contact_set(contact_set)
+
             # visualizations before taking action
             if self._predicts_dynamics_cls():
                 if self.ctrl.projected_x is not None:
@@ -117,9 +121,6 @@ class PybulletSim(simulation.Simulation):
 
                 if self.ctrl.trap_set and self.ctrl.trap_cost is not None:
                     self.env.visualize_trap_set(self.ctrl.trap_set)
-
-                if self._has_recovery_policy():
-                    self.env.visualize_contact_set(self.ctrl.contact_set)
 
                 if self._has_recovery_policy() and self.ctrl.autonomous_recovery is online_controller.AutonomousRecovery.MAB:
                     mode_text = "recovery" if self.ctrl.autonomous_recovery_mode else (
@@ -237,7 +238,7 @@ class PybulletSim(simulation.Simulation):
         if len(self.additional_info):
             additional_info = np.stack(self.additional_info)
         else:
-            additional_info = None
+            additional_info = np.array([])
         return {'X': X, 'U': self.u, 'reaction': self.reaction_force, 'model error': self.model_error,
                 'scaled model error': scaled_model_error, 'wall contact': self.wall_contact.reshape(-1, 1),
                 'contact_id': self.contact_id.reshape(-1, 1),
