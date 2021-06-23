@@ -502,7 +502,7 @@ class ArmEnv(PybulletEnv):
                 self._contact_info[key] = []
             self._contact_info[key].append(value)
 
-    def _get_ee_contact_info(self, bodyId):
+    def get_ee_contact_info(self, bodyId):
         # changes when end effector type changes
         return p.getContactPoints(bodyId, self.armId, linkIndexB=self.endEffectorIndex)
 
@@ -516,7 +516,7 @@ class ArmEnv(PybulletEnv):
 
         # detect what we are in contact with
         for bodyId in self.movable + self.immovable:
-            contactInfo = self._get_ee_contact_info(bodyId)
+            contactInfo = self.get_ee_contact_info(bodyId)
             # assume at most single body in contact
             if len(contactInfo):
                 self._mini_step_contact['id'][mini_step] = bodyId
@@ -1016,6 +1016,8 @@ class FloatingGripperEnv(PlanarArmEnv):
         self._close_gripper()
 
     def _setup_experiment(self):
+        # set gravity
+        p.setGravity(0, 0, -10)
         # add plane to push on (slightly below the base of the robot)
         self.planeId = p.loadURDF("plane.urdf", [0, 0, 0], useFixedBase=True)
 
@@ -1096,6 +1098,53 @@ class FloatingGripperEnv(PlanarArmEnv):
                 self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "topple_cylinder.urdf"), useFixedBase=False,
                                                basePosition=[0.7, y, h + 0.02],
                                                baseOrientation=p.getQuaternionFromEuler([0, np.pi / 2, np.pi / 2])))
+        elif self.level is Levels.RANDOM:
+            # first move end effector out of the way
+            p.resetBasePositionAndOrientation(self.gripperId, [0, 0, 100], self.endEffectorOrientation)
+            p.removeConstraint(self.gripperConstraint)
+            bound = 0.7
+            obj_types = ["tester.urdf", "topple_cylinder.urdf", "block_tall.urdf", "wall.urdf"]
+            # randomize number of objects, type of object, and size of object
+            num_obj = random.randint(1, 4)
+            for _ in range(num_obj):
+                obj_type = random.choice(obj_types)
+                # TODO start with making everything immovable
+                moveable = False
+                # moveable = obj_type != "wall.urdf"
+                global_scale = random.uniform(0.5, 1.5)
+                yaw = random.uniform(0, 2 * math.pi)
+                h = 0.1 * global_scale
+                obj = None
+                out_of_bounds = True
+                while out_of_bounds:
+                    # randomly sample start location and yaw
+                    # convert yaw to quaternion
+                    if obj_type == "topple_cylinder.urdf":
+                        orientation = p.getQuaternionFromEuler([0, yaw, np.pi / 2])
+                    else:
+                        orientation = p.getQuaternionFromEuler([0, 0, yaw])
+                    # even if immovable have to initialize as having movable base to enable collision checks
+                    obj = p.loadURDF(os.path.join(cfg.ROOT_DIR, obj_type), useFixedBase=False,
+                                     globalScaling=global_scale,
+                                     basePosition=[random.uniform(-bound, bound), random.uniform(-bound, bound), h],
+                                     baseOrientation=orientation)
+                    # let settle
+                    for _ in range(1000):
+                        p.stepSimulation()
+                    # retry positioning if we teleported out of bounds
+                    pos = p.getBasePositionAndOrientation(obj)[0]
+                    if bound > pos[0] > -bound and bound > pos[1] > -bound:
+                        out_of_bounds = False
+                    else:
+                        p.removeBody(obj)
+                if moveable:
+                    self.movable.append(obj)
+                else:
+                    # make static (mass = 0)
+                    p.changeDynamics(obj, -1, mass=0)
+                    self.immovable.append(obj)
+            # restore gripper movement
+            self.reset()
 
         for objId in self.immovable:
             p.changeVisualShape(objId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])
@@ -1106,13 +1155,10 @@ class FloatingGripperEnv(PlanarArmEnv):
         self.state = self._obs()
         self._draw_state()
 
-        # set gravity
-        p.setGravity(0, 0, -10)
-
     def _setup_gripper(self):
         # orientation of the end effector (pointing down)
         # TODO allow gripper to change yaw?
-        self.endEffectorOrientation = p.getQuaternionFromEuler([0, -np.pi / 2, 0])
+        self.endEffectorOrientation = p.getQuaternionFromEuler([0, np.pi / 2, 0])
 
         # use a floating gripper
         self.gripperId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "panda_gripper.urdf"), self.init,
@@ -1121,7 +1167,7 @@ class FloatingGripperEnv(PlanarArmEnv):
         p.changeDynamics(self.gripperId, PandaJustGripperID.FINGER_B, lateralFriction=2)
 
         self.gripperConstraint = p.createConstraint(self.gripperId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
-                                                    self.init, self.endEffectorOrientation)
+                                                    self.init, childFrameOrientation=self.endEffectorOrientation)
 
         self._open_gripper()
         self._close_gripper()
@@ -1138,14 +1184,14 @@ class FloatingGripperEnv(PlanarArmEnv):
         r, t = p.multiplyTransforms(world_link_position, world_link_orientation, joint_reaction_force[:3], [0, 0, 0, 0])
         return r
 
-    def _get_ee_contact_info(self, bodyId):
+    def get_ee_contact_info(self, bodyId):
         return p.getContactPoints(self.gripperId, bodyId)
 
     def _observe_additional_info(self, info, visualize=True):
         reaction_force = [0, 0, 0]
 
         for objectId in self.objects:
-            contactInfo = self._get_ee_contact_info(objectId)
+            contactInfo = self.get_ee_contact_info(objectId)
             for i, contact in enumerate(contactInfo):
                 f_contact = get_total_contact_force(contact, False)
                 reaction_force = [sum(i) for i in zip(reaction_force, f_contact)]
@@ -1165,7 +1211,7 @@ class FloatingGripperEnv(PlanarArmEnv):
             p.removeConstraint(self.gripperConstraint)
         p.resetBasePositionAndOrientation(self.gripperId, self.init, self.endEffectorOrientation)
         self.gripperConstraint = p.createConstraint(self.gripperId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
-                                                    self.init, self.endEffectorOrientation)
+                                                    self.init, childFrameOrientation=self.endEffectorOrientation)
         self._close_gripper()
 
         # set robot init config
