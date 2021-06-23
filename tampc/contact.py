@@ -4,7 +4,7 @@ import typing
 import copy
 import logging
 from tampc.dynamics import online_model
-from arm_pytorch_utilities import tensor_utils, optim, serialization, math_utils
+from arm_pytorch_utilities import tensor_utils, optim, serialization
 from tampc.filters.ukf import EnvConditionedUKF
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class ContactParameters:
 
 
 class ContactObject(serialization.Serializable):
-    def __init__(self, empty_local_model: online_model.OnlineDynamicsModel, params: ContactParameters,
+    def __init__(self, empty_local_model: typing.Optional[online_model.OnlineDynamicsModel], params: ContactParameters,
                  assume_linear_scaling=True):
         # (x, u, dx) tuples associated with this object for fitting local model
         self.transitions = []
@@ -74,7 +74,7 @@ class ContactObject(serialization.Serializable):
     def state_dict(self) -> dict:
         state = {'points': self.points,
                  'actions': self.actions,
-                 'dynamics': self.dynamics.state_dict(),
+                 'dynamics': self.dynamics.state_dict() if self.dynamics is not None else None,
                  'mu': self.mu,
                  'cov': self.cov,
                  'mu_bar': self.mu_bar,
@@ -90,7 +90,7 @@ class ContactObject(serialization.Serializable):
         self.cov = state['cov']
         self.mu_bar = state['mu_bar']
         self.cov_bar = state['cov_bar']
-        if not self.dynamics.load_state_dict(state['dynamics']):
+        if self.dynamics is not None and not self.dynamics.load_state_dict(state['dynamics']):
             return False
         return True
 
@@ -116,7 +116,8 @@ class ContactObject(serialization.Serializable):
             dx /= u_scale
         # convert back to state
         centered_x = self.pos_to_state(centered_x).view(-1)
-        self.dynamics.update(centered_x, u, centered_x + dx)
+        if self.dynamics is not None:
+            self.dynamics.update(centered_x, u, centered_x + dx)
 
     def move_all_points(self, dpos):
         self.points += dpos
