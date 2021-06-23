@@ -1130,10 +1130,11 @@ class FloatingGripperEnv(PlanarArmEnv):
                         orientation = p.getQuaternionFromEuler([0, yaw, np.pi / 2])
                     else:
                         orientation = p.getQuaternionFromEuler([0, 0, yaw])
+                    position = [random.uniform(-bound, bound), random.uniform(-bound, bound), h]
                     # even if immovable have to initialize as having movable base to enable collision checks
                     obj = p.loadURDF(os.path.join(cfg.ROOT_DIR, obj_type), useFixedBase=False,
                                      globalScaling=global_scale,
-                                     basePosition=[random.uniform(-bound, bound), random.uniform(-bound, bound), h],
+                                     basePosition=position,
                                      baseOrientation=orientation)
                     # let settle
                     for _ in range(1000):
@@ -1147,8 +1148,13 @@ class FloatingGripperEnv(PlanarArmEnv):
                 if moveable:
                     self.movable.append(obj)
                 else:
-                    # make static (mass = 0)
-                    p.changeDynamics(obj, -1, mass=0)
+                    # recreate object and make it fixed base
+                    pose = p.getBasePositionAndOrientation(obj)
+                    p.removeBody(obj)
+                    obj = p.loadURDF(os.path.join(cfg.ROOT_DIR, obj_type), useFixedBase=True,
+                                     globalScaling=global_scale,
+                                     basePosition=pose[0],
+                                     baseOrientation=pose[1])
                     self.immovable.append(obj)
             # restore gripper movement
             self.reset()
