@@ -5,7 +5,7 @@ try:
 except:
     pass
 
-import enum
+import random
 import torch
 import pybullet as p
 import typing
@@ -22,7 +22,7 @@ from arm_pytorch_utilities.optim import get_device
 from arm_pytorch_utilities import preprocess
 from arm_pytorch_utilities import draw
 
-from tampc import cfg
+from tampc import cfg, contact
 from tampc.controller import controller
 from tampc.transform import invariant
 from tampc.dynamics import hybrid_model
@@ -109,6 +109,18 @@ class ArmGetter(EnvGetter):
         }
         return common_wrapper_opts, mpc_opts
 
+    @staticmethod
+    def contact_parameters(env: arm.ArmEnv) -> contact.ContactParameters:
+        return contact.ContactParameters(state_to_pos=env.get_ee_pos_states,
+                                         pos_to_state=env.get_state_ee_pos,
+                                         control_similarity=env.control_similarity,
+                                         state_to_reaction=env.get_ee_reaction,
+                                         max_pos_move_per_action=env.MAX_PUSH_DIST,
+                                         length=0.1,
+                                         weight_multiplier=0.1,
+                                         ignore_below_weight=0.2,
+                                         force_threshold=0.5)
+
     @classmethod
     def env(cls, level=0, log_video=True, **kwargs):
         level = Levels(level)
@@ -164,7 +176,7 @@ class OfflineDataCollection:
 
 from pytorch_rrt import UniformActionSpace, ActionDescription, \
     UniformStateSpace, State, StateDescription, \
-    KinodynamicRRT, Visualizer
+    KinodynamicRRT
 from typing import Iterable
 
 
@@ -368,11 +380,9 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                         assume_all_nonnominal_dynamics_are_traps=assume_all_nonnominal_dynamics_are_traps,
                         reuse_escape_as_demonstration=reuse_escape_as_demonstration,
                         use_trap_cost=use_trap_cost,
-                        state_to_position=env.get_ee_pos_states,
-                        state_to_reaction=env.get_ee_reaction,
-                        position_to_state=env.get_state_ee_pos,
                         never_estimate_error_dynamics=never_estimate_error,
                         known_immovable_obstacles=env.immovable,
+                        contact_params=ArmGetter.contact_parameters(env),
                         **tampc_opts, )
         if low_level_mpc is controller.ExperimentalMPPI:
             mpc = controller.ExperimentalMPPI(ctrl.mpc_apply_dynamics, ctrl.mpc_running_cost, ctrl.nx,
@@ -443,7 +453,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
     pre_run_setup(env, ctrl, ds)
 
     sim.run(seed, run_name)
-    logger.info("last run cost %f", np.sum(sim.last_run_cost))
+    logger.info("last run cost %f", sum(sim.last_run_cost))
     plt.ioff()
     plt.show()
 
@@ -519,27 +529,13 @@ def visualize_clustering_sets(*args, num_frames=100, **kwargs):
                    tensor([4.3680e-05, -6.0653e-04, -1.8815e-02, 7.3396e-02], device=d, dtype=dt),
                    tensor([5.1479e-04, 2.8380e-02, -3.8951e-02, -3.5810e+00], device=d, dtype=dt),
                    tensor([-1.4298e-02, 2.6445e-02, 3.0248e+01, 1.1995e+00], device=d, dtype=dt)]
+        else:
+            raise NotImplementedError(f"This task {level} is not considered")
 
-        # add data to the local model
-        state_to_position = env.get_ee_pos_states
-        position_to_state = env.get_state_ee_pos
-        length_scale = 0.03
-
-        # TODO use prior but with new preprocessing; need to adjust how to use prior
-        position_preprocessing = preprocess.PytorchTransformer(
-            online_controller.StateToPositionTransformer(state_to_position, position_to_state, length_scale, env.nu),
-            online_controller.StateToPositionTransformer(state_to_position, position_to_state, length_scale, 0))
         c = ContactObject(ctrl.dynamics.create_empty_local_model(use_prior=ctrl.contact_use_prior,
                                                                  preprocessor=ctrl.contact_preprocessing,
                                                                  nom_projection=False),
-                          ctrl.state_to_pos, ctrl.pos_to_state, ctrl.contact_max_linkage_dist, ctrl.u_sim)
-
-        # TODO use prior but with new preprocessing; need to adjust how to use prior
-        # state_preprocessing = preprocess.PytorchTransformer(
-        #     online_controller.DirectScaleTransformer([length_scale, length_scale, 10, 10, 1, 1]),
-        #     online_controller.DirectScaleTransformer([length_scale, length_scale, 10, 10]))
-        # c = ContactObject(ctrl.dynamics.create_empty_local_model(use_prior=True, preprocessor=ctrl.dynamics.preprocessor),
-        #                   object_centered_dynamics=True)
+                          ArmGetter.contact_parameters(env))
 
         ctrl.contact_set.append(c)
         for i in range(len(xs)):
@@ -651,8 +647,6 @@ def test_residual_model_batching(*args, **kwargs):
 
         # previous contacts made
         from torch import tensor
-        from tampc.contact import ContactObject
-        from tampc.dynamics import online_model
         d = 'cuda:0'
         dt = torch.float64
         if level is Levels.STRAIGHT_LINE:
@@ -786,7 +780,7 @@ class EvaluateTask:
 
         reached_states = X.cpu().numpy()
         goal_pos = env.get_ee_pos(env.goal)
-        reached_ee = np.stack(env.get_ee_pos(s) for s in reached_states)
+        reached_ee = np.stack([env.get_ee_pos(s) for s in reached_states])
 
         dists = np.linalg.norm((reached_ee - goal_pos), axis=1)
         lower_bound_dist = dists.min()

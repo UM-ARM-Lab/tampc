@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import torch
 import typing
 import copy
@@ -9,10 +10,21 @@ from tampc.filters.ukf import EnvConditionedUKF
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class ContactParameters:
+    state_to_pos: typing.Callable[[torch.tensor], torch.tensor]
+    pos_to_state: typing.Callable[[torch.tensor], torch.tensor]
+    control_similarity: typing.Callable[[torch.tensor, torch.tensor], float]
+    state_to_reaction: typing.Callable[[torch.tensor], torch.tensor]
+    max_pos_move_per_action: float
+    length: float = 0.1
+    weight_multiplier: float = 0.1
+    ignore_below_weight: float = 0.2
+    force_threshold: float = 0.5
+
+
 class ContactObject(serialization.Serializable):
-    def __init__(self, empty_local_model: online_model.OnlineDynamicsModel, state_to_pos, pos_to_state,
-                 length_parameter, u_similarity,
-                 weight_multiplier=0.1,
+    def __init__(self, empty_local_model: online_model.OnlineDynamicsModel, params: ContactParameters,
                  assume_linear_scaling=True):
         # (x, u, dx) tuples associated with this object for fitting local model
         self.transitions = []
@@ -21,14 +33,14 @@ class ContactObject(serialization.Serializable):
         self.actions = None
 
         self.dynamics = empty_local_model
-        self.state_to_pos = state_to_pos
-        self.pos_to_state = pos_to_state
+        self.state_to_pos = params.state_to_pos
+        self.pos_to_state = params.pos_to_state
 
         self.assume_linear_scaling = assume_linear_scaling
 
         # UKF stuff
-        self.length_parameter = length_parameter
-        self.u_similarity = u_similarity
+        self.length_parameter = params.length
+        self.u_similarity = params.control_similarity
         self.n_x = 2  # state is center point
         self.n_y = 2  # observe robot position
         self.n_u = 2
@@ -45,7 +57,7 @@ class ContactObject(serialization.Serializable):
         # prior gaussian of position
         self.mu_bar = None
         self.cov_bar = None
-        self.weight_multiplier = weight_multiplier / (self.sigma * self.n_x)
+        self.weight_multiplier = params.weight_multiplier / (self.sigma * self.n_x)
 
     @property
     def center_point(self):
@@ -253,24 +265,18 @@ class ContactObject(serialization.Serializable):
 
 
 class ContactSet(serialization.Serializable):
-    def __init__(self, contact_max_linkage_dist, state_to_pos, u_sim,
-                 ignore_below_weight=0.2, immovable_collision_checker=None,
-                 contact_object_factory: typing.Callable[[], ContactObject] = None,
-                 contact_force_threshold=0.5):
+    def __init__(self, params: ContactParameters, immovable_collision_checker=None,
+                 contact_object_factory: typing.Callable[[], ContactObject] = None):
         self._obj: typing.List[ContactObject] = []
         # cached center of all points
         self.center_points = None
 
-        self.contact_max_linkage_dist = contact_max_linkage_dist
-        self.u_sim = u_sim
-        self.state_to_pos = state_to_pos
-        self.ignore_below_weight = ignore_below_weight
+        self.p = params
 
         self.immovable_collision_checker = immovable_collision_checker
         # used to produce contact objects during loading
         self.contact_object_factory = contact_object_factory
         # process and measurement model uses this to decide when force is high or low magnitude
-        self.contact_force_threshold = contact_force_threshold
 
     def state_dict(self) -> dict:
         state = {'center_points': self.center_points, 'num_obj': len(self._obj)}
@@ -304,7 +310,7 @@ class ContactSet(serialization.Serializable):
     def _keep_high_weight_contacts(self):
         if self._obj:
             init_len = len(self._obj)
-            self._obj = [c for c in self._obj if c.weight > self.ignore_below_weight]
+            self._obj = [c for c in self._obj if c.weight > self.p.ignore_below_weight]
             if len(self._obj) != init_len:
                 if len(self._obj):
                     self.center_points = torch.stack([obj.center_point for obj in self._obj])
@@ -337,7 +343,7 @@ class ContactSet(serialization.Serializable):
 
         center_points, points, actions = contact_data
         # norm across spacial dimension, sum across each object
-        d = (center_points - self.state_to_pos(goal_x)).norm(dim=-1)
+        d = (center_points - self.p.state_to_pos(goal_x)).norm(dim=-1)
         # modify by weight of contact object existing
         weights = torch.tensor([c.weight for c in self._obj], dtype=d.dtype, device=d.device)
         return (1 / d * weights.view(-1, 1)).sum(dim=0)
@@ -348,16 +354,16 @@ class ContactSet(serialization.Serializable):
         if not self._obj:
             return res_c, res_i
 
-        d = (self.center_points - self.state_to_pos(x)).norm(dim=1).view(-1)
+        d = (self.center_points - self.p.state_to_pos(x)).norm(dim=1).view(-1)
 
         for i, cc in enumerate(self._obj):
             # first use heuristic to filter out points based on state distance to object centers
-            if d[i] > 2 * self.contact_max_linkage_dist:
+            if d[i] > 2 * self.p.length:
                 continue
             # we're using the x before contact because our estimate of the object points haven't moved yet
             # TODO handle when multiple contact objects claim it is part of them
-            clustered, _ = cc.clusters_to_object(x.view(1, -1), u.view(1, -1), self.contact_max_linkage_dist,
-                                                 self.u_sim)
+            clustered, _ = cc.clusters_to_object(x.view(1, -1), u.view(1, -1), self.p.length,
+                                                 self.p.control_similarity)
             if clustered[0]:
                 res_c.append(cc)
                 res_i.append(i)
@@ -367,8 +373,8 @@ class ContactSet(serialization.Serializable):
         return res_c, res_i
 
     def update(self, x, u, dx, reaction):
-        environment = [self.state_to_pos(x), u, dx]
-        if reaction.norm() < self.contact_force_threshold:
+        environment = [self.p.state_to_pos(x), u, dx]
+        if reaction.norm() < self.p.force_threshold:
             self.stepped_without_contact(u, environment)
             return
 
@@ -396,7 +402,7 @@ class ContactSet(serialization.Serializable):
                 ci.ukf_predict(u, environment, expect_movement=True)
                 # c.ukf_update(unit_reaction, environment)
                 # where the contact point center would be taking last point into account
-                c.ukf_update(c.points.mean(dim=0) + self.state_to_pos(dx), environment)
+                c.ukf_update(c.points.mean(dim=0) + self.p.state_to_pos(dx), environment)
 
         self.updated()
 
@@ -416,7 +422,7 @@ class ContactSet(serialization.Serializable):
 
         # all of t
         if center_points is not None:
-            pos = self.state_to_pos(x)
+            pos = self.p.state_to_pos(x)
             rel_pos = pos - center_points
             d = rel_pos.norm(dim=-1)
 
@@ -428,12 +434,12 @@ class ContactSet(serialization.Serializable):
                 dd = d[i]
                 # first filter on distance to center of this object
                 # disallow multiple contact interactions
-                candidates = without_contact & (dd < 2 * self.contact_max_linkage_dist)
+                candidates = without_contact & (dd < 2 * self.p.length)
                 if not torch.any(candidates):
                     continue
 
                 # u_sim[stored action index (# points of object), total_num], sim of stored action and sampled action
-                candidates, none = c.clusters_to_object(pos, u, self.contact_max_linkage_dist, self.u_sim,
+                candidates, none = c.clusters_to_object(pos, u, self.p.length, self.p.control_similarity,
                                                         candidates=candidates, act=act, pts=pts, x_is_pos=True)
                 if none:
                     continue

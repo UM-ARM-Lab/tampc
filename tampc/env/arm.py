@@ -103,6 +103,10 @@ class ArmEnv(PybulletEnv):
     def get_ee_pos_states(states):
         return states[:, :3]
 
+    @tensor_utils.ensure_2d_input
+    def get_state_ee_pos(self, pos):
+        raise NotImplementedError()
+
     @classmethod
     @handle_data_format_for_state_diff
     def state_difference(cls, state, other_state):

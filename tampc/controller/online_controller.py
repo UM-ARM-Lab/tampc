@@ -174,12 +174,11 @@ class TAMPC(OnlineMPC):
                  assume_all_nonnominal_dynamics_are_traps=False,
                  recovery_scale=1, recovery_horizon=5, R_env=None,
                  autonomous_recovery=AutonomousRecovery.RETURN_STATE,
-                 state_to_position=None,
-                 state_to_reaction=None,
-                 position_to_state=None,
                  contact_use_prior=True,
                  known_immovable_obstacles=None,
-                 reuse_escape_as_demonstration=True, **kwargs):
+                 reuse_escape_as_demonstration=True,
+                 contact_params: contact.ContactParameters = None,
+                 **kwargs):
         self.known_immovable_obstacles = known_immovable_obstacles
         self.state_to_pos = None
         self.pos_to_state = None
@@ -235,23 +234,21 @@ class TAMPC(OnlineMPC):
         self.projected_x = None
         # contact tracking parameters
         # state distance between making contacts for distinguishing separate contacts
+        self.p = contact_params
         self.in_contact_with_known_immovable = False
-        self.contact_max_linkage_dist = 0.1
-        self.contact_set = contact.ContactSet(self.contact_max_linkage_dist, state_to_position, self.u_sim,
+        self.contact_set = contact.ContactSet(self.p,
                                               immovable_collision_checker=self._known_immovable_obstacle_collision_check,
-                                              contact_object_factory=self._create_contact_object,
-                                              contact_force_threshold=0.5)
+                                              contact_object_factory=self._create_contact_object)
         self.contact_cost = None
         self.contact_use_prior = contact_use_prior
-        self.state_to_pos = state_to_position
-        self.state_to_reaction = state_to_reaction
-        self.pos_to_state = position_to_state
-        if state_to_position is not None and position_to_state is not None:
-            # TODO this should come from the environment (i.e. maximum position change achieved by any single action)
-            length_scale = 0.03
+        if self.p is not None:
+            self.state_to_pos = self.p.state_to_pos
+            self.state_to_reaction = self.p.state_to_reaction
+            self.pos_to_state = self.p.pos_to_state
+            length_scale = self.p.max_pos_move_per_action
             self.contact_preprocessing = preprocess.PytorchTransformer(
-                StateToPositionTransformer(state_to_position, position_to_state, length_scale, self.nu),
-                StateToPositionTransformer(state_to_position, position_to_state, length_scale, 0))
+                StateToPositionTransformer(self.p.state_to_pos, self.p.pos_to_state, length_scale, self.nu),
+                StateToPositionTransformer(self.p.state_to_pos, self.p.pos_to_state, length_scale, 0))
         else:
             raise RuntimeError("Need to give controller state to position transform from env for contact dynamics")
 
@@ -646,7 +643,7 @@ class TAMPC(OnlineMPC):
         c = contact.ContactObject(self.dynamics.create_empty_local_model(use_prior=self.contact_use_prior,
                                                                          preprocessor=self.contact_preprocessing,
                                                                          nom_projection=False),
-                                  self.state_to_pos, self.pos_to_state, self.contact_max_linkage_dist, self.u_sim)
+                                  self.p)
         return c
 
     def _compute_action(self, x):
@@ -983,7 +980,7 @@ class TAMPCContactPolicyBaseline(TAMPC):
                     self.turns_since_last_pull = 0
                     logger.debug("pulled arm %d = %s", self.last_arm_pulled.item(), self.recovery_cost_weight())
 
-            if len(self.x_history) > 1 and reaction.norm() > self.contact_set.contact_force_threshold:
+            if len(self.x_history) > 1 and reaction.norm() > self.p.force_threshold:
                 u = self._action_when_in_contact(reaction)
             else:
                 u = self.mpc.command_augmented(x, self.contact_set, self.contact_cost)
