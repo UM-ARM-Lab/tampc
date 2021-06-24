@@ -13,7 +13,7 @@ import matplotlib.colors as colors
 import matplotlib.cm as cmx
 
 from arm_pytorch_utilities import tensor_utils
-from tampc.env.pybullet_env import PybulletEnv, get_total_contact_force, ContactInfo
+from tampc.env.pybullet_env import PybulletEnv, get_total_contact_force, make_wall
 from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource
 from tampc.env.peg_in_hole import PandaJustGripperID
 from tampc.env.pybullet_sim import PybulletSim
@@ -892,14 +892,7 @@ class PlanarArmEnv(ArmEnv):
         if self.level == 0:
             pass
         elif self.level in [1, 2]:
-            half_extents = [0.2, 0.05, 0.3]
-            colId = p.createCollisionShape(p.GEOM_BOX, halfExtents=half_extents)
-            visId = p.createVisualShape(p.GEOM_BOX, halfExtents=half_extents, rgbaColor=[0.2, 0.2, 0.2, 0.8])
-            wallId = p.createMultiBody(0, colId, visId, basePosition=[0.6, 0.30, 0.2],
-                                       baseOrientation=p.getQuaternionFromEuler([0, 0, 1.1]))
-            p.changeDynamics(wallId, -1, lateralFriction=1)
-            self.immovable.append(wallId)
-
+            self.immovable.append(make_wall([0.2, 0.05, 0.3], [0.6, 0.3, 0.2], [0, 0, 1.1], lateral_friction=1))
         for wallId in self.immovable:
             p.changeVisualShape(wallId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])
 
@@ -1178,9 +1171,7 @@ class FloatingGripperEnv(PlanarArmEnv):
             h = 0.1
             s = 0.25
             if self.level is Levels.SELECT1:
-                self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.5, 0, h],
-                                                 p.getQuaternionFromEuler([0, 0, -np.pi / 2]), useFixedBase=True,
-                                                 globalScaling=0.8))
+                self.immovable.append(make_wall([0.4, 0.15, 0.1], [-0.4, 0, h], [0, 0, -np.pi / 2]))
                 self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
                                                basePosition=[s, s, h]))
                 self._adjust_mass_and_visual(self.movable[-1], 2.2)
@@ -1202,9 +1193,7 @@ class FloatingGripperEnv(PlanarArmEnv):
                                                baseOrientation=p.getQuaternionFromEuler([0, np.pi / 2, np.pi / 2])))
                 self._adjust_mass_and_visual(self.movable[-1], 1)
             elif self.level is Levels.SELECT3:
-                self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0., 0.5, h],
-                                                 p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
-                                                 globalScaling=0.8))
+                self.immovable.append(make_wall([0.4, 0.15, 0.1], [0, 0.4, h], [0, 0, 0]))
                 self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
                                                basePosition=[-0.2, 0, h], globalScaling=1.1))
                 self._adjust_mass_and_visual(self.movable[-1], 1)
@@ -1212,9 +1201,7 @@ class FloatingGripperEnv(PlanarArmEnv):
                                                basePosition=[0.4, -s, h], globalScaling=1))
                 self._adjust_mass_and_visual(self.movable[-1], 2.2)
             elif self.level is Levels.SELECT4:
-                self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.4, -0.4, h],
-                                                 p.getQuaternionFromEuler([0, 0, np.pi / 4]), useFixedBase=True,
-                                                 globalScaling=0.8))
+                self.immovable.append(make_wall([0.3, 0.12, 0.1], [0.3, -0.3, h], [0, 0, np.pi / 4]))
                 self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "block_tall.urdf"), useFixedBase=False,
                                                basePosition=[s, s, h], globalScaling=1.5))
                 self._adjust_mass_and_visual(self.movable[-1], 1.8)
@@ -1235,7 +1222,9 @@ class FloatingGripperEnv(PlanarArmEnv):
         self._setup_gripper()
         self._setup_objects()
 
-        if self.level not in [Levels.RANDOM] + selected_levels:
+        if self.level in [Levels.RANDOM, Levels.FREESPACE] + selected_levels:
+            self.set_camera_position([0, 0])
+        else:
             self.set_camera_position([0.5, 0.3], yaw=-75, pitch=-80)
 
         self.state = self._obs()

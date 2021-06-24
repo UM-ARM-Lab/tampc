@@ -17,6 +17,15 @@ from tampc.env.env import Mode, Env
 logger = logging.getLogger(__name__)
 
 
+def make_wall(half_extents, position, euler_angles, lateral_friction=0.7):
+    colId = p.createCollisionShape(p.GEOM_BOX, halfExtents=half_extents)
+    visId = p.createVisualShape(p.GEOM_BOX, halfExtents=half_extents, rgbaColor=[0.2, 0.2, 0.2, 0.8])
+    wallId = p.createMultiBody(0, colId, visId, basePosition=position,
+                               baseOrientation=p.getQuaternionFromEuler(euler_angles))
+    p.changeDynamics(wallId, -1, lateralFriction=lateral_friction)
+    return wallId
+
+
 class PybulletEnv(Env):
     def __init__(self, mode=Mode.DIRECT, log_video=False, default_debug_height=0, camera_dist=1.5):
         self.log_video = log_video
