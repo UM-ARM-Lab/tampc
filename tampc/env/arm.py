@@ -39,7 +39,13 @@ class Levels(enum.IntEnum):
     NCB_S = 7
     NCB_T = 8
     RANDOM = 9
+    SELECT1 = 10
+    SELECT2 = 11
+    SELECT3 = 12
+    SELECT4 = 13
 
+
+selected_levels = [Levels.SELECT1, Levels.SELECT2, Levels.SELECT3, Levels.SELECT4]
 
 task_map = {str(c).split('.')[1]: c for c in Levels}
 
@@ -239,13 +245,7 @@ class ArmEnv(PybulletEnv):
     #                                 p.POSITION_CONTROL,
     #                                 targetPositions=[self.FINGER_CLOSED, self.FINGER_CLOSED],
     #                                 forces=[self.MAX_GRIPPER_FORCE, self.MAX_GRIPPER_FORCE])
-
-    def _setup_experiment(self):
-        # add plane to push on (slightly below the base of the robot)
-        self.planeId = p.loadURDF("plane.urdf", [0, 0, 0], useFixedBase=True)
-
-        self._setup_gripper()
-
+    def _setup_objects(self):
         self.immovable = []
         if self.level == 0:
             pass
@@ -260,6 +260,13 @@ class ArmEnv(PybulletEnv):
 
         for wallId in self.immovable:
             p.changeVisualShape(wallId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])
+
+    def _setup_experiment(self):
+        # add plane to push on (slightly below the base of the robot)
+        self.planeId = p.loadURDF("plane.urdf", [0, 0, 0], useFixedBase=True)
+
+        self._setup_gripper()
+        self._setup_objects()
 
         self.set_camera_position([0, 0], yaw=113, pitch=-40)
 
@@ -880,13 +887,7 @@ class PlanarArmEnv(ArmEnv):
             init = init[:2]
         super(PlanarArmEnv, self)._set_init(tuple(init) + (FIXED_Z,))
 
-    def _setup_experiment(self):
-        # add plane to push on (slightly below the base of the robot)
-        self.planeId = p.loadURDF("plane.urdf", [0, 0, 0], useFixedBase=True)
-
-        self._setup_gripper()
-
-        # TODO set up cylindral obstacles, some of which can be moved
+    def _setup_objects(self):
         self.immovable = []
         if self.level == 0:
             pass
@@ -901,6 +902,13 @@ class PlanarArmEnv(ArmEnv):
 
         for wallId in self.immovable:
             p.changeVisualShape(wallId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])
+
+    def _setup_experiment(self):
+        # add plane to push on (slightly below the base of the robot)
+        self.planeId = p.loadURDF("plane.urdf", [0, 0, 0], useFixedBase=True)
+
+        self._setup_gripper()
+        self._setup_objects()
 
         self.set_camera_position([0.5, 0.3], yaw=-75, pitch=-80)
 
@@ -1021,14 +1029,7 @@ class FloatingGripperEnv(PlanarArmEnv):
         p.changeConstraint(self.gripperConstraint, end, maxForce=self.MAX_FORCE)
         self._close_gripper()
 
-    def _setup_experiment(self):
-        # set gravity
-        p.setGravity(0, 0, -10)
-        # add plane to push on (slightly below the base of the robot)
-        self.planeId = p.loadURDF("plane.urdf", [0, 0, 0], useFixedBase=True)
-
-        self._setup_gripper()
-
+    def _setup_objects(self):
         self.immovable = []
         self.movable = []
         if self.level == Levels.FREESPACE:
@@ -1169,17 +1170,80 @@ class FloatingGripperEnv(PlanarArmEnv):
                                      baseOrientation=pose[1])
                     self.immovable.append(obj)
             # restore gripper movement
-            self.reset()
+            p.resetBasePositionAndOrientation(self.gripperId, self.init, self.endEffectorOrientation)
+            self.gripperConstraint = p.createConstraint(self.gripperId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
+                                                        self.init, childFrameOrientation=self.endEffectorOrientation)
+            self._close_gripper()
+        elif self.level in selected_levels:
+            h = 0.1
+            s = 0.25
+            if self.level is Levels.SELECT1:
+                self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.5, 0, h],
+                                                 p.getQuaternionFromEuler([0, 0, -np.pi / 2]), useFixedBase=True,
+                                                 globalScaling=0.8))
+                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
+                                               basePosition=[s, s, h]))
+                self._adjust_mass_and_visual(self.movable[-1], 2.2)
+                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "block_tall.urdf"), useFixedBase=False,
+                                               basePosition=[s, -s, h], globalScaling=1.5))
+                self._adjust_mass_and_visual(self.movable[-1], 0.8)
+            elif self.level is Levels.SELECT2:
+                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
+                                               basePosition=[-s, s, h], globalScaling=0.8))
+                self._adjust_mass_and_visual(self.movable[-1], 1)
+                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "block_tall.urdf"), useFixedBase=False,
+                                               basePosition=[s, s, h], globalScaling=1.2))
+                self._adjust_mass_and_visual(self.movable[-1], 1.8)
+                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
+                                               basePosition=[s, -s, h], globalScaling=1.2))
+                self._adjust_mass_and_visual(self.movable[-1], 1)
+                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "topple_cylinder.urdf"), useFixedBase=False,
+                                               basePosition=[-s, -s, h + 0.02],
+                                               baseOrientation=p.getQuaternionFromEuler([0, np.pi / 2, np.pi / 2])))
+                self._adjust_mass_and_visual(self.movable[-1], 1)
+            elif self.level is Levels.SELECT3:
+                self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0., 0.5, h],
+                                                 p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
+                                                 globalScaling=0.8))
+                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
+                                               basePosition=[-0.2, 0, h], globalScaling=1.1))
+                self._adjust_mass_and_visual(self.movable[-1], 1)
+                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
+                                               basePosition=[0.4, -s, h], globalScaling=1))
+                self._adjust_mass_and_visual(self.movable[-1], 2.2)
+            elif self.level is Levels.SELECT4:
+                self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.4, -0.4, h],
+                                                 p.getQuaternionFromEuler([0, 0, np.pi / 4]), useFixedBase=True,
+                                                 globalScaling=0.8))
+                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "block_tall.urdf"), useFixedBase=False,
+                                               basePosition=[s, s, h], globalScaling=1.5))
+                self._adjust_mass_and_visual(self.movable[-1], 1.8)
+                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "block_tall.urdf"), useFixedBase=False,
+                                               basePosition=[-s, 0, h], globalScaling=1.2))
+                self._adjust_mass_and_visual(self.movable[-1], 1.2)
 
         for objId in self.immovable:
             p.changeVisualShape(objId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])
         self.objects = self.immovable + self.movable
 
-        if self.level is not Levels.RANDOM:
+    def _setup_experiment(self):
+        # set gravity
+        p.setGravity(0, 0, -10)
+        # add plane to push on (slightly below the base of the robot)
+        self.planeId = p.loadURDF("plane.urdf", [0, 0, 0], useFixedBase=True)
+
+        self._setup_gripper()
+        self._setup_objects()
+
+        if self.level not in [Levels.RANDOM] + selected_levels:
             self.set_camera_position([0.5, 0.3], yaw=-75, pitch=-80)
 
         self.state = self._obs()
         self._draw_state()
+
+    def _adjust_mass_and_visual(self, obj, m):
+        p.changeVisualShape(obj, -1, rgbaColor=[1 - m / 3, 0.8 - m / 3, 0.2, 0.8])
+        p.changeDynamics(obj, -1, mass=m)
 
     def _setup_gripper(self):
         # orientation of the end effector (pointing down)
@@ -1235,6 +1299,11 @@ class FloatingGripperEnv(PlanarArmEnv):
         self._open_gripper()
         if self.gripperConstraint:
             p.removeConstraint(self.gripperConstraint)
+
+        for obj in self.immovable + self.movable:
+            p.removeBody(obj)
+        self._setup_objects()
+
         p.resetBasePositionAndOrientation(self.gripperId, self.init, self.endEffectorOrientation)
         self.gripperConstraint = p.createConstraint(self.gripperId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
                                                     self.init, childFrameOrientation=self.endEffectorOrientation)
