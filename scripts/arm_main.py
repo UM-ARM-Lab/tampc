@@ -174,7 +174,7 @@ class OfflineDataCollection:
         plt.show()
 
     @staticmethod
-    def tracking(level, seed_offset=0, trials=50, trial_length=150, force_gui=True):
+    def tracking(level, seed_offset=0, trials=50, trial_length=300, force_gui=True):
         env = ArmGetter.env(level=level, mode=p.GUI if force_gui else p.DIRECT)
         contact_params = ArmGetter.contact_parameters(env)
 
@@ -202,13 +202,18 @@ class OfflineDataCollection:
             ctrl = controller.GreedyControllerWithRandomWalkOnContact(env.nu, pm.dyn_net, cost_to_go, contact_set,
                                                                       u_min,
                                                                       u_max,
-                                                                      force_threshold=contact_params.force_threshold)
+                                                                      force_threshold=contact_params.force_threshold,
+                                                                      walk_length=6)
             # random position
             intersects_existing_objects = True
             while intersects_existing_objects:
                 init = [random.uniform(-0.7, 0.7), random.uniform(-0.7, 0.7)]
                 init_state = np.array(init + [0, 0])
                 goal = [random.uniform(-0.7, 0.7), random.uniform(-0.7, 0.7)]
+
+                # reject if init and goal is too close
+                if np.linalg.norm(np.subtract(init, goal)) < 0.7:
+                    continue
 
                 env.set_task_config(init=init, goal=goal)
                 env.set_state(env.goal)
@@ -236,9 +241,9 @@ class OfflineDataCollection:
                     intersects_existing_objects = False
 
             sim.ctrl = ctrl
+            env.draw_user_text(f"seed {seed}", xy=(0.5, 0.8, -1))
             sim.run(seed)
-            # TODO rerun if we experience too few contacts?
-            # env.reset()
+            env.clear_debug_trajectories()
 
         env.close()
         # if sim.save:
