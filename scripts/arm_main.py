@@ -5,6 +5,7 @@ try:
 except:
     pass
 
+import time
 import random
 import torch
 import pybullet as p
@@ -246,8 +247,8 @@ class OfflineDataCollection:
             env.clear_debug_trajectories()
 
         env.close()
-        # if sim.save:
-        #     load_data.merge_data_in_dir(cfg, save_dir, save_dir)
+        # wait for it to fully close; otherwise could skip next run due to also closing that when it's created
+        time.sleep(2.)
 
 
 from pytorch_rrt import UniformActionSpace, ActionDescription, \
