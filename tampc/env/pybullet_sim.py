@@ -62,7 +62,7 @@ class PybulletSim(simulation.Simulation):
         self.model_error = np.zeros_like(self.traj)
         self.time = np.arange(0, self.num_frames * self.sim_step_s, self.sim_step_s)
         self.pred_cls = np.zeros_like(self.wall_contact)
-        self.additional_info = []
+        self.object_poses = {}
         return simulation.ReturnMeaning.SUCCESS
 
     def _truncate_data(self, frame):
@@ -200,9 +200,12 @@ class PybulletSim(simulation.Simulation):
             self.reaction_force[simTime + 1, :] = info['reaction']
             self.wall_contact[simTime + 1] = info['wall_contact']
             self.contact_id[simTime] = info['contact_id']
-            additional_info = info.get('additional_info', None)
-            if additional_info is not None:
-                self.additional_info.append(additional_info)
+            object_poses = info.get('object_poses', None)
+            if object_poses is not None:
+                for obj_id, pose in object_poses.items():
+                    if obj_id not in self.object_poses:
+                        self.object_poses[obj_id] = []
+                    self.object_poses[obj_id].append(pose)
 
             if self._predicts_state():
                 self.pred_traj[simTime + 1, :] = self.ctrl.predicted_next_state
@@ -235,15 +238,16 @@ class PybulletSim(simulation.Simulation):
         # shift by 1 since the control at t-1 affects the model error at t
         u_norm = np.roll(u_norm, 1).reshape(-1, 1)
         scaled_model_error = np.divide(self.model_error, u_norm, out=np.zeros_like(self.model_error), where=u_norm != 0)
-        if len(self.additional_info):
-            additional_info = np.stack(self.additional_info)
-        else:
-            additional_info = np.array([])
-        return {'X': X, 'U': self.u, 'reaction': self.reaction_force, 'model error': self.model_error,
+
+        data = {'X': X, 'U': self.u, 'reaction': self.reaction_force, 'model error': self.model_error,
                 'scaled model error': scaled_model_error, 'wall contact': self.wall_contact.reshape(-1, 1),
                 'contact_id': self.contact_id.reshape(-1, 1),
-                'mask': mask.reshape(-1, 1), 'predicted dynamics_class': self.pred_cls.reshape(-1, 1),
-                'additional_info': additional_info}
+                'mask': mask.reshape(-1, 1), 'predicted dynamics_class': self.pred_cls.reshape(-1, 1)}
+
+        for obj_id, pose_list in self.object_poses.items():
+            poses = np.stack(pose_list)
+            data[f"obj{obj_id}pose"] = poses
+        return data
 
     def _start_plot_action_sample(self):
         self.fu_sample, self.au_sample = plt.subplots(self.env.nu, 1)

@@ -581,12 +581,12 @@ class ArmEnv(PybulletEnv):
         # summarize information per sim step into information for entire control step
         info = self._aggregate_info()
 
-        if len(self.movable):
-            poses = []
-            for obj_id in self.movable:
+        if len(self.movable + self.immovable):
+            poses = {}
+            for obj_id in self.movable + self.immovable:
                 pose = p.getBasePositionAndOrientation(obj_id)
-                poses.append(np.concatenate([pose[0], pose[1]]))
-            info['additional_info'] = np.stack(poses)
+                poses[obj_id] = np.concatenate([pose[0], pose[1]])
+            info['object_poses'] = poses
 
         # prepare for next control step
         self._clear_state_between_control_steps()
