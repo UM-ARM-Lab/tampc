@@ -173,6 +173,77 @@ class OfflineDataCollection:
         plt.ioff()
         plt.show()
 
+    @staticmethod
+    def tracking(level, seed_offset=0, trials=50, trial_length=150, force_gui=True):
+        env = ArmGetter.env(level=level, mode=p.GUI if force_gui else p.DIRECT)
+        contact_params = ArmGetter.contact_parameters(env)
+
+        def cost_to_go(state, goal):
+            return env.state_distance_two_arg(state, goal)
+
+        def create_contact_object():
+            return contact.ContactObject(None, contact_params)
+
+        ds, pm = ArmGetter.prior(env, use_tsf=UseTsf.NO_TRANSFORM)
+
+        ctrl = controller.Controller()
+        save_dir = '{}{}'.format(ArmGetter.env_dir, level)
+        sim = arm.ExperimentRunner(env, ctrl, num_frames=trial_length, plot=False, save=True,
+                                   stop_when_done=True, save_dir=save_dir)
+
+        # randomly distribute data
+        for offset in range(trials):
+            u_min, u_max = env.get_control_bounds()
+
+            # use mode p.GUI to see what the trials look like
+            seed = rand.seed(seed_offset + offset)
+
+            contact_set = contact.ContactSet(contact_params, contact_object_factory=create_contact_object)
+            ctrl = controller.GreedyControllerWithRandomWalkOnContact(env.nu, pm.dyn_net, cost_to_go, contact_set,
+                                                                      u_min,
+                                                                      u_max,
+                                                                      force_threshold=contact_params.force_threshold)
+            # random position
+            intersects_existing_objects = True
+            while intersects_existing_objects:
+                init = [random.uniform(-0.7, 0.7), random.uniform(-0.7, 0.7)]
+                init_state = np.array(init + [0, 0])
+                goal = [random.uniform(-0.7, 0.7), random.uniform(-0.7, 0.7)]
+
+                env.set_task_config(init=init, goal=goal)
+                env.set_state(env.goal)
+
+                # want both goal and start to be free from collision
+                p.performCollisionDetection()
+                goal_intersection = False
+                for obj in env.movable + env.immovable:
+                    c = env.get_ee_contact_info(obj)
+                    if len(c):
+                        goal_intersection = True
+                        break
+                if goal_intersection:
+                    continue
+
+                env.set_state(init_state)
+                ctrl.set_goal(env.goal)
+
+                p.performCollisionDetection()
+                for obj in env.movable + env.immovable:
+                    c = env.get_ee_contact_info(obj)
+                    if len(c):
+                        break
+                else:
+                    intersects_existing_objects = False
+
+            sim.ctrl = ctrl
+            sim.run(seed)
+            # TODO rerun if we experience too few contacts?
+            # env.reset()
+
+        env.close()
+        # if sim.save:
+        #     load_data.merge_data_in_dir(cfg, save_dir, save_dir)
+
 
 from pytorch_rrt import UniformActionSpace, ActionDescription, \
     UniformStateSpace, State, StateDescription, \
@@ -792,8 +863,8 @@ class EvaluateTask:
 
 parser = argparse.ArgumentParser(description='Experiments on the 2D grid environment')
 parser.add_argument('command',
-                    choices=['collect', 'learn_representation', 'fine_tune_dynamics', 'run', 'evaluate', 'visualize',
-                             'debug'],
+                    choices=['collect', 'collect_tracking', 'learn_representation', 'fine_tune_dynamics', 'run',
+                             'evaluate', 'visualize', 'debug'],
                     help='which part of the experiment to run')
 parser.add_argument('--seed', metavar='N', type=int, nargs='+',
                     default=[0],
@@ -859,6 +930,10 @@ if __name__ == "__main__":
 
     if args.command == 'collect':
         OfflineDataCollection.freespace(seed_offset=0, trials=100, trial_length=30, force_gui=args.gui)
+    elif args.command == 'collect_tracking':
+        for level in [Levels.SELECT1, Levels.SELECT2, Levels.SELECT3, Levels.SELECT4]:
+            for offset in [7]:
+                OfflineDataCollection.tracking(level, seed_offset=offset, trials=40, force_gui=True)
     elif args.command == 'learn_representation':
         for seed in args.seed:
             ArmGetter.learn_invariant(ut, seed=seed, name=arm.DIR, MAX_EPOCH=1000, BATCH_SIZE=args.batch)
