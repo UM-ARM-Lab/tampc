@@ -391,6 +391,15 @@ class ArmEnv(PybulletEnv):
         self._dd.clear_visualization_after('ts', T)
         self._dd.clear_visualization_after('u', T + 1)
 
+    def visualize_state_actions(self, base_name, states, actions, state_c, action_c, action_scale):
+        for j in range(len(states)):
+            p = self.get_ee_pos(states[j])
+            name = '{}{}'.format(base_name, j)
+            self._dd.draw_point(name, p, color=state_c)
+            # draw action
+            name = '{}{}a'.format(base_name, j)
+            self._dd.draw_2d_line(name, p.cpu(), actions[j].cpu(), color=action_c, scale=action_scale)
+
     def visualize_contact_set(self, contact_set: contact.ContactSet):
         color_pairs = [[(1, 0.5, 0), (1, 0.8, 0.4)],
                        [(28 / 255, 237 / 255, 143 / 255), (22 / 255, 186 / 255, 112 / 255)],
@@ -417,21 +426,12 @@ class ArmEnv(PybulletEnv):
                                 color=color)
             self._contact_debug_names[i].add(name)
 
+            base_name = str(i)
+            self.visualize_state_actions(base_name, c.points, c.actions, color, u_color, 0.1 * w)
+
             for j in range(len(c.points)):
-                p = self.get_ee_pos(c.points[j])
-                name = 'c{}{}'.format(i, j)
-                self._dd.draw_point(name, p, color=color)
-                self._contact_debug_names[i].add(name)
-                # draw action
-                name = 'a{}{}'.format(i, j)
-                self._dd.draw_2d_line(name, p.cpu(), c.actions[j].cpu(), color=u_color, scale=0.1 * w)
-                self._contact_debug_names[i].add(name)
-                # draw linkage to next point
-                if j < len(c.points) - 1:
-                    diff = self.get_ee_pos(c.points[j + 1]) - p
-                    name = 'c{}{}-{}'.format(i, j, j + 1)
-                    self._dd.draw_2d_line(name, p.cpu(), diff.cpu(), color=color, scale=1)
-                    self._contact_debug_names[i].add(name)
+                self._contact_debug_names[i].add('{}{}'.format(base_name, j))
+                self._contact_debug_names[i].add('{}{}a'.format(base_name, j))
         # clean up any old visualization
         # for i in range(len(contact_set), len(self._contact_debug_names)):
         #     self._dd.clear_visualizations(self._contact_debug_names[i])

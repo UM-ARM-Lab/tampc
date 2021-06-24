@@ -91,6 +91,9 @@ class PybulletEnv(Env):
     def _draw_action(self, action, old_state=None, debug=0):
         pass
 
+    def visualize_state_actions(self, base_name, states, actions, state_c, action_c, action_scale):
+        pass
+
     @abc.abstractmethod
     def visualize_goal_set(self, states):
         pass
