@@ -1,5 +1,6 @@
 from tampc import cfg
-from tampc.env import env
+# from tampc.env import env as env_base
+from tampc.env import pybullet_env as env_base
 from tampc.env import arm
 import scipy.io
 import numpy as np
@@ -14,7 +15,7 @@ NO_CONTACT_ID = -1
 prefix_to_environment = {'arm/gripper': arm.FloatingGripperEnv}
 
 
-def extract_env_and_level_from_string(string) -> typing.Optional[typing.Tuple[typing.Type[env.Env], int]]:
+def extract_env_and_level_from_string(string) -> typing.Optional[typing.Tuple[typing.Type[env_base.PybulletEnv], int]]:
     for name, env_cls in prefix_to_environment.items():
         m = re.search(r"{}\d+".format(name), string)
         if m is not None:
@@ -43,7 +44,7 @@ def load_file(datafile):
     X = d['X'][mask]
     U = d['U'][mask]
 
-    contact_id = d['contact_id'][mask]
+    contact_id = d['contact_id'][mask].reshape(-1)
     ids, counts = np.unique(contact_id, return_counts=True)
     unique_contact_counts = dict(zip(ids, counts))
     steps_taken = sum(unique_contact_counts.values())
@@ -69,6 +70,19 @@ def load_file(datafile):
     # should be able to combine those
 
     print(f"{datafile} freespace ratio {freespace_ratio} unique contact IDs {unique_contact_counts}")
+
+    env = env_cls(environment_level=level, mode=p.GUI)
+    for i, unique_obj_id in enumerate(unique_contact_counts.keys()):
+        if unique_obj_id == NO_CONTACT_ID:
+            continue
+        x = X[contact_id == unique_obj_id]
+        u = U[contact_id == unique_obj_id]
+        state_c, action_c = env_base.state_action_color_pairs[(i - 1) % len(env_base.state_action_color_pairs)]
+        env.visualize_state_actions(str(i), x, u, state_c, action_c, 0.1)
+    env.close()
+    import time
+    time.sleep(1)
+
     return X, U, dX, contact_id, obj_poses, reactions
 
 
