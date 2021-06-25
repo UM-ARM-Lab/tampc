@@ -374,10 +374,11 @@ class ContactSet(serialization.Serializable):
         return res_c, res_i
 
     def update(self, x, u, dx, reaction):
+        """Returns updated contact object"""
         environment = [self.p.state_to_pos(x), u, dx]
         if reaction.norm() < self.p.force_threshold:
             self.stepped_without_contact(u, environment)
-            return
+            return None
 
         # associate each contact to a single object (max likelihood estimate on which object it is)
         cc, ii = self.check_which_object_applies(x, u)
@@ -406,6 +407,7 @@ class ContactSet(serialization.Serializable):
                 c.ukf_update(c.points.mean(dim=0) + self.p.state_to_pos(dx), environment)
 
         self.updated()
+        return c
 
     def get_batch_data_for_dynamics(self, total_num):
         if not self._obj:
