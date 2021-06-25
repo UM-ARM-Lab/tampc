@@ -13,7 +13,7 @@ import matplotlib.colors as colors
 import matplotlib.cm as cmx
 
 from arm_pytorch_utilities import tensor_utils
-from tampc.env.pybullet_env import PybulletEnv, get_total_contact_force, make_wall
+from tampc.env.pybullet_env import PybulletEnv, get_total_contact_force, make_wall, state_action_color_pairs
 from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource
 from tampc.env.peg_in_hole import PandaJustGripperID
 from tampc.env.pybullet_sim import PybulletSim
@@ -392,19 +392,18 @@ class ArmEnv(PybulletEnv):
         self._dd.clear_visualization_after('u', T + 1)
 
     def visualize_state_actions(self, base_name, states, actions, state_c, action_c, action_scale):
+        if torch.is_tensor(states):
+            states = states.cpu()
+            actions = actions.cpu()
         for j in range(len(states)):
             p = self.get_ee_pos(states[j])
             name = '{}{}'.format(base_name, j)
             self._dd.draw_point(name, p, color=state_c)
             # draw action
             name = '{}{}a'.format(base_name, j)
-            self._dd.draw_2d_line(name, p.cpu(), actions[j].cpu(), color=action_c, scale=action_scale)
+            self._dd.draw_2d_line(name, p, actions[j], color=action_c, scale=action_scale)
 
     def visualize_contact_set(self, contact_set: contact.ContactSet):
-        color_pairs = [[(1, 0.5, 0), (1, 0.8, 0.4)],
-                       [(28 / 255, 237 / 255, 143 / 255), (22 / 255, 186 / 255, 112 / 255)],
-                       [(172 / 255, 17 / 255, 237 / 255), (136 / 255, 13 / 255, 189 / 256)],
-                       [(181 / 255, 237 / 255, 28 / 255), (148 / 255, 194 / 255, 23 / 255)]]
         # clear all previous markers because we don't know which one was removed
         if len(self._contact_debug_names) > len(contact_set):
             for name in self._contact_debug_names:
@@ -412,7 +411,7 @@ class ArmEnv(PybulletEnv):
             self._contact_debug_names = []
 
         for i, c in enumerate(contact_set):
-            color, u_color = color_pairs[i % len(color_pairs)]
+            color, u_color = state_action_color_pairs[i % len(state_action_color_pairs)]
             if i >= len(self._contact_debug_names):
                 self._contact_debug_names.append(set())
             # represent the uncertainty of the center point

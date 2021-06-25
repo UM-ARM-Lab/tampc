@@ -16,6 +16,11 @@ from tampc.env.env import Mode, Env
 
 logger = logging.getLogger(__name__)
 
+state_action_color_pairs = [[(1, 0.5, 0), (1, 0.8, 0.4)],
+                            [(28 / 255, 237 / 255, 143 / 255), (22 / 255, 186 / 255, 112 / 255)],
+                            [(172 / 255, 17 / 255, 237 / 255), (136 / 255, 13 / 255, 189 / 256)],
+                            [(181 / 255, 237 / 255, 28 / 255), (148 / 255, 194 / 255, 23 / 255)]]
+
 
 def make_wall(half_extents, position, euler_angles, lateral_friction=0.7):
     colId = p.createCollisionShape(p.GEOM_BOX, halfExtents=half_extents)
