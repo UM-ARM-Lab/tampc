@@ -12,6 +12,7 @@ import typing
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from sklearn.cluster import DBSCAN
+from sklearn import metrics
 
 # by convention -1 refers to not in contact
 NO_CONTACT_ID = -1
@@ -96,6 +97,12 @@ def load_file(datafile):
     kmeans = KMeans(n_clusters=len(unique_contact_counts), random_state=0).fit(xx)
     dbscan = DBSCAN(eps=0.5, min_samples=10).fit(xx)
 
+    # we care about homogenity more than completeness - multiple objects in a single cluster is more dangerous
+    h, c, v = clustering_metrics(contact_id[:-1], kmeans.labels_, beta=0.5)
+    print(f"kmeans h {h} c {c} v {v}")
+    h, c, v = clustering_metrics(contact_id[:-1], dbscan.labels_, beta=0.5)
+    print(f"dbscan h {h} c {c} v {v}")
+
     # simplified plot in 2D
     # ground truth
     f = plt.figure()
@@ -115,6 +122,13 @@ def load_file(datafile):
     plt.show()
 
     return X, U, dX, contact_id, obj_poses, reactions
+
+
+def clustering_metrics(labels_true, labels_pred, beta=1.):
+    # beta < 1 means more weight for homogenity
+    return metrics.homogeneity_score(labels_true, labels_pred), \
+           metrics.completeness_score(labels_true, labels_pred), \
+           metrics.v_measure_score(labels_true, labels_pred, beta=beta)
 
 
 def plot_sklearn_cluster_res(method, xx, name):
