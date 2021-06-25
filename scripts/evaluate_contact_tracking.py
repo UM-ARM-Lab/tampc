@@ -1,7 +1,7 @@
-from tampc import cfg
-# from tampc.env import env as env_base
-from tampc.env import pybullet_env as env_base
-from tampc.env import arm
+import torch
+import logging
+import os
+from datetime import datetime
 import scipy.io
 import numpy as np
 import os.path
@@ -13,6 +13,29 @@ import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from sklearn.cluster import DBSCAN
 from sklearn import metrics
+
+from arm_pytorch_utilities.optim import get_device
+from arm_pytorch_utilities import preprocess
+
+from tampc import cfg, contact
+from tampc.env import pybullet_env as env_base
+from tampc.dynamics import hybrid_model
+from tampc.env import arm
+from tampc.dynamics.hybrid_model import OnlineAdapt
+from tampc.util import no_tsf_preprocessor, UseTsf
+from tampc.controller.online_controller import StateToPositionTransformer
+from tampc.env_getters.arm import ArmGetter
+
+ch = logging.StreamHandler()
+fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
+
+logging.basicConfig(level=logging.WARNING,
+                    format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
+                    datefmt='%m-%d %H:%M:%S', handlers=[ch, fh])
+
+logging.getLogger('matplotlib.font_manager').disabled = True
+
+logger = logging.getLogger(__name__)
 
 # by convention -1 refers to not in contact
 NO_CONTACT_ID = -1
@@ -31,7 +54,7 @@ def extract_env_and_level_from_string(string) -> typing.Optional[typing.Tuple[ty
     return None
 
 
-def load_file(datafile):
+def load_file(datafile, show_in_place=False):
     if not os.path.exists(datafile):
         raise RuntimeError(f"File doesn't exist")
 
@@ -60,6 +83,7 @@ def load_file(datafile):
     freespace_ratio = unique_contact_counts[NO_CONTACT_ID] / steps_taken
     if len(unique_contact_counts) < 2 or freespace_ratio > 0.95:
         raise RuntimeWarning(f"Too few contacts; spends {freespace_ratio} ratio in freespace")
+    print(f"{datafile} freespace ratio {freespace_ratio} unique contact IDs {unique_contact_counts}")
 
     obj_poses = {}
     for unique_obj_id in unique_contact_counts.keys():
@@ -76,20 +100,61 @@ def load_file(datafile):
     # another way is cosine similarity between vector of [robot->obj A], [robot->obj B]
     # should be able to combine those
 
-    print(f"{datafile} freespace ratio {freespace_ratio} unique contact IDs {unique_contact_counts}")
+    if show_in_place:
+        env = env_cls(environment_level=level, mode=p.GUI)
+        for i, unique_obj_id in enumerate(unique_contact_counts.keys()):
+            if unique_obj_id == NO_CONTACT_ID:
+                continue
+            x = X[contact_id == unique_obj_id]
+            u = U[contact_id == unique_obj_id]
+            state_c, action_c = env_base.state_action_color_pairs[(i - 1) % len(env_base.state_action_color_pairs)]
+            env.visualize_state_actions(str(i), x, u, state_c, action_c, 0.1)
+        env.close()
+        import time
+        time.sleep(1)
 
-    # env = env_cls(environment_level=level, mode=p.GUI)
-    # for i, unique_obj_id in enumerate(unique_contact_counts.keys()):
-    #     if unique_obj_id == NO_CONTACT_ID:
-    #         continue
-    #     x = X[contact_id == unique_obj_id]
-    #     u = U[contact_id == unique_obj_id]
-    #     state_c, action_c = env_base.state_action_color_pairs[(i - 1) % len(env_base.state_action_color_pairs)]
-    #     env.visualize_state_actions(str(i), x, u, state_c, action_c, 0.1)
-    # env.close()
-    # import time
-    # time.sleep(1)
+    # our method
+    env = ArmGetter.env(level=level, mode=p.DIRECT)
+    rep_name = None
+    use_tsf = UseTsf.NO_TRANSFORM
+    ds, pm = ArmGetter.prior(env, use_tsf, rep_name=rep_name)
 
+    dss = [ds]
+    ensemble = []
+    for s in range(10):
+        _, pp = ArmGetter.prior(env, use_tsf, rep_name=rep_name, seed=s)
+        ensemble.append(pp.dyn_net)
+
+    hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, env.state_distance_two_arg,
+                                                       [use_tsf.name],
+                                                       device=get_device(),
+                                                       preprocessor=no_tsf_preprocessor(),
+                                                       nominal_model_kwargs={'online_adapt': OnlineAdapt.NONE},
+                                                       ensemble=ensemble,
+                                                       project_by_default=True)
+
+    contact_params = ArmGetter.contact_parameters(env)
+    contact_preprocessing = preprocess.PytorchTransformer(
+        StateToPositionTransformer(contact_params.state_to_pos, contact_params.pos_to_state,
+                                   contact_params.max_pos_move_per_action, 2),
+        StateToPositionTransformer(contact_params.state_to_pos, contact_params.pos_to_state,
+                                   contact_params.max_pos_move_per_action, 0))
+
+    def create_contact_object():
+        return contact.ContactObject(hybrid_dynamics.create_empty_local_model(use_prior=True,
+                                                                              preprocessor=contact_preprocessing,
+                                                                              nom_projection=False), contact_params)
+
+    contact_set = contact.ContactSet(contact_params, contact_object_factory=create_contact_object)
+    labels = np.zeros(len(contact_id) - 1)
+    x = torch.from_numpy(X).to(device=pm.dyn_net.device, dtype=pm.dyn_net.dtype)
+    u = torch.from_numpy(U).to(device=pm.dyn_net.device, dtype=pm.dyn_net.dtype)
+    r = torch.from_numpy(reactions).to(device=pm.dyn_net.device, dtype=pm.dyn_net.dtype)
+    for i in range(len(X) - 1):
+        c = contact_set.update(x[i], u[i], env.state_difference(x[i + 1], x[i]).reshape(-1), r[i + 1])
+        labels[i] = -1 if c is None else hash(c)
+
+    # TODO cluster iteratively, using our tracking to move the points to get fairer baselines
     # simple baselines
     # cluster in [pos, next reaction force, action] space
     xx = np.concatenate([X[:-1, :2], reactions[1:], U[:-1]], axis=1)
@@ -102,22 +167,21 @@ def load_file(datafile):
     print(f"kmeans h {h} c {c} v {v}")
     h, c, v = clustering_metrics(contact_id[:-1], dbscan.labels_, beta=0.5)
     print(f"dbscan h {h} c {c} v {v}")
+    h, c, v = clustering_metrics(contact_id[:-1], labels, beta=0.5)
+    print(f"ours h {h} c {c} v {v}")
 
     # simplified plot in 2D
-    # ground truth
-    f = plt.figure()
-    f.suptitle(f"Task {level} {datafile.split('/')[-1]} ground truth")
-    ax = plt.gca()
-    for i, unique_obj_id in enumerate(unique_contact_counts.keys()):
-        x = X[contact_id == unique_obj_id]
-        pos = x[:, :2]
-        ax.scatter(pos[:, 0], pos[:, 1],
-                   label='no contact' if unique_obj_id == NO_CONTACT_ID else 'contact {}'.format(unique_obj_id))
-    ax.legend()
-    set_position_axis_bounds(ax, 0.7)
+    def cluster_id_to_str(cluster_id):
+        return 'no contact' if cluster_id == NO_CONTACT_ID else 'contact {}'.format(cluster_id)
 
-    plot_sklearn_cluster_res(kmeans, xx, f"Task {level} {datafile.split('/')[-1]} K-means")
-    plot_sklearn_cluster_res(dbscan, xx, f"Task {level} {datafile.split('/')[-1]} DBSCAN")
+    # ground truth
+    plot_cluster_res(contact_id, X, f"Task {level} {datafile.split('/')[-1]} ground truth",
+                     label_function=cluster_id_to_str)
+
+    # comparison of methods
+    plot_cluster_res(kmeans.labels_, xx, f"Task {level} {datafile.split('/')[-1]} K-means")
+    plot_cluster_res(dbscan.labels_, xx, f"Task {level} {datafile.split('/')[-1]} DBSCAN")
+    plot_cluster_res(labels, xx, f"Task {level} {datafile.split('/')[-1]} ours")
 
     plt.show()
 
@@ -131,18 +195,22 @@ def clustering_metrics(labels_true, labels_pred, beta=1.):
            metrics.v_measure_score(labels_true, labels_pred, beta=beta)
 
 
-def plot_sklearn_cluster_res(method, xx, name):
+def plot_cluster_res(labels, xx, name, label_function=None):
     f = plt.figure()
     f.suptitle(name)
     ax = plt.gca()
-    ids, counts = np.unique(method.labels_, return_counts=True)
+    ids, counts = np.unique(labels, return_counts=True)
     sklearn_cluster_counts = dict(zip(ids, counts))
     sklearn_cluster_counts = dict(sorted(sklearn_cluster_counts.items(), key=lambda item: item[1], reverse=True))
-    for i, kmeans_cluster in enumerate(sklearn_cluster_counts.keys()):
-        x = xx[method.labels_ == kmeans_cluster]
+    for i, cluster_id in enumerate(sklearn_cluster_counts.keys()):
+        x = xx[labels == cluster_id]
         pos = x[:, :2]
-        ax.scatter(pos[:, 0], pos[:, 1], label=str(kmeans_cluster))
+        if label_function is not None:
+            ax.scatter(pos[:, 0], pos[:, 1], label=label_function(cluster_id))
+        else:
+            ax.scatter(pos[:, 0], pos[:, 1])
     set_position_axis_bounds(ax, 0.7)
+    ax.legend()
 
 
 def set_position_axis_bounds(ax, bound=0.7):
