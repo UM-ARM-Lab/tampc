@@ -84,7 +84,10 @@ def load_file(datafile, show_in_place=False):
     unique_contact_counts = dict(sorted(unique_contact_counts.items(), key=lambda item: item[1], reverse=True))
 
     # reject if we haven't made sufficient contact
-    freespace_ratio = unique_contact_counts[NO_CONTACT_ID] / steps_taken
+    if NO_CONTACT_ID in unique_contact_counts:
+        freespace_ratio = unique_contact_counts[NO_CONTACT_ID] / steps_taken
+    else:
+        freespace_ratio = 1.
     if len(unique_contact_counts) < 2 or freespace_ratio > 0.95:
         raise RuntimeWarning(f"Too few contacts; spends {freespace_ratio} ratio in freespace")
     logger.info(f"{datafile} freespace ratio {freespace_ratio} unique contact IDs {unique_contact_counts}")
@@ -261,6 +264,7 @@ for res_dir in dirs:
             logger.info(f"{full_filename} error: {e}")
             continue
 
+all_res = dict(sorted(all_res.items(), key=lambda item: item[1][-1]))
 for k, v in all_res.items():
     pretty_v = [round(metric, 2) for metric in v]
     logger.info(f"{k} : {pretty_v}")
