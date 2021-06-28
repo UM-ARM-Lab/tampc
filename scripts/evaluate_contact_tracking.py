@@ -170,14 +170,9 @@ def load_file(datafile, show_in_place=False):
     kmeans = KMeans(n_clusters=len(unique_contact_counts), random_state=0).fit(xx)
     dbscan = DBSCAN(eps=0.5, min_samples=10).fit(xx)
 
-    # we care about homogenity more than completeness - multiple objects in a single cluster is more dangerous
-    h, c, v = clustering_metrics(contact_id[:-1], kmeans.labels_, beta=0.5)
-    logger.info(f"kmeans h {h} c {c} v {v}")
-    h, c, v = clustering_metrics(contact_id[:-1], dbscan.labels_, beta=0.5)
-    logger.info(f"dbscan h {h} c {c} v {v}")
-    h, c, v = clustering_metrics(contact_id[:-1], labels, beta=0.5)
-    logger.info(f"ours h {h} c {c} v {v}")
-    all_res[(level, seed)] = h, c, v
+    record_metric('kmeans', contact_id[:-1], kmeans.labels_, level, seed)
+    record_metric('dbscan', contact_id[:-1], dbscan.labels_, level, seed)
+    record_metric('ours', contact_id[:-1], labels, level, seed)
 
     # simplified plot in 2D
     def cluster_id_to_str(cluster_id):
@@ -190,17 +185,16 @@ def load_file(datafile, show_in_place=False):
         plt.close(f)
 
     # # ground truth
-    f = plot_cluster_res(contact_id, X, f"Task {level} {datafile.split('/')[-1]} ground truth",
-                         label_function=cluster_id_to_str)
-    save_and_close_fig(f, 'gt')
-
-    # comparison of methods
-    f = plot_cluster_res(kmeans.labels_, xx, f"Task {level} {datafile.split('/')[-1]} K-means")
-    save_and_close_fig(f, 'kmeans')
-    f = plot_cluster_res(dbscan.labels_, xx, f"Task {level} {datafile.split('/')[-1]} DBSCAN")
-    save_and_close_fig(f, 'dbscan')
-    f = plot_cluster_res(labels, xx, f"Task {level} {datafile.split('/')[-1]} ours")
-    save_and_close_fig(f, 'ours')
+    # f = plot_cluster_res(contact_id, X, f"Task {level} {datafile.split('/')[-1]} ground truth",
+    #                      label_function=cluster_id_to_str)
+    # save_and_close_fig(f, 'gt')
+    # # comparison of methods
+    # f = plot_cluster_res(kmeans.labels_, xx, f"Task {level} {datafile.split('/')[-1]} K-means")
+    # save_and_close_fig(f, 'kmeans')
+    # f = plot_cluster_res(dbscan.labels_, xx, f"Task {level} {datafile.split('/')[-1]} DBSCAN")
+    # save_and_close_fig(f, 'dbscan')
+    # f = plot_cluster_res(labels, xx, f"Task {level} {datafile.split('/')[-1]} ours")
+    # save_and_close_fig(f, 'ours')
     #
     # plt.show()
 
@@ -212,6 +206,14 @@ def clustering_metrics(labels_true, labels_pred, beta=1.):
     return metrics.homogeneity_score(labels_true, labels_pred), \
            metrics.completeness_score(labels_true, labels_pred), \
            metrics.v_measure_score(labels_true, labels_pred, beta=beta)
+
+
+def record_metric(method_name, labels_true, labels_pred, level, seed):
+    # we care about homogenity more than completeness - multiple objects in a single cluster is more dangerous
+    h, c, v = clustering_metrics(labels_true, labels_pred, beta=0.5)
+    logger.info(f"{method_name} h {h} c {c} v {v}")
+    all_res[(method_name, level, seed)] = h, c, v
+    return h, c, v
 
 
 def plot_cluster_res(labels, xx, name, label_function=None):
