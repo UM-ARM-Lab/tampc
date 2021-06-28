@@ -1,4 +1,5 @@
 import torch
+import pickle
 import logging
 import os
 from datetime import datetime
@@ -42,8 +43,6 @@ NO_CONTACT_ID = -1
 
 prefix_to_environment = {'arm/gripper': arm.FloatingGripperEnv}
 
-all_res = {}
-
 
 def extract_env_and_level_from_string(string) -> typing.Optional[
     typing.Tuple[typing.Type[env_base.PybulletEnv], int, int]]:
@@ -58,7 +57,7 @@ def extract_env_and_level_from_string(string) -> typing.Optional[
     return None
 
 
-def load_file(datafile, show_in_place=False):
+def load_file(datafile, run_res, show_in_place=False):
     if not os.path.exists(datafile):
         raise RuntimeError(f"File doesn't exist")
 
@@ -170,9 +169,9 @@ def load_file(datafile, show_in_place=False):
     kmeans = KMeans(n_clusters=len(unique_contact_counts), random_state=0).fit(xx)
     dbscan = DBSCAN(eps=0.5, min_samples=10).fit(xx)
 
-    record_metric('kmeans', contact_id[:-1], kmeans.labels_, level, seed)
-    record_metric('dbscan', contact_id[:-1], dbscan.labels_, level, seed)
-    record_metric('ours', contact_id[:-1], labels, level, seed)
+    record_metric('kmeans', contact_id[:-1], kmeans.labels_, level, seed, run_res)
+    record_metric('dbscan', contact_id[:-1], dbscan.labels_, level, seed, run_res)
+    record_metric('ours', contact_id[:-1], labels, level, seed, run_res)
 
     # simplified plot in 2D
     def cluster_id_to_str(cluster_id):
@@ -208,11 +207,11 @@ def clustering_metrics(labels_true, labels_pred, beta=1.):
            metrics.v_measure_score(labels_true, labels_pred, beta=beta)
 
 
-def record_metric(method_name, labels_true, labels_pred, level, seed):
+def record_metric(method_name, labels_true, labels_pred, level, seed, run_res):
     # we care about homogenity more than completeness - multiple objects in a single cluster is more dangerous
     h, c, v = clustering_metrics(labels_true, labels_pred, beta=0.5)
     logger.info(f"{method_name} h {h} c {c} v {v}")
-    all_res[(method_name, level, seed)] = h, c, v
+    run_res[(level, seed, method_name)] = h, c, v
     return h, c, v
 
 
@@ -242,31 +241,41 @@ def set_position_axis_bounds(ax, bound=0.7):
     ax.set_xlabel('y')
 
 
-data = {}
+if __name__ == "__main__":
+    fullname = os.path.join(cfg.DATA_DIR, 'contact_res.pkl')
+    if os.path.exists(fullname):
+        with open(fullname, 'rb') as f:
+            runs = pickle.load(f)
+            logger.info("loaded runs from %s", fullname)
+    else:
+        runs = {}
 
-dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
+    dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
 
-for res_dir in dirs:
-    # full_dir = os.path.join(cfg.DATA_DIR, 'arm/gripper10')
-    full_dir = os.path.join(cfg.DATA_DIR, res_dir)
+    for res_dir in dirs:
+        # full_dir = os.path.join(cfg.DATA_DIR, 'arm/gripper10')
+        full_dir = os.path.join(cfg.DATA_DIR, res_dir)
 
-    files = os.listdir(full_dir)
-    files = sorted(files)
+        files = os.listdir(full_dir)
+        files = sorted(files)
 
-    for file in files:
-        full_filename = '{}/{}'.format(full_dir, file)
-        # # some interesting ones filtered
-        # if file not in ['16.mat', '18.mat', '22.mat']:
-        #     continue
-        if os.path.isdir(full_filename):
-            continue
-        try:
-            data[full_filename] = load_file(full_filename)
-        except (RuntimeError, RuntimeWarning) as e:
-            logger.info(f"{full_filename} error: {e}")
-            continue
+        for file in files:
+            full_filename = '{}/{}'.format(full_dir, file)
+            # # some interesting ones filtered
+            # if file not in ['16.mat', '18.mat', '22.mat']:
+            #     continue
+            if os.path.isdir(full_filename):
+                continue
+            try:
+                load_file(full_filename, runs)
+            except (RuntimeError, RuntimeWarning) as e:
+                logger.info(f"{full_filename} error: {e}")
+                continue
 
-all_res = dict(sorted(all_res.items(), key=lambda item: item[1][-1]))
-for k, v in all_res.items():
-    pretty_v = [round(metric, 2) for metric in v]
-    logger.info(f"{k} : {pretty_v}")
+    for k, v in runs.items():
+        pretty_v = [round(metric, 2) for metric in v]
+        logger.info(f"{k} : {pretty_v}")
+
+    with open(fullname, 'wb') as f:
+        pickle.dump(runs, f)
+        logger.info("saved runs to %s", fullname)
