@@ -27,6 +27,8 @@ from tampc.util import no_tsf_preprocessor, UseTsf
 from tampc.controller.online_controller import StateToPositionTransformer
 from tampc.env_getters.arm import ArmGetter
 
+from cottun.cluster_baseline import KMeansWithAutoK
+
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
 
@@ -57,7 +59,64 @@ def extract_env_and_level_from_string(string) -> typing.Optional[
     return None
 
 
-def load_file(datafile, run_res, show_in_place=False):
+def our_method(X, U, reactions, level):
+    env = ArmGetter.env(level=level, mode=p.DIRECT)
+    rep_name = None
+    use_tsf = UseTsf.NO_TRANSFORM
+    ds, pm = ArmGetter.prior(env, use_tsf, rep_name=rep_name)
+
+    dss = [ds]
+    ensemble = []
+    for s in range(10):
+        _, pp = ArmGetter.prior(env, use_tsf, rep_name=rep_name, seed=s)
+        ensemble.append(pp.dyn_net)
+
+    hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, env.state_distance_two_arg,
+                                                       [use_tsf.name],
+                                                       device=get_device(),
+                                                       preprocessor=no_tsf_preprocessor(),
+                                                       nominal_model_kwargs={'online_adapt': OnlineAdapt.NONE},
+                                                       ensemble=ensemble,
+                                                       project_by_default=True)
+
+    contact_params = ArmGetter.contact_parameters(env)
+    contact_preprocessing = preprocess.PytorchTransformer(
+        StateToPositionTransformer(contact_params.state_to_pos, contact_params.pos_to_state,
+                                   contact_params.max_pos_move_per_action, 2),
+        StateToPositionTransformer(contact_params.state_to_pos, contact_params.pos_to_state,
+                                   contact_params.max_pos_move_per_action, 0))
+
+    def create_contact_object():
+        return contact.ContactObject(hybrid_dynamics.create_empty_local_model(use_prior=True,
+                                                                              preprocessor=contact_preprocessing,
+                                                                              nom_projection=False), contact_params)
+
+    contact_set = contact.ContactSet(contact_params, contact_object_factory=create_contact_object)
+    labels = np.zeros(len(X) - 1)
+    x = torch.from_numpy(X).to(device=pm.dyn_net.device, dtype=pm.dyn_net.dtype)
+    u = torch.from_numpy(U).to(device=pm.dyn_net.device, dtype=pm.dyn_net.dtype)
+    r = torch.from_numpy(reactions).to(device=pm.dyn_net.device, dtype=pm.dyn_net.dtype)
+    for i in range(len(X) - 1):
+        c = contact_set.update(x[i], u[i], env.state_difference(x[i + 1], x[i]).reshape(-1), r[i + 1])
+        labels[i] = -1 if c is None else hash(c)
+    env.close()
+    return labels
+
+
+def sklearn_method_factory(method, **kwargs):
+    def sklearn_method(X, U, reactions, level):
+        # TODO cluster iteratively, using our tracking to move the points to get fairer baselines
+        # simple baselines
+        # cluster in [pos, next reaction force, action] space
+        xx = np.concatenate([X[:-1, :2], reactions[1:], U[:-1]], axis=1)
+        # give it some help by telling it the number of clusters as unique contacts IDs
+        res = method(**kwargs).fit(xx)
+        return res.labels_
+
+    return sklearn_method
+
+
+def load_file(datafile, run_res, methods, show_in_place=False):
     if not os.path.exists(datafile):
         raise RuntimeError(f"File doesn't exist")
 
@@ -119,60 +178,6 @@ def load_file(datafile, run_res, show_in_place=False):
         import time
         time.sleep(1)
 
-    # our method
-    env = ArmGetter.env(level=level, mode=p.DIRECT)
-    rep_name = None
-    use_tsf = UseTsf.NO_TRANSFORM
-    ds, pm = ArmGetter.prior(env, use_tsf, rep_name=rep_name)
-
-    dss = [ds]
-    ensemble = []
-    for s in range(10):
-        _, pp = ArmGetter.prior(env, use_tsf, rep_name=rep_name, seed=s)
-        ensemble.append(pp.dyn_net)
-
-    hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, env.state_distance_two_arg,
-                                                       [use_tsf.name],
-                                                       device=get_device(),
-                                                       preprocessor=no_tsf_preprocessor(),
-                                                       nominal_model_kwargs={'online_adapt': OnlineAdapt.NONE},
-                                                       ensemble=ensemble,
-                                                       project_by_default=True)
-
-    contact_params = ArmGetter.contact_parameters(env)
-    contact_preprocessing = preprocess.PytorchTransformer(
-        StateToPositionTransformer(contact_params.state_to_pos, contact_params.pos_to_state,
-                                   contact_params.max_pos_move_per_action, 2),
-        StateToPositionTransformer(contact_params.state_to_pos, contact_params.pos_to_state,
-                                   contact_params.max_pos_move_per_action, 0))
-
-    def create_contact_object():
-        return contact.ContactObject(hybrid_dynamics.create_empty_local_model(use_prior=True,
-                                                                              preprocessor=contact_preprocessing,
-                                                                              nom_projection=False), contact_params)
-
-    contact_set = contact.ContactSet(contact_params, contact_object_factory=create_contact_object)
-    labels = np.zeros(len(contact_id) - 1)
-    x = torch.from_numpy(X).to(device=pm.dyn_net.device, dtype=pm.dyn_net.dtype)
-    u = torch.from_numpy(U).to(device=pm.dyn_net.device, dtype=pm.dyn_net.dtype)
-    r = torch.from_numpy(reactions).to(device=pm.dyn_net.device, dtype=pm.dyn_net.dtype)
-    for i in range(len(X) - 1):
-        c = contact_set.update(x[i], u[i], env.state_difference(x[i + 1], x[i]).reshape(-1), r[i + 1])
-        labels[i] = -1 if c is None else hash(c)
-    env.close()
-
-    # TODO cluster iteratively, using our tracking to move the points to get fairer baselines
-    # simple baselines
-    # cluster in [pos, next reaction force, action] space
-    xx = np.concatenate([X[:-1, :2], reactions[1:], U[:-1]], axis=1)
-    # give it some help by telling it the number of clusters as unique contacts IDs
-    kmeans = KMeans(n_clusters=len(unique_contact_counts), random_state=0).fit(xx)
-    dbscan = DBSCAN(eps=0.5, min_samples=10).fit(xx)
-
-    record_metric('kmeans', contact_id[:-1], kmeans.labels_, level, seed, run_res)
-    record_metric('dbscan', contact_id[:-1], dbscan.labels_, level, seed, run_res)
-    record_metric('ours', contact_id[:-1], labels, level, seed, run_res)
-
     # simplified plot in 2D
     def cluster_id_to_str(cluster_id):
         return 'no contact' if cluster_id == NO_CONTACT_ID else 'contact {}'.format(cluster_id)
@@ -187,14 +192,14 @@ def load_file(datafile, run_res, show_in_place=False):
     # f = plot_cluster_res(contact_id, X, f"Task {level} {datafile.split('/')[-1]} ground truth",
     #                      label_function=cluster_id_to_str)
     # save_and_close_fig(f, 'gt')
-    # # comparison of methods
-    # f = plot_cluster_res(kmeans.labels_, xx, f"Task {level} {datafile.split('/')[-1]} K-means")
-    # save_and_close_fig(f, 'kmeans')
-    # f = plot_cluster_res(dbscan.labels_, xx, f"Task {level} {datafile.split('/')[-1]} DBSCAN")
-    # save_and_close_fig(f, 'dbscan')
-    # f = plot_cluster_res(labels, xx, f"Task {level} {datafile.split('/')[-1]} ours")
-    # save_and_close_fig(f, 'ours')
-    #
+
+    for method_name, method in methods.items():
+        labels = method(X, U, reactions, level)
+        record_metric(method_name, contact_id[:-1], labels, level, seed, run_res)
+
+        f = plot_cluster_res(labels, X[:-1], f"Task {level} {datafile.split('/')[-1]} {method_name}")
+        save_and_close_fig(f, method_name)
+
     # plt.show()
 
     return X, U, dX, contact_id, obj_poses, reactions
@@ -251,6 +256,11 @@ if __name__ == "__main__":
         runs = {}
 
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
+    methods_to_run = {
+        'ours': our_method,
+        'kmeans': sklearn_method_factory(KMeansWithAutoK),
+        'dbscan': sklearn_method_factory(DBSCAN, eps=0.5, min_samples=10)
+    }
 
     for res_dir in dirs:
         # full_dir = os.path.join(cfg.DATA_DIR, 'arm/gripper10')
@@ -267,7 +277,7 @@ if __name__ == "__main__":
             if os.path.isdir(full_filename):
                 continue
             try:
-                load_file(full_filename, runs)
+                load_file(full_filename, runs, methods_to_run)
             except (RuntimeError, RuntimeWarning) as e:
                 logger.info(f"{full_filename} error: {e}")
                 continue
