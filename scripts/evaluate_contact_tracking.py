@@ -11,20 +11,14 @@ import pybullet as p
 import typing
 
 import matplotlib.pyplot as plt
-from sklearn.cluster import KMeans
 from sklearn.cluster import DBSCAN
 from sklearn import metrics
 
 from arm_pytorch_utilities.optim import get_device
-from arm_pytorch_utilities import preprocess
 
 from tampc import cfg, contact
 from tampc.env import pybullet_env as env_base
-from tampc.dynamics import hybrid_model
 from tampc.env import arm
-from tampc.dynamics.hybrid_model import OnlineAdapt
-from tampc.util import no_tsf_preprocessor, UseTsf
-from tampc.controller.online_controller import StateToPositionTransformer
 from tampc.env_getters.arm import ArmGetter
 
 from cottun.cluster_baseline import KMeansWithAutoK
@@ -60,42 +54,20 @@ def extract_env_and_level_from_string(string) -> typing.Optional[
 
 
 def our_method(X, U, reactions, level):
+    # TODO use the env class here instead of a specific class?
     env = ArmGetter.env(level=level, mode=p.DIRECT)
-    rep_name = None
-    use_tsf = UseTsf.NO_TRANSFORM
-    ds, pm = ArmGetter.prior(env, use_tsf, rep_name=rep_name)
-
-    dss = [ds]
-    ensemble = []
-    for s in range(10):
-        _, pp = ArmGetter.prior(env, use_tsf, rep_name=rep_name, seed=s)
-        ensemble.append(pp.dyn_net)
-
-    hybrid_dynamics = hybrid_model.HybridDynamicsModel(dss, pm, env.state_difference, env.state_distance_two_arg,
-                                                       [use_tsf.name],
-                                                       device=get_device(),
-                                                       preprocessor=no_tsf_preprocessor(),
-                                                       nominal_model_kwargs={'online_adapt': OnlineAdapt.NONE},
-                                                       ensemble=ensemble,
-                                                       project_by_default=True)
-
     contact_params = ArmGetter.contact_parameters(env)
-    contact_preprocessing = preprocess.PytorchTransformer(
-        StateToPositionTransformer(contact_params.state_to_pos, contact_params.pos_to_state,
-                                   contact_params.max_pos_move_per_action, 2),
-        StateToPositionTransformer(contact_params.state_to_pos, contact_params.pos_to_state,
-                                   contact_params.max_pos_move_per_action, 0))
+    d = get_device()
+    dtype = torch.float32
 
     def create_contact_object():
-        return contact.ContactObject(hybrid_dynamics.create_empty_local_model(use_prior=True,
-                                                                              preprocessor=contact_preprocessing,
-                                                                              nom_projection=False), contact_params)
+        return contact.ContactObject(None, contact_params)
 
     contact_set = contact.ContactSet(contact_params, contact_object_factory=create_contact_object)
     labels = np.zeros(len(X) - 1)
-    x = torch.from_numpy(X).to(device=pm.dyn_net.device, dtype=pm.dyn_net.dtype)
-    u = torch.from_numpy(U).to(device=pm.dyn_net.device, dtype=pm.dyn_net.dtype)
-    r = torch.from_numpy(reactions).to(device=pm.dyn_net.device, dtype=pm.dyn_net.dtype)
+    x = torch.from_numpy(X).to(device=d, dtype=dtype)
+    u = torch.from_numpy(U).to(device=d, dtype=dtype)
+    r = torch.from_numpy(reactions).to(device=d, dtype=dtype)
     for i in range(len(X) - 1):
         c = contact_set.update(x[i], u[i], env.state_difference(x[i + 1], x[i]).reshape(-1), r[i + 1])
         labels[i] = -1 if c is None else hash(c)
