@@ -286,6 +286,20 @@ if __name__ == "__main__":
         pretty_v = [round(metric, 2) for metric in v]
         logger.info(f"{k} : {pretty_v}")
 
+    # plot results for all methods and runs
+    f = plt.figure()
+    ax = plt.gca()
+    ax.set_xlabel('homogenity')
+    ax.set_ylabel('completeness')
+    ax.set_xlim(0, 1.1)
+    ax.set_ylim(0, 1.1)
+    for method in methods_to_run.keys():
+        this_method_res = [v for k, v in runs.items() if method == k[2]]
+        h, c, v = zip(*this_method_res)
+        ax.scatter(h, c, alpha=0.4, label=method)
+    ax.legend()
+    plt.show()
+
     with open(fullname, 'wb') as f:
         pickle.dump(runs, f)
         logger.info("saved runs to %s", fullname)
