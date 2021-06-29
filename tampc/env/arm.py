@@ -109,8 +109,9 @@ class ArmEnv(PybulletEnv):
     def get_ee_pos_states(states):
         return states[:, :3]
 
+    @classmethod
     @tensor_utils.ensure_2d_input
-    def get_state_ee_pos(self, pos):
+    def get_state_ee_pos(cls, pos):
         raise NotImplementedError()
 
     @classmethod
@@ -825,9 +826,10 @@ class PlanarArmEnv(ArmEnv):
     def get_ee_pos_states(states):
         return states[:, :2]
 
+    @classmethod
     @tensor_utils.ensure_2d_input
-    def get_state_ee_pos(self, pos):
-        return torch.cat((pos, torch.zeros(pos.shape[0], self.nx - pos.shape[1], dtype=pos.dtype, device=pos.device)),
+    def get_state_ee_pos(cls, pos):
+        return torch.cat((pos, torch.zeros(pos.shape[0], cls.nx - pos.shape[1], dtype=pos.dtype, device=pos.device)),
                          dim=1)
 
     @classmethod

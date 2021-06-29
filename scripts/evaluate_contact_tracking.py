@@ -53,10 +53,9 @@ def extract_env_and_level_from_string(string) -> typing.Optional[
     return None
 
 
-def our_method(X, U, reactions, level):
-    # TODO use the env class here instead of a specific class?
-    env = ArmGetter.env(level=level, mode=p.DIRECT)
-    contact_params = ArmGetter.contact_parameters(env)
+def our_method(X, U, reactions, env_class):
+    # TODO select getter based on env class
+    contact_params = ArmGetter.contact_parameters(env_class)
     d = get_device()
     dtype = torch.float32
 
@@ -69,14 +68,13 @@ def our_method(X, U, reactions, level):
     u = torch.from_numpy(U).to(device=d, dtype=dtype)
     r = torch.from_numpy(reactions).to(device=d, dtype=dtype)
     for i in range(len(X) - 1):
-        c = contact_set.update(x[i], u[i], env.state_difference(x[i + 1], x[i]).reshape(-1), r[i + 1])
+        c = contact_set.update(x[i], u[i], env_class.state_difference(x[i + 1], x[i]).reshape(-1), r[i + 1])
         labels[i] = -1 if c is None else hash(c)
-    env.close()
     return labels
 
 
 def sklearn_method_factory(method, **kwargs):
-    def sklearn_method(X, U, reactions, level):
+    def sklearn_method(X, U, reactions, env_class):
         # TODO cluster iteratively, using our tracking to move the points to get fairer baselines
         # simple baselines
         # cluster in [pos, next reaction force, action] space
@@ -166,7 +164,7 @@ def load_file(datafile, run_res, methods, show_in_place=False):
     # save_and_close_fig(f, 'gt')
 
     for method_name, method in methods.items():
-        labels = method(X, U, reactions, level)
+        labels = method(X, U, reactions, env_cls)
         record_metric(method_name, contact_id[:-1], labels, level, seed, run_res)
 
         f = plot_cluster_res(labels, X[:-1], f"Task {level} {datafile.split('/')[-1]} {method_name}")
