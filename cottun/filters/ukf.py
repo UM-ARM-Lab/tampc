@@ -349,7 +349,7 @@ class EnvConditionedUKF(UnscentedKalmanFilter):
 
     Only update and predict methods are supported"""
 
-    def __init__(self, *args, plot=True, **kwargs):
+    def __init__(self, *args, plot=False, **kwargs):
         super(EnvConditionedUKF, self).__init__(*args, **kwargs)
         self.plot = plot
         if self.plot:

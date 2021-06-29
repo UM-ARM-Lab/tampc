@@ -18,7 +18,7 @@ from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, E
 from tampc.env.peg_in_hole import PandaJustGripperID
 from tampc.env.pybullet_sim import PybulletSim
 from tampc import cfg
-from tampc import contact
+from cottun import contact
 
 logger = logging.getLogger(__name__)
 

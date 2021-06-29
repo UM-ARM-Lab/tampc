@@ -18,7 +18,8 @@ from sklearn import metrics
 
 from arm_pytorch_utilities.optim import get_device
 
-from tampc import cfg, contact
+from tampc import cfg
+from cottun import contact
 from tampc.env import pybullet_env as env_base
 from tampc.env import arm
 from tampc.env_getters.arm import ArmGetter

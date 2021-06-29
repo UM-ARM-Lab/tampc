@@ -3,9 +3,8 @@ import torch
 import typing
 import copy
 import logging
-from tampc.dynamics import online_model
 from arm_pytorch_utilities import tensor_utils, optim, serialization
-from tampc.filters.ukf import EnvConditionedUKF
+from cottun.filters.ukf import EnvConditionedUKF
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +23,7 @@ class ContactParameters:
 
 
 class ContactObject(serialization.Serializable):
-    def __init__(self, empty_local_model: typing.Optional[online_model.OnlineDynamicsModel], params: ContactParameters,
+    def __init__(self, empty_local_model: typing.Optional[typing.Any], params: ContactParameters,
                  assume_linear_scaling=True):
         # (x, u, dx) tuples associated with this object for fitting local model
         self.transitions = []

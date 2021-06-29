@@ -1,7 +1,6 @@
 import logging
 import enum
 import statistics
-import typing
 
 import torch
 from tampc.controller.multi_arm_bandit import KFMANDB
@@ -10,7 +9,7 @@ from arm_pytorch_utilities import tensor_utils, preprocess
 from tampc.dynamics import hybrid_model
 from tampc.controller import controller, gating_function
 from tampc import cost
-from tampc import contact
+from cottun import contact
 
 logger = logging.getLogger(__name__)
 

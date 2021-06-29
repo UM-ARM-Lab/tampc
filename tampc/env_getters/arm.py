@@ -3,7 +3,7 @@ import typing
 import torch
 from arm_pytorch_utilities import load_data, preprocess
 from arm_pytorch_utilities.optim import get_device
-from tampc import contact
+from cottun import contact
 from tampc.env import arm
 from tampc.env.arm import Levels
 from tampc.util import EnvGetter, UseTsf

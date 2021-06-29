@@ -1,6 +1,5 @@
 import abc
 import logging
-import os.path
 from typing import Dict
 
 import numpy as np
@@ -12,6 +11,7 @@ from arm_pytorch_utilities import serialization
 from pytorch_mppi import mppi
 
 from tampc import cost
+from cottun import contact
 
 logger = logging.getLogger(__name__)
 
@@ -116,9 +116,6 @@ class FullRandomController(Controller):
         u = np.random.uniform(low=self.u_min, high=self.u_max, size=self.nu)
         # logger.debug(obs)
         return u
-
-
-from tampc import contact
 
 
 class GreedyControllerWithRandomWalkOnContact(Controller):
