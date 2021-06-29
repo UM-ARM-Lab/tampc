@@ -58,6 +58,9 @@ class OnlineSklearnContactSet:
     def _fit_online(self):
         raise NotImplementedError()
 
+    def final_labels(self):
+        return self.cluster_method.predict(self.data)
+
 
 class OnlineSklearnFixedClusters(OnlineSklearnContactSet):
     def _fit_online(self):
@@ -80,3 +83,7 @@ class OnlineAgglomorativeClustering(OnlineSklearnContactSet):
     def _fit_online(self):
         # use as is, just rerun
         self.cluster_method.fit(self.data)
+
+    def final_labels(self):
+        # some of these don't have predict for some reason
+        return self.cluster_method.fit_predict(self.data)

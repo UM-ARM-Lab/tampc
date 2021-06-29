@@ -13,6 +13,7 @@ import typing
 import matplotlib.pyplot as plt
 from sklearn.cluster import DBSCAN
 from sklearn.cluster import KMeans
+from sklearn.cluster import Birch
 from sklearn import metrics
 
 from arm_pytorch_utilities.optim import get_device
@@ -22,7 +23,9 @@ from tampc.env import pybullet_env as env_base
 from tampc.env import arm
 from tampc.env_getters.arm import ArmGetter
 
-from cottun.cluster_baseline import KMeansWithAutoK, OnlineSklearnFixedClusters, OnlineAgglomorativeClustering
+from cottun.cluster_baseline import KMeansWithAutoK
+from cottun.cluster_baseline import OnlineSklearnFixedClusters
+from cottun.cluster_baseline import OnlineAgglomorativeClustering
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
@@ -90,11 +93,11 @@ def sklearn_method_factory(method, **kwargs):
 def online_sklearn_method_factory(online_class, method, inertia_ratio=0.5, **kwargs):
     def sklearn_method(X, U, reactions, env_class):
         online_method = online_class(method(**kwargs), inertia_ratio=inertia_ratio)
-        labels = None
         for i in range(len(X) - 1):
+            # intermediate labels in case we want plotting of movement
             labels = online_method.update(X[i], U[i], env_class.state_difference(X[i + 1], X[i]).reshape(-1),
                                           reactions[i + 1])
-        return labels
+        return online_method.final_labels()
 
     return sklearn_method
 
@@ -242,9 +245,12 @@ if __name__ == "__main__":
     methods_to_run = {
         # 'ours': our_method,
         # 'kmeans': sklearn_method_factory(KMeansWithAutoK),
-        # 'dbscan': sklearn_method_factory(DBSCAN, eps=0.5, min_samples=10),
+        # 'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
+        # 'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
         # 'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1, random_state=0),
-        'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=0.5, min_samples=5),
+        'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
+        # 'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
+        #                                               threshold=1.5)
     }
 
     for res_dir in dirs:
