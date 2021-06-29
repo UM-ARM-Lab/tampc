@@ -22,7 +22,7 @@ from tampc.env import pybullet_env as env_base
 from tampc.env import arm
 from tampc.env_getters.arm import ArmGetter
 
-from cottun.cluster_baseline import KMeansWithAutoK, OnlineSklearnFixedClusters
+from cottun.cluster_baseline import KMeansWithAutoK, OnlineSklearnFixedClusters, OnlineAgglomorativeClustering
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
@@ -243,7 +243,8 @@ if __name__ == "__main__":
         # 'ours': our_method,
         # 'kmeans': sklearn_method_factory(KMeansWithAutoK),
         # 'dbscan': sklearn_method_factory(DBSCAN, eps=0.5, min_samples=10),
-        'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1, random_state=0)
+        # 'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1, random_state=0),
+        'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=0.5, min_samples=5),
     }
 
     for res_dir in dirs:

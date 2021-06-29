@@ -74,3 +74,9 @@ class OnlineSklearnFixedClusters(OnlineSklearnContactSet):
             self.cluster_method = use_more_n_clusters
         else:
             self.cluster_method = use_same_n_clusters
+
+
+class OnlineAgglomorativeClustering(OnlineSklearnContactSet):
+    def _fit_online(self):
+        # use as is, just rerun
+        self.cluster_method.fit(self.data)
