@@ -168,7 +168,7 @@ def load_file(datafile, run_res, methods, show_in_place=False):
     def cluster_id_to_str(cluster_id):
         return 'no contact' if cluster_id == NO_CONTACT_ID else 'contact {}'.format(cluster_id)
 
-    save_loc = "/home/zhsh/Documents/results/2021-06-22/6 clustering res/"
+    save_loc = "/home/zhsh/Documents/results/cluster_res/"
 
     def save_and_close_fig(f, name):
         plt.savefig(os.path.join(save_loc, f"{level} {seed} {name}"))
@@ -243,41 +243,43 @@ if __name__ == "__main__":
 
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
-        # 'ours': our_method,
-        # 'kmeans': sklearn_method_factory(KMeansWithAutoK),
-        # 'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
-        # 'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
-        # 'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1, random_state=0),
+        'ours': our_method,
+        'kmeans': sklearn_method_factory(KMeansWithAutoK),
+        'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
+        'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
+        'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
+                                                       random_state=0),
         'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
-        # 'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
-        #                                               threshold=1.5)
+        'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
+                                                      threshold=1.5)
     }
 
-    for res_dir in dirs:
-        # full_dir = os.path.join(cfg.DATA_DIR, 'arm/gripper10')
-        full_dir = os.path.join(cfg.DATA_DIR, res_dir)
-
-        files = os.listdir(full_dir)
-        files = sorted(files)
-
-        for file in files:
-            full_filename = '{}/{}'.format(full_dir, file)
-            # # some interesting ones filtered
-            # if file not in ['16.mat', '18.mat', '22.mat']:
-            #     continue
-            if os.path.isdir(full_filename):
-                continue
-            try:
-                load_file(full_filename, runs, methods_to_run)
-            except (RuntimeError, RuntimeWarning) as e:
-                logger.info(f"{full_filename} error: {e}")
-                continue
+    # for res_dir in dirs:
+    #     # full_dir = os.path.join(cfg.DATA_DIR, 'arm/gripper10')
+    #     full_dir = os.path.join(cfg.DATA_DIR, res_dir)
+    #
+    #     files = os.listdir(full_dir)
+    #     files = sorted(files)
+    #
+    #     for file in files:
+    #         full_filename = '{}/{}'.format(full_dir, file)
+    #         # # some interesting ones filtered
+    #         # if file not in ['16.mat', '18.mat', '22.mat']:
+    #         #     continue
+    #         if os.path.isdir(full_filename):
+    #             continue
+    #         try:
+    #             load_file(full_filename, runs, methods_to_run)
+    #         except (RuntimeError, RuntimeWarning) as e:
+    #             logger.info(f"{full_filename} error: {e}")
+    #             continue
 
     for k, v in runs.items():
         pretty_v = [round(metric, 2) for metric in v]
         logger.info(f"{k} : {pretty_v}")
 
     # plot results for all methods and runs
+    plot_median = True
     f = plt.figure()
     ax = plt.gca()
     ax.set_xlabel('homogenity')
@@ -287,7 +289,18 @@ if __name__ == "__main__":
     for method in methods_to_run.keys():
         this_method_res = [v for k, v in runs.items() if method == k[2]]
         h, c, v = zip(*this_method_res)
-        ax.scatter(h, c, alpha=0.4, label=method)
+        logger.info(f"{method} median {round(np.median(h), 2)} {round(np.median(c), 2)} {round(np.median(v), 2)}")
+
+        if plot_median:
+            # scatter for their median
+            hm = np.median(h)
+            cm = np.median(c)
+            ax.errorbar(hm, cm, yerr=[[cm - np.percentile(c, 20)], [np.percentile(c, 80) - cm]],
+                        xerr=[[hm - np.percentile(h, 20)], [np.percentile(h, 80) - hm]],
+                        label=method, fmt='o')
+        else:
+            ax.scatter(h, c, alpha=0.4, label=method)
+
     ax.legend()
     plt.show()
 
