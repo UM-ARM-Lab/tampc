@@ -22,7 +22,7 @@ from tampc.env import pybullet_env as env_base
 from tampc.env import arm
 from tampc.env_getters.arm import ArmGetter
 
-from cottun.cluster_baseline import KMeansWithAutoK, OnlineSklearnContactSet
+from cottun.cluster_baseline import KMeansWithAutoK, OnlineSklearnFixedClusters
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
@@ -87,9 +87,9 @@ def sklearn_method_factory(method, **kwargs):
     return sklearn_method
 
 
-def online_sklearn_method_factory(method, inertia_ratio=0.5, **kwargs):
+def online_sklearn_method_factory(online_class, method, inertia_ratio=0.5, **kwargs):
     def sklearn_method(X, U, reactions, env_class):
-        online_method = OnlineSklearnContactSet(method(**kwargs), inertia_ratio=inertia_ratio)
+        online_method = online_class(method(**kwargs), inertia_ratio=inertia_ratio)
         labels = None
         for i in range(len(X) - 1):
             labels = online_method.update(X[i], U[i], env_class.state_difference(X[i + 1], X[i]).reshape(-1),
@@ -243,7 +243,7 @@ if __name__ == "__main__":
         # 'ours': our_method,
         # 'kmeans': sklearn_method_factory(KMeansWithAutoK),
         # 'dbscan': sklearn_method_factory(DBSCAN, eps=0.5, min_samples=10),
-        'online-kmeans': online_sklearn_method_factory(KMeans, n_clusters=1, random_state=0)
+        'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1, random_state=0)
     }
 
     for res_dir in dirs:

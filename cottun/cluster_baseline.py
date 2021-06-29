@@ -45,20 +45,7 @@ class OnlineSklearnContactSet:
             self.cluster_method.fit(self.data)
         else:
             self.data = np.concatenate([self.data, xx], axis=0)
-
-            # decide if data should be part of existing clusters or if a new cluster should be created
-            use_same_n_clusters = self.cluster_method
-            use_more_n_clusters = copy.deepcopy(self.cluster_method)
-            use_more_n_clusters.n_clusters += 1
-
-            use_same_n_clusters.fit(self.data)
-            use_more_n_clusters.fit(self.data)
-            # using more cluster improved inertia sufficiently, so use new one
-            if len(self.data) >= self.delay_new_clusters_until and \
-                    use_more_n_clusters.inertia_ < use_same_n_clusters.inertia_ * self.inertia_ratio:
-                self.cluster_method = use_more_n_clusters
-            else:
-                self.cluster_method = use_same_n_clusters
+            self._fit_online()
 
         # filter by moving all members of the current cluster by dx
         this_cluster = self.cluster_method.labels_[-1]
@@ -67,3 +54,23 @@ class OnlineSklearnContactSet:
         if np.linalg.norm(reaction) > 2:
             self.data[members_of_this_cluster, :2] += dx[:2]
         return self.cluster_method.labels_
+
+    def _fit_online(self):
+        raise NotImplementedError()
+
+
+class OnlineSklearnFixedClusters(OnlineSklearnContactSet):
+    def _fit_online(self):
+        # decide if data should be part of existing clusters or if a new cluster should be created
+        use_same_n_clusters = self.cluster_method
+        use_more_n_clusters = copy.deepcopy(self.cluster_method)
+        use_more_n_clusters.n_clusters += 1
+
+        use_same_n_clusters.fit(self.data)
+        use_more_n_clusters.fit(self.data)
+        # using more cluster improved inertia sufficiently, so use new one
+        if len(self.data) >= self.delay_new_clusters_until and \
+                use_more_n_clusters.inertia_ < use_same_n_clusters.inertia_ * self.inertia_ratio:
+            self.cluster_method = use_more_n_clusters
+        else:
+            self.cluster_method = use_same_n_clusters
