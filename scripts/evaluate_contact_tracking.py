@@ -6,23 +6,21 @@ from datetime import datetime
 import scipy.io
 import numpy as np
 import os.path
-import re
 import pybullet as p
-import typing
-from collections import namedtuple
 
 import matplotlib.pyplot as plt
+from cottun.defines import NO_CONTACT_ID, RunKey, CONTACT_RES_FILE
+from cottun.script_utils import extract_env_and_level_from_string, dict_to_namespace_str, record_metric, \
+    plot_cluster_res, load_runs_results
 from sklearn.cluster import DBSCAN
 from sklearn.cluster import KMeans
 from sklearn.cluster import Birch
-from sklearn import metrics
 
 from arm_pytorch_utilities.optim import get_device
 
 from tampc import cfg
 from cottun import contact
 from tampc.env import pybullet_env as env_base
-from tampc.env import arm
 from tampc.env_getters.arm import ArmGetter
 
 from cottun.cluster_baseline import KMeansWithAutoK
@@ -39,24 +37,6 @@ logging.basicConfig(level=logging.INFO,
 logging.getLogger('matplotlib.font_manager').disabled = True
 
 logger = logging.getLogger(__name__)
-
-# by convention -1 refers to not in contact
-NO_CONTACT_ID = -1
-
-prefix_to_environment = {'arm/gripper': arm.FloatingGripperEnv}
-
-
-def extract_env_and_level_from_string(string) -> typing.Optional[
-    typing.Tuple[typing.Type[env_base.PybulletEnv], int, int]]:
-    for name, env_cls in prefix_to_environment.items():
-        m = re.search(r"{}\d+".format(name), string)
-        if m is not None:
-            # find level, which is number succeeding this string match
-            level = int(m.group()[len(name):])
-            seed = int(os.path.splitext(os.path.basename(string))[0])
-            return env_cls, level, seed
-
-    return None
 
 
 def our_method(X, U, reactions, env_class):
@@ -85,10 +65,6 @@ def our_method(X, U, reactions, env_class):
     return labels, param_str_values
 
 
-def dict_to_namespace_str(d):
-    return str(d).replace(': ', '=').replace('\'', '').strip('{}')
-
-
 def sklearn_method_factory(method, **kwargs):
     def sklearn_method(X, U, reactions, env_class):
         # TODO cluster iteratively, using our tracking to move the points to get fairer baselines
@@ -112,9 +88,6 @@ def online_sklearn_method_factory(online_class, method, inertia_ratio=0.5, **kwa
         return online_method.final_labels(), dict_to_namespace_str(kwargs)
 
     return sklearn_method
-
-
-RunKey = namedtuple('RunKey', ['level', 'seed', 'method', 'params'])
 
 
 def load_file(datafile, run_res, methods, show_in_place=False):
@@ -207,55 +180,8 @@ def load_file(datafile, run_res, methods, show_in_place=False):
     return X, U, dX, contact_id, obj_poses, reactions
 
 
-def clustering_metrics(labels_true, labels_pred, beta=1.):
-    # beta < 1 means more weight for homogenity
-    return metrics.homogeneity_score(labels_true, labels_pred), \
-           metrics.completeness_score(labels_true, labels_pred), \
-           metrics.v_measure_score(labels_true, labels_pred, beta=beta)
-
-
-def record_metric(run_key, labels_true, labels_pred, run_res):
-    # we care about homogenity more than completeness - multiple objects in a single cluster is more dangerous
-    h, c, v = clustering_metrics(labels_true, labels_pred, beta=0.5)
-    logger.info(f"{run_key.method} h {h} c {c} v {v}")
-    run_res[run_key] = h, c, v
-    return h, c, v
-
-
-def plot_cluster_res(labels, xx, name, label_function=None):
-    f = plt.figure()
-    f.suptitle(name)
-    ax = plt.gca()
-    ids, counts = np.unique(labels, return_counts=True)
-    sklearn_cluster_counts = dict(zip(ids, counts))
-    sklearn_cluster_counts = dict(sorted(sklearn_cluster_counts.items(), key=lambda item: item[1], reverse=True))
-    for i, cluster_id in enumerate(sklearn_cluster_counts.keys()):
-        x = xx[labels == cluster_id]
-        pos = x[:, :2]
-        if label_function is not None:
-            ax.scatter(pos[:, 0], pos[:, 1], label=label_function(cluster_id))
-        else:
-            ax.scatter(pos[:, 0], pos[:, 1])
-    set_position_axis_bounds(ax, 0.7)
-    ax.legend()
-    return f
-
-
-def set_position_axis_bounds(ax, bound=0.7):
-    ax.set_xlim(-bound, bound)
-    ax.set_ylim(-bound, bound)
-    ax.set_xlabel('x')
-    ax.set_xlabel('y')
-
-
 if __name__ == "__main__":
-    fullname = os.path.join(cfg.DATA_DIR, 'contact_res.pkl')
-    if os.path.exists(fullname):
-        with open(fullname, 'rb') as f:
-            runs = pickle.load(f)
-            logger.info("loaded runs from %s", fullname)
-    else:
-        runs = {}
+    runs = load_runs_results()
 
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
@@ -270,25 +196,25 @@ if __name__ == "__main__":
                                                       threshold=1.5)
     }
 
-    # for res_dir in dirs:
-    #     # full_dir = os.path.join(cfg.DATA_DIR, 'arm/gripper10')
-    #     full_dir = os.path.join(cfg.DATA_DIR, res_dir)
-    #
-    #     files = os.listdir(full_dir)
-    #     files = sorted(files)
-    #
-    #     for file in files:
-    #         full_filename = '{}/{}'.format(full_dir, file)
-    #         # # some interesting ones filtered
-    #         # if file not in ['16.mat', '18.mat', '22.mat']:
-    #         #     continue
-    #         if os.path.isdir(full_filename):
-    #             continue
-    #         try:
-    #             load_file(full_filename, runs, methods_to_run)
-    #         except (RuntimeError, RuntimeWarning) as e:
-    #             logger.info(f"{full_filename} error: {e}")
-    #             continue
+    for res_dir in dirs:
+        # full_dir = os.path.join(cfg.DATA_DIR, 'arm/gripper10')
+        full_dir = os.path.join(cfg.DATA_DIR, res_dir)
+
+        files = os.listdir(full_dir)
+        files = sorted(files)
+
+        for file in files:
+            full_filename = '{}/{}'.format(full_dir, file)
+            # # some interesting ones filtered
+            # if file not in ['16.mat', '18.mat', '22.mat']:
+            #     continue
+            if os.path.isdir(full_filename):
+                continue
+            try:
+                load_file(full_filename, runs, methods_to_run)
+            except (RuntimeError, RuntimeWarning) as e:
+                logger.info(f"{full_filename} error: {e}")
+                continue
 
     # print runs by how problematic they are - allows us to examine specific runs
     sorted_runs = {k: v for k, v in sorted(runs.items(), key=lambda item: item[1][-1])}
@@ -297,43 +223,6 @@ if __name__ == "__main__":
             continue
         logger.info(f"{k} : {[round(metric, 2) for metric in v]}")
 
-    # plot results for all methods and runs
-    plot_median = True
-    f = plt.figure()
-    ax = plt.gca()
-    ax.set_xlabel('homogenity')
-    ax.set_ylabel('completeness')
-    ax.set_xlim(0, 1.1)
-    ax.set_ylim(0, 1.1)
-    for method in methods_to_run.keys():
-        # check if there are multiple parameters values for this method
-        this_method_runs = {k: v for k, v in runs.items() if method == k.method}
-        runs_per_param_value = {}
-        for k, v in this_method_runs.items():
-            param_value = k.params
-            if k.params not in runs_per_param_value:
-                runs_per_param_value[k.params] = set()
-            runs_per_param_value[k.params].add(v)
-
-        for params, values in runs_per_param_value.items():
-            h, c, v = zip(*values)
-            method_label = f"{method} {params}" if len(runs_per_param_value) > 1 else method
-
-            logger.info(
-                f"{method_label} median {round(np.median(h), 2)} {round(np.median(c), 2)} {round(np.median(v), 2)}")
-            if plot_median:
-                # scatter for their median
-                hm = np.median(h)
-                cm = np.median(c)
-                ax.errorbar(hm, cm, yerr=[[cm - np.percentile(c, 20)], [np.percentile(c, 80) - cm]],
-                            xerr=[[hm - np.percentile(h, 20)], [np.percentile(h, 80) - hm]],
-                            label=method_label, fmt='o')
-            else:
-                ax.scatter(h, c, alpha=0.4, label=method_label)
-
-    ax.legend()
-    plt.show()
-
-    with open(fullname, 'wb') as f:
+    with open(CONTACT_RES_FILE, 'wb') as f:
         pickle.dump(runs, f)
-        logger.info("saved runs to %s", fullname)
+        logger.info("saved runs to %s", CONTACT_RES_FILE)
