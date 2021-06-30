@@ -9,6 +9,7 @@ import os.path
 import re
 import pybullet as p
 import typing
+from collections import namedtuple
 
 import matplotlib.pyplot as plt
 from sklearn.cluster import DBSCAN
@@ -113,6 +114,9 @@ def online_sklearn_method_factory(online_class, method, inertia_ratio=0.5, **kwa
     return sklearn_method
 
 
+RunKey = namedtuple('RunKey', ['level', 'seed', 'method', 'params'])
+
+
 def load_file(datafile, run_res, methods, show_in_place=False):
     if not os.path.exists(datafile):
         raise RuntimeError(f"File doesn't exist")
@@ -192,7 +196,8 @@ def load_file(datafile, run_res, methods, show_in_place=False):
 
     for method_name, method in methods.items():
         labels, param_values = method(X, U, reactions, env_cls)
-        record_metric(method_name, contact_id[:-1], labels, level, seed, param_values, run_res)
+        run_key = RunKey(level=level, seed=seed, method=method_name, params=param_values)
+        record_metric(run_key, contact_id[:-1], labels, run_res)
 
         f = plot_cluster_res(labels, X[:-1], f"Task {level} {datafile.split('/')[-1]} {method_name}")
         save_and_close_fig(f, f"{method_name} {param_values.replace('.', '_')}")
@@ -209,11 +214,11 @@ def clustering_metrics(labels_true, labels_pred, beta=1.):
            metrics.v_measure_score(labels_true, labels_pred, beta=beta)
 
 
-def record_metric(method_name, labels_true, labels_pred, level, seed, param_values, run_res):
+def record_metric(run_key, labels_true, labels_pred, run_res):
     # we care about homogenity more than completeness - multiple objects in a single cluster is more dangerous
     h, c, v = clustering_metrics(labels_true, labels_pred, beta=0.5)
-    logger.info(f"{method_name} h {h} c {c} v {v}")
-    run_res[(level, seed, method_name, param_values)] = h, c, v
+    logger.info(f"{run_key.method} h {h} c {c} v {v}")
+    run_res[run_key] = h, c, v
     return h, c, v
 
 
@@ -254,7 +259,7 @@ if __name__ == "__main__":
 
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
-        'ours V1': our_method,
+        'ours UKF': our_method,
         'kmeans': sklearn_method_factory(KMeansWithAutoK),
         'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
         'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
@@ -265,25 +270,25 @@ if __name__ == "__main__":
                                                       threshold=1.5)
     }
 
-    for res_dir in dirs:
-        # full_dir = os.path.join(cfg.DATA_DIR, 'arm/gripper10')
-        full_dir = os.path.join(cfg.DATA_DIR, res_dir)
-
-        files = os.listdir(full_dir)
-        files = sorted(files)
-
-        for file in files:
-            full_filename = '{}/{}'.format(full_dir, file)
-            # # some interesting ones filtered
-            # if file not in ['16.mat', '18.mat', '22.mat']:
-            #     continue
-            if os.path.isdir(full_filename):
-                continue
-            try:
-                load_file(full_filename, runs, methods_to_run)
-            except (RuntimeError, RuntimeWarning) as e:
-                logger.info(f"{full_filename} error: {e}")
-                continue
+    # for res_dir in dirs:
+    #     # full_dir = os.path.join(cfg.DATA_DIR, 'arm/gripper10')
+    #     full_dir = os.path.join(cfg.DATA_DIR, res_dir)
+    #
+    #     files = os.listdir(full_dir)
+    #     files = sorted(files)
+    #
+    #     for file in files:
+    #         full_filename = '{}/{}'.format(full_dir, file)
+    #         # # some interesting ones filtered
+    #         # if file not in ['16.mat', '18.mat', '22.mat']:
+    #         #     continue
+    #         if os.path.isdir(full_filename):
+    #             continue
+    #         try:
+    #             load_file(full_filename, runs, methods_to_run)
+    #         except (RuntimeError, RuntimeWarning) as e:
+    #             logger.info(f"{full_filename} error: {e}")
+    #             continue
 
     for k, v in runs.items():
         pretty_v = [round(metric, 2) for metric in v]
@@ -298,19 +303,30 @@ if __name__ == "__main__":
     ax.set_xlim(0, 1.1)
     ax.set_ylim(0, 1.1)
     for method in methods_to_run.keys():
-        this_method_res = [v for k, v in runs.items() if method == k[2]]
-        h, c, v = zip(*this_method_res)
-        logger.info(f"{method} median {round(np.median(h), 2)} {round(np.median(c), 2)} {round(np.median(v), 2)}")
+        # check if there are multiple parameters values for this method
+        this_method_runs = {k: v for k, v in runs.items() if method == k.method}
+        runs_per_param_value = {}
+        for k, v in this_method_runs.items():
+            param_value = k.params
+            if k.params not in runs_per_param_value:
+                runs_per_param_value[k.params] = set()
+            runs_per_param_value[k.params].add(v)
 
-        if plot_median:
-            # scatter for their median
-            hm = np.median(h)
-            cm = np.median(c)
-            ax.errorbar(hm, cm, yerr=[[cm - np.percentile(c, 20)], [np.percentile(c, 80) - cm]],
-                        xerr=[[hm - np.percentile(h, 20)], [np.percentile(h, 80) - hm]],
-                        label=method, fmt='o')
-        else:
-            ax.scatter(h, c, alpha=0.4, label=method)
+        for params, values in runs_per_param_value.items():
+            h, c, v = zip(*values)
+            method_label = f"{method} {params}" if len(runs_per_param_value) > 1 else method
+
+            logger.info(
+                f"{method_label} median {round(np.median(h), 2)} {round(np.median(c), 2)} {round(np.median(v), 2)}")
+            if plot_median:
+                # scatter for their median
+                hm = np.median(h)
+                cm = np.median(c)
+                ax.errorbar(hm, cm, yerr=[[cm - np.percentile(c, 20)], [np.percentile(c, 80) - cm]],
+                            xerr=[[hm - np.percentile(h, 20)], [np.percentile(h, 80) - hm]],
+                            label=method_label, fmt='o')
+            else:
+                ax.scatter(h, c, alpha=0.4, label=method_label)
 
     ax.legend()
     plt.show()
