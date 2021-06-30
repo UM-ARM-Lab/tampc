@@ -290,9 +290,12 @@ if __name__ == "__main__":
     #             logger.info(f"{full_filename} error: {e}")
     #             continue
 
-    for k, v in runs.items():
-        pretty_v = [round(metric, 2) for metric in v]
-        logger.info(f"{k} : {pretty_v}")
+    # print runs by how problematic they are - allows us to examine specific runs
+    sorted_runs = {k: v for k, v in sorted(runs.items(), key=lambda item: item[1][-1])}
+    for k, v in sorted_runs.items():
+        if k.method not in methods_to_run.keys():
+            continue
+        logger.info(f"{k} : {[round(metric, 2) for metric in v]}")
 
     # plot results for all methods and runs
     plot_median = True
