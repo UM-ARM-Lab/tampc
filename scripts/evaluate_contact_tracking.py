@@ -75,7 +75,17 @@ def our_method(X, U, reactions, env_class):
     for i in range(len(X) - 1):
         c = contact_set.update(x[i], u[i], env_class.state_difference(x[i + 1], x[i]).reshape(-1), r[i + 1])
         labels[i] = -1 if c is None else hash(c)
-    return labels
+    param_values = str(contact_params).split('(')
+    start = param_values[0]
+    param_values = param_values[1].split(',')
+    # remove the functional values
+    param_values = [param for param in param_values if '<' not in param]
+    param_str_values = f"{start}({','.join(param_values)}"
+    return labels, param_str_values
+
+
+def dict_to_namespace_str(d):
+    return str(d).replace(': ', '=').replace('\'', '').strip('{}')
 
 
 def sklearn_method_factory(method, **kwargs):
@@ -86,7 +96,7 @@ def sklearn_method_factory(method, **kwargs):
         xx = np.concatenate([X[:-1, :2], reactions[1:], U[:-1]], axis=1)
         # give it some help by telling it the number of clusters as unique contacts IDs
         res = method(**kwargs).fit(xx)
-        return res.labels_
+        return res.labels_, dict_to_namespace_str(kwargs)
 
     return sklearn_method
 
@@ -98,7 +108,7 @@ def online_sklearn_method_factory(online_class, method, inertia_ratio=0.5, **kwa
             # intermediate labels in case we want plotting of movement
             labels = online_method.update(X[i], U[i], env_class.state_difference(X[i + 1], X[i]).reshape(-1),
                                           reactions[i + 1])
-        return online_method.final_labels()
+        return online_method.final_labels(), dict_to_namespace_str(kwargs)
 
     return sklearn_method
 
@@ -172,20 +182,20 @@ def load_file(datafile, run_res, methods, show_in_place=False):
     save_loc = "/home/zhsh/Documents/results/cluster_res/"
 
     def save_and_close_fig(f, name):
-        plt.savefig(os.path.join(save_loc, f"{level} {seed} {name}"))
+        plt.savefig(os.path.join(save_loc, f"{level} {seed} {name}.png"))
         plt.close(f)
 
-    # # ground truth
-    # f = plot_cluster_res(contact_id, X, f"Task {level} {datafile.split('/')[-1]} ground truth",
-    #                      label_function=cluster_id_to_str)
-    # save_and_close_fig(f, 'gt')
+    # ground truth
+    f = plot_cluster_res(contact_id, X, f"Task {level} {datafile.split('/')[-1]} ground truth",
+                         label_function=cluster_id_to_str)
+    save_and_close_fig(f, '')
 
     for method_name, method in methods.items():
-        labels = method(X, U, reactions, env_cls)
-        record_metric(method_name, contact_id[:-1], labels, level, seed, run_res)
+        labels, param_values = method(X, U, reactions, env_cls)
+        record_metric(method_name, contact_id[:-1], labels, level, seed, param_values, run_res)
 
         f = plot_cluster_res(labels, X[:-1], f"Task {level} {datafile.split('/')[-1]} {method_name}")
-        save_and_close_fig(f, method_name)
+        save_and_close_fig(f, f"{method_name} {param_values.replace('.', '_')}")
 
     # plt.show()
 
@@ -199,11 +209,11 @@ def clustering_metrics(labels_true, labels_pred, beta=1.):
            metrics.v_measure_score(labels_true, labels_pred, beta=beta)
 
 
-def record_metric(method_name, labels_true, labels_pred, level, seed, run_res):
+def record_metric(method_name, labels_true, labels_pred, level, seed, param_values, run_res):
     # we care about homogenity more than completeness - multiple objects in a single cluster is more dangerous
     h, c, v = clustering_metrics(labels_true, labels_pred, beta=0.5)
     logger.info(f"{method_name} h {h} c {c} v {v}")
-    run_res[(level, seed, method_name)] = h, c, v
+    run_res[(level, seed, method_name, param_values)] = h, c, v
     return h, c, v
 
 
@@ -244,7 +254,7 @@ if __name__ == "__main__":
 
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
-        'ours': our_method,
+        'ours V1': our_method,
         'kmeans': sklearn_method_factory(KMeansWithAutoK),
         'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
         'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
@@ -255,25 +265,25 @@ if __name__ == "__main__":
                                                       threshold=1.5)
     }
 
-    # for res_dir in dirs:
-    #     # full_dir = os.path.join(cfg.DATA_DIR, 'arm/gripper10')
-    #     full_dir = os.path.join(cfg.DATA_DIR, res_dir)
-    #
-    #     files = os.listdir(full_dir)
-    #     files = sorted(files)
-    #
-    #     for file in files:
-    #         full_filename = '{}/{}'.format(full_dir, file)
-    #         # # some interesting ones filtered
-    #         # if file not in ['16.mat', '18.mat', '22.mat']:
-    #         #     continue
-    #         if os.path.isdir(full_filename):
-    #             continue
-    #         try:
-    #             load_file(full_filename, runs, methods_to_run)
-    #         except (RuntimeError, RuntimeWarning) as e:
-    #             logger.info(f"{full_filename} error: {e}")
-    #             continue
+    for res_dir in dirs:
+        # full_dir = os.path.join(cfg.DATA_DIR, 'arm/gripper10')
+        full_dir = os.path.join(cfg.DATA_DIR, res_dir)
+
+        files = os.listdir(full_dir)
+        files = sorted(files)
+
+        for file in files:
+            full_filename = '{}/{}'.format(full_dir, file)
+            # # some interesting ones filtered
+            # if file not in ['16.mat', '18.mat', '22.mat']:
+            #     continue
+            if os.path.isdir(full_filename):
+                continue
+            try:
+                load_file(full_filename, runs, methods_to_run)
+            except (RuntimeError, RuntimeWarning) as e:
+                logger.info(f"{full_filename} error: {e}")
+                continue
 
     for k, v in runs.items():
         pretty_v = [round(metric, 2) for metric in v]
