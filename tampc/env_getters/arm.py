@@ -71,16 +71,20 @@ class ArmGetter(EnvGetter):
         return common_wrapper_opts, mpc_opts
 
     @staticmethod
-    def contact_parameters(env: arm.ArmEnv) -> contact.ContactParameters:
-        return contact.ContactParameters(state_to_pos=env.get_ee_pos_states,
-                                         pos_to_state=env.get_state_ee_pos,
-                                         control_similarity=env.control_similarity,
-                                         state_to_reaction=env.get_ee_reaction,
-                                         max_pos_move_per_action=env.MAX_PUSH_DIST,
-                                         length=0.1,
-                                         weight_multiplier=0.1,
-                                         ignore_below_weight=0.2,
-                                         force_threshold=0.5)
+    def contact_parameters(env: arm.ArmEnv, **kwargs) -> contact.ContactParameters:
+        params = contact.ContactParameters(state_to_pos=env.get_ee_pos_states,
+                                           pos_to_state=env.get_state_ee_pos,
+                                           control_similarity=env.control_similarity,
+                                           state_to_reaction=env.get_ee_reaction,
+                                           max_pos_move_per_action=env.MAX_PUSH_DIST,
+                                           length=0.1,
+                                           weight_multiplier=0.1,
+                                           ignore_below_weight=0.2,
+                                           force_threshold=0.5)
+        if kwargs is not None:
+            for k, v in kwargs.items():
+                setattr(params, k, v)
+        return params
 
     @classmethod
     def env(cls, level=0, log_video=True, **kwargs):

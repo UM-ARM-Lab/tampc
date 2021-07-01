@@ -39,30 +39,33 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 logger = logging.getLogger(__name__)
 
 
-def our_method(X, U, reactions, env_class):
-    # TODO select getter based on env class
-    contact_params = ArmGetter.contact_parameters(env_class)
-    d = get_device()
-    dtype = torch.float32
+def our_method_factory(**kwargs):
+    def our_method(X, U, reactions, env_class):
+        # TODO select getter based on env class
+        contact_params = ArmGetter.contact_parameters(env_class, **kwargs)
+        d = get_device()
+        dtype = torch.float32
 
-    def create_contact_object():
-        return contact.ContactUKF(None, contact_params)
+        def create_contact_object():
+            return contact.ContactUKF(None, contact_params)
 
-    contact_set = contact.ContactSet(contact_params, contact_object_factory=create_contact_object)
-    labels = np.zeros(len(X) - 1)
-    x = torch.from_numpy(X).to(device=d, dtype=dtype)
-    u = torch.from_numpy(U).to(device=d, dtype=dtype)
-    r = torch.from_numpy(reactions).to(device=d, dtype=dtype)
-    for i in range(len(X) - 1):
-        c = contact_set.update(x[i], u[i], env_class.state_difference(x[i + 1], x[i]).reshape(-1), r[i + 1])
-        labels[i] = -1 if c is None else hash(c)
-    param_values = str(contact_params).split('(')
-    start = param_values[0]
-    param_values = param_values[1].split(',')
-    # remove the functional values
-    param_values = [param for param in param_values if '<' not in param]
-    param_str_values = f"{start}({','.join(param_values)}"
-    return labels, param_str_values
+        contact_set = contact.ContactSet(contact_params, contact_object_factory=create_contact_object)
+        labels = np.zeros(len(X) - 1)
+        x = torch.from_numpy(X).to(device=d, dtype=dtype)
+        u = torch.from_numpy(U).to(device=d, dtype=dtype)
+        r = torch.from_numpy(reactions).to(device=d, dtype=dtype)
+        for i in range(len(X) - 1):
+            c = contact_set.update(x[i], u[i], env_class.state_difference(x[i + 1], x[i]).reshape(-1), r[i + 1])
+            labels[i] = -1 if c is None else hash(c)
+        param_values = str(contact_params).split('(')
+        start = param_values[0]
+        param_values = param_values[1].split(',')
+        # remove the functional values
+        param_values = [param for param in param_values if '<' not in param]
+        param_str_values = f"{start}({','.join(param_values)}"
+        return labels, param_str_values
+
+    return our_method
 
 
 def sklearn_method_factory(method, **kwargs):
@@ -185,15 +188,15 @@ if __name__ == "__main__":
 
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
-        'ours UKF': our_method,
-        'kmeans': sklearn_method_factory(KMeansWithAutoK),
-        'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
-        'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
-        'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
-                                                       random_state=0),
-        'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
-        'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
-                                                      threshold=1.5)
+        'ours UKF': our_method_factory(),
+        # 'kmeans': sklearn_method_factory(KMeansWithAutoK),
+        # 'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
+        # 'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
+        # 'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
+        #                                                random_state=0),
+        # 'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
+        # 'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
+        #                                               threshold=1.5)
     }
 
     for res_dir in dirs:
