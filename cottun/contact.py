@@ -3,6 +3,7 @@ import torch
 import typing
 import copy
 import logging
+import abc
 from arm_pytorch_utilities import tensor_utils, optim, serialization
 from cottun.filters.ukf import EnvConditionedUKF
 
@@ -37,47 +38,26 @@ class ContactObject(serialization.Serializable):
 
         self.assume_linear_scaling = assume_linear_scaling
 
-        # UKF stuff
         self.length_parameter = params.length
         self.u_similarity = params.control_similarity
         self.n_x = 2  # state is center point
         self.n_y = 2  # observe robot position
         self.n_u = 2
-        # process and observation noise, respectively
-        self.device = optim.get_device()
-        self.sigma = 0.0001
-        Q = torch.eye(self.n_x, device=self.device).view(1, self.n_x, self.n_x) * self.sigma
-        R = torch.eye(self.n_y, device=self.device).view(1, self.n_y, self.n_y) * self.sigma
-        # kwargs for sigma point selector
-        self.ukf = EnvConditionedUKF(self.n_x, self.n_y, self.n_u, Q, R, self.device, kappa=0, alpha=0.3)
-        # posterior gaussian of position (init to prior)
-        self.mu = None
-        self.cov = torch.eye(self.n_x, device=self.device).repeat(1, 1, 1) * self.sigma * 2
-        # prior gaussian of position
-        self.mu_bar = None
-        self.cov_bar = None
-        self.weight_multiplier = params.weight_multiplier / (self.sigma * self.n_x)
 
     @property
+    @abc.abstractmethod
     def center_point(self):
-        return self.mu[0]
+        """What we are tracking"""
 
     @property
+    @abc.abstractmethod
     def weight(self):
-        tr = self.cov[0].trace()
-        # convert to (0, 1)
-        weight_exp = torch.exp(- self.weight_multiplier * tr)
-        # weight = self.n_x * self.sigma / tr.item()
-        return weight_exp
+        """How important or certain we are about this contact object"""
 
     def state_dict(self) -> dict:
         state = {'points': self.points,
                  'actions': self.actions,
                  'dynamics': self.dynamics.state_dict() if self.dynamics is not None else None,
-                 'mu': self.mu,
-                 'cov': self.cov,
-                 'mu_bar': self.mu_bar,
-                 'cov_bar': self.cov_bar
                  }
         return state
 
@@ -85,10 +65,6 @@ class ContactObject(serialization.Serializable):
         self.points = state['points']
         self.actions = state['actions']
 
-        self.mu = state['mu']
-        self.cov = state['cov']
-        self.mu_bar = state['mu_bar']
-        self.cov_bar = state['cov_bar']
         if self.dynamics is not None and not self.dynamics.load_state_dict(state['dynamics']):
             return False
         return True
@@ -248,17 +224,76 @@ class ContactObject(serialization.Serializable):
     def dynamics_no_movement_fn(self, state, action, environment):
         return state
 
-    def ukf_update(self, measurement, environment):
+    @abc.abstractmethod
+    def filter_update(self, measurement, environment, observed_movement=True):
+        """Update step of the Bayes filter"""
+
+    @abc.abstractmethod
+    def filter_predict(self, control, environment, expect_movement=True):
+        """Predict step of teh Bayes filter"""
+
+
+class ContactUKF(ContactObject):
+    def __init__(self, empty_local_model: typing.Optional[typing.Any], params: ContactParameters, **kwargs):
+        super(ContactUKF, self).__init__(empty_local_model, params, **kwargs)
+        # process and observation noise, respectively
+        self.device = optim.get_device()
+        self.sigma = 0.0001
+        Q = torch.eye(self.n_x, device=self.device).view(1, self.n_x, self.n_x) * self.sigma
+        R = torch.eye(self.n_y, device=self.device).view(1, self.n_y, self.n_y) * self.sigma
+        # kwargs for sigma point selector
+        self.ukf = EnvConditionedUKF(self.n_x, self.n_y, self.n_u, Q, R, self.device, kappa=0, alpha=0.3)
+        # posterior gaussian of position (init to prior)
+        self.mu = None
+        self.cov = torch.eye(self.n_x, device=self.device).repeat(1, 1, 1) * self.sigma * 2
+        # prior gaussian of position
+        self.mu_bar = None
+        self.cov_bar = None
+        self.weight_multiplier = params.weight_multiplier / (self.sigma * self.n_x)
+
+    @property
+    def center_point(self):
+        return self.mu[0]
+
+    @property
+    def weight(self):
+        tr = self.cov[0].trace()
+        # convert to (0, 1)
+        weight_exp = torch.exp(- self.weight_multiplier * tr)
+        # weight = self.n_x * self.sigma / tr.item()
+        return weight_exp
+
+    def state_dict(self) -> dict:
+        state = super(ContactUKF, self).state_dict()
+        state.update({
+            'mu': self.mu,
+            'cov': self.cov,
+            'mu_bar': self.mu_bar,
+            'cov_bar': self.cov_bar
+        })
+        return state
+
+    def load_state_dict(self, state: dict) -> bool:
+        if not super(ContactUKF, self).load_state_dict(state):
+            return False
+
+        self.mu = state['mu']
+        self.cov = state['cov']
+        self.mu_bar = state['mu_bar']
+        self.cov_bar = state['cov_bar']
+        return True
+
+    def filter_update(self, measurement, environment, observed_movement=True):
         """Update with a force measurement; only call on the object in contact"""
-        center_point_before = self.mu.clone()
-        self.mu, self.cov = self.ukf.update(measurement, self.mu_bar, self.cov_bar, self.measurement_fn,
-                                            environment=environment)
-        self.move_all_points(self.mu - center_point_before)
+        if observed_movement:
+            center_point_before = self.mu.clone()
+            self.mu, self.cov = self.ukf.update(measurement, self.mu_bar, self.cov_bar, self.measurement_fn,
+                                                environment=environment)
+            self.move_all_points(self.mu - center_point_before)
+        else:
+            self.mu, self.cov = self.mu_bar, self.cov_bar
 
-    def ukf_update_no_contact(self):
-        self.mu, self.cov = self.mu_bar, self.cov_bar
-
-    def ukf_predict(self, control, environment, expect_movement=True):
+    def filter_predict(self, control, environment, expect_movement=True):
         self.mu_bar, self.cov_bar, _ = self.ukf.predict(control, self.mu, self.cov,
                                                         self.dynamics_fn if expect_movement else self.dynamics_no_movement_fn,
                                                         environment=environment)
@@ -325,8 +360,8 @@ class ContactSet(serialization.Serializable):
 
     def stepped_without_contact(self, u, environment):
         for ci in self._obj:
-            ci.ukf_predict(u, environment, expect_movement=False)
-            ci.ukf_update_no_contact()
+            ci.filter_predict(u, environment, expect_movement=False)
+            ci.filter_update(None, environment, observed_movement=False)
         self._keep_high_weight_contacts()
 
     def merge_objects(self, obj_indices) -> ContactObject:
@@ -397,13 +432,13 @@ class ContactSet(serialization.Serializable):
         # also do prediction
         for ci in self._obj:
             if ci is not c:
-                ci.ukf_predict(u, environment, expect_movement=False)
-                ci.ukf_update_no_contact()
+                ci.filter_predict(u, environment, expect_movement=False)
+                ci.filter_update(None, environment, observed_movement=False)
             else:
-                ci.ukf_predict(u, environment, expect_movement=True)
+                ci.filter_predict(u, environment, expect_movement=True)
                 # c.ukf_update(unit_reaction, environment)
                 # where the contact point center would be taking last point into account
-                c.ukf_update(c.points.mean(dim=0) + self.p.state_to_pos(dx), environment)
+                c.filter_update(c.points.mean(dim=0) + self.p.state_to_pos(dx), environment, observed_movement=True)
 
         self.updated()
         return c

@@ -46,7 +46,7 @@ def our_method(X, U, reactions, env_class):
     dtype = torch.float32
 
     def create_contact_object():
-        return contact.ContactObject(None, contact_params)
+        return contact.ContactUKF(None, contact_params)
 
     contact_set = contact.ContactSet(contact_params, contact_object_factory=create_contact_object)
     labels = np.zeros(len(X) - 1)

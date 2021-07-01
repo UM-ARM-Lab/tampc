@@ -86,7 +86,7 @@ class OfflineDataCollection:
             return env.state_distance_two_arg(state, goal)
 
         def create_contact_object():
-            return contact.ContactObject(None, contact_params)
+            return contact.ContactUKF(None, contact_params)
 
         ds, pm = ArmGetter.prior(env, use_tsf=UseTsf.NO_TRANSFORM)
 
@@ -512,10 +512,10 @@ def visualize_clustering_sets(*args, num_frames=100, **kwargs):
         else:
             raise NotImplementedError(f"This task {level} is not considered")
 
-        c = ContactObject(ctrl.dynamics.create_empty_local_model(use_prior=ctrl.contact_use_prior,
-                                                                 preprocessor=ctrl.contact_preprocessing,
-                                                                 nom_projection=False),
-                          ArmGetter.contact_parameters(env))
+        c = contact.ContactUKF(ctrl.dynamics.create_empty_local_model(use_prior=ctrl.contact_use_prior,
+                                                                      preprocessor=ctrl.contact_preprocessing,
+                                                                      nom_projection=False),
+                               ArmGetter.contact_parameters(env))
 
         ctrl.contact_set.append(c)
         for i in range(len(xs)):

@@ -639,10 +639,10 @@ class TAMPC(OnlineMPC):
                 self.nominal_dynamic_states[-1].insert(0, self.x_history[i])
 
     def _create_contact_object(self):
-        c = contact.ContactObject(self.dynamics.create_empty_local_model(use_prior=self.contact_use_prior,
-                                                                         preprocessor=self.contact_preprocessing,
-                                                                         nom_projection=False),
-                                  self.p)
+        c = contact.ContactUKF(self.dynamics.create_empty_local_model(use_prior=self.contact_use_prior,
+                                                                      preprocessor=self.contact_preprocessing,
+                                                                      nom_projection=False),
+                               self.p)
         return c
 
     def _compute_action(self, x):
