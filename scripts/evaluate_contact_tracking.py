@@ -54,9 +54,17 @@ def our_method_factory(**kwargs):
         x = torch.from_numpy(X).to(device=d, dtype=dtype)
         u = torch.from_numpy(U).to(device=d, dtype=dtype)
         r = torch.from_numpy(reactions).to(device=d, dtype=dtype)
+        obj_id = 0
         for i in range(len(X) - 1):
             c = contact_set.update(x[i], u[i], env_class.state_difference(x[i + 1], x[i]).reshape(-1), r[i + 1])
-            labels[i] = -1 if c is None else hash(c)
+            if c is None:
+                labels[i] = NO_CONTACT_ID
+            else:
+                this_obj_id = getattr(c, 'id', None)
+                if this_obj_id is None:
+                    setattr(c, 'id', obj_id)
+                    obj_id += 1
+                labels[i] = c.id
         param_values = str(contact_params).split('(')
         start = param_values[0]
         param_values = param_values[1].split(',')
@@ -201,8 +209,10 @@ if __name__ == "__main__":
         #                                               threshold=1.5)
     }
 
+    # full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper10/29.mat')
+    # load_file(full_filename, runs, methods_to_run)
+
     for res_dir in dirs:
-        # full_dir = os.path.join(cfg.DATA_DIR, 'arm/gripper12')
         full_dir = os.path.join(cfg.DATA_DIR, res_dir)
 
         files = os.listdir(full_dir)
@@ -210,9 +220,6 @@ if __name__ == "__main__":
 
         for file in files:
             full_filename = '{}/{}'.format(full_dir, file)
-            # some interesting ones filtered
-            # if file not in ['17.mat']:
-            #     continue
             if os.path.isdir(full_filename):
                 continue
             try:
