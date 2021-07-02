@@ -148,6 +148,8 @@ class OfflineDataCollection:
             env.draw_user_text(f"seed {seed}", xy=(0.5, 0.8, -1))
             sim.run(seed)
             env.clear_debug_trajectories()
+            # reset so collision checks are on a valid scene for the next trial
+            env.reset()
 
         env.close()
         # wait for it to fully close; otherwise could skip next run due to also closing that when it's created
@@ -703,7 +705,7 @@ def test_residual_model_batching(*args, **kwargs):
     run_controller('tune_avoid_nonnom_action', setup, *args, level=level, **kwargs)
 
 
-def replay_trajectory(traj_data_name, upto_index, *args, **kwargs):
+def replay_trajectory(traj_data_name, upto_index, *args, save_control=False, resume_control=False, **kwargs):
     def setup(env, ctrl, ds):
         env.reset()
         ds_eval = ArmGetter.ds(env, traj_data_name, validation_ratio=0.)
@@ -713,7 +715,9 @@ def replay_trajectory(traj_data_name, upto_index, *args, **kwargs):
         XU, Y, info = ds_eval.training_set(original=True)
         X, U = torch.split(XU, env.nx, dim=1)
 
-        saved_ctrl_filename = os.path.join(cfg.ROOT_DIR, 'checkpoints', '{}{}'.format(traj_data_name, upto_index))
+        upto = min(upto_index, len(X) - 1)
+
+        saved_ctrl_filename = os.path.join(cfg.ROOT_DIR, 'checkpoints', '{}{}'.format(traj_data_name, upto))
         # import copy
         # orig_ctrl = copy.deepcopy(ctrl)
 
@@ -721,31 +725,37 @@ def replay_trajectory(traj_data_name, upto_index, *args, **kwargs):
         # if ctrl.load(saved_ctrl_filename):
         #     need_to_compute_commands = False
 
-        # put the state right before the evaluated action
-        x = X[upto_index].cpu().numpy()
+        env.set_state(X[0].cpu().numpy())
+        x = X[upto].cpu().numpy()
         logger.info(np.array2string(x, separator=', '))
         # only need to do rollouts
         T = ctrl.mpc.T
         ctrl.original_horizon = 1
-        for i in range(upto_index):
+        for i in range(upto):
             env.draw_user_text(str(i), 1)
             # if need_to_compute_commands:
             #     ctrl.command(X[i].cpu().numpy())
             if i > 1:
+                # remove contact dynamics to speed up execution
+                for obj in ctrl.contact_set:
+                    obj.dynamics = None
                 # will do worse than actual execution because we don't protect against immovable obstacle contact here
                 ctrl.contact_set.update(X[i - 1], U[i - 1], ctrl.compare_to_goal(X[i], X[i - 1])[0], X[i, -2:])
-                env.visualize_contact_set(ctrl.contact_set)
-            env.step(U[i].cpu().numpy())
+                # env.visualize_contact_set(ctrl.contact_set)
+            obs, rew, done, info = env.step(U[i].cpu().numpy())
             # env.set_state(X[i].cpu().numpy(), U[i].cpu().numpy())
             ctrl.mpc.change_horizon(1)
 
         ctrl.original_horizon = T
         ctrl.mpc.change_horizon(T)
 
-        ctrl.save(saved_ctrl_filename)
-        env.set_task_config(init=X[upto_index, :2])
+        if save_control:
+            ctrl.save(saved_ctrl_filename)
+        env.set_task_config(init=X[upto, :2])
 
         logger.info("env played up to desired index")
+        if not resume_control:
+            exit(0)
 
     run_controller('replay_{}'.format(traj_data_name), setup, *args, **kwargs)
 
@@ -914,17 +924,16 @@ if __name__ == "__main__":
             task_names=task_names, success_min_dist=0.04, plot_success_vs_steps=True, plot_min_scatter=False)
 
     else:
-        # replay_trajectory(
-        #     'arm/auto_recover__NONE__MAB__5__NO_TRANSFORM__SOMETRAP__NOREUSE__AlwaysSelectNominal__TRAPCOST____0__500.mat',
-        #     45,
-        #     seed=0, level=5, use_tsf=ut,
-        #     assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
-        #     visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
-        #     override_tampc_params=tampc_params, override_mpc_params=mpc_params,
-        #     autonomous_recovery=online_controller.AutonomousRecovery.MAB,
-        #     never_estimate_error=args.never_estimate_error,
-        #     other_baseline=baseline)
-        visualize_clustering_sets(seed=0, level=Levels.NCB_C, use_tsf=ut)
+        replay_trajectory(
+            'arm/gripper10/29.mat',
+            300,
+            seed=29, level=Levels.SELECT1, use_tsf=ut,
+            assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
+            visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
+            override_tampc_params=tampc_params, override_mpc_params=mpc_params,
+            autonomous_recovery=online_controller.AutonomousRecovery.MAB,
+            never_estimate_error=args.never_estimate_error,
+            other_baseline=baseline)
 
         # d, env, config, ds = ArmGetter.free_space_env_init(0)
         # ds.update_preprocessor(ArmGetter.pre_invariant_preprocessor(use_tsf=use_tsf))
