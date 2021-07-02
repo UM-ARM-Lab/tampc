@@ -83,15 +83,15 @@ class ContactObject(serialization.Serializable):
             self.points = torch.cat((self.points, x.view(1, -1)))
             self.actions = torch.cat((self.actions, u.view(1, -1)))
 
-        centered_x = x - self.center_point
-
-        if self.assume_linear_scaling:
-            u_scale = u.norm()
-            u /= u_scale
-            dx /= u_scale
-        # convert back to state
-        centered_x = self.pos_to_state(centered_x).view(-1)
         if self.dynamics is not None:
+            centered_x = x - self.center_point
+
+            if self.assume_linear_scaling:
+                u_scale = u.norm()
+                u /= u_scale
+                dx /= u_scale
+            # convert back to state
+            centered_x = self.pos_to_state(centered_x).view(-1)
             self.dynamics.update(centered_x, u, centered_x + dx)
 
     def move_all_points(self, dpos):
