@@ -135,7 +135,9 @@ def load_file(datafile, run_res, methods, show_in_place=False):
         obj_poses[unique_obj_id] = d[f"obj{unique_obj_id}pose"][mask[1:]]
 
     reactions = d['reaction'][mask]
-    in_contact = contact_id != NO_CONTACT_ID
+    # filter out steps that had inconsistent contact (low reaction force but detected contact ID)
+    # note that contact ID is 1 index in front of reaction since reactions are what was felt during the last step
+    contact_id[:-1][np.linalg.norm(reactions[1:], axis=1) < 0.1] = NO_CONTACT_ID
 
     # TODO compute inherent ambiguity of each contact so as to not penalize misclassifications on ambiguous contacts
     # a way to measure ambiguity is distance of objects to robot (same distance is more ambiguous)
@@ -200,7 +202,7 @@ if __name__ == "__main__":
     }
 
     for res_dir in dirs:
-        # full_dir = os.path.join(cfg.DATA_DIR, 'arm/gripper10')
+        # full_dir = os.path.join(cfg.DATA_DIR, 'arm/gripper12')
         full_dir = os.path.join(cfg.DATA_DIR, res_dir)
 
         files = os.listdir(full_dir)
@@ -208,8 +210,8 @@ if __name__ == "__main__":
 
         for file in files:
             full_filename = '{}/{}'.format(full_dir, file)
-            # # some interesting ones filtered
-            # if file not in ['16.mat', '18.mat', '22.mat']:
+            # some interesting ones filtered
+            # if file not in ['17.mat']:
             #     continue
             if os.path.isdir(full_filename):
                 continue
