@@ -28,6 +28,17 @@ def extract_env_and_level_from_string(string) -> typing.Optional[
     return None
 
 
+def get_file_metainfo(datafile):
+    if not os.path.exists(datafile):
+        raise RuntimeError(f"File doesn't exist")
+
+    ret = extract_env_and_level_from_string(datafile)
+    if ret is None:
+        raise RuntimeError(f"Path not properly formatted to extract environment and level")
+    env_cls, level, seed = ret
+    return ret
+
+
 def dict_to_namespace_str(d):
     return str(d).replace(': ', '=').replace('\'', '').strip('{}')
 

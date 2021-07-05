@@ -1,4 +1,5 @@
 import torch
+import time
 import pickle
 import logging
 import os
@@ -9,9 +10,9 @@ import os.path
 import pybullet as p
 
 import matplotlib.pyplot as plt
-from cottun.defines import NO_CONTACT_ID, RunKey, CONTACT_RES_FILE
+from cottun.defines import NO_CONTACT_ID, RunKey, CONTACT_RES_FILE, RUN_AMBIGUITY, CONTACT_ID
 from cottun.script_utils import extract_env_and_level_from_string, dict_to_namespace_str, record_metric, \
-    plot_cluster_res, load_runs_results
+    plot_cluster_res, load_runs_results, get_file_metainfo
 from sklearn.cluster import DBSCAN
 from sklearn.cluster import KMeans
 from sklearn.cluster import Birch
@@ -22,6 +23,7 @@ from tampc import cfg
 from cottun import contact
 from tampc.env import pybullet_env as env_base
 from tampc.env_getters.arm import ArmGetter
+from tampc.env.pybullet_env import ContactInfo
 
 from cottun.cluster_baseline import KMeansWithAutoK
 from cottun.cluster_baseline import OnlineSklearnFixedClusters
@@ -101,25 +103,19 @@ def online_sklearn_method_factory(online_class, method, inertia_ratio=0.5, **kwa
     return sklearn_method
 
 
-def load_file(datafile, run_res, methods, show_in_place=False):
-    if not os.path.exists(datafile):
-        raise RuntimeError(f"File doesn't exist")
-
-    ret = extract_env_and_level_from_string(datafile)
-    if ret is None:
-        raise RuntimeError(f"Path not properly formatted to extract environment and level")
-    env_cls, level, seed = ret
+def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
+    env_cls, level, seed = get_file_metainfo(datafile)
 
     # load data
     d = scipy.io.loadmat(datafile)
-    mask = d['mask'].reshape(-1) != 0
+    # mask = d['mask'].reshape(-1) != 0
     # use environment specific state difference function since not all states are R^n
     dX = env_cls.state_difference(d['X'][1:], d['X'][:-1])
-    dX = dX[mask[:-1]]
-    X = d['X'][mask]
-    U = d['U'][mask]
+    dX = dX
+    X = d['X']
+    U = d['U']
 
-    contact_id = d['contact_id'][mask].reshape(-1)
+    contact_id = d['contact_id'].reshape(-1)
     ids, counts = np.unique(contact_id, return_counts=True)
     unique_contact_counts = dict(zip(ids, counts))
     steps_taken = sum(unique_contact_counts.values())
@@ -140,17 +136,19 @@ def load_file(datafile, run_res, methods, show_in_place=False):
         if unique_obj_id == NO_CONTACT_ID:
             continue
         # not saved for the time step, so adjust mask usage
-        obj_poses[unique_obj_id] = d[f"obj{unique_obj_id}pose"][mask[1:]]
+        obj_poses[unique_obj_id] = d[f"obj{unique_obj_id}pose"]
 
-    reactions = d['reaction'][mask]
+    reactions = d['reaction']
     # filter out steps that had inconsistent contact (low reaction force but detected contact ID)
     # note that contact ID is 1 index in front of reaction since reactions are what was felt during the last step
     contact_id[:-1][np.linalg.norm(reactions[1:], axis=1) < 0.1] = NO_CONTACT_ID
 
-    # TODO compute inherent ambiguity of each contact so as to not penalize misclassifications on ambiguous contacts
-    # a way to measure ambiguity is distance of objects to robot (same distance is more ambiguous)
-    # another way is cosine similarity between vector of [robot->obj A], [robot->obj B]
-    # should be able to combine those
+    contact_id_key = RunKey(level=level, seed=seed, method=CONTACT_ID, params=None)
+    run_res[contact_id_key] = contact_id
+
+    ambiguity_key = RunKey(level=level, seed=seed, method=RUN_AMBIGUITY, params=None)
+    ambiguity = compute_run_ambiguity(d, unique_contact_counts.keys())
+    run_res[ambiguity_key] = ambiguity
 
     if show_in_place:
         env = env_cls(environment_level=level, mode=p.GUI)
@@ -193,6 +191,25 @@ def load_file(datafile, run_res, methods, show_in_place=False):
     return X, U, dX, contact_id, obj_poses, reactions
 
 
+def compute_run_ambiguity(data, obj_ids, dist_threshold=0.15):
+    """Ambiguity ranges from [0,1] where 1 means the objects may be indistinguishable"""
+    # a way to measure ambiguity is distance of objects to robot (same distance is more ambiguous)
+    # another way is cosine similarity between vector of [robot->obj A], [robot->obj B]
+    # should be able to combine those
+    obj_distances = {obj_id: data[f"obj{obj_id}distance"] for obj_id in obj_ids if not obj_id == NO_CONTACT_ID}
+    obj_distances = np.concatenate(list(obj_distances.values())).T
+    # no ambiguity if there's only 1 object
+    if obj_distances.shape[1] < 2:
+        return np.zeros(obj_distances.shape[0] + 1)
+    # based on second closest distance
+    partitioned_distances = np.partition(obj_distances, 1, axis=1)
+    ambiguity = np.clip(dist_threshold - partitioned_distances[:, 1], 0, None) / dist_threshold
+    # currently this is the ambiguity at the end of the step (start of next step)
+    # convert to ambiguity at the start of the step by assuming first step has no ambiguity
+    ambiguity = np.insert(ambiguity, 0, 0)
+    return ambiguity
+
+
 if __name__ == "__main__":
     runs = load_runs_results()
 
@@ -210,7 +227,7 @@ if __name__ == "__main__":
     }
 
     # full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper10/29.mat')
-    # load_file(full_filename, runs, methods_to_run)
+    # evaluate_methods_on_file(full_filename, runs, methods_to_run)
 
     for res_dir in dirs:
         full_dir = os.path.join(cfg.DATA_DIR, res_dir)
@@ -223,7 +240,7 @@ if __name__ == "__main__":
             if os.path.isdir(full_filename):
                 continue
             try:
-                load_file(full_filename, runs, methods_to_run)
+                evaluate_methods_on_file(full_filename, runs, methods_to_run)
             except (RuntimeError, RuntimeWarning) as e:
                 logger.info(f"{full_filename} error: {e}")
                 continue
@@ -233,7 +250,11 @@ if __name__ == "__main__":
     for k, v in sorted_runs.items():
         if k.method not in methods_to_run.keys():
             continue
-        logger.info(f"{k} : {[round(metric, 2) for metric in v]}")
+        contact_id = runs[RunKey(level=k.level, seed=k.seed, method=CONTACT_ID, params=None)]
+        ambiguity = runs[RunKey(level=k.level, seed=k.seed, method=RUN_AMBIGUITY, params=None)]
+        ambiguity_when_in_contact = ambiguity[contact_id != NO_CONTACT_ID]
+        m = np.mean(ambiguity_when_in_contact)
+        logger.info(f"{k} : {[round(metric, 2) for metric in v]} ambiguity in contact {m}")
 
     with open(CONTACT_RES_FILE, 'wb') as f:
         pickle.dump(runs, f)
