@@ -16,12 +16,13 @@ class KMeansWithAutoK:
 
     def fit(self, x):
         sse = []
-        for k in range(1, self.max_k + 1):
+        max_k = min(self.max_k, len(x))
+        for k in range(1, max_k):
             kmeans = KMeans(n_clusters=k, **self.kmeans_args).fit(x)
             sse.append(kmeans.inertia_)
             if k > 1 and sse[-1] > self.inertia_ratio * sse[-2]:
                 return KMeans(n_clusters=k - 1, **self.kmeans_args).fit(x)
-        return KMeans(n_clusters=self.max_k, **self.kmeans_args).fit(x)
+        return KMeans(n_clusters=max_k, **self.kmeans_args).fit(x)
 
 
 class OnlineSklearnContactSet:
