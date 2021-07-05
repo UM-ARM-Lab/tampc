@@ -78,15 +78,30 @@ def our_method_factory(**kwargs):
     return our_method
 
 
+def process_labels_with_noise(labels):
+    noise_label = max(labels) + 1
+    for i in range(len(labels)):
+        # some methods use -1 to indicate noise; in this case we have to assign a cluster so we use a single element
+        if labels[i] == -1:
+            labels[i] = noise_label
+            noise_label += 1
+    return labels
+
+
 def sklearn_method_factory(method, **kwargs):
     def sklearn_method(X, U, reactions, env_class):
-        # TODO cluster iteratively, using our tracking to move the points to get fairer baselines
         # simple baselines
         # cluster in [pos, next reaction force, action] space
         xx = np.concatenate([X[:-1, :2], reactions[1:], U[:-1]], axis=1)
+        valid = np.linalg.norm(reactions[1:], axis=1) > 0.1
+        xx = xx[valid]
         # give it some help by telling it the number of clusters as unique contacts IDs
         res = method(**kwargs).fit(xx)
-        return res.labels_, dict_to_namespace_str(kwargs)
+        # return res.labels_, dict_to_namespace_str(kwargs)
+        labels = np.ones(len(valid)) * NO_CONTACT_ID
+        res.labels_ = process_labels_with_noise(res.labels_)
+        labels[valid] = res.labels_
+        return labels, dict_to_namespace_str(kwargs)
 
     return sklearn_method
 
@@ -94,17 +109,26 @@ def sklearn_method_factory(method, **kwargs):
 def online_sklearn_method_factory(online_class, method, inertia_ratio=0.5, **kwargs):
     def sklearn_method(X, U, reactions, env_class):
         online_method = online_class(method(**kwargs), inertia_ratio=inertia_ratio)
+        valid = np.linalg.norm(reactions[1:], axis=1) > 0.1
         for i in range(len(X) - 1):
+            if not valid[i]:
+                continue
             # intermediate labels in case we want plotting of movement
             labels = online_method.update(X[i], U[i], env_class.state_difference(X[i + 1], X[i]).reshape(-1),
                                           reactions[i + 1])
-        return online_method.final_labels(), dict_to_namespace_str(kwargs)
+        labels = np.ones(len(valid)) * NO_CONTACT_ID
+        labels[valid] = process_labels_with_noise(online_method.final_labels())
+        return labels, dict_to_namespace_str(kwargs)
 
     return sklearn_method
 
 
 def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
-    env_cls, level, seed = get_file_metainfo(datafile)
+    try:
+        env_cls, level, seed = get_file_metainfo(datafile)
+    except (RuntimeError, RuntimeWarning) as e:
+        logger.info(f"{full_filename} error: {e}")
+        return None
 
     # load data
     d = scipy.io.loadmat(datafile)
@@ -128,7 +152,8 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
     else:
         freespace_ratio = 1.
     if len(unique_contact_counts) < 2 or freespace_ratio > 0.95:
-        raise RuntimeWarning(f"Too few contacts; spends {freespace_ratio} ratio in freespace")
+        logger.info(f"Too few contacts; spends {freespace_ratio} ratio in freespace")
+        return None
     logger.info(f"{datafile} freespace ratio {freespace_ratio} unique contact IDs {unique_contact_counts}")
 
     obj_poses = {}
@@ -178,10 +203,11 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
                          label_function=cluster_id_to_str)
     save_and_close_fig(f, '')
 
+    in_contact = contact_id[:-1] != NO_CONTACT_ID
     for method_name, method in methods.items():
         labels, param_values = method(X, U, reactions, env_cls)
         run_key = RunKey(level=level, seed=seed, method=method_name, params=param_values)
-        record_metric(run_key, contact_id[:-1], labels, run_res)
+        record_metric(run_key, contact_id[:-1][in_contact], labels[in_contact], run_res)
 
         f = plot_cluster_res(labels, X[:-1], f"Task {level} {datafile.split('/')[-1]} {method_name}")
         save_and_close_fig(f, f"{method_name} {param_values.replace('.', '_')}")
@@ -215,15 +241,15 @@ if __name__ == "__main__":
 
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
-        'ours UKF': our_method_factory(),
+        # 'ours UKF': our_method_factory(length=0.1),
         # 'kmeans': sklearn_method_factory(KMeansWithAutoK),
         # 'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
         # 'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
         # 'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
         #                                                random_state=0),
         # 'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
-        # 'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
-        #                                               threshold=1.5)
+        'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
+                                                      threshold=1.5)
     }
 
     # full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper10/29.mat')
@@ -239,11 +265,7 @@ if __name__ == "__main__":
             full_filename = '{}/{}'.format(full_dir, file)
             if os.path.isdir(full_filename):
                 continue
-            try:
-                evaluate_methods_on_file(full_filename, runs, methods_to_run)
-            except (RuntimeError, RuntimeWarning) as e:
-                logger.info(f"{full_filename} error: {e}")
-                continue
+            evaluate_methods_on_file(full_filename, runs, methods_to_run)
 
     # print runs by how problematic they are - allows us to examine specific runs
     sorted_runs = {k: v for k, v in sorted(runs.items(), key=lambda item: item[1][-1])}
