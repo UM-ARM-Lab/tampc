@@ -4,7 +4,7 @@ import logging
 import numpy as np
 
 from cottun.script_utils import load_runs_results
-from cottun.defines import RunKey
+from cottun.defines import RunKey, RUN_INFO_KEYWORDS, RUN_AMBIGUITY, CONTACT_ID, NO_CONTACT_ID
 
 logging.basicConfig(level=logging.INFO,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
@@ -18,9 +18,10 @@ if __name__ == "__main__":
     runs = load_runs_results()
 
     # plot all by default
-    all_methods = set([k.method for k in runs.keys()])
+    all_methods = set([k.method for k in runs.keys() if k.method not in RUN_INFO_KEYWORDS])
     logger.info(f"all methods: {all_methods}")
-    methods_to_run = ["ours UKF"]
+    # methods_to_run = ["ours UKF"]
+    methods_to_run = all_methods
 
     # plot results for all methods and runs
     plot_median = True
@@ -30,9 +31,23 @@ if __name__ == "__main__":
     ax.set_ylabel('completeness')
     ax.set_xlim(0, 1.1)
     ax.set_ylim(0, 1.1)
+
+    # filter plotting via difficulty
+    keys = set((k.level, k.seed) for k in runs.keys())
+    bad_keys = set()
+    for k in keys:
+        contact_id = runs[RunKey(level=k[0], seed=k[1], method=CONTACT_ID, params=None)]
+        ambiguity = runs[RunKey(level=k[0], seed=k[1], method=RUN_AMBIGUITY, params=None)]
+        ambiguity_when_in_contact = ambiguity[contact_id != NO_CONTACT_ID]
+        m = np.mean(ambiguity_when_in_contact)
+        logger.info(f"level {k[0]} seed {k[1]} mean ambiguity in contact {round(m, 2)}")
+        if m < 0.2:
+            bad_keys.add(k)
+    f.suptitle("runs where mean ambiguity in contact > 0.2")
+
     for method in methods_to_run:
         # check if there are multiple parameters values for this method
-        this_method_runs = {k: v for k, v in runs.items() if method == k.method}
+        this_method_runs = {k: v for k, v in runs.items() if method == k.method and (k.level, k.seed) not in bad_keys}
         runs_per_param_value = {}
         for k, v in this_method_runs.items():
             param_value = k.params
@@ -45,7 +60,7 @@ if __name__ == "__main__":
             method_label = f"{method} {params}" if len(runs_per_param_value) > 1 else method
 
             logger.info(
-                f"{method_label} median {round(np.median(h), 2)} {round(np.median(c), 2)} {round(np.median(v), 2)}")
+                f"{method_label} {len(values)} runs | median {round(np.median(h), 2)} {round(np.median(c), 2)} {round(np.median(v), 2)}")
             if plot_median:
                 # scatter for their median
                 hm = np.median(h)
