@@ -20,11 +20,13 @@ if __name__ == "__main__":
     # plot all by default
     all_methods = set([k.method for k in runs.keys() if k.method not in RUN_INFO_KEYWORDS])
     logger.info(f"all methods: {all_methods}")
-    # methods_to_run = ["ours UKF"]
-    methods_to_run = all_methods
+    methods_to_run = ["ours UKF", "kmeans", "dbscan", "online-kmeans", "online-dbscan", "online-birch"]
+    # methods_to_run = all_methods
 
     # plot results for all methods and runs
     plot_median = True
+    aggregate_method = np.mean
+
     f = plt.figure()
     ax = plt.gca()
     ax.set_xlabel('homogenity')
@@ -52,20 +54,21 @@ if __name__ == "__main__":
         for k, v in this_method_runs.items():
             param_value = k.params
             if k.params not in runs_per_param_value:
-                runs_per_param_value[k.params] = set()
-            runs_per_param_value[k.params].add(v)
+                runs_per_param_value[k.params] = []
+            runs_per_param_value[k.params].append(v)
 
         for params, values in runs_per_param_value.items():
             h, c, v = zip(*values)
             method_label = f"{method} {params}" if len(runs_per_param_value) > 1 else method
 
             logger.info(
-                f"{method_label} {len(values)} runs | median {round(np.median(h), 2)} {round(np.median(c), 2)} {round(np.median(v), 2)}")
+                f"{method_label} {len(values)} runs | mean {round(np.mean(h), 2)} {round(np.mean(c), 2)} {round(np.mean(v), 2)}")
             if plot_median:
-                # scatter for their median
-                hm = np.median(h)
-                cm = np.median(c)
-                ax.errorbar(hm, cm, yerr=[[cm - np.percentile(c, 20)], [np.percentile(c, 80) - cm]],
+                # scatter
+                hm = aggregate_method(h)
+                cm = aggregate_method(c)
+                ax.errorbar(hm + np.random.randn() * 0.001, cm + np.random.randn() * 0.001,
+                            yerr=[[cm - np.percentile(c, 20)], [np.percentile(c, 80) - cm]],
                             xerr=[[hm - np.percentile(h, 20)], [np.percentile(h, 80) - hm]],
                             label=method_label, fmt='o')
             else:
