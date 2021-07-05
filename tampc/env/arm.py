@@ -13,7 +13,8 @@ import matplotlib.colors as colors
 import matplotlib.cm as cmx
 
 from arm_pytorch_utilities import tensor_utils
-from tampc.env.pybullet_env import PybulletEnv, get_total_contact_force, make_wall, state_action_color_pairs
+from tampc.env.pybullet_env import PybulletEnv, get_total_contact_force, make_wall, state_action_color_pairs, \
+    ContactInfo
 from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource
 from tampc.env.peg_in_hole import PandaJustGripperID
 from tampc.env.pybullet_sim import PybulletSim
@@ -148,6 +149,10 @@ class ArmEnv(PybulletEnv):
     @classmethod
     def control_cost(cls):
         return np.diag([1 for _ in range(cls.nu)])
+
+    @property
+    def robot_id(self):
+        return self.armId
 
     def __init__(self, goal=(0.8, 0.0, 0.3), init=(0.3, 0.6, 0.2),
                  environment_level=0, sim_step_wait=None, mini_steps=15, wait_sim_steps_per_mini_step=20,
@@ -581,12 +586,18 @@ class ArmEnv(PybulletEnv):
         # summarize information per sim step into information for entire control step
         info = self._aggregate_info()
 
+        # ground truth object information
         if len(self.movable + self.immovable):
             poses = {}
+            distances = {}
             for obj_id in self.movable + self.immovable:
                 pose = p.getBasePositionAndOrientation(obj_id)
                 poses[obj_id] = np.concatenate([pose[0], pose[1]])
+                c = p.getClosestPoints(obj_id, self.robot_id, 100000)
+                # for multi-link bodies, will return 1 per combination; store the min
+                distances[obj_id] = min(cc[ContactInfo.DISTANCE] for cc in c)
             info['object_poses'] = poses
+            info['object_distances'] = distances
 
         # prepare for next control step
         self._clear_state_between_control_steps()
@@ -985,6 +996,10 @@ class FloatingGripperEnv(PlanarArmEnv):
     MAX_PUSH_DIST = 0.03
     OPEN_ANGLE = 0.04
     CLOSE_ANGLE = 0.01
+
+    @property
+    def robot_id(self):
+        return self.gripperId
 
     # --- set current state
     def set_state(self, state, action=None):

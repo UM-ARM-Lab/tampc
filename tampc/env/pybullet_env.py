@@ -92,6 +92,11 @@ class PybulletEnv(Env):
                 raise RuntimeError("Can't use same location index (0) as cost")
             self._dd.draw_text('user{}_{}'.format(location_index, left_offset), text, location_index, left_offset)
 
+    @property
+    @abc.abstractmethod
+    def robot_id(self):
+        """Return the unique pybullet ID of the robot"""
+
     @abc.abstractmethod
     def _draw_action(self, action, old_state=None, debug=0):
         pass
@@ -135,6 +140,7 @@ class ContactInfo(enum.IntEnum):
     LINK_B = 4
     POS_A = 5
     NORMAL_DIR_B = 7
+    DISTANCE = 8
     NORMAL_MAG = 9
     LATERAL1_MAG = 10
     LATERAL1_DIR = 11
@@ -330,6 +336,9 @@ class DebugDrawer:
         return self._debug_ids[name]
 
     def draw_screen_text(self, name, text, camera_frame_pos):
+        # not in camera mode, ignore
+        if self._inv_camera_tsf is None:
+            return
         if name not in self._debug_ids:
             self._debug_ids[name] = -1
         uid = self._debug_ids[name]

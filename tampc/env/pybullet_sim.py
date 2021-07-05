@@ -63,6 +63,7 @@ class PybulletSim(simulation.Simulation):
         self.time = np.arange(0, self.num_frames * self.sim_step_s, self.sim_step_s)
         self.pred_cls = np.zeros_like(self.wall_contact)
         self.object_poses = {}
+        self.object_distances = {}
         return simulation.ReturnMeaning.SUCCESS
 
     def _truncate_data(self, frame):
@@ -206,6 +207,12 @@ class PybulletSim(simulation.Simulation):
                     if obj_id not in self.object_poses:
                         self.object_poses[obj_id] = []
                     self.object_poses[obj_id].append(pose)
+            object_distances = info.get('object_distances', None)
+            if object_distances is not None:
+                for obj_id, distance in object_distances.items():
+                    if obj_id not in self.object_distances:
+                        self.object_distances[obj_id] = []
+                    self.object_distances[obj_id].append(distance)
 
             if self._predicts_state():
                 self.pred_traj[simTime + 1, :] = self.ctrl.predicted_next_state
@@ -247,6 +254,11 @@ class PybulletSim(simulation.Simulation):
         for obj_id, pose_list in self.object_poses.items():
             poses = np.stack(pose_list)
             data[f"obj{obj_id}pose"] = poses
+
+        for obj_id, distance_list in self.object_distances.items():
+            distances = np.stack(distance_list)
+            data[f"obj{obj_id}distance"] = distances
+
         return data
 
     def _start_plot_action_sample(self):
