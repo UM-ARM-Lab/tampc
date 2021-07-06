@@ -20,7 +20,7 @@ if __name__ == "__main__":
     # plot all by default
     all_methods = set([k.method for k in runs.keys() if k.method not in RUN_INFO_KEYWORDS])
     logger.info(f"all methods: {all_methods}")
-    methods_to_run = ["ours UKF", "kmeans", "dbscan", "online-kmeans", "online-dbscan", "online-birch"]
+    methods_to_run = ["ours UKF", "ours PF", "kmeans", "dbscan", "birch", "online-kmeans", "online-dbscan", "online-birch"]
     # methods_to_run = all_methods
 
     # plot results for all methods and runs

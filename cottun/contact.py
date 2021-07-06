@@ -4,7 +4,9 @@ import typing
 import copy
 import logging
 import abc
-from arm_pytorch_utilities import tensor_utils, optim, serialization
+import enum
+from arm_pytorch_utilities import tensor_utils, optim, serialization, linalg, math_utils, draw
+from torch.distributions.multivariate_normal import MultivariateNormal
 from cottun.filters.ukf import EnvConditionedUKF
 
 logger = logging.getLogger(__name__)
@@ -23,6 +25,11 @@ class ContactParameters:
     force_threshold: float = 0.5
 
 
+class MeasurementType(enum.Enum):
+    POSITION = 0
+    REACTION = 1
+
+
 class ContactObject(serialization.Serializable):
     def __init__(self, empty_local_model: typing.Optional[typing.Any], params: ContactParameters,
                  assume_linear_scaling=True):
@@ -38,11 +45,17 @@ class ContactObject(serialization.Serializable):
 
         self.assume_linear_scaling = assume_linear_scaling
 
+        self.p = params
         self.length_parameter = params.length
         self.u_similarity = params.control_similarity
         self.n_x = 2  # state is center point
         self.n_y = 2  # observe robot position
         self.n_u = 2
+
+    @property
+    def measurement_type(self) -> MeasurementType:
+        """What data does our measurement function expect"""
+        return MeasurementType.POSITION
 
     @property
     @abc.abstractmethod
@@ -168,7 +181,7 @@ class ContactObject(serialization.Serializable):
         # version of measurement function where measurement space is unit reaction force
         # NOTE this is an alternative measurement function that more directly uses directionality
         # this is the robot position before movement
-        robot_position, action, _ = environment
+        robot_position, action = environment['robot'], environment['control']
 
         # represent direction as unit vector
         measurement = torch.zeros((state.shape[0], self.n_y), device=state.device, dtype=state.dtype)
@@ -178,14 +191,18 @@ class ContactObject(serialization.Serializable):
         rob_to_obj = state - robot_position
         rob_to_obj_norm = rob_to_obj.norm(dim=1)
         # anything too far is disqualified (based on maximum distance we expect robot to move in 1 action)
-        too_far = rob_to_obj_norm > 0.05
+        # and also expected object size
+        # TODO use parameters for these; these should be learned on the training set
+        expected_max_move = 0.03
+        expected_max_obj_radius = 0.1
+        too_far = rob_to_obj_norm > (expected_max_move + expected_max_obj_radius)
         # anything too angled is disqualified
         # TODO generalize function for getting predicted ee movement direction from actions
         unit_pos_diff = (rob_to_obj / rob_to_obj_norm.view(-1, 1))
         unit_action_dir = (action / action.norm())
         # dot product between position diff and action
         dot_pos_diff_action = unit_pos_diff @ unit_action_dir
-        too_angled = dot_pos_diff_action < 0.5
+        too_angled = dot_pos_diff_action < 0.3
 
         # those that are not too far or too angled should feel some force
         # uncertainty over contact surface, assume both are spheres so average between them
@@ -197,13 +214,13 @@ class ContactObject(serialization.Serializable):
 
     def dynamics_fn(self, state, action, environment):
         """Predict change in object center position"""
-        robot_position, _, dx = environment
-        return state + self.state_to_pos(dx)
+        return state + self.state_to_pos(environment['dx'])
 
     def dynamics_fn_cluster_per_sample(self, state, action, environment):
         # version of dynamics function where instead of assuming all input is clustered/expected movement, we cluster
         # each input sample
-        robot_position, _, dx = environment
+        robot_position = environment['robot']
+        dx = environment['dx']
         new_state = state.clone()
         # first check if we cluster into it
         # only relative position matters, so instead of translating the contact points, we translate the robot position
@@ -216,9 +233,7 @@ class ContactObject(serialization.Serializable):
         if none:
             return new_state
 
-        x = robot_translated_pos[in_contact] - state[0]
-        dpos = self.predict_dpos(x, action[in_contact])
-        new_state[in_contact] += dpos
+        new_state[in_contact] += dx
         return new_state
 
     def dynamics_no_movement_fn(self, state, action, environment):
@@ -297,6 +312,243 @@ class ContactUKF(ContactObject):
         self.mu_bar, self.cov_bar, _ = self.ukf.predict(control, self.mu, self.cov,
                                                         self.dynamics_fn if expect_movement else self.dynamics_no_movement_fn,
                                                         environment=environment)
+
+
+import matplotlib.pyplot as plt
+
+
+class ContactPF(ContactObject):
+    def __init__(self, empty_local_model: typing.Optional[typing.Any], params: ContactParameters, n_particles=500,
+                 n_eff_threshold=1.,
+                 **kwargs):
+        super(ContactPF, self).__init__(empty_local_model, params, **kwargs)
+        self.device = optim.get_device()
+
+        self.n_particles = n_particles
+        self.particles = None
+        self.hypothesis = None
+        # can only init when given an observation
+        # sigma (assume symmetric) for initial gaussian prior of particles
+        self.init_spread = 0.005
+        self.dynamics_noise_spread = 0.0001
+        # this is easier to tune since measurement space is bounded, so error is also bounded
+        self.squared_error_sigma = 0.3
+
+        self.n_eff_threshold = n_eff_threshold
+        self.weights = torch.ones(self.n_particles, device=self.device) / self.n_particles
+        self.weights_normalization = 1
+        # additional noise for each action step
+        self.dynamics_noise_dist = MultivariateNormal(torch.zeros(self.n_x, device=self.device),
+                                                      torch.eye(self.n_x,
+                                                                device=self.device) * self.dynamics_noise_spread)
+
+        # self.weight_multiplier = params.weight_multiplier / (self.dynamics_noise_spread * self.n_x)
+        # don't care about weight for now
+        self.weight_multiplier = 0.1
+
+        self.plot = False
+        if self.plot:
+            plt.ion()
+            f, self.axes = plt.subplots(2, 2, figsize=(8, 8), constrained_layout=True)
+            self.axes[0, 0].set_title('predict input: state space')
+            self.axes[0, 0].set_ylim(-0.5, 0.5)
+            self.axes[0, 0].set_xlim(-0.5, 0.5)
+            self.axes[0, 1].set_title('predict output: state space')
+            self.axes[0, 1].set_ylim(-0.5, 0.5)
+            self.axes[0, 1].set_xlim(-0.5, 0.5)
+
+            self.axes[1, 0].set_ylim(-1., 1.)
+            self.axes[1, 0].set_xlim(-1., 1.)
+            self.axes[1, 0].set_title('update input: measurement space')
+            self.axes[1, 1].set_ylim(-0.5, 0.5)
+            self.axes[1, 1].set_xlim(-0.5, 0.5)
+            self.axes[1, 1].set_title('update output: state space')
+
+    @property
+    def measurement_type(self):
+        return MeasurementType.REACTION
+
+    def init_pf(self, environment):
+        robot_position = environment['robot']
+        action = environment['control']
+        # TODO make expected max object radius a parameter
+        action_dir = action / action.norm()
+        sample_dist = MultivariateNormal(robot_position.view(-1) + action_dir * 0.1,
+                                         covariance_matrix=torch.eye(self.n_x, device=self.device) * self.init_spread)
+        new_sample = sample_dist.sample((self.n_particles,))
+        self.particles = new_sample
+
+    @property
+    def center_point(self):
+        # take the weighted mean
+        return torch.sum(self.particles * self.weights.view(-1, 1), dim=0)
+
+    @property
+    def weight(self):
+        # TODO how to assign weight to particles? Currently using empirical covariance
+        cov = linalg.cov(self.particles)
+        tr = cov.trace()
+        # convert to (0, 1)
+        weight_exp = torch.exp(- self.weight_multiplier * tr)
+        # weight = self.n_x * self.sigma / tr.item()
+        return weight_exp
+
+    def state_dict(self) -> dict:
+        # TODO
+        pass
+
+    def load_state_dict(self, state: dict) -> bool:
+        # TODO
+        pass
+
+    def filter_update(self, measurement, environment, observed_movement=True):
+        if observed_movement:
+            center_point_before = self.center_point.clone()
+            self._pf_update(measurement, environment)
+            # can't just move points like before since our initial estimate of robot location will be bad
+            # self.move_all_points(self.center_point - center_point_before)
+            self.move_all_points(self.state_to_pos(environment['dx']))
+        else:
+            pass
+
+    def _pf_update(self, measurement, environment):
+        # hypothesis observations
+        self.hypothesis = self.measurement_fn_reaction_force(self.particles, environment)
+
+        # compare hypothesized measurement with actual measurement
+        obs_weights = squared_error(self.hypothesis, measurement, self.squared_error_sigma)
+        # obs_weights = torch.zeros(self.n_particles, device=self.device)
+        valid = self.hypothesis.norm(dim=1) > 0
+        obs_weights[~valid] = 0
+        # obs_weights[valid] = torch.cosine_similarity(self.hypothesis[valid], measurement.view(1, -1))
+        # obs_weights[valid] = torch.exp(-obs_weights[valid] / (2.0 * 0.5 ** 2))
+
+        if self.plot:
+            ax = self.axes[1, 0]
+            draw.clear_ax_content(ax)
+            c = [(0, 0, 1, min(1, max(0.01, w))) for w in obs_weights]
+            ax.scatter(self.hypothesis[:, 0], self.hypothesis[:, 1], label='hypotheses', c=c)
+            ax.scatter(measurement[0], measurement[1], label='measured', c='g')
+            ax.legend()
+
+        self.weights = self.weights * obs_weights
+        # force positive
+        self.weights[self.weights < 0] = 0
+
+        # TODO consider internal weights to combine inverse and forward models
+
+        # normalize weights to resampling probabilities
+        self.weights_normalization = self.weights.sum()
+        self.weights = self.weights / self.weights_normalization
+
+        # from pfilter
+        # Compute effective sample size and entropy of weighting vector.
+        # These are useful statistics for adaptive particle filtering.
+        self.n_eff = (1.0 / (self.weights ** 2).sum()) / self.n_particles
+        self.weight_entropy = torch.sum(self.weights * torch.log(self.weights))
+
+        # preserve current sample set before any replenishment
+        self.original_particles = self.particles.clone()
+
+        # store MAP estimate
+        argmax_weight = torch.argmax(self.weights)
+        self.map_state = self.particles[argmax_weight]
+        self.map_hypothesis = self.hypothesis[argmax_weight]
+
+        # resampling (systematic resampling) step
+        if self.n_eff < self.n_eff_threshold:
+            indices = resample(self.weights)
+            self.particles = self.particles[indices, :]
+            self.weights = torch.ones(self.n_particles, device=self.device) / self.n_particles
+
+        if self.plot:
+            ax = self.axes[1, 1]
+            draw.clear_ax_content(ax)
+            c = [(0, 0, 1, w * self.n_particles / 2) for w in self.weights]
+            ax.scatter(self.particles[:, 0], self.particles[:, 1], label='particles', c=c)
+            robot_xy = environment['robot']
+            ax.scatter(robot_xy[:, 0], robot_xy[:, 1], label='robot', c='g')
+            m = self.center_point
+            ax.scatter(m[0], m[1], label='mean particle', c='c')
+            ax.scatter(self.map_state[0], self.map_state[1], label='MAP particle', c='y')
+
+            colors = 'rkm'
+            obj_poses = environment.get('obj', None)
+            if obj_poses is not None:
+                for obj_id, obj_pose in obj_poses.items():
+                    ax.scatter(obj_pose[0], obj_pose[1], label=f"object {obj_id}", c=colors[obj_id % len(colors)])
+
+            ax.legend()
+
+    def filter_predict(self, control, environment, expect_movement=True):
+        if self.particles is None:
+            self.init_pf(environment)
+
+        if self.plot:
+            ax = self.axes[0, 0]
+            draw.clear_ax_content(ax)
+            c = [(0, 0, 1, w * self.n_particles / 2) for w in self.weights]
+            ax.scatter(self.particles[:, 0], self.particles[:, 1], label='particles', c=c)
+            robot_xy = environment['robot']
+            ax.scatter(robot_xy[:, 0], robot_xy[:, 1], label='robot', c='g')
+            m = self.center_point
+            ax.scatter(m[0], m[1], label='mean particle', c='c')
+            # ax.scatter(sp[1:, 0], sp[1:, 1], label='sp', alpha=0.3)
+            ax.legend()
+
+        if expect_movement:
+            self.particles = self.dynamics_fn(self.particles, control, environment)
+        # apply dynamics to particles
+        else:
+            # do nothing
+            pass
+        noise = self.dynamics_noise_dist.sample((self.n_particles,))
+        self.particles += noise
+
+        if self.plot:
+            ax = self.axes[0, 1]
+            draw.clear_ax_content(ax)
+            c = [(0, 0, 1, w * self.n_particles / 2) for w in self.weights]
+            ax.scatter(self.particles[:, 0], self.particles[:, 1], label='particles', c=c)
+            robot_xy = environment['robot']
+            ax.scatter(robot_xy[:, 0], robot_xy[:, 1], label='robot', c='g')
+            m = self.center_point
+            ax.scatter(m[0], m[1], label='mean particle', c='c')
+            # ax.scatter(sp[1:, 0], sp[1:, 1], label='sp', alpha=0.3)
+            ax.legend()
+
+
+# resample function from http://scipy-cookbook.readthedocs.io/items/ParticleFilter.html
+def resample(weights):
+    n = len(weights)
+    indices = []
+    C = [0.0] + [torch.sum(weights[: i + 1]) for i in range(n)]
+    u0, j = torch.rand((1,)), 0
+    for u in [(u0 + i) / n for i in range(n)]:
+        while u > C[j]:
+            j += 1
+        indices.append(j - 1)
+    return indices
+
+
+def squared_error(x, y, sigma=1.):
+    """
+        from pfilter
+        RBF kernel, supporting masked values in the observation
+        Parameters:
+        -----------
+        x : array (N,D) array of values
+        y : array (N,D) array of values
+        Returns:
+        -------
+        distance : scalar
+            Total similarity, using equation:
+                d(x,y) = e^((-1 * (x - y) ** 2) / (2 * sigma ** 2))
+            summed over all samples. Supports masked arrays.
+    """
+    dx = (x - y) ** 2
+    d = torch.sum(dx, dim=1)
+    return torch.exp(-d / (2.0 * sigma ** 2))
 
 
 class ContactSet(serialization.Serializable):
@@ -407,9 +659,12 @@ class ContactSet(serialization.Serializable):
 
         return res_c, res_i
 
-    def update(self, x, u, dx, reaction):
+    def update(self, x, u, dx, reaction, info=None):
         """Returns updated contact object"""
-        environment = [self.p.state_to_pos(x), u, dx]
+        environment = {'robot': self.p.state_to_pos(x), 'control': u, 'dx': dx}
+        # debugging info
+        if info is not None:
+            environment['obj'] = info['object_poses']
         if reaction.norm() < self.p.force_threshold:
             self.stepped_without_contact(u, environment)
             return None
@@ -436,9 +691,13 @@ class ContactSet(serialization.Serializable):
                 ci.filter_update(None, environment, observed_movement=False)
             else:
                 ci.filter_predict(u, environment, expect_movement=True)
-                # c.ukf_update(unit_reaction, environment)
                 # where the contact point center would be taking last point into account
-                c.filter_update(c.points.mean(dim=0) + self.p.state_to_pos(dx), environment, observed_movement=True)
+                if c.measurement_type == MeasurementType.POSITION:
+                    c.filter_update(c.points.mean(dim=0) + self.p.state_to_pos(dx), environment, observed_movement=True)
+                elif c.measurement_type == MeasurementType.REACTION:
+                    c.filter_update(unit_reaction, environment, observed_movement=True)
+                else:
+                    raise RuntimeError(f"Unknown measurement type {c.measurement_type}")
 
         self.updated()
         return c

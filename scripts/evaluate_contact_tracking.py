@@ -41,15 +41,15 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 logger = logging.getLogger(__name__)
 
 
-def our_method_factory(**kwargs):
-    def our_method(X, U, reactions, env_class):
+def our_method_factory(contact_object_class=contact.ContactUKF, **kwargs):
+    def our_method(X, U, reactions, env_class, info):
         # TODO select getter based on env class
         contact_params = ArmGetter.contact_parameters(env_class, **kwargs)
         d = get_device()
         dtype = torch.float32
 
         def create_contact_object():
-            return contact.ContactUKF(None, contact_params)
+            return contact_object_class(None, contact_params)
 
         contact_set = contact.ContactSet(contact_params, contact_object_factory=create_contact_object)
         labels = np.zeros(len(X) - 1)
@@ -58,7 +58,9 @@ def our_method_factory(**kwargs):
         r = torch.from_numpy(reactions).to(device=d, dtype=dtype)
         obj_id = 0
         for i in range(len(X) - 1):
-            c = contact_set.update(x[i], u[i], env_class.state_difference(x[i + 1], x[i]).reshape(-1), r[i + 1])
+            this_info = {'object_poses': {obj_id: obj_pose[i] for obj_id, obj_pose in info['object_poses'].items()}}
+            c = contact_set.update(x[i], u[i], env_class.state_difference(x[i + 1], x[i]).reshape(-1), r[i + 1],
+                                   this_info)
             if c is None:
                 labels[i] = NO_CONTACT_ID
             else:
@@ -89,7 +91,7 @@ def process_labels_with_noise(labels):
 
 
 def sklearn_method_factory(method, **kwargs):
-    def sklearn_method(X, U, reactions, env_class):
+    def sklearn_method(X, U, reactions, env_class, info):
         # simple baselines
         # cluster in [pos, next reaction force, action] space
         xx = np.concatenate([X[:-1, :2], reactions[1:], U[:-1]], axis=1)
@@ -107,7 +109,7 @@ def sklearn_method_factory(method, **kwargs):
 
 
 def online_sklearn_method_factory(online_class, method, inertia_ratio=0.5, **kwargs):
-    def sklearn_method(X, U, reactions, env_class):
+    def sklearn_method(X, U, reactions, env_class, info):
         online_method = online_class(method(**kwargs), inertia_ratio=inertia_ratio)
         valid = np.linalg.norm(reactions[1:], axis=1) > 0.1
         for i in range(len(X) - 1):
@@ -139,7 +141,12 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
     X = d['X']
     U = d['U']
 
+    reactions = d['reaction']
     contact_id = d['contact_id'].reshape(-1)
+    # filter out steps that had inconsistent contact (low reaction force but detected contact ID)
+    # note that contact ID is 1 index in front of reaction since reactions are what was felt during the last step
+    contact_id[:-1][np.linalg.norm(reactions[1:], axis=1) < 0.1] = NO_CONTACT_ID
+
     ids, counts = np.unique(contact_id, return_counts=True)
     unique_contact_counts = dict(zip(ids, counts))
     steps_taken = sum(unique_contact_counts.values())
@@ -151,7 +158,8 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
         freespace_ratio = unique_contact_counts[NO_CONTACT_ID] / steps_taken
     else:
         freespace_ratio = 1.
-    if len(unique_contact_counts) < 2 or freespace_ratio > 0.95:
+    if len(unique_contact_counts) < 2 or freespace_ratio > 0.95 or \
+            sum([v for k, v in unique_contact_counts.items() if k != NO_CONTACT_ID]) < 2:
         logger.info(f"Too few contacts; spends {freespace_ratio} ratio in freespace")
         return None
     logger.info(f"{datafile} freespace ratio {freespace_ratio} unique contact IDs {unique_contact_counts}")
@@ -162,11 +170,6 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
             continue
         # not saved for the time step, so adjust mask usage
         obj_poses[unique_obj_id] = d[f"obj{unique_obj_id}pose"]
-
-    reactions = d['reaction']
-    # filter out steps that had inconsistent contact (low reaction force but detected contact ID)
-    # note that contact ID is 1 index in front of reaction since reactions are what was felt during the last step
-    contact_id[:-1][np.linalg.norm(reactions[1:], axis=1) < 0.1] = NO_CONTACT_ID
 
     contact_id_key = RunKey(level=level, seed=seed, method=CONTACT_ID, params=None)
     run_res[contact_id_key] = contact_id
@@ -205,7 +208,10 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
 
     in_contact = contact_id[:-1] != NO_CONTACT_ID
     for method_name, method in methods.items():
-        labels, param_values = method(X, U, reactions, env_cls)
+        # additional info to pass to methods for debugging
+        info = {'object_poses': obj_poses}
+
+        labels, param_values = method(X, U, reactions, env_cls, info)
         run_key = RunKey(level=level, seed=seed, method=method_name, params=param_values)
         record_metric(run_key, contact_id[:-1][in_contact], labels[in_contact], run_res)
 
@@ -241,18 +247,19 @@ if __name__ == "__main__":
 
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
-        # 'ours UKF': our_method_factory(length=0.1),
+        'ours UKF': our_method_factory(length=0.1),
+        # 'ours PF': our_method_factory(contact_object_class=contact.ContactPF, length=0.1),
         # 'kmeans': sklearn_method_factory(KMeansWithAutoK),
         # 'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
         # 'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
         # 'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
         #                                                random_state=0),
         # 'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
-        'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
-                                                      threshold=1.5)
+        # 'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
+        #                                               threshold=1.5)
     }
 
-    # full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper10/29.mat')
+    # full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper12/17.mat')
     # evaluate_methods_on_file(full_filename, runs, methods_to_run)
 
     for res_dir in dirs:
