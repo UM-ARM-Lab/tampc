@@ -22,6 +22,11 @@ state_action_color_pairs = [[(1, 0.5, 0), (1, 0.8, 0.4)],
                             [(181 / 255, 237 / 255, 28 / 255), (148 / 255, 194 / 255, 23 / 255)]]
 
 
+def remove_user_debug_item(id):
+    # p.removeUserDebugItem seems bugged and after calling it the whole simulation slows dramatically
+    p.addUserDebugLine([-100, -100, -100], [-100, -100, -100], (0, 0, 0), 1, replaceItemUniqueId=id)
+
+
 def make_wall(half_extents, position, euler_angles, lateral_friction=0.7):
     colId = p.createCollisionShape(p.GEOM_BOX, halfExtents=half_extents)
     visId = p.createVisualShape(p.GEOM_BOX, halfExtents=half_extents, rgbaColor=[0.2, 0.2, 0.2, 0.8])
@@ -255,7 +260,7 @@ class DebugDrawer:
             if type(uids) is int:
                 uids = [uids]
             for id in uids:
-                p.removeUserDebugItem(id)
+                remove_user_debug_item(id)
 
     def clear_visualization_after(self, prefix, index):
         name = "{}{}".format(prefix, index)
@@ -264,7 +269,7 @@ class DebugDrawer:
             if type(uids) is int:
                 uids = [uids]
             for id in uids:
-                p.removeUserDebugItem(id)
+                remove_user_debug_item(id)
             index += 1
             name = "{}{}".format(prefix, index)
 
@@ -312,7 +317,7 @@ class DebugDrawer:
         name = 't'
         if name in self._debug_ids:
             for line in self._debug_ids[name]:
-                p.removeUserDebugItem(line)
+                remove_user_debug_item(line)
             self._debug_ids[name] = []
 
     def draw_text(self, name, text, location_index, left_offset=1., offset_in_z=False):
