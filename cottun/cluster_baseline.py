@@ -62,6 +62,9 @@ class OnlineSklearnContactSet:
     def final_labels(self):
         return self.cluster_method.predict(self.data)
 
+    def moved_data(self):
+        return self.data[:, :2]
+
 
 class OnlineSklearnFixedClusters(OnlineSklearnContactSet):
     def _fit_online(self):

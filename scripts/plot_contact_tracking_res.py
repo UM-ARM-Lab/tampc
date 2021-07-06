@@ -20,7 +20,8 @@ if __name__ == "__main__":
     # plot all by default
     all_methods = set([k.method for k in runs.keys() if k.method not in RUN_INFO_KEYWORDS])
     logger.info(f"all methods: {all_methods}")
-    methods_to_run = ["ours UKF", "ours PF", "kmeans", "dbscan", "birch", "online-kmeans", "online-dbscan", "online-birch"]
+    methods_to_run = ["ours UKF", "ours PF", "kmeans", "dbscan", "birch", "online-kmeans", "online-dbscan",
+                      "online-birch"]
     # methods_to_run = all_methods
 
     # plot results for all methods and runs
@@ -57,12 +58,16 @@ if __name__ == "__main__":
             runs_per_param_value[k.params].append((run_mean_ambiguity[(k.level, k.seed)], v))
 
         for params, values in runs_per_param_value.items():
-            a, fmi = zip(*values)
+            a, metrics = zip(*values)
+            fmi, contact_manifold_error = zip(*metrics)
             method_label = f"{method} {params}" if len(runs_per_param_value) > 1 else method
 
             logger.info(
-                f"{method_label} {len(values)} runs | mean {round(np.mean(fmi), 2)} median {round(np.median(fmi), 2)} "
+                f"{method_label} {len(values)} runs | fmi mean {round(np.mean(fmi), 2)} median {round(np.median(fmi), 2)} "
                 f"20th {round(np.percentile(fmi, 20), 2)} 80th {round(np.percentile(fmi, 80), 2)}")
+            logger.info(
+                f"{method_label} {len(values)} runs | contact error mean {round(np.mean(contact_manifold_error), 2)} median {round(np.median(contact_manifold_error), 2)} "
+                f"20th {round(np.percentile(contact_manifold_error, 20), 2)} 80th {round(np.percentile(contact_manifold_error, 80), 2)}")
             ax.scatter(a, fmi, alpha=0.4, label=method_label)
 
     ax.legend()

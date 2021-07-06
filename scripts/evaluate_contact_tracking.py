@@ -12,7 +12,7 @@ import pybullet as p
 import matplotlib.pyplot as plt
 from cottun.defines import NO_CONTACT_ID, RunKey, CONTACT_RES_FILE, RUN_AMBIGUITY, CONTACT_ID
 from cottun.script_utils import extract_env_and_level_from_string, dict_to_namespace_str, record_metric, \
-    plot_cluster_res, load_runs_results, get_file_metainfo
+    plot_cluster_res, load_runs_results, get_file_metainfo, clustering_metrics
 from sklearn.cluster import DBSCAN
 from sklearn.cluster import KMeans
 from sklearn.cluster import Birch
@@ -75,7 +75,9 @@ def our_method_factory(contact_object_class=contact.ContactUKF, **kwargs):
         # remove the functional values
         param_values = [param for param in param_values if '<' not in param]
         param_str_values = f"{start}({','.join(param_values)}"
-        return labels, param_str_values
+        # pass where we think contact will be made
+        contact_pts = torch.cat([cc.points for cc in contact_set], dim=0)
+        return labels, param_str_values, contact_pts.cpu().numpy()
 
     return our_method
 
@@ -103,7 +105,7 @@ def sklearn_method_factory(method, **kwargs):
         labels = np.ones(len(valid)) * NO_CONTACT_ID
         res.labels_ = process_labels_with_noise(res.labels_)
         labels[valid] = res.labels_
-        return labels, dict_to_namespace_str(kwargs)
+        return labels, dict_to_namespace_str(kwargs), None
 
     return sklearn_method
 
@@ -120,9 +122,34 @@ def online_sklearn_method_factory(online_class, method, inertia_ratio=0.5, **kwa
                                           reactions[i + 1])
         labels = np.ones(len(valid)) * NO_CONTACT_ID
         labels[valid] = process_labels_with_noise(online_method.final_labels())
-        return labels, dict_to_namespace_str(kwargs)
+        return labels, dict_to_namespace_str(kwargs), online_method.moved_data()
 
     return sklearn_method
+
+
+def compute_contact_manifold_error(moved_points, env_cls, level, obj_poses):
+    contact_manifold_error = -1
+    if moved_points is not None:
+        env = env_cls(environment_level=level, mode=p.DIRECT)
+        for obj_id, poses in obj_poses.items():
+            pos = poses[-1, :3]
+            orientation = poses[-1, 3:]
+            p.resetBasePositionAndOrientation(obj_id, pos, orientation)
+
+        closest_distances = []
+        for point in moved_points:
+            env.set_state(np.r_[point, 0, 0])
+            p.performCollisionDetection()
+
+            distances = []
+            for obj_id in env.movable + env.immovable:
+                c = p.getClosestPoints(obj_id, env.robot_id, 100000)
+                # for multi-link bodies, will return 1 per combination; store the min
+                distances.append(min(cc[ContactInfo.DISTANCE] for cc in c))
+            closest_distances.append(min(distances))
+        contact_manifold_error = np.mean(np.abs(closest_distances))
+        env.close()
+    return contact_manifold_error
 
 
 def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
@@ -211,9 +238,11 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
         # additional info to pass to methods for debugging
         info = {'object_poses': obj_poses}
 
-        labels, param_values = method(X, U, reactions, env_cls, info)
+        labels, param_values, moved_points = method(X, U, reactions, env_cls, info)
         run_key = RunKey(level=level, seed=seed, method=method_name, params=param_values)
-        record_metric(run_key, contact_id[:-1][in_contact], labels[in_contact], run_res)
+        m = clustering_metrics(contact_id[:-1][in_contact], labels[in_contact])
+        contact_manifold_error = compute_contact_manifold_error(moved_points, env_cls, level, obj_poses)
+        run_res[run_key] = list(m) + [contact_manifold_error]
 
         f = plot_cluster_res(labels, X[:-1], f"Task {level} {datafile.split('/')[-1]} {method_name}")
         save_and_close_fig(f, f"{method_name} {param_values.replace('.', '_')}")
@@ -248,10 +277,10 @@ if __name__ == "__main__":
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
         'ours UKF': our_method_factory(length=0.1),
-        # 'ours PF': our_method_factory(contact_object_class=contact.ContactPF, length=0.1),
-        # 'kmeans': sklearn_method_factory(KMeansWithAutoK),
-        # 'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
-        # 'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
+        'ours PF': our_method_factory(contact_object_class=contact.ContactPF, length=0.1),
+        'kmeans': sklearn_method_factory(KMeansWithAutoK),
+        'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
+        'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
         # 'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
         #                                                random_state=0),
         # 'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
