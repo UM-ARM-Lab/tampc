@@ -43,19 +43,16 @@ def dict_to_namespace_str(d):
     return str(d).replace(': ', '=').replace('\'', '').strip('{}')
 
 
-def clustering_metrics(labels_true, labels_pred, beta=1.):
-    # beta < 1 means more weight for homogenity
-    return metrics.homogeneity_score(labels_true, labels_pred), \
-           metrics.completeness_score(labels_true, labels_pred), \
-           metrics.v_measure_score(labels_true, labels_pred, beta=beta)
+def clustering_metrics(labels_true, labels_pred):
+    return metrics.fowlkes_mallows_score(labels_true, labels_pred),
 
 
 def record_metric(run_key, labels_true, labels_pred, run_res):
     # we care about homogenity more than completeness - multiple objects in a single cluster is more dangerous
-    h, c, v = clustering_metrics(labels_true, labels_pred, beta=0.5)
-    logger.info(f"{run_key.method} h {h} c {c} v {v}")
-    run_res[run_key] = h, c, v
-    return h, c, v
+    ret = clustering_metrics(labels_true, labels_pred.astype(int))
+    logger.info(f"{run_key.method} {ret}")
+    run_res[run_key] = ret
+    return ret
 
 
 def plot_cluster_res(labels, xx, name, label_function=None):
