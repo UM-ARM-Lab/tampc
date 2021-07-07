@@ -144,6 +144,7 @@ class ContactInfo(enum.IntEnum):
     LINK_A = 3
     LINK_B = 4
     POS_A = 5
+    POS_B = 6
     NORMAL_DIR_B = 7
     DISTANCE = 8
     NORMAL_MAG = 9

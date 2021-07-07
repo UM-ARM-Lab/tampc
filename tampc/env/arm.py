@@ -241,6 +241,14 @@ class ArmEnv(PybulletEnv):
                                                             self.init,
                                                             self.endEffectorOrientation))
 
+    def set_state(self, state, action=None):
+        for i in self.armInds:
+            p.resetJointState(self.armId, i, state[i])
+        self.state = state
+        self._draw_state()
+        if action is not None:
+            self._draw_action(action, old_state=state)
+
     # def _open_gripper(self):
     #     p.resetJointState(self.armId, PandaGripperID.FINGER_A, self.FINGER_OPEN)
     #     p.resetJointState(self.armId, PandaGripperID.FINGER_B, self.FINGER_OPEN)
@@ -405,9 +413,10 @@ class ArmEnv(PybulletEnv):
             p = self.get_ee_pos(states[j])
             name = '{}{}'.format(base_name, j)
             self._dd.draw_point(name, p, color=state_c)
-            # draw action
-            name = '{}{}a'.format(base_name, j)
-            self._dd.draw_2d_line(name, p, actions[j], color=action_c, scale=action_scale)
+            if actions is not None:
+                # draw action
+                name = '{}{}a'.format(base_name, j)
+                self._dd.draw_2d_line(name, p, actions[j], color=action_c, scale=action_scale)
 
     def visualize_contact_set(self, contact_set: contact.ContactSet):
         # clear all previous markers because we don't know which one was removed

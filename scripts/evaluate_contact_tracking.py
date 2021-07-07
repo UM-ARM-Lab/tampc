@@ -1,3 +1,5 @@
+from typing import Type
+
 import torch
 import time
 import pickle
@@ -21,7 +23,7 @@ from arm_pytorch_utilities.optim import get_device
 
 from tampc import cfg
 from cottun import contact
-from tampc.env import pybullet_env as env_base
+from tampc.env import pybullet_env as env_base, arm
 from tampc.env_getters.arm import ArmGetter
 from tampc.env.pybullet_env import ContactInfo
 
@@ -41,7 +43,7 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 logger = logging.getLogger(__name__)
 
 
-def our_method_factory(contact_object_class=contact.ContactUKF, **kwargs):
+def our_method_factory(contact_object_class: Type[contact.ContactObject] = contact.ContactUKF, **kwargs):
     def our_method(X, U, reactions, env_class, info):
         # TODO select getter based on env class
         contact_params = ArmGetter.contact_parameters(env_class, **kwargs)
@@ -127,14 +129,24 @@ def online_sklearn_method_factory(online_class, method, inertia_ratio=0.5, **kwa
     return sklearn_method
 
 
-def compute_contact_manifold_error(moved_points, env_cls, level, obj_poses):
+def compute_contact_manifold_error(moved_points, env_cls: Type[arm.ArmEnv], level, obj_poses,
+                                   visualize=False):
     contact_manifold_error = -1
     if moved_points is not None:
-        env = env_cls(environment_level=level, mode=p.DIRECT)
+        # set the gripper away from other objects so that physics don't deform the fingers
+        env = env_cls(init=(100, 100), environment_level=level, mode=p.GUI if visualize else p.DIRECT, log_video=True)
+        # to make object IDs consistent (after a reset the object IDs may not be in previously created order)
+        env.reset()
         for obj_id, poses in obj_poses.items():
             pos = poses[-1, :3]
             orientation = poses[-1, 3:]
             p.resetBasePositionAndOrientation(obj_id, pos, orientation)
+
+        if visualize:
+            # visualize all the moved points
+            state_c, action_c = env_base.state_action_color_pairs[0]
+            env.visualize_state_actions("movedpts", moved_points, None, state_c, action_c, 0.1)
+            env._dd.clear_visualization_after("movedpts", 0)
 
         closest_distances = []
         for point in moved_points:
@@ -144,10 +156,22 @@ def compute_contact_manifold_error(moved_points, env_cls, level, obj_poses):
             distances = []
             for obj_id in env.movable + env.immovable:
                 c = p.getClosestPoints(obj_id, env.robot_id, 100000)
+
+                if visualize:
+                    # visualize the points on the robot and object
+                    for cc in c:
+                        env._dd.draw_point("contactA", cc[ContactInfo.POS_A], color=(1, 0, 0))
+                        env._dd.draw_point("contactB", cc[ContactInfo.POS_B], color=(1, 0, 0))
+                        env._dd.draw_2d_line("contact between", cc[ContactInfo.POS_A],
+                                             np.subtract(cc[ContactInfo.POS_B], cc[ContactInfo.POS_A]), scale=1,
+                                             color=(0, 1, 0))
+                        env.draw_user_text(str(round(cc[ContactInfo.DISTANCE], 3)), xy=(0.3, 0.5, -1))
+
                 # for multi-link bodies, will return 1 per combination; store the min
                 distances.append(min(cc[ContactInfo.DISTANCE] for cc in c))
             closest_distances.append(min(distances))
         contact_manifold_error = np.mean(np.abs(closest_distances))
+        logger.info(f"largest penetration: {round(min(closest_distances), 4)}")
         env.close()
     return contact_manifold_error
 
@@ -278,14 +302,14 @@ if __name__ == "__main__":
     methods_to_run = {
         'ours UKF': our_method_factory(length=0.1),
         'ours PF': our_method_factory(contact_object_class=contact.ContactPF, length=0.1),
-        'kmeans': sklearn_method_factory(KMeansWithAutoK),
-        'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
-        'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
-        # 'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
-        #                                                random_state=0),
-        # 'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
-        # 'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
-        #                                               threshold=1.5)
+        # 'kmeans': sklearn_method_factory(KMeansWithAutoK),
+        # 'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
+        # 'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
+        'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
+                                                       random_state=0),
+        'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
+        'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
+                                                      threshold=1.5)
     }
 
     # full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper12/17.mat')
