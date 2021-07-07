@@ -255,7 +255,9 @@ class DebugDrawer:
                                      color, 2, replaceItemUniqueId=uids[1])
         return uids
 
-    def clear_visualizations(self, names):
+    def clear_visualizations(self, names=None):
+        if names is None:
+            names = list(self._debug_ids.keys())
         for name in names:
             uids = self._debug_ids.pop(name)
             if type(uids) is int:
