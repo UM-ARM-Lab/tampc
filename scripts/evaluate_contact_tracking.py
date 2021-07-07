@@ -129,10 +129,10 @@ def online_sklearn_method_factory(online_class, method, inertia_ratio=0.5, **kwa
     return sklearn_method
 
 
-def compute_contact_manifold_error(moved_points, env_cls: Type[arm.ArmEnv], level, obj_poses,
+def compute_contact_manifold_error(before_moving_pts, moved_pts, env_cls: Type[arm.ArmEnv], level, obj_poses,
                                    visualize=False):
     contact_manifold_error = -1
-    if moved_points is not None:
+    if moved_pts is not None:
         # set the gripper away from other objects so that physics don't deform the fingers
         env = env_cls(init=(100, 100), environment_level=level, mode=p.GUI if visualize else p.DIRECT, log_video=True)
         # to make object IDs consistent (after a reset the object IDs may not be in previously created order)
@@ -145,11 +145,14 @@ def compute_contact_manifold_error(moved_points, env_cls: Type[arm.ArmEnv], leve
         if visualize:
             # visualize all the moved points
             state_c, action_c = env_base.state_action_color_pairs[0]
-            env.visualize_state_actions("movedpts", moved_points, None, state_c, action_c, 0.1)
+            env.visualize_state_actions("movedpts", moved_pts, None, state_c, action_c, 0.1)
+            state_c, action_c = env_base.state_action_color_pairs[1]
+            env.visualize_state_actions("premovepts", before_moving_pts, None, state_c, action_c, 0.1)
             env._dd.clear_visualization_after("movedpts", 0)
+            env._dd.clear_visualization_after("premovepts", 0)
 
         closest_distances = []
-        for point in moved_points:
+        for point in moved_pts:
             env.set_state(np.r_[point, 0, 0])
             p.performCollisionDetection()
 
@@ -265,7 +268,7 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
         labels, param_values, moved_points = method(X, U, reactions, env_cls, info)
         run_key = RunKey(level=level, seed=seed, method=method_name, params=param_values)
         m = clustering_metrics(contact_id[:-1][in_contact], labels[in_contact])
-        contact_manifold_error = compute_contact_manifold_error(moved_points, env_cls, level, obj_poses)
+        contact_manifold_error = compute_contact_manifold_error(X[:-1][in_contact], moved_points, env_cls, level, obj_poses)
         run_res[run_key] = list(m) + [contact_manifold_error]
 
         f = plot_cluster_res(labels, X[:-1], f"Task {level} {datafile.split('/')[-1]} {method_name}")
@@ -300,16 +303,16 @@ if __name__ == "__main__":
 
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
-        'ours UKF': our_method_factory(length=0.1),
-        'ours PF': our_method_factory(contact_object_class=contact.ContactPF, length=0.1),
+        # 'ours UKF': our_method_factory(length=0.1),
+        # 'ours PF': our_method_factory(contact_object_class=contact.ContactPF, length=0.1),
         # 'kmeans': sklearn_method_factory(KMeansWithAutoK),
         # 'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
         # 'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
-        'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
-                                                       random_state=0),
+        # 'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
+        #                                                random_state=0),
         'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
-        'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
-                                                      threshold=1.5)
+        # 'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
+        #                                               threshold=1.5)
     }
 
     # full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper12/17.mat')
