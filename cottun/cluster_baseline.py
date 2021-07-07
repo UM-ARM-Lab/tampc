@@ -50,10 +50,13 @@ class OnlineSklearnContactSet:
 
         # filter by moving all members of the current cluster by dx
         this_cluster = self.cluster_method.labels_[-1]
-        members_of_this_cluster = self.cluster_method.labels_ == this_cluster
-        # don't move everything if reaction force too low
-        if np.linalg.norm(reaction) > 2:
-            self.data[members_of_this_cluster, :2] += dx[:2]
+
+        # noise labels aren't actually clusters
+        if this_cluster != -1:
+            members_of_this_cluster = self.cluster_method.labels_ == this_cluster
+            # don't move everything if reaction force too low
+            if np.linalg.norm(reaction) > 2:
+                self.data[members_of_this_cluster, :2] += dx[:2]
         return self.cluster_method.labels_
 
     def _fit_online(self):
