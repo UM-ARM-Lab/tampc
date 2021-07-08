@@ -77,11 +77,14 @@ class ContactTrackingResultsPlot:
             for params, values in runs_per_param_value.items():
                 a, metrics = zip(*values)
                 # Fowlkes-Mallows index and contact manifold error
-                fmi, cme = zip(*metrics)
-                cme = [v / MAX_PENETRATION for v in cme]
+                fmi, cme, wcme = zip(*metrics)
+                if self.represent_cme_as_ratio:
+                    cme = [v / MAX_PENETRATION for v in cme]
+                    wcme = [v / MAX_PENETRATION for v in wcme]
                 method_label = f"{method} {params}" if len(runs_per_param_value) > 1 else method
 
-                x, y = self._select_x_y(a, fmi, cme)
+                data = {'ambiguity': a, 'fmi': fmi, 'cme': cme, 'wcme': wcme}
+                x, y = self._select_x_y(data)
 
                 if self.plot_aggregate:
                     xa = aggregate_method(x)
@@ -96,6 +99,7 @@ class ContactTrackingResultsPlot:
 
                 self._log_metric(method_label, "fmi", fmi, 2)
                 self._log_metric(method_label, "contact error", cme, 3)
+                self._log_metric(method_label, "weighted contact error", wcme, 3)
 
         self.ax.legend()
 
@@ -108,7 +112,7 @@ class ContactTrackingResultsPlot:
     def _set_title_and_lims(self, f, ax):
         raise NotImplementedError()
 
-    def _select_x_y(self, a, fmi, contact_manifold_error) -> typing.Tuple[np.array, np.array]:
+    def _select_x_y(self, data: dict) -> typing.Tuple[np.array, np.array]:
         raise NotImplementedError()
 
 
@@ -119,23 +123,32 @@ class PlotAmbiguityVsFMI(ContactTrackingResultsPlot):
         ax.set_xlim(0, 1.1)
         ax.set_ylim(0, 1.1)
 
-    def _select_x_y(self, a, fmi, contact_manifold_error) -> typing.Tuple[np.array, np.array]:
-        return a, fmi
+    def _select_x_y(self, data) -> typing.Tuple[np.array, np.array]:
+        return data['ambiguity'], data['fmi']
 
 
 class PlotContactManifoldErrorVsFMI(ContactTrackingResultsPlot):
+    def __init__(self, *args, weight_cme=True, **kwargs):
+        self.weight_cme = weight_cme
+        super(PlotContactManifoldErrorVsFMI, self).__init__(*args, **kwargs)
+
     def _set_title_and_lims(self, f, ax):
+        xlabel = []
+        if self.weight_cme:
+            xlabel.append('weighted')
+        xlabel.append('contact manifold error')
         if self.represent_cme_as_ratio:
-            ax.set_xlabel('contact manifold error (relative to max penetration dist)')
+            xlabel.append('(relative to max penetration dist)')
             ax.set_xlim(0, 1)
         else:
-            ax.set_xlabel('contact manifold error')
             ax.set_xlim(0, 0.15)
+        ax.set_xlabel(' '.join(xlabel))
         ax.set_ylabel('FMI')
         ax.set_ylim(0, 1.1)
 
-    def _select_x_y(self, a, fmi, contact_manifold_error) -> typing.Tuple[np.array, np.array]:
-        return contact_manifold_error, fmi
+    def _select_x_y(self, data) -> typing.Tuple[np.array, np.array]:
+        x = data['wcme'] if self.weight_cme else data['cme']
+        return x, data['fmi']
 
 
 if __name__ == "__main__":
@@ -151,7 +164,7 @@ if __name__ == "__main__":
         "online-birch"
     ]
 
-    manifold_error_vs_fmi = PlotContactManifoldErrorVsFMI(all_runs, methods, plot_aggregate=True,
+    manifold_error_vs_fmi = PlotContactManifoldErrorVsFMI(all_runs, methods, plot_aggregate=True, weight_cme=True,
                                                           represent_cme_as_ratio=True)
 
     plt.show()

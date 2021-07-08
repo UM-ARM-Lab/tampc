@@ -79,7 +79,8 @@ def our_method_factory(contact_object_class: Type[contact.ContactObject] = conta
         param_str_values = f"{start}({','.join(param_values)}"
         # pass where we think contact will be made
         contact_pts = torch.cat([cc.points for cc in contact_set], dim=0)
-        return labels, param_str_values, contact_pts.cpu().numpy()
+        pt_weights = torch.cat([cc.weight.repeat(len(cc.points)) for cc in contact_set], dim=0)
+        return labels, param_str_values, contact_pts.cpu().numpy(), pt_weights.cpu().numpy()
 
     return our_method
 
@@ -107,7 +108,7 @@ def sklearn_method_factory(method, **kwargs):
         labels = np.ones(len(valid)) * NO_CONTACT_ID
         res.labels_ = process_labels_with_noise(res.labels_)
         labels[valid] = res.labels_
-        return labels, dict_to_namespace_str(kwargs), None
+        return labels, dict_to_namespace_str(kwargs), None, np.ones(len(valid))
 
     return sklearn_method
 
@@ -124,14 +125,15 @@ def online_sklearn_method_factory(online_class, method, inertia_ratio=0.5, **kwa
                                           reactions[i + 1])
         labels = np.ones(len(valid)) * NO_CONTACT_ID
         labels[valid] = process_labels_with_noise(online_method.final_labels())
-        return labels, dict_to_namespace_str(kwargs), online_method.moved_data()
+        moved_pts = online_method.moved_data()
+        return labels, dict_to_namespace_str(kwargs), moved_pts, np.ones(len(moved_pts))
 
     return sklearn_method
 
 
 def compute_contact_manifold_error(before_moving_pts, moved_pts, env_cls: Type[arm.ArmEnv], level, obj_poses,
                                    visualize=False):
-    contact_manifold_error = -1
+    contact_manifold_error = []
     if moved_pts is not None:
         # set the gripper away from other objects so that physics don't deform the fingers
         env = env_cls(init=(100, 100), environment_level=level, mode=p.GUI if visualize else p.DIRECT, log_video=True)
@@ -151,7 +153,6 @@ def compute_contact_manifold_error(before_moving_pts, moved_pts, env_cls: Type[a
             env._dd.clear_visualization_after("movedpts", 0)
             env._dd.clear_visualization_after("premovepts", 0)
 
-        closest_distances = []
         for point in moved_pts:
             env.set_state(np.r_[point, 0, 0])
             p.performCollisionDetection()
@@ -172,9 +173,8 @@ def compute_contact_manifold_error(before_moving_pts, moved_pts, env_cls: Type[a
 
                 # for multi-link bodies, will return 1 per combination; store the min
                 distances.append(min(cc[ContactInfo.DISTANCE] for cc in c))
-            closest_distances.append(min(distances))
-        contact_manifold_error = np.mean(np.abs(closest_distances))
-        logger.info(f"largest penetration: {round(min(closest_distances), 4)}")
+            contact_manifold_error.append(min(distances))
+        logger.info(f"largest penetration: {round(min(contact_manifold_error), 4)}")
         env.close()
     return contact_manifold_error
 
@@ -265,11 +265,16 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
         # additional info to pass to methods for debugging
         info = {'object_poses': obj_poses}
 
-        labels, param_values, moved_points = method(X, U, reactions, env_cls, info)
+        labels, param_values, moved_points, pt_weights = method(X, U, reactions, env_cls, info)
         run_key = RunKey(level=level, seed=seed, method=method_name, params=param_values)
         m = clustering_metrics(contact_id[:-1][in_contact], labels[in_contact])
-        contact_manifold_error = compute_contact_manifold_error(X[:-1][in_contact], moved_points, env_cls, level, obj_poses)
-        run_res[run_key] = list(m) + [contact_manifold_error]
+        contact_manifold_error = compute_contact_manifold_error(X[:-1][in_contact], moved_points, env_cls, level,
+                                                                obj_poses)
+        cme = np.mean(np.abs(contact_manifold_error))
+        # normalize weights
+        pt_weights = pt_weights / np.sum(pt_weights)
+        wcme = np.sum(np.abs(contact_manifold_error) @ pt_weights)
+        run_res[run_key] = list(m) + [cme, wcme]
 
         f = plot_cluster_res(labels, X[:-1], f"Task {level} {datafile.split('/')[-1]} {method_name}")
         save_and_close_fig(f, f"{method_name} {param_values.replace('.', '_')}")
@@ -303,14 +308,14 @@ if __name__ == "__main__":
 
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
-        # 'ours UKF': our_method_factory(length=0.1),
+        'ours UKF': our_method_factory(length=0.1),
         # 'ours PF': our_method_factory(contact_object_class=contact.ContactPF, length=0.1),
         # 'kmeans': sklearn_method_factory(KMeansWithAutoK),
         # 'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
         # 'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
         # 'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
         #                                                random_state=0),
-        'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
+        # 'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
         # 'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
         #                                               threshold=1.5)
     }
@@ -329,17 +334,6 @@ if __name__ == "__main__":
             if os.path.isdir(full_filename):
                 continue
             evaluate_methods_on_file(full_filename, runs, methods_to_run)
-
-    # print runs by how problematic they are - allows us to examine specific runs
-    sorted_runs = {k: v for k, v in sorted(runs.items(), key=lambda item: item[1][-1])}
-    for k, v in sorted_runs.items():
-        if k.method not in methods_to_run.keys():
-            continue
-        contact_id = runs[RunKey(level=k.level, seed=k.seed, method=CONTACT_ID, params=None)]
-        ambiguity = runs[RunKey(level=k.level, seed=k.seed, method=RUN_AMBIGUITY, params=None)]
-        ambiguity_when_in_contact = ambiguity[contact_id != NO_CONTACT_ID]
-        m = np.mean(ambiguity_when_in_contact)
-        logger.info(f"{k} : {[round(metric, 2) for metric in v]} ambiguity in contact {m}")
 
     with open(CONTACT_RES_FILE, 'wb') as f:
         pickle.dump(runs, f)

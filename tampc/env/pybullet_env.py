@@ -194,7 +194,7 @@ class DebugDrawer:
         # cache the inverse camera transform for efficiency
         info = p.getDebugVisualizerCamera()
         if info[0] == 0 and info[1] == 0:
-            logger.warning("Setting empty camera; check that we are not in GUI mode")
+            logger.debug("Setting empty camera; check that we are not in GUI mode")
         else:
             view_matrix = np.array(info[2]).reshape(4, 4).T
             self._inv_camera_tsf = np.linalg.inv(view_matrix)

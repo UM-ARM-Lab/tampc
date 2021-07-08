@@ -346,9 +346,8 @@ class ContactPF(ContactObject):
                                                       torch.eye(self.n_x,
                                                                 device=self.device) * self.dynamics_noise_spread)
 
-        # self.weight_multiplier = params.weight_multiplier / (self.dynamics_noise_spread * self.n_x)
+        self.weight_multiplier = 2 * params.weight_multiplier / (self.dynamics_noise_spread * self.n_x)
         # don't care about weight for now
-        self.weight_multiplier = 0.1
 
         self.plot = False
         if self.plot:
