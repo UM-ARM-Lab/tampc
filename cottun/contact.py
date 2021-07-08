@@ -598,6 +598,8 @@ class ContactSet(serialization.Serializable):
         self._obj.append(contact)
 
     def _keep_high_weight_contacts(self):
+        # TODO for evaluating clustering and filtering, don't have to forget low weight objects
+        return
         if self._obj:
             init_len = len(self._obj)
             self._obj = [c for c in self._obj if c.weight > self.p.ignore_below_weight]
