@@ -301,10 +301,14 @@ class ContactUKF(ContactObject):
     def filter_update(self, measurement, environment, observed_movement=True):
         """Update with a force measurement; only call on the object in contact"""
         if observed_movement:
-            center_point_before = self.mu.clone()
+            # center_point_before = self.mu.clone()
+            # self.mu from before hasn't incorporated the current point
+            center_point_before = self.points.mean(dim=0)
             self.mu, self.cov = self.ukf.update(measurement, self.mu_bar, self.cov_bar, self.measurement_fn,
                                                 environment=environment)
-            self.move_all_points(self.mu - center_point_before)
+            # these 2 are pretty much equivalent now
+            # self.move_all_points(self.mu - center_point_before)
+            self.move_all_points(self.state_to_pos(environment['dx']))
         else:
             self.mu, self.cov = self.mu_bar, self.cov_bar
 
