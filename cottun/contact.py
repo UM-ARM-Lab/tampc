@@ -39,6 +39,9 @@ class ContactObject(serialization.Serializable):
         self.points = None
         self.actions = None
 
+        # every input we get is dx = t (param_c * u) + (1 - t) (freespace dynamics(u))
+        # however, since freespace dynamics(u) != 0, any dx ~= 0 we receive forces param_c = 0
+        self.known_zero_dynamics = False
         self.dynamics = empty_local_model
         self.state_to_pos = params.state_to_pos
         self.pos_to_state = params.pos_to_state
@@ -96,6 +99,13 @@ class ContactObject(serialization.Serializable):
             self.points = torch.cat((self.points, x.view(1, -1)))
             self.actions = torch.cat((self.actions, u.view(1, -1)))
 
+        if dx.norm() < 1e-7:
+            self.known_zero_dynamics = True
+
+        if self.known_zero_dynamics:
+            # move the robot's prev location to its current location
+            self.points[-1] += self.state_to_pos(dx).view(-1)
+
         if self.dynamics is not None:
             centered_x = x - self.center_point
 
@@ -108,7 +118,8 @@ class ContactObject(serialization.Serializable):
             self.dynamics.update(centered_x, u, centered_x + dx)
 
     def move_all_points(self, dpos):
-        self.points += dpos
+        if not self.known_zero_dynamics:
+            self.points += dpos
         # TODO may need to change the training input points for dynamics to be self.points - self.mu
 
     def merge_objects(self, other_objects):

@@ -157,6 +157,7 @@ if __name__ == "__main__":
     all_methods = set([k.method for k in all_runs.keys() if k.method not in RUN_INFO_KEYWORDS])
     logger.info(f"all methods: {all_methods}")
     methods = [
+        "ours UKF 0 dyn",
         "ours UKF",
         "ours PF",
         "online-kmeans",
@@ -165,6 +166,6 @@ if __name__ == "__main__":
     ]
 
     manifold_error_vs_fmi = PlotContactManifoldErrorVsFMI(all_runs, methods, plot_aggregate=True, weight_cme=True,
-                                                          represent_cme_as_ratio=True)
+                                                          represent_cme_as_ratio=True, aggregate_perturbation=0.002)
 
     plt.show()
