@@ -15,10 +15,12 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 
 logger = logging.getLogger(__name__)
 
+MAX_PENETRATION = 0.133
+
 
 class ContactTrackingResultsPlot:
     def __init__(self, runs, methods_to_run, aggregate_method=np.median, filter_on_ambiguity=None, plot_aggregate=False,
-                 aggregate_perturbation=0.):
+                 aggregate_perturbation=0., represent_cme_as_ratio=True):
         """
         :param runs:
         :param methods_to_run:
@@ -27,12 +29,15 @@ class ContactTrackingResultsPlot:
         :param plot_aggregate:
         :param aggregate_perturbation: may want to be non-0 when duplicate values are often encountered to visually
         distinguish different series, only relevant when plot_aggregate is true
+        :param represent_cme_as_ratio: whether the contact manifold error is in absolute units (m) or as relative to the
+        max reported penetration
         """
         self.runs = runs
         self.methods_to_run = methods_to_run
         self.aggregate_method = aggregate_method
         self.filter_on_ambiguity = filter_on_ambiguity
         self.plot_aggregate = plot_aggregate
+        self.represent_cme_as_ratio = represent_cme_as_ratio
 
         self.f = plt.figure()
         self.ax = plt.gca()
@@ -57,7 +62,7 @@ class ContactTrackingResultsPlot:
             sorted_runs = {k: v for k, v in sorted(this_method_runs.items(), key=lambda item: item[1][-1])}
             for k, v in sorted_runs.items():
                 am = run_mean_ambiguity[(k.level, k.seed)]
-                logger.info(f"{k} : {[round(metric, 2) for metric in v]} ambiguity in contact {am}")
+                # logger.info(f"{k} : {[round(metric, 2) for metric in v]} ambiguity in contact {am}")
 
             runs_per_param_value = {}
             for k, v in this_method_runs.items():
@@ -73,6 +78,7 @@ class ContactTrackingResultsPlot:
                 a, metrics = zip(*values)
                 # Fowlkes-Mallows index and contact manifold error
                 fmi, cme = zip(*metrics)
+                cme = [v / MAX_PENETRATION for v in cme]
                 method_label = f"{method} {params}" if len(runs_per_param_value) > 1 else method
 
                 x, y = self._select_x_y(a, fmi, cme)
@@ -119,9 +125,13 @@ class PlotAmbiguityVsFMI(ContactTrackingResultsPlot):
 
 class PlotContactManifoldErrorVsFMI(ContactTrackingResultsPlot):
     def _set_title_and_lims(self, f, ax):
-        ax.set_xlabel('contact manifold error')
+        if self.represent_cme_as_ratio:
+            ax.set_xlabel('contact manifold error (relative to max penetration dist)')
+            ax.set_xlim(0, 1)
+        else:
+            ax.set_xlabel('contact manifold error')
+            ax.set_xlim(0, 0.15)
         ax.set_ylabel('FMI')
-        ax.set_xlim(0, 0.15)
         ax.set_ylim(0, 1.1)
 
     def _select_x_y(self, a, fmi, contact_manifold_error) -> typing.Tuple[np.array, np.array]:
@@ -141,6 +151,7 @@ if __name__ == "__main__":
         "online-birch"
     ]
 
-    manifold_error_vs_fmi = PlotContactManifoldErrorVsFMI(all_runs, methods, plot_aggregate=True)
+    manifold_error_vs_fmi = PlotContactManifoldErrorVsFMI(all_runs, methods, plot_aggregate=True,
+                                                          represent_cme_as_ratio=True)
 
     plt.show()
