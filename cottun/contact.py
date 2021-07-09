@@ -5,6 +5,7 @@ import copy
 import logging
 import abc
 import enum
+import math
 from arm_pytorch_utilities import tensor_utils, optim, serialization, linalg, math_utils, draw
 from torch.distributions.multivariate_normal import MultivariateNormal
 from cottun.filters.ukf import EnvConditionedUKF
@@ -98,10 +99,8 @@ class ContactObject(serialization.Serializable):
         # save only positions
         x = self.state_to_pos(x)
         if self.points is None:
-            self.points = x.view(1, -1)
-            self.actions = u.view(1, -1)
-            # first time init prior
-            self.mu = x.clone().view(1, -1)
+            self.points = x.clone().view(1, -1)
+            self.actions = u.clone().view(1, -1)
         else:
             self.points = torch.cat((self.points, x.view(1, -1)))
             self.actions = torch.cat((self.actions, u.view(1, -1)))
@@ -118,8 +117,8 @@ class ContactObject(serialization.Serializable):
 
             if self.assume_linear_scaling:
                 u_scale = u.norm()
-                u /= u_scale
-                dx /= u_scale
+                u = u / u_scale
+                dx = dx / u_scale
             # convert back to state
             centered_x = self.pos_to_state(centered_x).view(-1)
             self.dynamics.update(centered_x, u, centered_x + dx)
@@ -333,6 +332,14 @@ class ContactUKF(ContactObject):
         self.mu_bar, self.cov_bar, _ = self.ukf.predict(control, self.mu, self.cov,
                                                         self.dynamics_fn if expect_movement else self.dynamics_no_movement_fn,
                                                         environment=environment)
+
+    def add_transition(self, x, u, dx):
+        dtype = torch.float64 if not torch.is_tensor(x) else x.dtype
+        x = tensor_utils.ensure_tensor(self.device, dtype, x)
+        x = self.state_to_pos(x)
+        if self.mu is None:
+            self.mu = x.clone().view(1, -1)
+        return super(ContactUKF, self).add_transition(x, u, dx)
 
 
 import matplotlib.pyplot as plt
