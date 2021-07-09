@@ -135,6 +135,19 @@ class ContactObject(serialization.Serializable):
         self.points = torch.cat([self.points] + [obj.points for obj in other_objects])
         self.actions = torch.cat([self.actions] + [obj.actions for obj in other_objects])
 
+    def merging_preserves_convexity(self, other_obj):
+        combined_u = torch.cat([self.actions, other_obj.actions])
+        combined_p = torch.cat([self.points, other_obj.points])
+        total_num = len(combined_u)
+        # get pairwise distance
+        dd = approx_conic_similarity(combined_u, combined_p, combined_u.repeat(total_num, 1, 1).transpose(0, -2),
+                                     combined_p.repeat(total_num, 1, 1).transpose(0, -2))
+
+        at_least_this_many_close = math.ceil(self.cluster_close_to_ratio * total_num)
+        partitioned_dist = torch.kthvalue(dd, k=at_least_this_many_close, dim=0)[0]
+        accepted = partitioned_dist < self.p.length
+        return torch.all(accepted)
+
     @tensor_utils.ensure_2d_input
     def predict_dpos(self, pos, u, **kwargs):
         # pos is relative to the object center
@@ -685,8 +698,15 @@ class ContactSetHard(ContactSet):
         obj_to_combine = [self._obj[i] for i in obj_indices]
         self._obj = [obj for obj in self._obj if obj not in obj_to_combine]
         c = copy.deepcopy(obj_to_combine[0])
-        c.merge_objects(obj_to_combine[1:])
-        self.append(c)
+        separate_objects = [c]
+        # check if they should be combined
+        for cc in obj_to_combine[1:]:
+            if c.merging_preserves_convexity(cc):
+                c.merge_objects([cc])
+            else:
+                separate_objects.append(cc)
+        for cc in separate_objects:
+            self.append(cc)
         return c
 
     def goal_cost(self, goal_x, contact_data):
@@ -738,12 +758,12 @@ class ContactSetHard(ContactSet):
             # if using object-centered model, don't use preprocessor, else use default
             c = self.contact_object_factory()
             self.append(c)
-        # matches more than 1 contact set, combine them
-        elif len(cc) > 1:
-            c = self.merge_objects(ii)
         else:
             c = cc[0]
         c.add_transition(x, u, dx)
+        # matches more than 1 contact set, combine them
+        if len(cc) > 1:
+            c = self.merge_objects(ii)
         # update c with observation (only this one; other UFKs didn't receive an observation)
         unit_reaction = reaction / reaction.norm()
         # also do prediction

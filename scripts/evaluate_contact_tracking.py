@@ -313,7 +313,7 @@ if __name__ == "__main__":
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
         # 'ours UKF': our_method_factory(length=0.1),
-        'ours UKF all cluster': our_method_factory(length=0.1),
+        'ours UKF convexity merge constraint': our_method_factory(length=0.1),
         # 'ours PF': our_method_factory(contact_object_class=contact.ContactPF, length=0.1),
         # 'kmeans': sklearn_method_factory(KMeansWithAutoK),
         # 'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),

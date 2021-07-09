@@ -157,6 +157,7 @@ if __name__ == "__main__":
     all_methods = set([k.method for k in all_runs.keys() if k.method not in RUN_INFO_KEYWORDS])
     logger.info(f"all methods: {all_methods}")
     methods = [
+        "ours UKF convexity merge constraint",
         "ours UKF all cluster",
         "ours UKF 0 dyn",
         "ours UKF",
