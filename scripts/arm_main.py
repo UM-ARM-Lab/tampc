@@ -721,11 +721,6 @@ def replay_trajectory(traj_data_name, upto_index, *args, save_control=False, res
         XT = torch.from_numpy(X).to(device=ds.d)
         UT = torch.from_numpy(U).to(device=ds.d)
 
-        contact_id = d['contact_id'].reshape(-1)
-        ids, counts = np.unique(contact_id, return_counts=True)
-        unique_contact_counts = dict(zip(ids, counts))
-        unique_contact_counts = dict(sorted(unique_contact_counts.items(), key=lambda item: item[1], reverse=True))
-
         obj_poses = {}
         for unique_obj_id in env.movable + env.immovable:
             if unique_obj_id == NO_CONTACT_ID:
@@ -753,12 +748,12 @@ def replay_trajectory(traj_data_name, upto_index, *args, save_control=False, res
             env.draw_user_text(str(i), 1)
             # if need_to_compute_commands:
             #     ctrl.command(X[i].cpu().numpy())
-            if i > 1:
+            if i > 0:
                 # remove contact dynamics to speed up execution
                 for obj in ctrl.contact_set:
                     obj.dynamics = None
                 # will do worse than actual execution because we don't protect against immovable obstacle contact here
-                ctrl.contact_set.update(XT[i - 1], UT[i - 1], ctrl.compare_to_goal(XT[i], XT[i - 1])[0], XT[i, -2:])
+                c, cc = ctrl.contact_set.update(XT[i - 1], UT[i - 1], ctrl.compare_to_goal(XT[i], XT[i - 1])[0], XT[i, -2:])
                 env.visualize_contact_set(ctrl.contact_set)
 
             # obs, rew, done, info = env.step(U[i])
@@ -956,9 +951,9 @@ if __name__ == "__main__":
 
     else:
         replay_trajectory(
-            'arm/gripper12/44.mat',
+            'arm/gripper10/40.mat',
             300,
-            seed=44, level=Levels.SELECT3, use_tsf=ut,
+            seed=40, level=Levels.SELECT1, use_tsf=ut,
             assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
             visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
             override_tampc_params=tampc_params, override_mpc_params=mpc_params,

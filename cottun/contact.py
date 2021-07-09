@@ -63,6 +63,9 @@ class ContactObject(serialization.Serializable):
         self.n_y = 2  # observe robot position
         self.n_u = 2
 
+        # TODO move this in to params
+        self.cluster_close_to_ratio = 0.5
+
     @property
     def measurement_type(self) -> MeasurementType:
         """What data does our measurement function expect"""
@@ -129,10 +132,8 @@ class ContactObject(serialization.Serializable):
         # TODO may need to change the training input points for dynamics to be self.points - self.mu
 
     def merge_objects(self, other_objects):
-        # self.points = torch.cat([self.points] + [obj.points for obj in other_objects])
-        # self.actions = torch.cat([self.actions] + [obj.actions for obj in other_objects])
-        # self.center_point = self.points.mean(dim=0)
-        raise NotImplementedError("Currently merging the estimates of the two objects is not handled")
+        self.points = torch.cat([self.points] + [obj.points for obj in other_objects])
+        self.actions = torch.cat([self.actions] + [obj.actions for obj in other_objects])
 
     @tensor_utils.ensure_2d_input
     def predict_dpos(self, pos, u, **kwargs):
@@ -179,7 +180,12 @@ class ContactObject(serialization.Serializable):
             pts = self.points.repeat(total_num, 1, 1).transpose(0, -2)
 
         dd = approx_conic_similarity(u[candidates], pos[candidates], act[:, candidates], pts[:, candidates])
-        accepted = torch.any(dd < length_parameter, dim=0)
+
+        at_least_this_many_close = math.ceil(self.cluster_close_to_ratio * total_num)
+        partitioned_dist = torch.kthvalue(dd, k=at_least_this_many_close, dim=0)[0]
+        accepted = partitioned_dist < length_parameter
+        # accepted = torch.any(dd < length_parameter, dim=0)
+
         candidates[candidates] = accepted
         if not torch.any(accepted):
             return candidates, True
@@ -313,6 +319,19 @@ class ContactUKF(ContactObject):
         self.mu_bar = state['mu_bar']
         self.cov_bar = state['cov_bar']
         return True
+
+    def merge_objects(self, other_objects):
+        super(ContactUKF, self).merge_objects(other_objects)
+        # self.center_point = self.points.mean(dim=0)
+        weight = [len(self.points)] + [len(obj.points) for obj in other_objects]
+        weight = torch.tensor(weight, dtype=self.points.dtype, device=self.device)
+        weight = weight / weight.sum()
+        mu = torch.cat([self.mu] + [obj.mu for obj in other_objects])
+        self.mu = (mu * weight.view(-1, 1)).sum(dim=0, keepdim=True)
+        cov = torch.cat([self.cov] + [obj.cov for obj in other_objects])
+        self.cov = (cov * weight.view(-1, 1, 1)).sum(dim=0, keepdim=True)
+        self.mu_bar = None
+        self.cov_bar = None
 
     def filter_update(self, measurement, environment, observed_movement=True):
         """Update with a force measurement; only call on the object in contact"""
@@ -552,7 +571,7 @@ def resample(weights):
     C = [0.0] + [torch.sum(weights[: i + 1]) for i in range(n)]
     u0, j = torch.rand((1,)), 0
     for u in [(u0 + i) / n for i in range(n)]:
-        while u > C[j]:
+        while j < len(C) and u > C[j]:
             j += 1
         indices.append(j - 1)
     return indices
@@ -694,14 +713,11 @@ class ContactSetHard(ContactSet):
             if d[i] > 2 * self.p.length:
                 continue
             # we're using the x before contact because our estimate of the object points haven't moved yet
-            # TODO handle when multiple contact objects claim it is part of them
             clustered, _ = cc.clusters_to_object(x.view(1, -1), u.view(1, -1), self.p.length,
                                                  self.p.control_similarity)
             if clustered[0]:
                 res_c.append(cc)
                 res_i.append(i)
-                # still can't deal with merging very well, so revert back to returning a single object
-                break
 
         return res_c, res_i
 
@@ -713,7 +729,7 @@ class ContactSetHard(ContactSet):
             environment['obj'] = info['object_poses']
         if reaction.norm() < self.p.force_threshold:
             self.stepped_without_contact(u, environment)
-            return None
+            return None, None
 
         # associate each contact to a single object (max likelihood estimate on which object it is)
         cc, ii = self.check_which_object_applies(x, u)
@@ -746,7 +762,7 @@ class ContactSetHard(ContactSet):
                     raise RuntimeError(f"Unknown measurement type {c.measurement_type}")
 
         self.updated()
-        return c
+        return c, cc
 
     def get_batch_data_for_dynamics(self, total_num):
         if not self._obj:

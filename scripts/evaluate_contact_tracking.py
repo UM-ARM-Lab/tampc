@@ -61,8 +61,8 @@ def our_method_factory(contact_object_class: Type[contact.ContactObject] = conta
         obj_id = 0
         for i in range(len(X) - 1):
             this_info = {'object_poses': {obj_id: obj_pose[i] for obj_id, obj_pose in info['object_poses'].items()}}
-            c = contact_set.update(x[i], u[i], env_class.state_difference(x[i + 1], x[i]).reshape(-1), r[i + 1],
-                                   this_info)
+            c, cc = contact_set.update(x[i], u[i], env_class.state_difference(x[i + 1], x[i]).reshape(-1), r[i + 1],
+                                       this_info)
             if c is None:
                 labels[i] = NO_CONTACT_ID
             else:
@@ -71,6 +71,10 @@ def our_method_factory(contact_object_class: Type[contact.ContactObject] = conta
                     setattr(c, 'id', obj_id)
                     obj_id += 1
                 labels[i] = c.id
+                # merged, have to set all labels previously assigned to new obj
+                if len(cc) > 1:
+                    for other_c in cc:
+                        labels[labels == other_c.id] = c.id
         param_values = str(contact_params).split('(')
         start = param_values[0]
         param_values = param_values[1].split(',')
@@ -308,7 +312,8 @@ if __name__ == "__main__":
 
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
-        'ours UKF 0 dyn': our_method_factory(length=0.1),
+        # 'ours UKF': our_method_factory(length=0.1),
+        'ours UKF all cluster': our_method_factory(length=0.1),
         # 'ours PF': our_method_factory(contact_object_class=contact.ContactPF, length=0.1),
         # 'kmeans': sklearn_method_factory(KMeansWithAutoK),
         # 'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
