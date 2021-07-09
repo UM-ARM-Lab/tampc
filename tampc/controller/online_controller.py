@@ -235,9 +235,9 @@ class TAMPC(OnlineMPC):
         # state distance between making contacts for distinguishing separate contacts
         self.p = contact_params
         self.in_contact_with_known_immovable = False
-        self.contact_set = contact.ContactSet(self.p,
-                                              immovable_collision_checker=self._known_immovable_obstacle_collision_check,
-                                              contact_object_factory=self._create_contact_object)
+        self.contact_set = contact.ContactSetHard(self.p,
+                                                  immovable_collision_checker=self._known_immovable_obstacle_collision_check,
+                                                  contact_object_factory=self._create_contact_object)
         self.contact_cost = None
         self.contact_use_prior = contact_use_prior
         if self.p is not None:

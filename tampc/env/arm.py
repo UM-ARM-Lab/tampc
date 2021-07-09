@@ -418,7 +418,7 @@ class ArmEnv(PybulletEnv):
                 name = '{}{}a'.format(base_name, j)
                 self._dd.draw_2d_line(name, p, actions[j], color=action_c, scale=action_scale)
 
-    def visualize_contact_set(self, contact_set: contact.ContactSet):
+    def visualize_contact_set(self, contact_set: contact.ContactSetHard):
         # clear all previous markers because we don't know which one was removed
         if len(self._contact_debug_names) > len(contact_set):
             for name in self._contact_debug_names:

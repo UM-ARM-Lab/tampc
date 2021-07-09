@@ -1,3 +1,5 @@
+from cottun.defines import NO_CONTACT_ID
+
 try:
     import sys
 
@@ -102,7 +104,7 @@ class OfflineDataCollection:
             # use mode p.GUI to see what the trials look like
             seed = rand.seed(seed_offset + offset)
 
-            contact_set = contact.ContactSet(contact_params, contact_object_factory=create_contact_object)
+            contact_set = contact.ContactSetHard(contact_params, contact_object_factory=create_contact_object)
             ctrl = controller.GreedyControllerWithRandomWalkOnContact(env.nu, pm.dyn_net, cost_to_go, contact_set,
                                                                       u_min,
                                                                       u_max,
@@ -153,7 +155,7 @@ class OfflineDataCollection:
 
         env.close()
         # wait for it to fully close; otherwise could skip next run due to also closing that when it's created
-        time.sleep(2.)
+        time.sleep(5.)
 
 
 from pytorch_rrt import UniformActionSpace, ActionDescription, \
@@ -707,13 +709,29 @@ def test_residual_model_batching(*args, **kwargs):
 
 def replay_trajectory(traj_data_name, upto_index, *args, save_control=False, resume_control=False, **kwargs):
     def setup(env, ctrl, ds):
+        # set the gripper away from other objects so that physics don't deform the fingers
+        env.set_task_config(init=(100, 100))
+        # to make object IDs consistent (after a reset the object IDs may not be in previously created order)
         env.reset()
-        ds_eval = ArmGetter.ds(env, traj_data_name, validation_ratio=0.)
-        ds_eval.update_preprocessor(ds.preprocessor)
 
-        # evaluate on a non-recovery dataset to see if rolling out the actions from the recovery set is helpful
-        XU, Y, info = ds_eval.training_set(original=True)
-        X, U = torch.split(XU, env.nx, dim=1)
+        import scipy.io
+        d = scipy.io.loadmat(os.path.join(cfg.DATA_DIR, traj_data_name))
+        X = d['X']
+        U = d['U']
+        XT = torch.from_numpy(X).to(device=ds.d)
+        UT = torch.from_numpy(U).to(device=ds.d)
+
+        contact_id = d['contact_id'].reshape(-1)
+        ids, counts = np.unique(contact_id, return_counts=True)
+        unique_contact_counts = dict(zip(ids, counts))
+        unique_contact_counts = dict(sorted(unique_contact_counts.items(), key=lambda item: item[1], reverse=True))
+
+        obj_poses = {}
+        for unique_obj_id in env.movable + env.immovable:
+            if unique_obj_id == NO_CONTACT_ID:
+                continue
+            # not saved for the time step, so adjust mask usage
+            obj_poses[unique_obj_id] = d[f"obj{unique_obj_id}pose"]
 
         upto = min(upto_index, len(X) - 1)
 
@@ -725,8 +743,8 @@ def replay_trajectory(traj_data_name, upto_index, *args, save_control=False, res
         # if ctrl.load(saved_ctrl_filename):
         #     need_to_compute_commands = False
 
-        env.set_state(X[0].cpu().numpy())
-        x = X[upto].cpu().numpy()
+        env.set_state(X[0])
+        x = X[upto]
         logger.info(np.array2string(x, separator=', '))
         # only need to do rollouts
         T = ctrl.mpc.T
@@ -740,10 +758,23 @@ def replay_trajectory(traj_data_name, upto_index, *args, save_control=False, res
                 for obj in ctrl.contact_set:
                     obj.dynamics = None
                 # will do worse than actual execution because we don't protect against immovable obstacle contact here
-                ctrl.contact_set.update(X[i - 1], U[i - 1], ctrl.compare_to_goal(X[i], X[i - 1])[0], X[i, -2:])
-                # env.visualize_contact_set(ctrl.contact_set)
-            obs, rew, done, info = env.step(U[i].cpu().numpy())
-            # env.set_state(X[i].cpu().numpy(), U[i].cpu().numpy())
+                ctrl.contact_set.update(XT[i - 1], UT[i - 1], ctrl.compare_to_goal(XT[i], XT[i - 1])[0], XT[i, -2:])
+                env.visualize_contact_set(ctrl.contact_set)
+
+            # obs, rew, done, info = env.step(U[i])
+            # # sanity check that the system is deterministic and we're playing back correctly
+            # # won't be exactly the same due to RNG differences
+            # if i + 1 < len(X) and env.state_distance_two_arg(torch.from_numpy(obs), torch.from_numpy(X[i + 1])) > 1e-3:
+            #     env.close()
+            #     raise RuntimeError(f"State in playback is different from stored: {obs} vs {X[i + 1]}")
+
+            # instead of stepping, just set state to avoid RNG differences (contact involves RNG it seems?)
+            env.set_state(X[i], U[i])
+            for obj_id, poses in obj_poses.items():
+                pos = poses[i, :3]
+                orientation = poses[i, 3:]
+                p.resetBasePositionAndOrientation(obj_id, pos, orientation)
+
             ctrl.mpc.change_horizon(1)
 
         ctrl.original_horizon = T
@@ -852,7 +883,7 @@ if __name__ == "__main__":
     elif args.command == 'collect_tracking':
         for level in [Levels.SELECT1, Levels.SELECT2, Levels.SELECT3, Levels.SELECT4]:
             for offset in [7]:
-                OfflineDataCollection.tracking(level, seed_offset=offset, trials=40, force_gui=True)
+                OfflineDataCollection.tracking(level, seed_offset=offset, trials=40, force_gui=args.gui)
     elif args.command == 'learn_representation':
         for seed in args.seed:
             ArmGetter.learn_invariant(ut, seed=seed, name=arm.DIR, MAX_EPOCH=1000, BATCH_SIZE=args.batch)
@@ -925,9 +956,9 @@ if __name__ == "__main__":
 
     else:
         replay_trajectory(
-            'arm/gripper10/29.mat',
+            'arm/gripper12/44.mat',
             300,
-            seed=29, level=Levels.SELECT1, use_tsf=ut,
+            seed=44, level=Levels.SELECT3, use_tsf=ut,
             assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
             visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
             override_tampc_params=tampc_params, override_mpc_params=mpc_params,

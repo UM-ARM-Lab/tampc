@@ -53,7 +53,7 @@ def our_method_factory(contact_object_class: Type[contact.ContactObject] = conta
         def create_contact_object():
             return contact_object_class(None, contact_params)
 
-        contact_set = contact.ContactSet(contact_params, contact_object_factory=create_contact_object)
+        contact_set = contact.ContactSetHard(contact_params, contact_object_factory=create_contact_object)
         labels = np.zeros(len(X) - 1)
         x = torch.from_numpy(X).to(device=d, dtype=dtype)
         u = torch.from_numpy(U).to(device=d, dtype=dtype)

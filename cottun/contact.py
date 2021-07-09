@@ -30,6 +30,13 @@ class MeasurementType(enum.Enum):
     REACTION = 1
 
 
+def approx_conic_similarity(a_norm, a_origin, b_norm, b_origin):
+    """Comparison elementwise of 2 lists of cones offset to some origin with a vector representing cone direction"""
+    dir_sim = torch.cosine_similarity(a_norm, b_norm, dim=-1).clamp(0, 1) + 1e-8  # avoid divide by 0
+    dd = (a_origin - b_origin).norm(dim=-1) / dir_sim
+    return dd
+
+
 class ContactObject(serialization.Serializable):
     def __init__(self, empty_local_model: typing.Optional[typing.Any], params: ContactParameters,
                  assume_linear_scaling=True):
@@ -172,8 +179,7 @@ class ContactObject(serialization.Serializable):
         if pts is None:
             pts = self.points.repeat(total_num, 1, 1).transpose(0, -2)
 
-        u_sim = u_similarity(u[candidates], act[:, candidates]) + 1e-8  # avoid divide by 0
-        dd = (pos[candidates] - pts[:, candidates]).norm(dim=-1) / u_sim
+        dd = approx_conic_similarity(u[candidates], pos[candidates], act[:, candidates], pts[:, candidates])
         accepted = torch.any(dd < length_parameter, dim=0)
         candidates[candidates] = accepted
         if not torch.any(accepted):
@@ -566,15 +572,32 @@ def squared_error(x, y, sigma=1.):
 
 
 class ContactSet(serialization.Serializable):
-    def __init__(self, params: ContactParameters, immovable_collision_checker=None,
-                 contact_object_factory: typing.Callable[[], ContactObject] = None):
+    def __init__(self, params: ContactParameters, immovable_collision_checker=None):
+        self.p = params
+        self.immovable_collision_checker = immovable_collision_checker
+
+    @abc.abstractmethod
+    def update(self, x, u, dx, reaction, info=None):
+        """Update contact set with observed transition"""
+
+    @abc.abstractmethod
+    def get_batch_data_for_dynamics(self, total_num):
+        """Return initial contact data needed for dynamics for total_num batch size"""
+
+    @abc.abstractmethod
+    def dynamics(self, x, u, contact_data):
+        """Perform batch dynamics on x with control u using contact data from get_batch_data_for_dynamics
+
+        :return next x, without contact mask, updated contact data"""
+
+
+class ContactSetHard(ContactSet):
+    def __init__(self, *args, contact_object_factory: typing.Callable[[], ContactObject] = None, **kwargs):
+        super(ContactSetHard, self).__init__(*args, **kwargs)
         self._obj: typing.List[ContactObject] = []
         # cached center of all points
         self.center_points = None
 
-        self.p = params
-
-        self.immovable_collision_checker = immovable_collision_checker
         # used to produce contact objects during loading
         self.contact_object_factory = contact_object_factory
         # process and measurement model uses this to decide when force is high or low magnitude
@@ -774,3 +797,48 @@ class ContactSet(serialization.Serializable):
                 pts[:, candidates] += dpos
 
         return x, without_contact, (center_points, points, actions)
+
+
+class ContactSetSoft(ContactSet):
+    def __init__(self, *args, **kwargs):
+        super(ContactSetSoft, self).__init__(*args, **kwargs)
+        self.adjacency = None
+        # TODO consider making the particles over the point positions as well, not just their assignment
+        self.pts = None
+        self.acts = None
+
+    def update(self, x, u, dx, reaction, info=None):
+        environment = {'robot': self.p.state_to_pos(x), 'control': u, 'dx': dx}
+        # debugging info
+        if info is not None:
+            environment['obj'] = info['object_poses']
+        if reaction.norm() < self.p.force_threshold:
+            # TODO step without contact
+            return None
+
+        if self.pts is None:
+            self.pts = x.view(1, -1)
+            self.acts = u.view(1, -1)
+            self.adjacency = torch.zeros(1)
+        else:
+            self.pts = torch.cat((self.pts, x.view(1, -1)))
+            self.acts = torch.cat((self.acts, u.view(1, -1)))
+            self.adjacency = torch.zeros(len(self.pts))
+
+        # TODO need pairwise here
+        dd = approx_conic_similarity(self.acts, self.pts, self.acts, self.pts)
+        self.adjacency = dd
+
+        # TODO convert to probability (softmax?)
+
+        # TODO sample particles which make hard assignments
+
+        # TODO apply dx to each particle's cluster that contains the latest x
+
+        return None
+
+    def dynamics(self, x, u, contact_data):
+        raise NotImplementedError()
+
+    def get_batch_data_for_dynamics(self, total_num):
+        raise NotImplementedError()

@@ -121,7 +121,7 @@ class FullRandomController(Controller):
 class GreedyControllerWithRandomWalkOnContact(Controller):
     """Sample actions then take one that leads to lowest cost; take a random action after experiencing contact"""
 
-    def __init__(self, nu, dynamics, cost_to_go, contact_set: contact.ContactSet, u_min, u_max, num_samples=100,
+    def __init__(self, nu, dynamics, cost_to_go, contact_set: contact.ContactSetHard, u_min, u_max, num_samples=100,
                  force_threshold=4, walk_length=3):
         super().__init__()
         self.nu = nu
