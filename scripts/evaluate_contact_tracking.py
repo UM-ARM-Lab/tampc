@@ -89,6 +89,50 @@ def our_method_factory(contact_object_class: Type[contact.ContactObject] = conta
     return our_method
 
 
+def our_soft_method_factory(**kwargs):
+    def our_method(X, U, reactions, env_class, info):
+        # TODO select getter based on env class
+        contact_params = ArmGetter.contact_parameters(env_class, **kwargs)
+        d = get_device()
+        dtype = torch.float32
+
+        contact_set = contact.ContactSetSoft(contact_params)
+        labels = np.zeros(len(X) - 1)
+        x = torch.from_numpy(X).to(device=d, dtype=dtype)
+        u = torch.from_numpy(U).to(device=d, dtype=dtype)
+        r = torch.from_numpy(reactions).to(device=d, dtype=dtype)
+        obj_id = 0
+        for i in range(len(X) - 1):
+            this_info = {'object_poses': {obj_id: obj_pose[i] for obj_id, obj_pose in info['object_poses'].items()}}
+            c, cc = contact_set.update(x[i], u[i], env_class.state_difference(x[i + 1], x[i]).reshape(-1), r[i + 1],
+                                       this_info)
+            if c is None:
+                labels[i] = NO_CONTACT_ID
+            else:
+                this_obj_id = getattr(c, 'id', None)
+                if this_obj_id is None:
+                    setattr(c, 'id', obj_id)
+                    obj_id += 1
+                labels[i] = c.id
+                # merged, have to set all labels previously assigned to new obj
+                if len(cc) > 1:
+                    for other_c in cc:
+                        labels[labels == other_c.id] = c.id
+        param_values = str(contact_params).split('(')
+        start = param_values[0]
+        param_values = param_values[1].split(',')
+        # remove the functional values
+        param_values = [param for param in param_values if '<' not in param]
+        param_str_values = f"{start}({','.join(param_values)}"
+        # pass where we think contact will be made
+        contact_pts = contact_set.pts
+        # TODO compute weights
+        pt_weights = torch.ones(contact_pts.shape[0])
+        return labels, param_str_values, contact_pts.cpu().numpy(), pt_weights.cpu().numpy()
+
+    return our_method
+
+
 def process_labels_with_noise(labels):
     noise_label = max(labels) + 1
     for i in range(len(labels)):
@@ -312,8 +356,9 @@ if __name__ == "__main__":
 
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
+        'ours soft': our_soft_method_factory(length=0.1),
         # 'ours UKF': our_method_factory(length=0.1),
-        'ours UKF convexity merge constraint': our_method_factory(length=0.1),
+        # 'ours UKF convexity merge constraint': our_method_factory(length=0.1),
         # 'ours PF': our_method_factory(contact_object_class=contact.ContactPF, length=0.1),
         # 'kmeans': sklearn_method_factory(KMeansWithAutoK),
         # 'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),

@@ -843,12 +843,50 @@ class ContactSetHard(ContactSet):
 
 
 class ContactSetSoft(ContactSet):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, n_particles=100, **kwargs):
         super(ContactSetSoft, self).__init__(*args, **kwargs)
         self.adjacency = None
-        # TODO consider making the particles over the point positions as well, not just their assignment
+        self.connection_prob = None
+        self.n_particles = n_particles
+
         self.pts = None
         self.acts = None
+
+        self.sampled_pts = None
+
+    def _compute_full_adjacency(self):
+        # don't typically need to compute full adjacency
+        total_num = self.pts.shape[0]
+        dd = approx_conic_similarity(self.acts, self.pts,
+                                     self.acts.repeat(total_num, 1, 1).transpose(0, -2),
+                                     self.pts.repeat(total_num, 1, 1).transpose(0, -2))
+        self.adjacency = self._distance_to_probability(dd)
+        return self.adjacency
+
+    def _distance_to_probability(self, distance):
+        # parameter where higher means a greater drop off in probability with distance
+        sigma = self.p.length
+        return torch.exp(-sigma * distance)
+
+    def predict_particles(self, dx):
+        # assume we just added latest pt and act to self
+        dd = approx_conic_similarity(self.acts[-1], self.pts[-1],
+                                     self.acts.repeat(self.n_particles, 1, 1),
+                                     self.sampled_pts)
+
+        # convert to probability
+        connection_prob = self._distance_to_probability(dd)
+
+        # sample particles which make hard assignments
+        # independently sample uniform [0, 1) and compare against prob - note that connections are symmetric
+        # sampled_prob[i,j] is the ith particle's probability of connection between the latest point and the jth point
+        sampled_prob = torch.rand(connection_prob.shape, device=self.pts.device)
+        adjacent = sampled_prob < connection_prob
+
+        # don't actually need to label connected components because we just need to propagate for the latest
+        # apply dx to each particle's cluster that contains the latest x
+        # sampled_pts = self.pts.repeat(self.n_particles, 1, 1)
+        self.sampled_pts[adjacent] += self.p.state_to_pos(dx)
 
     def update(self, x, u, dx, reaction, info=None):
         environment = {'robot': self.p.state_to_pos(x), 'control': u, 'dx': dx}
@@ -857,28 +895,22 @@ class ContactSetSoft(ContactSet):
             environment['obj'] = info['object_poses']
         if reaction.norm() < self.p.force_threshold:
             # TODO step without contact
-            return None
+            return None, None
+
+        x = self.p.state_to_pos(x)
 
         if self.pts is None:
             self.pts = x.view(1, -1)
             self.acts = u.view(1, -1)
-            self.adjacency = torch.zeros(1)
+            self.sampled_pts = self.pts.repeat(self.n_particles, 1, 1)
         else:
             self.pts = torch.cat((self.pts, x.view(1, -1)))
             self.acts = torch.cat((self.acts, u.view(1, -1)))
-            self.adjacency = torch.zeros(len(self.pts))
+            self.sampled_pts = torch.cat([self.sampled_pts, x.view(1, -1).repeat(self.n_particles, 1, 1)], dim=1)
 
-        # TODO need pairwise here
-        dd = approx_conic_similarity(self.acts, self.pts, self.acts, self.pts)
-        self.adjacency = dd
-
-        # TODO convert to probability (softmax?)
-
-        # TODO sample particles which make hard assignments
-
-        # TODO apply dx to each particle's cluster that contains the latest x
-
-        return None
+        self.predict_particles(dx)
+        # TODO update step
+        return None, None
 
     def dynamics(self, x, u, contact_data):
         raise NotImplementedError()
