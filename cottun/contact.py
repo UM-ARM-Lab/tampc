@@ -24,6 +24,8 @@ class ContactParameters:
     weight_multiplier: float = 0.1
     ignore_below_weight: float = 0.2
     force_threshold: float = 0.5
+    # approx_robot_radius: float = 0.1
+    # min_friction_cossim: float = 0.3  # (0,1) where 0 means very high friction and 1 means no friction
 
 
 class MeasurementType(enum.Enum):
@@ -36,6 +38,37 @@ def approx_conic_similarity(a_norm, a_origin, b_norm, b_origin):
     dir_sim = torch.cosine_similarity(a_norm, b_norm, dim=-1).clamp(0, 1) + 1e-8  # avoid divide by 0
     dd = (a_origin - b_origin).norm(dim=-1) / dir_sim
     return dd
+
+
+def freespace_consistency(obs_pt, obs_act, pts, acts, approx_robot_radius, required_cosim=0.):
+    """Test whether a group of {(p,u)} is free space consistent with an observed (p,u)
+
+    An observed (p,u) implies freespace inside the body of the robot when it is at p.
+    If any (p,u) implies a contact made inside the body of the robot then it is freespace inconsistent.
+    We use an approximate spherical model for the robot, and assume a point contact.
+    We also assume a minimum value for the angle of the friction cone (that some friction exists), which is
+    reflected in the required_cosim parameter in [0, 1), where 0 extends the friction cone to a half plane
+    and 1 reduces it to a line (in the case of no friction)."""
+    # TODO use robot geometry and estimated contact points
+
+    # first off only need to check those that are within radius distance to the observed point
+    dpts = pts - obs_pt
+    d = torch.norm(dpts, dim=1, keepdim=True)
+    candidate = d <= approx_robot_radius
+    if not torch.any(candidate):
+        return True
+    # next check if any lies within the assumed minimum friction cone extending from the observed action
+    dpts = dpts[candidate.view(-1)]
+    # -obs_act is the center axis of the friction cone
+    dir_sim = torch.cosine_similarity(dpts, -obs_act, dim=-1)
+    if torch.any(dir_sim > required_cosim):
+        return False
+    # TODO? also consider the other way around, if the new point is in the freespace of any points
+
+    # TODO consider just angular distance
+    # ang_dist = torch.angle(dpts + obs_act)
+
+    return True
 
 
 class ContactObject(serialization.Serializable):
@@ -108,12 +141,12 @@ class ContactObject(serialization.Serializable):
             self.points = torch.cat((self.points, x.view(1, -1)))
             self.actions = torch.cat((self.actions, u.view(1, -1)))
 
-        if dx.norm() < 1e-7:
-            self.known_zero_dynamics = True
-
-        if self.known_zero_dynamics:
-            # move the robot's prev location to its current location
-            self.points[-1] += self.state_to_pos(dx).view(-1)
+        # if dx.norm() < 1e-7:
+        #     self.known_zero_dynamics = True
+        #
+        # if self.known_zero_dynamics:
+        #     # move the robot's prev location to its current location
+        #     self.points[-1] += self.state_to_pos(dx).view(-1)
 
         if self.dynamics is not None:
             centered_x = x - self.center_point
@@ -356,7 +389,7 @@ class ContactUKF(ContactObject):
                                                 environment=environment)
             # these 2 are pretty much equivalent now
             # self.move_all_points(self.mu - center_point_before)
-            self.move_all_points(self.state_to_pos(environment['dx']))
+            self.move_all_points(self.state_to_pos(environment['dobj']))
         else:
             self.mu, self.cov = self.mu_bar, self.cov_bar
 
@@ -466,7 +499,7 @@ class ContactPF(ContactObject):
             self._pf_update(measurement, environment)
             # can't just move points like before since our initial estimate of robot location will be bad
             # self.move_all_points(self.center_point - center_point_before)
-            self.move_all_points(self.state_to_pos(environment['dx']))
+            self.move_all_points(self.state_to_pos(environment['dobj']))
         else:
             pass
 
@@ -743,7 +776,7 @@ class ContactSetHard(ContactSet):
 
     def update(self, x, u, dx, reaction, info=None):
         """Returns updated contact object"""
-        environment = {'robot': self.p.state_to_pos(x), 'control': u, 'dx': dx}
+        environment = {'robot': self.p.state_to_pos(x), 'control': u, 'dx': dx, 'dobj': dx * 1.0}
         # debugging info
         if info is not None:
             environment['obj'] = info['object_poses']
@@ -760,6 +793,22 @@ class ContactSetHard(ContactSet):
             self.append(c)
         else:
             c = cc[0]
+
+        # # we assume the object has moved by t*dx, t in (0, 1] due to discrete actions
+        # # we can estimate t by considering if it would make the set of points freespace inconsistent
+        # obs_pt = self.p.state_to_pos(x + dx)
+        # dpt = self.p.state_to_pos(dx)
+        # for t in [1., 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.]:
+        #     # when there are no points, everything is consistent, so allow t = 1 to pass
+        #     if c.points is None or freespace_consistency(obs_pt, u, c.points + dpt * t, c.actions,
+        #                                                  self.p.approx_robot_radius,
+        #                                                  self.p.min_friction_cossim):
+        #         c.add_transition(x + dx * (1 - t), u, dx * t)
+        #         environment['dobj'] = dx * t
+        #         break
+        # else:
+        #     raise RuntimeError("Any pre-existing choice of t makes the set of points inconsistent")
+
         c.add_transition(x, u, dx)
         # matches more than 1 contact set, combine them
         if len(cc) > 1:
