@@ -214,7 +214,8 @@ class ArmEnv(PybulletEnv):
     # --- initialization and task configuration
     def _clear_state_between_control_steps(self):
         self._sim_step = 0
-        self._mini_step_contact = {'full': np.zeros((self.mini_steps, 3)), 'mag': np.zeros(self.mini_steps),
+        self._mini_step_contact = {'full': np.zeros((self.mini_steps, 3)), 'torque': np.zeros((self.mini_steps, 3)),
+                                   'mag': np.zeros(self.mini_steps),
                                    'id': np.ones(self.mini_steps) * -1}
         self._contact_info = {}
         self._largest_contact = {}
@@ -486,26 +487,29 @@ class ArmEnv(PybulletEnv):
     # --- observing state from simulation
     def _obs(self):
         """Observe current state from simulator"""
-        state = np.concatenate((self._observe_ee(), self._observe_reaction_force()))
+        state = np.concatenate((self._observe_ee(), self._observe_reaction_force_torque()[0]))
         return state
 
-    def _observe_ee(self):
+    def _observe_ee(self, return_z=True):
         link_info = p.getLinkState(self.armId, self.endEffectorIndex, computeForwardKinematics=True)
         pos = link_info[4]
+        if not return_z:
+            pos = pos[:2]
         return pos
 
-    def _observe_reaction_force(self):
+    def _observe_reaction_force_torque(self):
         """Return representative reaction force for simulation steps up to current one since last control step"""
         if self.reaction_force_strategy is ReactionForceStrategy.AVG_OVER_MINI_STEPS:
-            return self._mini_step_contact['full'].mean(axis=0)
+            return self._mini_step_contact['full'].mean(axis=0), self._mini_step_contact['torque'].mean(axis=0)
         if self.reaction_force_strategy is ReactionForceStrategy.MEDIAN_OVER_MINI_STEPS:
             median_mini_step = np.argsort(self._mini_step_contact['mag'])[self.mini_steps // 2]
-            return self._mini_step_contact['full'][median_mini_step]
+            return self._mini_step_contact['full'][median_mini_step], \
+                   self._mini_step_contact['torque'][median_mini_step]
         if self.reaction_force_strategy is ReactionForceStrategy.MAX_OVER_MINI_STEPS:
             max_mini_step = np.argmax(self._mini_step_contact['mag'])
-            return self._mini_step_contact['full'][max_mini_step]
+            return self._mini_step_contact['full'][max_mini_step], self._mini_step_contact['torque'][max_mini_step]
         else:
-            return self._reaction_force[:3]
+            raise NotImplementedError("Not implemented max over control step reaction torque")
 
     def _observe_additional_info(self, info, visualize=True):
         joint_pos, joint_vel, joint_reaction_force, joint_applied = p.getJointState(self.armId, self.endEffectorIndex)
@@ -516,9 +520,8 @@ class ArmEnv(PybulletEnv):
         world_link_position = states[4]
         world_link_orientation = states[5]
         r, t = p.multiplyTransforms(world_link_position, world_link_orientation, joint_reaction_force[:3], [0, 0, 0, 0])
-        reaction_force = r
 
-        self._observe_raw_reaction_force(info, reaction_force, visualize)
+        self._observe_raw_reaction_force(info, r, t, visualize)
 
     def _observe_info(self, visualize=True):
         info = {}
@@ -535,7 +538,7 @@ class ArmEnv(PybulletEnv):
         # changes when end effector type changes
         return p.getContactPoints(bodyId, self.armId, linkIndexB=self.endEffectorIndex)
 
-    def _observe_raw_reaction_force(self, info, reaction_force, visualize=True):
+    def _observe_raw_reaction_force(self, info, reaction_force, reaction_torque, visualize=True):
         # save reaction force
         name = 'r'
         info[name] = reaction_force
@@ -553,6 +556,7 @@ class ArmEnv(PybulletEnv):
 
         if step_since_start is self._steps_since_start_to_get_reaction:
             self._mini_step_contact['full'][mini_step] = reaction_force
+            self._mini_step_contact['torque'][mini_step] = reaction_torque
             self._mini_step_contact['mag'][mini_step] = reaction_force_size
             if self.reaction_force_strategy is not ReactionForceStrategy.MAX_OVER_CONTROL_STEP and \
                     self._debug_visualizations[DebugVisualization.REACTION_MINI_STEP] and visualize:
@@ -567,7 +571,7 @@ class ArmEnv(PybulletEnv):
 
     def _aggregate_info(self):
         info = {key: np.stack(value, axis=0) for key, value in self._contact_info.items() if len(value)}
-        info['reaction'] = self._observe_reaction_force()
+        info['reaction'], info['torque'] = self._observe_reaction_force_torque()
         info['wall_contact'] = -1
         most_frequent_contact = scipy.stats.mode(self._mini_step_contact['id'])
         info['contact_id'] = int(most_frequent_contact[0])
@@ -775,7 +779,7 @@ class ArmJointEnv(ArmEnv):
         return u_min, u_max
 
     def _obs(self):
-        state = np.concatenate((self._observe_joints(), self._observe_reaction_force()))
+        state = np.concatenate((self._observe_joints(), self._observe_reaction_force_torque()[0]))
         return state
 
     def _observe_joints(self):
@@ -893,11 +897,12 @@ class PlanarArmEnv(ArmEnv):
     def __init__(self, goal=(1.0, -0.4), init=(0.5, 0.8), **kwargs):
         super(PlanarArmEnv, self).__init__(goal=goal, init=tuple(init) + (FIXED_Z,), **kwargs)
 
-    def _observe_ee(self):
-        return super(PlanarArmEnv, self)._observe_ee()[:2]
+    def _observe_ee(self, return_z=False):
+        return super(PlanarArmEnv, self)._observe_ee(return_z=return_z)
 
-    def _observe_reaction_force(self):
-        return super(PlanarArmEnv, self)._observe_reaction_force()[:2]
+    def _observe_reaction_force_torque(self):
+        r, t = super(PlanarArmEnv, self)._observe_reaction_force_torque()
+        return r[:2], t
 
     def _set_goal(self, goal):
         if len(goal) > 2:
@@ -1025,9 +1030,12 @@ class FloatingGripperEnv(PlanarArmEnv):
     def __init__(self, goal=(1.3, -0.4), init=(-.1, 0.4), **kwargs):
         super(FloatingGripperEnv, self).__init__(goal=goal, init=init, camera_dist=1, **kwargs)
 
-    def _observe_ee(self):
+    def _observe_ee(self, return_z=False):
         gripperPose = p.getBasePositionAndOrientation(self.gripperId)
-        return gripperPose[0][:2]
+        pos = gripperPose[0]
+        if not return_z:
+            pos = pos[:2]
+        return pos
 
     def _open_gripper(self):
         # p.resetJointState(self.gripperId, PandaJustGripperID.FINGER_A, self.OPEN_ANGLE)
@@ -1280,34 +1288,25 @@ class FloatingGripperEnv(PlanarArmEnv):
         self._close_gripper()
         self._make_robot_translucent(self.gripperId)
 
-    def _observe_single_finger(self, info, fingerId):
-        joint_pos, joint_vel, joint_reaction_force, joint_applied = p.getJointState(self.gripperId, fingerId)
-        info['pv{}'.format(fingerId)] = joint_vel
-
-        # transform reaction to world frame
-        states = p.getLinkState(self.gripperId, fingerId)
-        world_link_position = states[4]
-        world_link_orientation = states[5]
-        r, t = p.multiplyTransforms(world_link_position, world_link_orientation, joint_reaction_force[:3], [0, 0, 0, 0])
-        return r
-
     def get_ee_contact_info(self, bodyId):
         return p.getContactPoints(self.gripperId, bodyId)
 
     def _observe_additional_info(self, info, visualize=True):
         reaction_force = [0, 0, 0]
+        reaction_torque = [0, 0, 0]
 
+        ee_pos = self._observe_ee(return_z=True)
         for objectId in self.objects:
             contactInfo = self.get_ee_contact_info(objectId)
             for i, contact in enumerate(contactInfo):
                 f_contact = get_total_contact_force(contact, False)
                 reaction_force = [sum(i) for i in zip(reaction_force, f_contact)]
+                # torque wrt end effector position
+                pos_vec = np.subtract(contact[ContactInfo.POS_A], ee_pos)
+                r_contact = np.cross(pos_vec, f_contact)
+                reaction_torque = np.add(reaction_torque, r_contact)
 
-                # name = 'r{}'.format(i)
-                # if abs(contact[ContactInfo.NORMAL_MAG]) > abs(self._largest_contact.get(name, 0)):
-                #     self._largest_contact[name] = contact[ContactInfo.NORMAL_MAG]
-
-        self._observe_raw_reaction_force(info, reaction_force, visualize)
+        self._observe_raw_reaction_force(info, reaction_force, reaction_torque, visualize)
 
     def reset(self):
         for _ in range(1000):

@@ -57,6 +57,7 @@ class PybulletSim(simulation.Simulation):
         self.pred_traj = np.zeros_like(self.traj)
         self.u = np.zeros((self.num_frames, self.env.nu))
         self.reaction_force = np.zeros((self.num_frames, self.reaction_dim))
+        self.reaction_torque = []
         self.wall_contact = np.zeros((self.num_frames,))
         self.contact_id = np.ones((self.num_frames,), dtype=np.intc) * -1
         self.model_error = np.zeros_like(self.traj)
@@ -199,6 +200,11 @@ class PybulletSim(simulation.Simulation):
             self.traj[simTime + 1, :] = obs
             # reaction force felt as we apply this action, as observed at the start of the next time step
             self.reaction_force[simTime + 1, :] = info['reaction']
+            this_torque = info['torque']
+            # at the beginning add zeros to sync up in indexing with the reaction force
+            if not len(self.reaction_torque):
+                self.reaction_torque.append(np.zeros_like(this_torque))
+            self.reaction_torque.append(this_torque)
             self.wall_contact[simTime + 1] = info['wall_contact']
             self.contact_id[simTime] = info['contact_id']
             object_poses = info.get('object_poses', None)
@@ -246,7 +252,9 @@ class PybulletSim(simulation.Simulation):
         u_norm = np.roll(u_norm, 1).reshape(-1, 1)
         scaled_model_error = np.divide(self.model_error, u_norm, out=np.zeros_like(self.model_error), where=u_norm != 0)
 
-        data = {'X': X, 'U': self.u, 'reaction': self.reaction_force, 'model error': self.model_error,
+        reaction_torque = np.stack(self.reaction_torque)
+        data = {'X': X, 'U': self.u, 'reaction': self.reaction_force, 'torque': reaction_torque,
+                'model error': self.model_error,
                 'scaled model error': scaled_model_error, 'wall contact': self.wall_contact.reshape(-1, 1),
                 'contact_id': self.contact_id.reshape(-1, 1),
                 'mask': mask.reshape(-1, 1), 'predicted dynamics_class': self.pred_cls.reshape(-1, 1)}
