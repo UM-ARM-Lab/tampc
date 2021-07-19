@@ -156,7 +156,7 @@ def sklearn_method_factory(method, **kwargs):
         labels = np.ones(len(valid)) * NO_CONTACT_ID
         res.labels_ = process_labels_with_noise(res.labels_)
         labels[valid] = res.labels_
-        return labels, dict_to_namespace_str(kwargs), None, np.ones(len(valid))
+        return labels, dict_to_namespace_str(kwargs), xx, np.ones(len(xx))
 
     return sklearn_method
 
@@ -179,9 +179,9 @@ def online_sklearn_method_factory(online_class, method, inertia_ratio=0.5, **kwa
     return sklearn_method
 
 
-def compute_contact_manifold_error(before_moving_pts, moved_pts, env_cls: Type[arm.ArmEnv], level, obj_poses,
-                                   visualize=False):
-    contact_manifold_error = []
+def compute_contact_error(before_moving_pts, moved_pts, env_cls: Type[arm.ArmEnv], level, obj_poses,
+                          visualize=False):
+    contact_error = []
     if moved_pts is not None:
         # set the gripper away from other objects so that physics don't deform the fingers
         env = env_cls(init=(100, 100), environment_level=level, mode=p.GUI if visualize else p.DIRECT, log_video=True)
@@ -222,10 +222,10 @@ def compute_contact_manifold_error(before_moving_pts, moved_pts, env_cls: Type[a
 
                 # for multi-link bodies, will return 1 per combination; store the min
                 distances.append(min(cc[ContactInfo.DISTANCE] for cc in c))
-            contact_manifold_error.append(min(distances))
-        logger.info(f"largest penetration: {round(min(contact_manifold_error), 4)}")
+            contact_error.append(min(distances))
+        logger.info(f"largest penetration: {round(min(contact_error), 4)}")
         env.close()
-    return contact_manifold_error
+    return contact_error
 
 
 def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
@@ -317,12 +317,12 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
         labels, param_values, moved_points, pt_weights = method(X, U, reactions, env_cls, info)
         run_key = RunKey(level=level, seed=seed, method=method_name, params=param_values)
         m = clustering_metrics(contact_id[:-1][in_contact], labels[in_contact])
-        contact_manifold_error = compute_contact_manifold_error(X[:-1][in_contact], moved_points, env_cls, level,
-                                                                obj_poses)
-        cme = np.mean(np.abs(contact_manifold_error))
+        contact_error = compute_contact_error(X[:-1][in_contact], moved_points, env_cls, level,
+                                              obj_poses)
+        cme = np.mean(np.abs(contact_error))
         # normalize weights
         pt_weights = pt_weights / np.sum(pt_weights)
-        wcme = np.sum(np.abs(contact_manifold_error) @ pt_weights)
+        wcme = np.sum(np.abs(contact_error) @ pt_weights)
         run_res[run_key] = list(m) + [cme, wcme]
 
         f = plot_cluster_res(labels, X[:-1], f"Task {level} {datafile.split('/')[-1]} {method_name}")
@@ -357,18 +357,18 @@ if __name__ == "__main__":
 
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
-        'ours soft': our_soft_method_factory(length=0.1),
+        # 'ours soft': our_soft_method_factory(length=0.1),
         # 'ours UKF': our_method_factory(length=0.1),
         # 'ours UKF convexity merge constraint': our_method_factory(length=0.1),
         # 'ours PF': our_method_factory(contact_object_class=contact.ContactPF, length=0.1),
         # 'kmeans': sklearn_method_factory(KMeansWithAutoK),
         # 'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
         # 'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
-        # 'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
-        #                                                random_state=0),
-        # 'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
-        # 'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
-        #                                               threshold=1.5)
+        'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
+                                                       random_state=0),
+        'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
+        'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
+                                                      threshold=1.5)
     }
 
     # full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper12/17.mat')
