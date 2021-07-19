@@ -185,6 +185,7 @@ def compute_contact_manifold_error(before_moving_pts, moved_pts, env_cls: Type[a
     if moved_pts is not None:
         # set the gripper away from other objects so that physics don't deform the fingers
         env = env_cls(init=(100, 100), environment_level=level, mode=p.GUI if visualize else p.DIRECT, log_video=True)
+        env.extrude_objects_in_z = True
         # to make object IDs consistent (after a reset the object IDs may not be in previously created order)
         env.reset()
         for obj_id, poses in obj_poses.items():

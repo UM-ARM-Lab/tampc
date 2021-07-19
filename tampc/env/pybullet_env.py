@@ -27,13 +27,22 @@ def remove_user_debug_item(id):
     p.addUserDebugLine([-100, -100, -100], [-100, -100, -100], (0, 0, 0), 1, replaceItemUniqueId=id)
 
 
-def make_wall(half_extents, position, euler_angles, lateral_friction=0.7):
-    colId = p.createCollisionShape(p.GEOM_BOX, halfExtents=half_extents)
-    visId = p.createVisualShape(p.GEOM_BOX, halfExtents=half_extents, rgbaColor=[0.2, 0.2, 0.2, 0.8])
-    wallId = p.createMultiBody(0, colId, visId, basePosition=position,
+def make_box(half_extents, position, euler_angles, lateral_friction=0.7):
+    col_id = p.createCollisionShape(p.GEOM_BOX, halfExtents=half_extents)
+    vis_id = p.createVisualShape(p.GEOM_BOX, halfExtents=half_extents, rgbaColor=[0.2, 0.2, 0.2, 0.8])
+    obj_id = p.createMultiBody(0, col_id, vis_id, basePosition=position,
                                baseOrientation=p.getQuaternionFromEuler(euler_angles))
-    p.changeDynamics(wallId, -1, lateralFriction=lateral_friction)
-    return wallId
+    p.changeDynamics(obj_id, -1, lateralFriction=lateral_friction)
+    return obj_id
+
+
+def make_cylinder(radius, height, position, euler_angles, mass=1., lateral_friction=1.5, spinning_friction=0.1):
+    col_id = p.createCollisionShape(p.GEOM_CYLINDER, radius=radius, height=height)
+    vis_id = p.createVisualShape(p.GEOM_CYLINDER, radius=radius, length=height, rgbaColor=[0.8, 0.7, 0.3, 0.8])
+    obj_id = p.createMultiBody(mass, col_id, vis_id, basePosition=position,
+                               baseOrientation=p.getQuaternionFromEuler(euler_angles))
+    p.changeDynamics(obj_id, -1, lateralFriction=lateral_friction, spinningFriction=spinning_friction)
+    return obj_id
 
 
 class PybulletEnv(Env):

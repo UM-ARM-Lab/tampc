@@ -13,8 +13,8 @@ import matplotlib.colors as colors
 import matplotlib.cm as cmx
 
 from arm_pytorch_utilities import tensor_utils
-from tampc.env.pybullet_env import PybulletEnv, get_total_contact_force, make_wall, state_action_color_pairs, \
-    ContactInfo
+from tampc.env.pybullet_env import PybulletEnv, get_total_contact_force, make_box, state_action_color_pairs, \
+    ContactInfo, make_cylinder
 from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource
 from tampc.env.peg_in_hole import PandaJustGripperID
 from tampc.env.pybullet_sim import PybulletSim
@@ -182,6 +182,9 @@ class ArmEnv(PybulletEnv):
         # object IDs
         self.immovable = []
         self.movable = []
+
+        # debug parameter for extruding objects so penetration is measured wrt the x-y plane
+        self.extrude_objects_in_z = False
 
         # initial config
         self.goal = None
@@ -913,7 +916,7 @@ class PlanarArmEnv(ArmEnv):
         if self.level == 0:
             pass
         elif self.level in [1, 2]:
-            self.immovable.append(make_wall([0.2, 0.05, 0.3], [0.6, 0.3, 0.2], [0, 0, 1.1], lateral_friction=1))
+            self.immovable.append(make_box([0.2, 0.05, 0.3], [0.6, 0.3, 0.2], [0, 0, 1.1], lateral_friction=1))
         for wallId in self.immovable:
             p.changeVisualShape(wallId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])
 
@@ -1054,74 +1057,74 @@ class FloatingGripperEnv(PlanarArmEnv):
             pass
         elif self.level in [Levels.WALL]:
             # drop movable obstacles
-            h = 0.075
+            z = 0.075
             xs = [0.3, 0.8]
             ys = [-0.3, 0.3]
             objId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
-                               basePosition=[xs[0], ys[0], h])
+                               basePosition=[xs[0], ys[0], z])
             self.movable.append(objId)
             objId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
-                               basePosition=[xs[1], ys[1], h])
+                               basePosition=[xs[1], ys[1], z])
             self.movable.append(objId)
 
             objId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=True,
-                               basePosition=[xs[1], ys[0], h])
+                               basePosition=[xs[1], ys[0], z])
             self.immovable.append(objId)
             objId = p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=True,
-                               basePosition=[xs[0], ys[1], h])
+                               basePosition=[xs[0], ys[1], z])
             self.immovable.append(objId)
         elif self.level == Levels.MOVEABLE_CANS:
             scale = 1.0
-            h = 0.075 * scale
+            z = 0.075 * scale
             xs = [0.3, 0.7]
             ys = [-0.2, 0.2]
             self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
-                                           basePosition=[xs[0], ys[0], h], globalScaling=scale))
+                                           basePosition=[xs[0], ys[0], z], globalScaling=scale))
             self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
-                                           basePosition=[xs[1], ys[1], h], globalScaling=scale))
+                                           basePosition=[xs[1], ys[1], z], globalScaling=scale))
             self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
-                                           basePosition=[xs[1], ys[0], h], globalScaling=scale))
+                                           basePosition=[xs[1], ys[0], z], globalScaling=scale))
             self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
-                                           basePosition=[xs[0], ys[1], h], globalScaling=scale))
-            self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [xs[1] + 0.48, 0., h],
+                                           basePosition=[xs[0], ys[1], z], globalScaling=scale))
+            self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [xs[1] + 0.48, 0., z],
                                              p.getQuaternionFromEuler([0, 0, np.pi / 2]), useFixedBase=True,
                                              globalScaling=0.5))
-            self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [xs[0], ys[0] - 0.43, h],
+            self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [xs[0], ys[0] - 0.43, z],
                                              p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
                                              globalScaling=0.5))
         elif self.level in [Levels.STRAIGHT_LINE, Levels.WALL_BEHIND]:
             scale = 1.0
-            h = 0.075 * scale
+            z = 0.075 * scale
             self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
-                                           basePosition=[0.5, 0, h]))
+                                           basePosition=[0.5, 0, z]))
             if self.level == Levels.WALL_BEHIND:
-                self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.21, 0., h],
+                self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.21, 0., z],
                                                  p.getQuaternionFromEuler([0, 0, -np.pi / 2]), useFixedBase=True,
                                                  globalScaling=0.5))
         elif self.level in [Levels.NCB_C, Levels.NCB_S, Levels.NCB_T]:
             scale = 1.0
-            h = 0.075 * scale
+            z = 0.075 * scale
             y = 0
             width = 0.85
-            self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.3, 0, h],
+            self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [-0.3, 0, z],
                                              p.getQuaternionFromEuler([0, 0, -np.pi / 2]), useFixedBase=True,
                                              globalScaling=0.5))
-            self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.5, -width / 2, h],
+            self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.5, -width / 2, z],
                                              p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
                                              globalScaling=0.5))
-            self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.5, width / 2, h],
+            self.immovable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0.5, width / 2, z],
                                              p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
                                              globalScaling=0.5))
             if self.level == Levels.NCB_C:
                 self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
-                                               basePosition=[0.7, y, h]))
+                                               basePosition=[0.7, y, z]))
             elif self.level == Levels.NCB_S:
                 self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "block_tall.urdf"), useFixedBase=False,
-                                               basePosition=[0.7, y, h]))
+                                               basePosition=[0.7, y, z]))
                 p.changeVisualShape(self.movable[-1], -1, rgbaColor=DEFAULT_MOVABLE_RGBA)
             elif self.level == Levels.NCB_T:
                 self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "topple_cylinder.urdf"), useFixedBase=False,
-                                               basePosition=[0.7, y, h + 0.02],
+                                               basePosition=[0.7, y, z + 0.02],
                                                baseOrientation=p.getQuaternionFromEuler([0, np.pi / 2, np.pi / 2])))
         elif self.level is Levels.RANDOM:
             # first move end effector out of the way
@@ -1139,7 +1142,7 @@ class FloatingGripperEnv(PlanarArmEnv):
                 moveable = obj_type != "wall.urdf"
                 global_scale = random.uniform(0.5, 1.5)
                 yaw = random.uniform(0, 2 * math.pi)
-                h = 0.1 * global_scale
+                z = 0.1 * global_scale
                 while True:
                     # randomly sample start location and yaw
                     # convert yaw to quaternion
@@ -1147,7 +1150,7 @@ class FloatingGripperEnv(PlanarArmEnv):
                         orientation = p.getQuaternionFromEuler([0, yaw, np.pi / 2])
                     else:
                         orientation = p.getQuaternionFromEuler([0, 0, yaw])
-                    position = [random.uniform(-bound, bound), random.uniform(-bound, bound), h]
+                    position = [random.uniform(-bound, bound), random.uniform(-bound, bound), z]
                     # even if immovable have to initialize as having movable base to enable collision checks
                     obj = p.loadURDF(os.path.join(cfg.ROOT_DIR, obj_type), useFixedBase=False,
                                      globalScaling=global_scale * 0.7 if obj_type == "wall.urdf" else global_scale,
@@ -1193,45 +1196,41 @@ class FloatingGripperEnv(PlanarArmEnv):
                                                         self.init, childFrameOrientation=self.endEffectorOrientation)
             self._close_gripper()
         elif self.level in selected_levels:
-            h = 0.1
+            z = 0.1
             s = 0.25
+            h = 2 if self.extrude_objects_in_z else 0.15
             if self.level is Levels.SELECT1:
-                self.immovable.append(make_wall([0.4, 0.15, 0.1], [-0.4, 0, h], [0, 0, -np.pi / 2]))
-                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
-                                               basePosition=[s, s, h]))
+                self.immovable.append(make_box([0.4, 0.15, h], [-0.4, 0, z], [0, 0, -np.pi / 2]))
+                self.movable.append(make_cylinder(0.15, h, [s, s, z], [0, 0, 0]))
                 self._adjust_mass_and_visual(self.movable[-1], 2.2)
-                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "block_tall.urdf"), useFixedBase=False,
-                                               basePosition=[s, -s, h], globalScaling=1.5))
+                self.movable.append(make_box([0.1 * 1.5, 0.1 * 1.5, h * 1.5 * 0.5], [s, -s, z], [0, 0, 0]))
+                self._adjust_box_dynamics(self.movable[-1])
                 self._adjust_mass_and_visual(self.movable[-1], 0.8)
             elif self.level is Levels.SELECT2:
-                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
-                                               basePosition=[-s, s, h], globalScaling=0.8))
+                self.movable.append(make_cylinder(0.15 * 0.8, h * 0.8, [-s, s, z], [0, 0, 0]))
                 self._adjust_mass_and_visual(self.movable[-1], 1)
-                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "block_tall.urdf"), useFixedBase=False,
-                                               basePosition=[s, s, h], globalScaling=1.2))
+                self.movable.append(make_box([0.1 * 1.2, 0.1 * 1.2, h * 1.2 * 0.5], [s, s, z], [0, 0, 0]))
+                self._adjust_box_dynamics(self.movable[-1])
                 self._adjust_mass_and_visual(self.movable[-1], 1.8)
-                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
-                                               basePosition=[s, -s, h], globalScaling=1.2))
+                self.movable.append(make_cylinder(0.15 * 1.2, h * 1.2, [s, -s, z], [0, 0, 0]))
                 self._adjust_mass_and_visual(self.movable[-1], 1)
                 self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "topple_cylinder.urdf"), useFixedBase=False,
-                                               basePosition=[-s, -s, h + 0.02],
+                                               basePosition=[-s, -s, z + 0.02],
                                                baseOrientation=p.getQuaternionFromEuler([0, np.pi / 2, np.pi / 2])))
                 self._adjust_mass_and_visual(self.movable[-1], 1)
             elif self.level is Levels.SELECT3:
-                self.immovable.append(make_wall([0.4, 0.15, 0.1], [0, 0.4, h], [0, 0, 0]))
-                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
-                                               basePosition=[-0.2, 0, h], globalScaling=1.1))
+                self.immovable.append(make_box([0.4, 0.15, h], [0, 0.4, z], [0, 0, 0]))
+                self.movable.append(make_cylinder(0.15 * 1.1, h * 1.1, [-0.2, 0, z], [0, 0, 0]))
                 self._adjust_mass_and_visual(self.movable[-1], 1)
-                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=False,
-                                               basePosition=[0.4, -s, h], globalScaling=1))
+                self.movable.append(make_cylinder(0.15, h, [0.4, -s, z], [0, 0, 0]))
                 self._adjust_mass_and_visual(self.movable[-1], 2.2)
             elif self.level is Levels.SELECT4:
-                self.immovable.append(make_wall([0.3, 0.12, 0.1], [0.3, -0.3, h], [0, 0, np.pi / 4]))
-                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "block_tall.urdf"), useFixedBase=False,
-                                               basePosition=[s, s, h], globalScaling=1.5))
+                self.immovable.append(make_box([0.3, 0.12, h], [0.3, -0.3, z], [0, 0, np.pi / 4]))
+                self.movable.append(make_box([0.1 * 1.5, 0.1 * 1.5, h * 1.5 * 0.5], [s, s, z], [0, 0, 0]))
+                self._adjust_box_dynamics(self.movable[-1])
                 self._adjust_mass_and_visual(self.movable[-1], 1.8)
-                self.movable.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "block_tall.urdf"), useFixedBase=False,
-                                               basePosition=[-s, 0, h], globalScaling=1.2))
+                self.movable.append(make_box([0.1 * 1.2, 0.1 * 1.2, h * 1.2 * 0.5], [-s, 0, z], [0, 0, 0]))
+                self._adjust_box_dynamics(self.movable[-1])
                 self._adjust_mass_and_visual(self.movable[-1], 1.2)
 
         for objId in self.immovable:
@@ -1256,8 +1255,12 @@ class FloatingGripperEnv(PlanarArmEnv):
         self._draw_state()
 
     def _adjust_mass_and_visual(self, obj, m):
+        # adjust the mass of a pybullet object and indicate it via the color
         p.changeVisualShape(obj, -1, rgbaColor=[1 - m / 3, 0.8 - m / 3, 0.2, 0.8])
         p.changeDynamics(obj, -1, mass=m)
+
+    def _adjust_box_dynamics(self, obj):
+        p.changeDynamics(obj, -1, lateralFriction=0.8, spinningFriction=0.05, rollingFriction=0.01)
 
     def _setup_gripper(self):
         # orientation of the end effector (pointing down)
