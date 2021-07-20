@@ -6,6 +6,7 @@ except:
     pass
 
 import time
+import math
 import random
 import torch
 import pybullet as p
@@ -27,7 +28,8 @@ from tampc.dynamics import hybrid_model
 from tampc.env import arm
 from tampc.env.arm import task_map, Levels
 from tampc.env_getters.arm import RetrievalGetter
-from tampc.env.pybullet_env import ContactInfo
+from tampc.env.pybullet_env import ContactInfo, state_action_color_pairs
+from cottun import icp
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
@@ -73,9 +75,55 @@ def sample_model_points(object_id, num_points=100, reject_too_close=0.002, force
 
 
 z = env._observe_ee(return_z=True)[-1]
-pts = sample_model_points(env.target_object_id, num_points=100, force_z=z)
-for i, pt in enumerate(pts):
-    env._dd.draw_point(f"pt{i}", pt, color=(1, 0, 0), length=0.003)
+
+# test ICP using fixed set of points
+o = p.getBasePositionAndOrientation(env.target_object_id)[0]
+contact_points = np.stack([
+    [o[0] - 0.045, o[1] - 0.05],
+    [o[0] - 0.05, o[1] - 0.01],
+    [o[0] - 0.045, o[1] + 0.02],
+    [o[0] - 0.045, o[1] + 0.04],
+    [o[0] - 0.01, o[1] + 0.05]
+])
+actions = np.stack([
+    [0.7, -0.7],
+    [0.9, 0.2],
+    [0.8, 0],
+    [0.5, 0.6],
+    [0, -0.8]
+])
+contact_points = np.stack(contact_points)
+
+angle = 0.5
+dx = -0.4
+dy = 0.2
+c, s = math.cos(angle), math.sin(angle)
+rot = np.array([[c, -s],
+                [s, c]])
+contact_points = np.dot(contact_points, rot.T)
+contact_points[:, 0] += dx
+contact_points[:, 1] += dy
+actions = np.dot(actions, rot.T)
+
+state_c, action_c = state_action_color_pairs[0]
+env.visualize_state_actions("fixed", contact_points, actions, state_c, action_c, 0.05)
+
+model_points = sample_model_points(env.target_object_id, num_points=50, force_z=z)
+for i, pt in enumerate(model_points):
+    env._dd.draw_point(f"mpt{i}", pt, color=(0, 0, 1), length=0.003)
+
+# perform ICP and visualize the transformed points
+# history, transformed_contact_points = icp.icp(model_points[:, :2], contact_points,
+#                                               point_pairs_threshold=len(contact_points), verbose=True)
+
+# better to have few A than few B and then invert the transform
+T, distances, i = icp.icp_2(contact_points, model_points[:, :2])
+# transformed_contact_points = np.dot(np.c_[contact_points, np.ones((contact_points.shape[0], 1))], T.T)
+# T, distances, i = icp.icp_2(model_points[:, :2], contact_points)
+transformed_model_points = np.dot(np.c_[model_points[:, :2], np.ones((model_points.shape[0], 1))], np.linalg.inv(T).T)
+for i, pt in enumerate(transformed_model_points):
+    pt = [pt[0], pt[1], z]
+    env._dd.draw_point(f"tmpt{i}", pt, color=(0, 1, 0), length=0.003)
 
 while True:
     env.step([0, 0])
