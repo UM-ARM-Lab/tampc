@@ -107,3 +107,16 @@ class ArmGetter(EnvGetter):
         if level is Levels.NCB_T:
             env.set_task_config(goal=[-0.02, 0.], init=[1, 0])
         return env
+
+
+class RetrievalGetter(ArmGetter):
+    @staticmethod
+    def dynamics_prefix() -> str:
+        return "retrieval"
+
+    @classmethod
+    def env(cls, level=Levels.NO_CLUTTER, log_video=True, **kwargs):
+        level = Levels(level)
+        env = arm.ObjectRetrievalEnv(environment_level=level, log_video=log_video, **kwargs)
+        cls.env_dir = '{}/retrieval'.format(cls.dynamics_prefix())
+        return env

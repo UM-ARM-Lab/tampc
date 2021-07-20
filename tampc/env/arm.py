@@ -12,6 +12,8 @@ import numpy as np
 import matplotlib.colors as colors
 import matplotlib.cm as cmx
 
+from pybullet_object_models import ycb_objects
+
 from arm_pytorch_utilities import tensor_utils
 from tampc.env.pybullet_env import PybulletEnv, get_total_contact_force, make_box, state_action_color_pairs, \
     ContactInfo, make_cylinder
@@ -44,6 +46,10 @@ class Levels(enum.IntEnum):
     SELECT2 = 11
     SELECT3 = 12
     SELECT4 = 13
+
+    # levels for object retrieval
+    NO_CLUTTER = 20
+    SIMPLE_CLUTTER = 21
 
 
 selected_levels = [Levels.SELECT1, Levels.SELECT2, Levels.SELECT3, Levels.SELECT4]
@@ -1256,6 +1262,8 @@ class FloatingGripperEnv(PlanarArmEnv):
 
         if self.level in [Levels.RANDOM, Levels.FREESPACE] + selected_levels:
             self.set_camera_position([0, 0])
+        elif int(self.level) >= Levels.NO_CLUTTER:
+            self.set_camera_position([0.25, 0.], yaw=-90, pitch=-80)
         else:
             self.set_camera_position([0.5, 0.3], yaw=-75, pitch=-80)
 
@@ -1335,6 +1343,61 @@ class FloatingGripperEnv(PlanarArmEnv):
         return np.copy(self.state)
 
 
+class ObjectRetrievalEnv(FloatingGripperEnv):
+    nu = 2
+    nx = 2
+    MAX_FORCE = 30
+    MAX_GRIPPER_FORCE = 30
+    MAX_PUSH_DIST = 0.03
+    OPEN_ANGLE = 0.04
+    CLOSE_ANGLE = 0.01
+
+    @staticmethod
+    def state_names():
+        return ['x ee (m)', 'y ee (m)']
+
+    @classmethod
+    @handle_data_format_for_state_diff
+    def state_difference(cls, state, other_state):
+        """Get state - other_state in state space"""
+        dpos = state[:, :2] - other_state[:, :2]
+        return dpos,
+
+    @classmethod
+    def state_cost(cls):
+        return np.diag([1, 1])
+
+    def __init__(self, goal=(0.5, -0.3, 0), init=(-.0, 0.0), **kwargs):
+        # here goal is the initial pose of the target object
+        super(FloatingGripperEnv, self).__init__(goal=goal, init=init, camera_dist=1, **kwargs)
+
+    def _setup_objects(self):
+        self.immovable = []
+        self.movable = []
+        if self.level == Levels.NO_CLUTTER:
+            z = 0.1
+            h = 2 if self.extrude_objects_in_z else 0.15
+            separation = 0.7
+
+            self.immovable.append(make_box([0.7, 0.1, h], [1.1, 0, z], [0, 0, -np.pi / 2]))
+            self.immovable.append(make_box([0.7, 0.1, h], [0.5, -separation, z], [0, 0, 0]))
+            self.immovable.append(make_box([0.7, 0.1, h], [0.5, separation, z], [0, 0, 0]))
+            flags = p.URDF_USE_INERTIA_FROM_FILE
+            self.target_object_id = p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbCrackerBox', "model.urdf"),
+                                               [self.goal[0], self.goal[1], z],
+                                               p.getQuaternionFromEuler([0, 0, self.goal[2]]), flags=flags)
+            self.movable.append(self.target_object_id)
+        for objId in self.immovable:
+            p.changeVisualShape(objId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])
+        self.objects = self.immovable + self.movable
+
+    def evaluate_cost(self, state, action=None):
+        # actually don't have information needed inside state, need to query object location
+        object_pos = p.getBasePositionAndOrientation(self.target_object_id)[0]
+        done = object_pos[0] < 0
+        return 0 if done else 1, done
+
+
 def interpolate_pos(start, end, t):
     return t * end + (1 - t) * start
 
@@ -1353,5 +1416,6 @@ class ArmDataSource(EnvDataSource):
 
     @staticmethod
     def _loader_map(env_type):
-        loader_map = {ArmEnv: ArmLoader, ArmJointEnv: ArmLoader, PlanarArmEnv: ArmLoader, FloatingGripperEnv: ArmLoader}
+        loader_map = {ArmEnv: ArmLoader, ArmJointEnv: ArmLoader, PlanarArmEnv: ArmLoader, FloatingGripperEnv: ArmLoader,
+                      ObjectRetrievalEnv: ArmLoader}
         return loader_map.get(env_type, None)
