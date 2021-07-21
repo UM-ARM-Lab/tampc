@@ -17,7 +17,7 @@ from pybullet_object_models import ycb_objects
 from arm_pytorch_utilities import tensor_utils
 from tampc.env.pybullet_env import PybulletEnv, get_total_contact_force, make_box, state_action_color_pairs, \
     ContactInfo, make_cylinder
-from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource
+from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource, InfoKeys
 from tampc.env.peg_in_hole import PandaJustGripperID
 from tampc.env.pybullet_sim import PybulletSim
 from tampc import cfg
@@ -554,7 +554,7 @@ class ArmEnv(PybulletEnv):
         # can estimate change in state only when in contact
         new_ee_pos = self._observe_ee(return_z=True)
         if np.linalg.norm(reaction_force) > self.contact_reaction_force_threshold:
-            info['dee in contact'] = np.subtract(new_ee_pos, self.last_ee_pos)
+            info[InfoKeys.DEE_IN_CONTACT] = np.subtract(new_ee_pos, self.last_ee_pos)
         self.last_ee_pos = new_ee_pos
 
         # save reaction force
@@ -590,13 +590,13 @@ class ArmEnv(PybulletEnv):
     def _aggregate_info(self):
         info = {key: np.stack(value, axis=0) for key, value in self._contact_info.items() if len(value)}
         info['reaction'], info['torque'] = self._observe_reaction_force_torque()
-        name = 'dee in contact'
+        name = InfoKeys.DEE_IN_CONTACT
         if name in info:
             info[name] = info[name].sum(axis=0)
         else:
             info[name] = np.zeros(3)
         most_frequent_contact = scipy.stats.mode(self._mini_step_contact['id'])
-        info['contact_id'] = int(most_frequent_contact[0])
+        info[InfoKeys.CONTACT_ID] = int(most_frequent_contact[0])
 
         # ground truth object information
         if len(self.movable + self.immovable):

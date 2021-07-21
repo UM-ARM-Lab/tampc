@@ -30,6 +30,7 @@ from tampc.transform import invariant
 from tampc.dynamics import hybrid_model
 from tampc.env import arm
 from tampc.env.arm import task_map, Levels
+from tampc.env.env import InfoKeys
 
 from tampc.dynamics.hybrid_model import OnlineAdapt
 from tampc.controller import online_controller
@@ -753,7 +754,9 @@ def replay_trajectory(traj_data_name, upto_index, *args, save_control=False, res
                 for obj in ctrl.contact_set:
                     obj.dynamics = None
                 # will do worse than actual execution because we don't protect against immovable obstacle contact here
-                c, cc = ctrl.contact_set.update(XT[i - 1], UT[i - 1], ctrl.compare_to_goal(XT[i], XT[i - 1])[0], XT[i, -2:])
+                c, cc = ctrl.contact_set.update(XT[i - 1], UT[i - 1], ctrl.compare_to_goal(XT[i], XT[i - 1])[0],
+                                                XT[i, -2:],
+                                                info={InfoKeys.DEE_IN_CONTACT: d[InfoKeys.DEE_IN_CONTACT][i - 1]})
                 env.visualize_contact_set(ctrl.contact_set)
 
             # obs, rew, done, info = env.step(U[i])

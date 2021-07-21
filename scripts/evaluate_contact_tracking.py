@@ -24,6 +24,7 @@ from arm_pytorch_utilities.optim import get_device
 from tampc import cfg
 from cottun import contact
 from tampc.env import pybullet_env as env_base, arm
+from tampc.env.env import InfoKeys
 from tampc.env_getters.arm import ArmGetter
 from tampc.env.pybullet_env import ContactInfo
 
@@ -60,7 +61,10 @@ def our_method_factory(contact_object_class: Type[contact.ContactObject] = conta
         r = torch.from_numpy(reactions).to(device=d, dtype=dtype)
         obj_id = 0
         for i in range(len(X) - 1):
-            this_info = {'object_poses': {obj_id: obj_pose[i] for obj_id, obj_pose in info['object_poses'].items()}}
+            this_info = {
+                InfoKeys.OBJ_POSES: {obj_id: obj_pose[i] for obj_id, obj_pose in info[InfoKeys.OBJ_POSES].items()},
+                InfoKeys.DEE_IN_CONTACT: info[InfoKeys.DEE_IN_CONTACT][i]
+            }
             c, cc = contact_set.update(x[i], u[i], env_class.state_difference(x[i + 1], x[i]).reshape(-1), r[i + 1],
                                        this_info)
             if c is None:
@@ -103,7 +107,10 @@ def our_soft_method_factory(**kwargs):
         r = torch.from_numpy(reactions).to(device=d, dtype=dtype)
         obj_id = 0
         for i in range(len(X) - 1):
-            this_info = {'object_poses': {obj_id: obj_pose[i] for obj_id, obj_pose in info['object_poses'].items()}}
+            this_info = {
+                InfoKeys.OBJ_POSES: {obj_id: obj_pose[i] for obj_id, obj_pose in info[InfoKeys.OBJ_POSES].items()},
+                InfoKeys.DEE_IN_CONTACT: info[InfoKeys.DEE_IN_CONTACT][i]
+            }
             c, cc = contact_set.update(x[i], u[i], env_class.state_difference(x[i + 1], x[i]).reshape(-1), r[i + 1],
                                        this_info)
             if c is None:
@@ -245,10 +252,12 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
     U = d['U']
 
     reactions = d['reaction']
-    contact_id = d['contact_id'].reshape(-1)
+    contact_id = d[InfoKeys.CONTACT_ID].reshape(-1)
     # filter out steps that had inconsistent contact (low reaction force but detected contact ID)
     # note that contact ID is 1 index in front of reaction since reactions are what was felt during the last step
-    contact_id[:-1][np.linalg.norm(reactions[1:], axis=1) < 0.1] = NO_CONTACT_ID
+    contact_id[np.linalg.norm(reactions[1:], axis=1) < 0.1] = NO_CONTACT_ID
+    # make same size as X
+    contact_id = np.r_[contact_id, NO_CONTACT_ID]
 
     ids, counts = np.unique(contact_id, return_counts=True)
     unique_contact_counts = dict(zip(ids, counts))
@@ -312,7 +321,7 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
     in_contact = contact_id[:-1] != NO_CONTACT_ID
     for method_name, method in methods.items():
         # additional info to pass to methods for debugging
-        info = {'object_poses': obj_poses}
+        info = {InfoKeys.OBJ_POSES: obj_poses, InfoKeys.DEE_IN_CONTACT: d[InfoKeys.DEE_IN_CONTACT]}
 
         labels, param_values, moved_points, pt_weights = method(X, U, reactions, env_cls, info)
         run_key = RunKey(level=level, seed=seed, method=method_name, params=param_values)
@@ -358,17 +367,17 @@ if __name__ == "__main__":
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
         # 'ours soft': our_soft_method_factory(length=0.1),
-        # 'ours UKF': our_method_factory(length=0.1),
+        'ours UKF': our_method_factory(length=0.1),
         # 'ours UKF convexity merge constraint': our_method_factory(length=0.1),
         # 'ours PF': our_method_factory(contact_object_class=contact.ContactPF, length=0.1),
         # 'kmeans': sklearn_method_factory(KMeansWithAutoK),
         # 'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
         # 'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
-        'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
-                                                       random_state=0),
-        'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
-        'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
-                                                      threshold=1.5)
+        # 'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
+        #                                                random_state=0),
+        # 'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
+        # 'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
+        #                                               threshold=1.5)
     }
 
     # full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper12/17.mat')

@@ -9,6 +9,7 @@ import math
 from arm_pytorch_utilities import tensor_utils, optim, serialization, linalg, math_utils, draw
 from torch.distributions.multivariate_normal import MultivariateNormal
 from cottun.filters.ukf import EnvConditionedUKF
+from tampc.env.env import InfoKeys
 
 logger = logging.getLogger(__name__)
 
@@ -80,9 +81,6 @@ class ContactObject(serialization.Serializable):
         self.points = None
         self.actions = None
 
-        # every input we get is dx = t (param_c * u) + (1 - t) (freespace dynamics(u))
-        # however, since freespace dynamics(u) != 0, any dx ~= 0 we receive forces param_c = 0
-        self.known_zero_dynamics = False
         self.dynamics = empty_local_model
         self.state_to_pos = params.state_to_pos
         self.pos_to_state = params.pos_to_state
@@ -141,13 +139,6 @@ class ContactObject(serialization.Serializable):
             self.points = torch.cat((self.points, x.view(1, -1)))
             self.actions = torch.cat((self.actions, u.view(1, -1)))
 
-        # if dx.norm() < 1e-7:
-        #     self.known_zero_dynamics = True
-        #
-        # if self.known_zero_dynamics:
-        #     # move the robot's prev location to its current location
-        #     self.points[-1] += self.state_to_pos(dx).view(-1)
-
         if self.dynamics is not None:
             centered_x = x - self.center_point
 
@@ -155,13 +146,10 @@ class ContactObject(serialization.Serializable):
                 u_scale = u.norm()
                 u = u / u_scale
                 dx = dx / u_scale
-            # convert back to state
-            centered_x = self.pos_to_state(centered_x).view(-1)
-            self.dynamics.update(centered_x, u, centered_x + dx)
+            self.dynamics.update(centered_x, u.view(1, -1), centered_x + dx)
 
     def move_all_points(self, dpos):
-        if not self.known_zero_dynamics:
-            self.points += dpos
+        self.points += dpos
         # TODO may need to change the training input points for dynamics to be self.points - self.mu
 
     def merge_objects(self, other_objects):
@@ -402,6 +390,7 @@ class ContactUKF(ContactObject):
         dtype = torch.float64 if not torch.is_tensor(x) else x.dtype
         x = tensor_utils.ensure_tensor(self.device, dtype, x)
         x = self.state_to_pos(x)
+        dx = dx[:x.numel()]
         if self.mu is None:
             self.mu = x.clone().view(1, -1)
         return super(ContactUKF, self).add_transition(x, u, dx)
@@ -776,10 +765,11 @@ class ContactSetHard(ContactSet):
 
     def update(self, x, u, dx, reaction, info=None):
         """Returns updated contact object"""
-        environment = {'robot': self.p.state_to_pos(x), 'control': u, 'dx': dx, 'dobj': dx * 1.0}
+        environment = {'robot': self.p.state_to_pos(x), 'control': u, 'dx': dx, 'dobj': dx}
         # debugging info
         if info is not None:
-            environment['obj'] = info['object_poses']
+            environment['obj'] = info.get(InfoKeys.OBJ_POSES, None)
+            environment['dobj'] = info[InfoKeys.DEE_IN_CONTACT]
         if reaction.norm() < self.p.force_threshold:
             self.stepped_without_contact(u, environment)
             return None, None
@@ -794,22 +784,7 @@ class ContactSetHard(ContactSet):
         else:
             c = cc[0]
 
-        # # we assume the object has moved by t*dx, t in (0, 1] due to discrete actions
-        # # we can estimate t by considering if it would make the set of points freespace inconsistent
-        # obs_pt = self.p.state_to_pos(x + dx)
-        # dpt = self.p.state_to_pos(dx)
-        # for t in [1., 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0.]:
-        #     # when there are no points, everything is consistent, so allow t = 1 to pass
-        #     if c.points is None or freespace_consistency(obs_pt, u, c.points + dpt * t, c.actions,
-        #                                                  self.p.approx_robot_radius,
-        #                                                  self.p.min_friction_cossim):
-        #         c.add_transition(x + dx * (1 - t), u, dx * t)
-        #         environment['dobj'] = dx * t
-        #         break
-        # else:
-        #     raise RuntimeError("Any pre-existing choice of t makes the set of points inconsistent")
-
-        c.add_transition(x, u, dx)
+        c.add_transition(x, u, environment['dobj'])
         # matches more than 1 contact set, combine them
         if len(cc) > 1:
             c = self.merge_objects(ii)
@@ -941,7 +916,7 @@ class ContactSetSoft(ContactSet):
         environment = {'robot': self.p.state_to_pos(x), 'control': u, 'dx': dx}
         # debugging info
         if info is not None:
-            environment['obj'] = info['object_poses']
+            environment['obj'] = info[InfoKeys.OBJ_POSES]
         if reaction.norm() < self.p.force_threshold:
             # TODO step without contact
             return None, None

@@ -9,6 +9,12 @@ from arm_pytorch_utilities.make_data import datasource
 from tampc import cfg
 
 
+class InfoKeys:
+    OBJ_POSES = "object_poses"
+    DEE_IN_CONTACT = "dee in contact"
+    CONTACT_ID = "contact_id"
+
+
 class TrajectoryLoader(load_utils.DataLoader):
     def __init__(self, *args, file_cfg=cfg, ignore_masks=False, **kwargs):
         self.info_desc = {}
