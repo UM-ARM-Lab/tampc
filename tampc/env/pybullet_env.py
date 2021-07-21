@@ -74,8 +74,9 @@ class PybulletEnv(Env):
         # disable useless menus on the left and right
         p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
         if self.log_video:
-            p.startStateLogging(p.STATE_LOGGING_VIDEO_MP4,
-                                "{}_{}.mp4".format(datetime.now().strftime('%Y_%m_%d_%H_%M_%S'), self.randseed))
+            self.logging_id = p.startStateLogging(p.STATE_LOGGING_VIDEO_MP4,
+                                                  "{}_{}.mp4".format(datetime.now().strftime('%Y_%m_%d_%H_%M_%S'),
+                                                                     self.randseed))
 
         # use data provided by PyBullet
         p.setAdditionalSearchPath(pybullet_data.getDataPath())  # optionally
@@ -96,6 +97,7 @@ class PybulletEnv(Env):
         # potentially also randomize the starting configuration
 
     def close(self):
+        p.stopStateLogging(self.logging_id)
         p.disconnect(self.physics_client)
 
     def draw_user_text(self, text, location_index=1, left_offset=1.0, xy=None):

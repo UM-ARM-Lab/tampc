@@ -56,25 +56,17 @@ class PybulletSim(simulation.Simulation):
         self.traj = np.zeros((self.num_frames, self.env.nx))
         self.pred_traj = np.zeros_like(self.traj)
         self.u = np.zeros((self.num_frames, self.env.nu))
-        self.reaction_force = np.zeros((self.num_frames, self.reaction_dim))
-        self.reaction_torque = []
-        self.wall_contact = np.zeros((self.num_frames,))
-        self.contact_id = np.ones((self.num_frames,), dtype=np.intc) * -1
         self.model_error = np.zeros_like(self.traj)
         self.time = np.arange(0, self.num_frames * self.sim_step_s, self.sim_step_s)
-        self.pred_cls = np.zeros_like(self.wall_contact)
-        self.object_poses = {}
-        self.object_distances = {}
+        self.pred_cls = np.zeros((self.num_frames,))
+        self.info = {}
         return simulation.ReturnMeaning.SUCCESS
 
     def _truncate_data(self, frame):
-        self.traj, self.u, self.reaction_force, self.contact_id, self.wall_contact, self.model_error, self.time, self.pred_cls = (
+        self.traj, self.u, self.model_error, self.time, self.pred_cls = (
             data[:frame] for data
             in
             (self.traj, self.u,
-             self.reaction_force,
-             self.contact_id,
-             self.wall_contact,
              self.model_error,
              self.time, self.pred_cls))
 
@@ -198,27 +190,11 @@ class PybulletSim(simulation.Simulation):
             self.last_run_cost.append(cost)
             self.u[simTime, :] = action
             self.traj[simTime + 1, :] = obs
-            # reaction force felt as we apply this action, as observed at the start of the next time step
-            self.reaction_force[simTime + 1, :] = info['reaction']
-            this_torque = info['torque']
-            # at the beginning add zeros to sync up in indexing with the reaction force
-            if not len(self.reaction_torque):
-                self.reaction_torque.append(np.zeros_like(this_torque))
-            self.reaction_torque.append(this_torque)
-            self.wall_contact[simTime + 1] = info['wall_contact']
-            self.contact_id[simTime] = info['contact_id']
-            object_poses = info.get('object_poses', None)
-            if object_poses is not None:
-                for obj_id, pose in object_poses.items():
-                    if obj_id not in self.object_poses:
-                        self.object_poses[obj_id] = []
-                    self.object_poses[obj_id].append(pose)
-            object_distances = info.get('object_distances', None)
-            if object_distances is not None:
-                for obj_id, distance in object_distances.items():
-                    if obj_id not in self.object_distances:
-                        self.object_distances[obj_id] = []
-                    self.object_distances[obj_id].append(distance)
+
+            for name, value in info.items():
+                if name not in self.info:
+                    self.info[name] = []
+                self.info[name].append(value)
 
             if self._predicts_state():
                 self.pred_traj[simTime + 1, :] = self.ctrl.predicted_next_state
@@ -252,20 +228,23 @@ class PybulletSim(simulation.Simulation):
         u_norm = np.roll(u_norm, 1).reshape(-1, 1)
         scaled_model_error = np.divide(self.model_error, u_norm, out=np.zeros_like(self.model_error), where=u_norm != 0)
 
-        reaction_torque = np.stack(self.reaction_torque)
-        data = {'X': X, 'U': self.u, 'reaction': self.reaction_force, 'torque': reaction_torque,
+        stacked_info = {}
+        for name, values in self.info.items():
+            # ignore certain debug/verbose values
+            if name in ['r']:
+                continue
+            # info to offset by 1 with 0 in front
+            if name in ['reaction', 'torque']:
+                values = [np.zeros(len(values[0]))] + values
+            values = np.stack(values)
+            if values.ndim == 1:
+                values = values.reshape(-1, 1)
+            stacked_info[name] = np.stack(values)
+        data = {'X': X, 'U': self.u,
                 'model error': self.model_error,
-                'scaled model error': scaled_model_error, 'wall contact': self.wall_contact.reshape(-1, 1),
-                'contact_id': self.contact_id.reshape(-1, 1),
+                'scaled model error': scaled_model_error,
                 'mask': mask.reshape(-1, 1), 'predicted dynamics_class': self.pred_cls.reshape(-1, 1)}
-
-        for obj_id, pose_list in self.object_poses.items():
-            poses = np.stack(pose_list)
-            data[f"obj{obj_id}pose"] = poses
-
-        for obj_id, distance_list in self.object_distances.items():
-            distances = np.stack(distance_list)
-            data[f"obj{obj_id}distance"] = distances
+        data.update(stacked_info)
 
         return data
 

@@ -22,6 +22,7 @@ from tampc.env.peg_in_hole import PandaJustGripperID
 from tampc.env.pybullet_sim import PybulletSim
 from tampc import cfg
 from cottun import contact
+from cottun.defines import NO_CONTACT_ID
 
 logger = logging.getLogger(__name__)
 
@@ -163,6 +164,7 @@ class ArmEnv(PybulletEnv):
     def __init__(self, goal=(0.8, 0.0, 0.3), init=(0.3, 0.6, 0.2),
                  environment_level=0, sim_step_wait=None, mini_steps=15, wait_sim_steps_per_mini_step=20,
                  debug_visualizations=None, dist_for_done=0.04, camera_dist=1.5,
+                 contact_reaction_force_threshold=1.,
                  reaction_force_strategy=ReactionForceStrategy.MEDIAN_OVER_MINI_STEPS, **kwargs):
         """
         :param environment_level: what obstacles should show up in the environment
@@ -172,6 +174,8 @@ class ArmEnv(PybulletEnv):
         more is better for controller and allows greater force to prevent sliding
         :param wait_sim_steps_per_mini_step how many sim steps to wait per mini control step executed;
         inversely proportional to mini_steps
+        :param contact_reaction_force_threshold magnitude threshold on the reaction force for when we should consider
+        to be in contact with an object
         :param reaction_force_strategy how to aggregate measured reaction forces over control step into 1 value
         :param kwargs:
         """
@@ -184,6 +188,7 @@ class ArmEnv(PybulletEnv):
         self.wait_sim_step_per_mini_step = wait_sim_steps_per_mini_step
         self.reaction_force_strategy = reaction_force_strategy
         self.dist_for_done = dist_for_done
+        self.contact_reaction_force_threshold = contact_reaction_force_threshold
 
         # object IDs
         self.immovable = []
@@ -220,9 +225,10 @@ class ArmEnv(PybulletEnv):
     # --- initialization and task configuration
     def _clear_state_between_control_steps(self):
         self._sim_step = 0
-        self._mini_step_contact = {'full': np.zeros((self.mini_steps, 3)), 'torque': np.zeros((self.mini_steps, 3)),
-                                   'mag': np.zeros(self.mini_steps),
-                                   'id': np.ones(self.mini_steps) * -1}
+        self._mini_step_contact = {'full': np.zeros((self.mini_steps + 1, 3)),
+                                   'torque': np.zeros((self.mini_steps + 1, 3)),
+                                   'mag': np.zeros(self.mini_steps + 1),
+                                   'id': np.ones(self.mini_steps + 1) * NO_CONTACT_ID}
         self._contact_info = {}
         self._largest_contact = {}
         self._reaction_force = np.zeros(2)
@@ -545,6 +551,12 @@ class ArmEnv(PybulletEnv):
         return p.getContactPoints(bodyId, self.armId, linkIndexB=self.endEffectorIndex)
 
     def _observe_raw_reaction_force(self, info, reaction_force, reaction_torque, visualize=True):
+        # can estimate change in state only when in contact
+        new_ee_pos = self._observe_ee(return_z=True)
+        if np.linalg.norm(reaction_force) > self.contact_reaction_force_threshold:
+            info['dee in contact'] = np.subtract(new_ee_pos, self.last_ee_pos)
+        self.last_ee_pos = new_ee_pos
+
         # save reaction force
         name = 'r'
         info[name] = reaction_force
@@ -578,9 +590,23 @@ class ArmEnv(PybulletEnv):
     def _aggregate_info(self):
         info = {key: np.stack(value, axis=0) for key, value in self._contact_info.items() if len(value)}
         info['reaction'], info['torque'] = self._observe_reaction_force_torque()
-        info['wall_contact'] = -1
+        name = 'dee in contact'
+        if name in info:
+            info[name] = info[name].sum(axis=0)
+        else:
+            info[name] = np.zeros(3)
         most_frequent_contact = scipy.stats.mode(self._mini_step_contact['id'])
         info['contact_id'] = int(most_frequent_contact[0])
+
+        # ground truth object information
+        if len(self.movable + self.immovable):
+            for obj_id in self.movable + self.immovable:
+                pose = p.getBasePositionAndOrientation(obj_id)
+                c = p.getClosestPoints(obj_id, self.robot_id, 100000)
+                info[f"obj{obj_id}pose"] = np.concatenate([pose[0], pose[1]])
+                # for multi-link bodies, will return 1 per combination; store the min
+                info[f"obj{obj_id}distance"] = min(cc[ContactInfo.DISTANCE] for cc in c)
+
         return info
 
     # --- control helpers (rarely overridden)
@@ -608,19 +634,6 @@ class ArmEnv(PybulletEnv):
         # summarize information per sim step into information for entire control step
         info = self._aggregate_info()
 
-        # ground truth object information
-        if len(self.movable + self.immovable):
-            poses = {}
-            distances = {}
-            for obj_id in self.movable + self.immovable:
-                pose = p.getBasePositionAndOrientation(obj_id)
-                poses[obj_id] = np.concatenate([pose[0], pose[1]])
-                c = p.getClosestPoints(obj_id, self.robot_id, 100000)
-                # for multi-link bodies, will return 1 per combination; store the min
-                distances[obj_id] = min(cc[ContactInfo.DISTANCE] for cc in c)
-            info['object_poses'] = poses
-            info['object_distances'] = distances
-
         # prepare for next control step
         self._clear_state_between_control_steps()
 
@@ -647,6 +660,7 @@ class ArmEnv(PybulletEnv):
 
     def _move_and_wait(self, eePos, steps_to_wait=50):
         # execute the action
+        self.last_ee_pos = self._observe_ee(return_z=True)
         self._move_pusher(eePos)
         p.stepSimulation()
         for _ in range(steps_to_wait):
@@ -1263,7 +1277,7 @@ class FloatingGripperEnv(PlanarArmEnv):
         if self.level in [Levels.RANDOM, Levels.FREESPACE] + selected_levels:
             self.set_camera_position([0, 0])
         elif int(self.level) >= Levels.NO_CLUTTER:
-            self.set_camera_position([0.25, 0.], yaw=-90, pitch=-80)
+            self.set_camera_position([0.4, 0.], yaw=-90, pitch=-80)
         else:
             self.set_camera_position([0.5, 0.3], yaw=-75, pitch=-80)
 
@@ -1369,24 +1383,32 @@ class ObjectRetrievalEnv(FloatingGripperEnv):
 
     def __init__(self, goal=(0.5, -0.3, 0), init=(-.0, 0.0), **kwargs):
         # here goal is the initial pose of the target object
-        super(FloatingGripperEnv, self).__init__(goal=goal, init=init, camera_dist=1, **kwargs)
+        super(FloatingGripperEnv, self).__init__(goal=goal, init=init, camera_dist=0.8, **kwargs)
 
     def _setup_objects(self):
         self.immovable = []
         self.movable = []
-        if self.level == Levels.NO_CLUTTER:
-            z = 0.1
-            h = 2 if self.extrude_objects_in_z else 0.15
-            separation = 0.7
+        z = 0.1
+        h = 2 if self.extrude_objects_in_z else 0.15
+        separation = 0.7
 
-            self.immovable.append(make_box([0.7, 0.1, h], [1.1, 0, z], [0, 0, -np.pi / 2]))
-            self.immovable.append(make_box([0.7, 0.1, h], [0.5, -separation, z], [0, 0, 0]))
-            self.immovable.append(make_box([0.7, 0.1, h], [0.5, separation, z], [0, 0, 0]))
-            flags = p.URDF_USE_INERTIA_FROM_FILE
-            self.target_object_id = p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbCrackerBox', "model.urdf"),
-                                               [self.goal[0], self.goal[1], z],
-                                               p.getQuaternionFromEuler([0, 0, self.goal[2]]), flags=flags)
-            self.movable.append(self.target_object_id)
+        self.immovable.append(make_box([0.7, 0.1, h], [1.1, 0, z], [0, 0, -np.pi / 2]))
+        self.immovable.append(make_box([0.7, 0.1, h], [0.5, -separation, z], [0, 0, 0]))
+        self.immovable.append(make_box([0.7, 0.1, h], [0.5, separation, z], [0, 0, 0]))
+        flags = p.URDF_USE_INERTIA_FROM_FILE
+        self.target_object_id = p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbCrackerBox', "model.urdf"),
+                                           [self.goal[0], self.goal[1], z],
+                                           p.getQuaternionFromEuler([0, 0, self.goal[2]]), flags=flags)
+        self.movable.append(self.target_object_id)
+        if self.level == Levels.NO_CLUTTER:
+            pass
+        elif self.level == Levels.SIMPLE_CLUTTER:
+            self.movable.append(p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbTomatoSoupCan', "model.urdf"),
+                                           [0.3, 0., z],
+                                           p.getQuaternionFromEuler([0, 0, 0]), flags=flags, globalScaling=2))
+            self.movable.append(p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbTomatoSoupCan', "model.urdf"),
+                                           [0.2, -0.3, z],
+                                           p.getQuaternionFromEuler([0, 0, 0]), flags=flags, globalScaling=2))
         for objId in self.immovable:
             p.changeVisualShape(objId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])
         self.objects = self.immovable + self.movable
