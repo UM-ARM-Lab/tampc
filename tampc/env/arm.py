@@ -668,6 +668,7 @@ class ArmEnv(PybulletEnv):
             p.stepSimulation()
             if self.mode is p.GUI and self.sim_step_wait:
                 time.sleep(self.sim_step_wait)
+        self._observe_info()
 
     def _unpack_action(self, action):
         dx = action[0] * self.MAX_PUSH_DIST
