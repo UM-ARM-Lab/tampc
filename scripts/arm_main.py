@@ -876,9 +876,11 @@ if __name__ == "__main__":
     if args.command == 'collect':
         OfflineDataCollection.freespace(seed_offset=0, trials=100, trial_length=30, force_gui=args.gui)
     elif args.command == 'collect_tracking':
-        for level in [Levels.SELECT1, Levels.SELECT2, Levels.SELECT3, Levels.SELECT4]:
-            for offset in [7]:
-                OfflineDataCollection.tracking(level, seed_offset=offset, trials=40, force_gui=args.gui)
+        accepted_levels = [Levels.SELECT2, Levels.SELECT3, Levels.SELECT4]
+        if level not in accepted_levels:
+            raise RuntimeError(f"Task must be one of {accepted_levels}")
+        for offset in [7]:
+            OfflineDataCollection.tracking(level, seed_offset=offset, trials=40, force_gui=args.gui)
     elif args.command == 'learn_representation':
         for seed in args.seed:
             ArmGetter.learn_invariant(ut, seed=seed, name=arm.DIR, MAX_EPOCH=1000, BATCH_SIZE=args.batch)
@@ -951,9 +953,9 @@ if __name__ == "__main__":
 
     else:
         replay_trajectory(
-            'arm/gripper10/40.mat',
+            'arm/gripper12/32.mat',
             300,
-            seed=40, level=Levels.SELECT1, use_tsf=ut,
+            seed=32, level=Levels.SELECT3, use_tsf=ut,
             assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
             visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
             override_tampc_params=tampc_params, override_mpc_params=mpc_params,
