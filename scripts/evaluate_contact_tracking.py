@@ -10,6 +10,7 @@ import scipy.io
 import numpy as np
 import os.path
 import pybullet as p
+import re
 
 import matplotlib.pyplot as plt
 from cottun.defines import NO_CONTACT_ID, RunKey, CONTACT_RES_FILE, RUN_AMBIGUITY, CONTACT_ID
@@ -59,6 +60,7 @@ def our_method_factory(contact_object_class: Type[contact.ContactObject] = conta
         x = torch.from_numpy(X).to(device=d, dtype=dtype)
         u = torch.from_numpy(U).to(device=d, dtype=dtype)
         r = torch.from_numpy(reactions).to(device=d, dtype=dtype)
+        info[InfoKeys.DEE_IN_CONTACT] = torch.from_numpy(info[InfoKeys.DEE_IN_CONTACT]).to(device=d, dtype=dtype)
         obj_id = 0
         for i in range(len(X) - 1):
             this_info = {
@@ -105,6 +107,7 @@ def our_soft_method_factory(**kwargs):
         x = torch.from_numpy(X).to(device=d, dtype=dtype)
         u = torch.from_numpy(U).to(device=d, dtype=dtype)
         r = torch.from_numpy(reactions).to(device=d, dtype=dtype)
+        info[InfoKeys.DEE_IN_CONTACT] = torch.from_numpy(info[InfoKeys.DEE_IN_CONTACT]).to(device=d, dtype=dtype)
         obj_id = 0
         for i in range(len(X) - 1):
             this_info = {
@@ -176,7 +179,7 @@ def online_sklearn_method_factory(online_class, method, inertia_ratio=0.5, **kwa
             if not valid[i]:
                 continue
             # intermediate labels in case we want plotting of movement
-            labels = online_method.update(X[i], U[i], env_class.state_difference(X[i + 1], X[i]).reshape(-1),
+            labels = online_method.update(X[i], U[i], info[InfoKeys.DEE_IN_CONTACT][i],
                                           reactions[i + 1])
         labels = np.ones(len(valid)) * NO_CONTACT_ID
         labels[valid] = process_labels_with_noise(online_method.final_labels())
@@ -277,11 +280,13 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
     logger.info(f"{datafile} freespace ratio {freespace_ratio} unique contact IDs {unique_contact_counts}")
 
     obj_poses = {}
-    for unique_obj_id in unique_contact_counts.keys():
-        if unique_obj_id == NO_CONTACT_ID:
-            continue
-        # not saved for the time step, so adjust mask usage
-        obj_poses[unique_obj_id] = d[f"obj{unique_obj_id}pose"]
+    pose_key = re.compile('obj(\d+)pose')
+    for k in d.keys():
+        m = pose_key.match(k)
+        if m is not None:
+            obj_id = int(m.group(1))
+            # not saved for the time step, so adjust mask usage
+            obj_poses[obj_id] = d[k]
 
     contact_id_key = RunKey(level=level, seed=seed, method=CONTACT_ID, params=None)
     run_res[contact_id_key] = contact_id
@@ -348,7 +353,7 @@ def compute_run_ambiguity(data, obj_ids, dist_threshold=0.15):
     # another way is cosine similarity between vector of [robot->obj A], [robot->obj B]
     # should be able to combine those
     obj_distances = {obj_id: data[f"obj{obj_id}distance"] for obj_id in obj_ids if not obj_id == NO_CONTACT_ID}
-    obj_distances = np.concatenate(list(obj_distances.values())).T
+    obj_distances = np.stack([np.concatenate(d) for d in obj_distances.values()]).T
     # no ambiguity if there's only 1 object
     if obj_distances.shape[1] < 2:
         return np.zeros(obj_distances.shape[0] + 1)
