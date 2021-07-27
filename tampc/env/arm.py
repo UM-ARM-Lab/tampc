@@ -529,9 +529,9 @@ class ArmEnv(PybulletEnv):
 
         # transform reaction to world frame
         states = p.getLinkState(self.armId, self.endEffectorIndex)
-        world_link_position = states[4]
         world_link_orientation = states[5]
-        r, t = p.multiplyTransforms(world_link_position, world_link_orientation, joint_reaction_force[:3], [0, 0, 0, 0])
+        r = p.rotateVector(world_link_orientation, joint_reaction_force[:3])
+        t = p.rotateVector(world_link_orientation, joint_reaction_force[3:])
 
         self._observe_raw_reaction_force(info, r, t, visualize)
 
