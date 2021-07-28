@@ -1033,7 +1033,7 @@ class FloatingGripperEnv(PlanarArmEnv):
     MAX_GRIPPER_FORCE = 30
     MAX_PUSH_DIST = 0.03
     OPEN_ANGLE = 0.04
-    CLOSE_ANGLE = 0.01
+    CLOSE_ANGLE = 0.0
 
     @property
     def robot_id(self):
@@ -1068,12 +1068,11 @@ class FloatingGripperEnv(PlanarArmEnv):
                                     forces=[self.MAX_GRIPPER_FORCE, self.MAX_GRIPPER_FORCE])
 
     def _close_gripper(self):
-        pass
-        # p.setJointMotorControlArray(self.gripperId,
-        #                             [PandaJustGripperID.FINGER_A, PandaJustGripperID.FINGER_B],
-        #                             p.POSITION_CONTROL,
-        #                             targetPositions=[self.CLOSE_ANGLE, self.CLOSE_ANGLE],
-        #                             forces=[self.MAX_GRIPPER_FORCE, self.MAX_GRIPPER_FORCE])
+        p.setJointMotorControlArray(self.gripperId,
+                                    [PandaJustGripperID.FINGER_A, PandaJustGripperID.FINGER_B],
+                                    p.POSITION_CONTROL,
+                                    targetPositions=[self.CLOSE_ANGLE, self.CLOSE_ANGLE],
+                                    forces=[self.MAX_GRIPPER_FORCE, self.MAX_GRIPPER_FORCE])
 
     def _move_pusher(self, end):
         p.changeConstraint(self.gripperConstraint, end, maxForce=self.MAX_FORCE)
@@ -1307,7 +1306,6 @@ class FloatingGripperEnv(PlanarArmEnv):
         self.gripperConstraint = p.createConstraint(self.gripperId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
                                                     self.init, childFrameOrientation=self.endEffectorOrientation)
 
-        self._open_gripper()
         self._close_gripper()
         self._make_robot_translucent(self.gripperId)
 
@@ -1361,11 +1359,6 @@ class FloatingGripperEnv(PlanarArmEnv):
 class ObjectRetrievalEnv(FloatingGripperEnv):
     nu = 2
     nx = 2
-    MAX_FORCE = 30
-    MAX_GRIPPER_FORCE = 30
-    MAX_PUSH_DIST = 0.03
-    OPEN_ANGLE = 0.04
-    CLOSE_ANGLE = 0.01
 
     @staticmethod
     def state_names():
