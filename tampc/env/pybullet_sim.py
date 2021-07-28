@@ -230,9 +230,6 @@ class PybulletSim(simulation.Simulation):
 
         stacked_info = {}
         for name, values in self.info.items():
-            # ignore certain debug/verbose values
-            if name in ['r']:
-                continue
             # info to offset by 1 with 0 in front
             if name in ['reaction', 'torque']:
                 values = [np.zeros(len(values[0]))] + values

@@ -13,6 +13,9 @@ class InfoKeys:
     OBJ_POSES = "object_poses"
     DEE_IN_CONTACT = "dee in contact"
     CONTACT_ID = "contact_id"
+    # highgest frequency feedback of reaction force and torque at end effector
+    HIGH_FREQ_REACTION_F = "r"
+    HIGH_FREQ_REACTION_T = "t"
 
 
 class TrajectoryLoader(load_utils.DataLoader):

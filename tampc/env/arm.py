@@ -558,7 +558,8 @@ class ArmEnv(PybulletEnv):
         self.last_ee_pos = new_ee_pos
 
         # save reaction force
-        name = 'r'
+        info[InfoKeys.HIGH_FREQ_REACTION_T] = reaction_torque
+        name = InfoKeys.HIGH_FREQ_REACTION_F
         info[name] = reaction_force
         reaction_force_size = np.linalg.norm(reaction_force)
         # see if we should save it as the reaction force for this mini-step
