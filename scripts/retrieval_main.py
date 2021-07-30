@@ -21,7 +21,7 @@ from arm_pytorch_utilities.optim import get_device
 from arm_pytorch_utilities import draw
 
 from tampc import cfg
-from cottun import contact
+from cottun import tracking
 from tampc.controller import controller
 from tampc.transform import invariant
 from tampc.dynamics import hybrid_model

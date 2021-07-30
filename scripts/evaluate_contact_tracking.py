@@ -23,7 +23,7 @@ from sklearn.cluster import Birch
 from arm_pytorch_utilities.optim import get_device
 
 from tampc import cfg
-from cottun import contact
+from cottun import tracking
 from tampc.env import pybullet_env as env_base, arm
 from tampc.env.env import InfoKeys
 from tampc.env_getters.arm import ArmGetter
@@ -45,7 +45,7 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 logger = logging.getLogger(__name__)
 
 
-def our_method_factory(contact_object_class: Type[contact.ContactObject] = contact.ContactUKF, **kwargs):
+def our_method_factory(contact_object_class: Type[tracking.ContactObject] = tracking.ContactUKF, **kwargs):
     def our_method(X, U, reactions, env_class, info):
         # TODO select getter based on env class
         contact_params = ArmGetter.contact_parameters(env_class, **kwargs)
@@ -55,7 +55,7 @@ def our_method_factory(contact_object_class: Type[contact.ContactObject] = conta
         def create_contact_object():
             return contact_object_class(None, contact_params)
 
-        contact_set = contact.ContactSetHard(contact_params, contact_object_factory=create_contact_object)
+        contact_set = tracking.ContactSetHard(contact_params, contact_object_factory=create_contact_object)
         labels = np.zeros(len(X) - 1)
         x = torch.from_numpy(X).to(device=d, dtype=dtype)
         u = torch.from_numpy(U).to(device=d, dtype=dtype)
@@ -102,7 +102,7 @@ def our_soft_method_factory(**kwargs):
         d = get_device()
         dtype = torch.float32
 
-        contact_set = contact.ContactSetSoft(contact_params)
+        contact_set = tracking.ContactSetSoft(contact_params)
         labels = np.zeros(len(X) - 1)
         x = torch.from_numpy(X).to(device=d, dtype=dtype)
         u = torch.from_numpy(U).to(device=d, dtype=dtype)

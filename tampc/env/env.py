@@ -7,6 +7,7 @@ import torch
 from arm_pytorch_utilities import load_data as load_utils, array_utils
 from arm_pytorch_utilities.make_data import datasource
 from tampc import cfg
+from cottun.detection import ContactDetector
 
 
 class InfoKeys:
@@ -149,6 +150,15 @@ class Env:
     def control_cost(cls):
         """Assuming cost function is xQx + uRu, return R"""
         return np.diag([])
+
+    @abc.abstractmethod
+    def create_contact_detector(self, residual_threshold, residual_precision) -> ContactDetector:
+        """Create a contact detector for detecting and isolating contact"""
+
+    @property
+    @abc.abstractmethod
+    def contact_detector(self) -> ContactDetector:
+        """Get the contact detector"""
 
     def verify_dims(self):
         u_min, u_max = self.get_control_bounds()

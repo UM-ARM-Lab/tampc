@@ -11,7 +11,7 @@ from arm_pytorch_utilities import serialization
 from pytorch_mppi import mppi
 
 from tampc import cost
-from cottun import contact
+from cottun import tracking
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +121,7 @@ class FullRandomController(Controller):
 class GreedyControllerWithRandomWalkOnContact(Controller):
     """Sample actions then take one that leads to lowest cost; take a random action after experiencing contact"""
 
-    def __init__(self, nu, dynamics, cost_to_go, contact_set: contact.ContactSetHard, u_min, u_max, num_samples=100,
+    def __init__(self, nu, dynamics, cost_to_go, contact_set: tracking.ContactSetHard, u_min, u_max, num_samples=100,
                  force_threshold=4, walk_length=3):
         super().__init__()
         self.nu = nu
@@ -139,7 +139,7 @@ class GreedyControllerWithRandomWalkOnContact(Controller):
         self.u_history = []
 
         self.contact_set = contact_set
-        self.ground_truth_contact_map: Dict[int, contact.ContactObject] = {}
+        self.ground_truth_contact_map: Dict[int, tracking.ContactObject] = {}
 
     def command(self, obs, info=None):
         d = self.dynamics.device
@@ -149,12 +149,12 @@ class GreedyControllerWithRandomWalkOnContact(Controller):
 
         if info is not None and np.linalg.norm(info['reaction']) > self.force_threshold:
             self.remaining_random_actions = self.max_walk_length
-            contact_id = info['contact_id']
-            if contact_id not in self.ground_truth_contact_map and self.contact_set is not None:
-                self.ground_truth_contact_map[contact_id] = self.contact_set.contact_object_factory()
-                self.contact_set.append(self.ground_truth_contact_map[contact_id])
-            self.ground_truth_contact_map[contact_id].add_transition(self.x_history[-2], self.u_history[-1],
-                                                                     self.x_history[-1] - self.x_history[-2])
+            # contact_id = info['contact_id']
+            # if contact_id not in self.ground_truth_contact_map and self.contact_set is not None:
+            #     self.ground_truth_contact_map[contact_id] = self.contact_set.contact_object_factory()
+            #     self.contact_set.append(self.ground_truth_contact_map[contact_id])
+            # self.ground_truth_contact_map[contact_id].add_transition(self.x_history[-2], self.u_history[-1],
+            #                                                          self.x_history[-1] - self.x_history[-2])
 
         if self.remaining_random_actions > 0:
             u = np.random.uniform(low=self.u_min, high=self.u_max, size=self.nu)

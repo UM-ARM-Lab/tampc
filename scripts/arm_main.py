@@ -24,7 +24,7 @@ from arm_pytorch_utilities.optim import get_device
 from arm_pytorch_utilities import draw
 
 from tampc import cfg
-from cottun import contact
+from cottun import tracking
 from tampc.controller import controller
 from tampc.transform import invariant
 from tampc.dynamics import hybrid_model
@@ -89,7 +89,7 @@ class OfflineDataCollection:
             return env.state_distance_two_arg(state, goal)
 
         def create_contact_object():
-            return contact.ContactUKF(None, contact_params)
+            return tracking.ContactUKF(None, contact_params)
 
         ds, pm = ArmGetter.prior(env, use_tsf=UseTsf.NO_TRANSFORM)
 
@@ -105,7 +105,7 @@ class OfflineDataCollection:
             # use mode p.GUI to see what the trials look like
             seed = rand.seed(seed_offset + offset)
 
-            contact_set = contact.ContactSetHard(contact_params, contact_object_factory=create_contact_object)
+            contact_set = tracking.ContactSetHard(contact_params, contact_object_factory=create_contact_object)
             ctrl = controller.GreedyControllerWithRandomWalkOnContact(env.nu, pm.dyn_net, cost_to_go, contact_set,
                                                                       u_min,
                                                                       u_max,
@@ -464,7 +464,7 @@ def visualize_clustering_sets(*args, num_frames=100, **kwargs):
 
         # previous contacts made
         from torch import tensor
-        from cottun.contact import ContactObject
+        from cottun.tracking import ContactObject
         from tampc.dynamics import online_model
         d = 'cuda:0'
         dt = torch.float64
@@ -517,10 +517,10 @@ def visualize_clustering_sets(*args, num_frames=100, **kwargs):
         else:
             raise NotImplementedError(f"This task {level} is not considered")
 
-        c = contact.ContactUKF(ctrl.dynamics.create_empty_local_model(use_prior=ctrl.contact_use_prior,
-                                                                      preprocessor=ctrl.contact_preprocessing,
-                                                                      nom_projection=False),
-                               ArmGetter.contact_parameters(env))
+        c = tracking.ContactUKF(ctrl.dynamics.create_empty_local_model(use_prior=ctrl.contact_use_prior,
+                                                                       preprocessor=ctrl.contact_preprocessing,
+                                                                       nom_projection=False),
+                                ArmGetter.contact_parameters(env))
 
         ctrl.contact_set.append(c)
         for i in range(len(xs)):

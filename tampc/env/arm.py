@@ -21,8 +21,10 @@ from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, E
 from tampc.env.peg_in_hole import PandaJustGripperID
 from tampc.env.pybullet_sim import PybulletSim
 from tampc import cfg
-from cottun import contact
+from cottun import tracking
 from cottun.defines import NO_CONTACT_ID
+from cottun.detection import ContactDetector
+from cottun.detection_impl import ContactDetectorPlanarPybulletGripper
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +166,8 @@ class ArmEnv(PybulletEnv):
     def __init__(self, goal=(0.8, 0.0, 0.3), init=(0.3, 0.6, 0.2),
                  environment_level=0, sim_step_wait=None, mini_steps=15, wait_sim_steps_per_mini_step=20,
                  debug_visualizations=None, dist_for_done=0.04, camera_dist=1.5,
-                 contact_reaction_force_threshold=1.,
+                 contact_residual_threshold=1.,
+                 contact_residual_precision=None,
                  reaction_force_strategy=ReactionForceStrategy.MEDIAN_OVER_MINI_STEPS, **kwargs):
         """
         :param environment_level: what obstacles should show up in the environment
@@ -174,8 +177,13 @@ class ArmEnv(PybulletEnv):
         more is better for controller and allows greater force to prevent sliding
         :param wait_sim_steps_per_mini_step how many sim steps to wait per mini control step executed;
         inversely proportional to mini_steps
-        :param contact_reaction_force_threshold magnitude threshold on the reaction force for when we should consider
-        to be in contact with an object
+        :param contact_residual_threshold magnitude threshold on the reaction residual (measured force and torque
+        at end effector) for when we should consider to be in contact with an object
+        :param contact_residual_precision if specified, the inverse of a matrix representing the expected measurement
+        error of the contact residual; if left none default values for the environment is used. This is used to
+        normalize the different dimensions of the residual so that they are around the same expected magnitude.
+        Typically estimated from the training set, but for simulated environments can just pass in 1/max training value
+        for normalization.
         :param reaction_force_strategy how to aggregate measured reaction forces over control step into 1 value
         :param kwargs:
         """
@@ -188,7 +196,6 @@ class ArmEnv(PybulletEnv):
         self.wait_sim_step_per_mini_step = wait_sim_steps_per_mini_step
         self.reaction_force_strategy = reaction_force_strategy
         self.dist_for_done = dist_for_done
-        self.contact_reaction_force_threshold = contact_reaction_force_threshold
 
         # object IDs
         self.immovable = []
@@ -217,10 +224,15 @@ class ArmEnv(PybulletEnv):
 
         self.set_task_config(goal, init)
         self._setup_experiment()
+        self._contact_detector = self.create_contact_detector(contact_residual_threshold, contact_residual_precision)
         # start at rest
         for _ in range(1000):
             p.stepSimulation()
         self.state = self._obs()
+
+    @property
+    def contact_detector(self) -> ContactDetector:
+        return self._contact_detector
 
     # --- initialization and task configuration
     def _clear_state_between_control_steps(self):
@@ -434,7 +446,7 @@ class ArmEnv(PybulletEnv):
                 name = '{}{}a'.format(base_name, j)
                 self._dd.draw_2d_line(name, p, actions[j], color=action_c, scale=action_scale)
 
-    def visualize_contact_set(self, contact_set: contact.ContactSetHard):
+    def visualize_contact_set(self, contact_set: tracking.ContactSetHard):
         # clear all previous markers because we don't know which one was removed
         if len(self._contact_debug_names) > len(contact_set):
             for name in self._contact_debug_names:
@@ -553,7 +565,7 @@ class ArmEnv(PybulletEnv):
     def _observe_raw_reaction_force(self, info, reaction_force, reaction_torque, visualize=True):
         # can estimate change in state only when in contact
         new_ee_pos = self._observe_ee(return_z=True)
-        if np.linalg.norm(reaction_force) > self.contact_reaction_force_threshold:
+        if self.contact_detector.observe_residual(np.r_[reaction_force, reaction_torque]):
             info[InfoKeys.DEE_IN_CONTACT] = np.subtract(new_ee_pos, self.last_ee_pos)
         self.last_ee_pos = new_ee_pos
 
@@ -1051,6 +1063,12 @@ class FloatingGripperEnv(PlanarArmEnv):
 
     def __init__(self, goal=(1.3, -0.4), init=(-.1, 0.4), **kwargs):
         super(FloatingGripperEnv, self).__init__(goal=goal, init=init, camera_dist=1, **kwargs)
+
+    def create_contact_detector(self, residual_threshold, residual_precision) -> ContactDetector:
+        if residual_precision is None:
+            residual_precision = np.diag([1, 1, 1, 50, 50, 50])
+        return ContactDetectorPlanarPybulletGripper(self.robot_id, self.endEffectorOrientation, [0, 0],
+                                                    residual_precision, residual_threshold)
 
     def _observe_ee(self, return_z=False):
         gripperPose = p.getBasePositionAndOrientation(self.gripperId)

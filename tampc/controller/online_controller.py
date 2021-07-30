@@ -9,7 +9,7 @@ from arm_pytorch_utilities import tensor_utils, preprocess
 from tampc.dynamics import hybrid_model
 from tampc.controller import controller, gating_function
 from tampc import cost
-from cottun import contact
+from cottun import tracking
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +176,7 @@ class TAMPC(OnlineMPC):
                  contact_use_prior=True,
                  known_immovable_obstacles=None,
                  reuse_escape_as_demonstration=True,
-                 contact_params: contact.ContactParameters = None,
+                 contact_params: tracking.ContactParameters = None,
                  **kwargs):
         self.known_immovable_obstacles = known_immovable_obstacles
         self.state_to_pos = None
@@ -235,9 +235,9 @@ class TAMPC(OnlineMPC):
         # state distance between making contacts for distinguishing separate contacts
         self.p = contact_params
         self.in_contact_with_known_immovable = False
-        self.contact_set = contact.ContactSetHard(self.p,
-                                                  immovable_collision_checker=self._known_immovable_obstacle_collision_check,
-                                                  contact_object_factory=self._create_contact_object)
+        self.contact_set = tracking.ContactSetHard(self.p,
+                                                   immovable_collision_checker=self._known_immovable_obstacle_collision_check,
+                                                   contact_object_factory=self._create_contact_object)
         self.contact_cost = None
         self.contact_use_prior = contact_use_prior
         if self.p is not None:
@@ -639,10 +639,10 @@ class TAMPC(OnlineMPC):
                 self.nominal_dynamic_states[-1].insert(0, self.x_history[i])
 
     def _create_contact_object(self):
-        c = contact.ContactUKF(self.dynamics.create_empty_local_model(use_prior=self.contact_use_prior,
-                                                                      preprocessor=self.contact_preprocessing,
-                                                                      nom_projection=False),
-                               self.p)
+        c = tracking.ContactUKF(self.dynamics.create_empty_local_model(use_prior=self.contact_use_prior,
+                                                                       preprocessor=self.contact_preprocessing,
+                                                                       nom_projection=False),
+                                self.p)
         return c
 
     def _compute_action(self, x):

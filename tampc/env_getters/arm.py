@@ -3,7 +3,7 @@ import typing
 import torch
 from arm_pytorch_utilities import load_data, preprocess
 from arm_pytorch_utilities.optim import get_device
-from cottun import contact
+from cottun import tracking
 from tampc.env import arm
 from tampc.env.arm import Levels
 from tampc.util import EnvGetter, UseTsf
@@ -71,16 +71,16 @@ class ArmGetter(EnvGetter):
         return common_wrapper_opts, mpc_opts
 
     @staticmethod
-    def contact_parameters(env: arm.ArmEnv, **kwargs) -> contact.ContactParameters:
-        params = contact.ContactParameters(state_to_pos=env.get_ee_pos_states,
-                                           pos_to_state=env.get_state_ee_pos,
-                                           control_similarity=env.control_similarity,
-                                           state_to_reaction=env.get_ee_reaction,
-                                           max_pos_move_per_action=env.MAX_PUSH_DIST,
-                                           length=0.1,
-                                           weight_multiplier=0.1,
-                                           ignore_below_weight=0.2,
-                                           force_threshold=0.5)
+    def contact_parameters(env: arm.ArmEnv, **kwargs) -> tracking.ContactParameters:
+        params = tracking.ContactParameters(state_to_pos=env.get_ee_pos_states,
+                                            pos_to_state=env.get_state_ee_pos,
+                                            control_similarity=env.control_similarity,
+                                            state_to_reaction=env.get_ee_reaction,
+                                            max_pos_move_per_action=env.MAX_PUSH_DIST,
+                                            length=0.1,
+                                            weight_multiplier=0.1,
+                                            ignore_below_weight=0.2,
+                                            force_threshold=0.5)
         if kwargs is not None:
             for k, v in kwargs.items():
                 setattr(params, k, v)
