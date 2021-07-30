@@ -19,8 +19,10 @@ class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
         self._default_joint_config = default_joint_config
 
         self._sample_pt_min_separation = sample_pt_min_separation
-        self._cached_points = None
         super().__init__(*args, **kwargs)
+
+        self._cached_points = None
+        self._init_sample_surface_points_in_canonical_pose()
 
     def _init_sample_surface_points_in_canonical_pose(self, visualizer=None):
         evenly_sample = True
