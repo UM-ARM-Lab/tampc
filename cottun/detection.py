@@ -62,7 +62,7 @@ class ContactDetector:
         x = tf.Translate(*pose[0])
         r = tf.Rotate(pose[1])
         link_to_current_tf = x.compose(r)
-        return link_to_current_tf.transform_point(last_contact_point)
+        return link_to_current_tf.transform_points(last_contact_point.view(1, -1))[0]
 
     @abc.abstractmethod
     def get_jacobian(self, locations, q=None):
@@ -87,8 +87,9 @@ class ContactDetectorPlanar(ContactDetector):
     def isolate_contact(self, ee_force_torque, pose, q=None, visualizer=None):
         # 2D
         link_frame_pts, pts, normals = self.sample_robot_surface_points(pose, visualizer=visualizer)
-        F_c = torch.tensor(ee_force_torque[:2], dtype=pts.dtype)
-        T_ee = torch.tensor(ee_force_torque[-1], dtype=pts.dtype)
+        dtype = pts.dtype
+        F_c = torch.tensor(ee_force_torque[:2], dtype=dtype)
+        T_ee = torch.tensor(ee_force_torque[-1], dtype=dtype)
 
         # reject points where force is sufficiently away from surface normal
         from_normal = math_utils.angle_between(normals[:, :2], -F_c.view(1, -1))
@@ -98,7 +99,7 @@ class ContactDetectorPlanar(ContactDetector):
         link_frame_pts = link_frame_pts[valid]
 
         # get relative to end effector origin
-        rel_pts = pts - torch.tensor(pose[0])
+        rel_pts = pts - torch.tensor(pose[0], dtype=dtype)
         J = self.get_jacobian(rel_pts, q=q)
         # J_{r_c}^T F_c
         expected_residual = J @ F_c
