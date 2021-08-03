@@ -22,6 +22,7 @@ class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
         super().__init__(*args, **kwargs)
 
         self._cached_points = None
+        self._cached_normals = None
         self._init_sample_surface_points_in_canonical_pose()
 
     def _init_sample_surface_points_in_canonical_pose(self, visualizer=None):
@@ -35,6 +36,7 @@ class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
         for i, joint_value in enumerate(self._default_joint_config):
             p.resetJointState(self.robot_id, i, joint_value)
         self._cached_points = []
+        self._cached_normals = []
 
         # initialize tester
         tester_id = p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=True,
@@ -59,6 +61,8 @@ class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
                     if np.any(d < self._sample_pt_min_separation):
                         continue
                 self._cached_points.append(min_pt_at_z)
+                normal = pts_on_surface[0][ContactInfo.POS_B + 1]
+                self._cached_normals.append([-normal[0], -normal[1], 0])
         else:
             # randomly sample
             sigma = 0.2
@@ -90,8 +94,9 @@ class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
         # convert points back to link frame
         x = tf.Translate(*canonical_pos)
         r = tf.Rotate(self._base_orientation)
-        trans = x.compose(r)
-        self._cached_points = trans.inverse().transform_points(torch.tensor(self._cached_points))
+        trans = x.compose(r).inverse()
+        self._cached_points = trans.transform_points(torch.tensor(self._cached_points))
+        self._cached_normals = trans.transform_normals(torch.tensor(self._cached_normals))
 
         # p.resetBasePositionAndOrientation(self.robot_id, [0, 0, 0], [0, 0, 0, 1])
         # if visualizer is not None:
@@ -111,7 +116,9 @@ class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
         link_to_current_tf = x.compose(r)
         pts = link_to_current_tf.transform_points(self._cached_points)
         if visualizer is not None:
+            normals = link_to_current_tf.transform_normals(self._cached_normals)
             for i, pt in enumerate(pts):
                 visualizer.draw_point(f't{i}', pt, color=(1, 0, 0), height=pt[2])
+                visualizer.draw_2d_line(f'n{i}', pt, normals[i], color=(0.5, 0, 0), size=2., scale=0.1)
 
-        return pts
+        return self._cached_points, pts
