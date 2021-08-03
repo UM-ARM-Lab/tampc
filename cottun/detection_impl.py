@@ -115,10 +115,10 @@ class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
         r = tf.Rotate(pose[1])
         link_to_current_tf = x.compose(r)
         pts = link_to_current_tf.transform_points(self._cached_points)
+        normals = link_to_current_tf.transform_normals(self._cached_normals)
         if visualizer is not None:
-            normals = link_to_current_tf.transform_normals(self._cached_normals)
             for i, pt in enumerate(pts):
                 visualizer.draw_point(f't{i}', pt, color=(1, 0, 0), height=pt[2])
                 visualizer.draw_2d_line(f'n{i}', pt, normals[i], color=(0.5, 0, 0), size=2., scale=0.1)
 
-        return self._cached_points, pts
+        return self._cached_points, pts, normals

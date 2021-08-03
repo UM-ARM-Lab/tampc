@@ -1,12 +1,15 @@
 import torch
+import math
 import abc
+import typing
 from collections import deque
 
 import pytorch_kinematics.transforms as tf
-import typing
+from arm_pytorch_utilities import math_utils
 
 point = torch.tensor
 points = torch.tensor
+normals = torch.tensor
 
 
 class ContactDetector:
@@ -15,16 +18,20 @@ class ContactDetector:
 
     We additionally assume access to force torque sensors at the end effector, which is our residual."""
 
-    def __init__(self, residual_precision, residual_threshold, num_sample_points=100):
+    def __init__(self, residual_precision, residual_threshold, num_sample_points=100,
+                 max_friction_cone_angle=80 * math.pi / 180):
         """
 
         :param residual_precision: sigma_meas^-1 matrix that scales the different residual dimensions based on their
         expected precision
         :param residual_threshold: contact threshold for residual^T sigma_meas^-1 residual to count as being in contact
+        :param max_friction_cone_angle: max angular difference (radian) from surface normal that a contact is possible
+        note that 90 degrees is the weakest assumption that the force is from a push and not a pull
         """
         self.residual_precision = residual_precision
         self.residual_threshold = residual_threshold
         self.num_sample_points = num_sample_points
+        self.max_friction_cone_angle = max_friction_cone_angle
         self.observation_history = deque(maxlen=500)
 
     def observe_residual(self, ee_force_torque, pose=None):
@@ -65,9 +72,10 @@ class ContactDetector:
         Locations are specified wrt the end effector frame."""
 
     @abc.abstractmethod
-    def sample_robot_surface_points(self, pose, visualizer=None) -> typing.Tuple[points, points]:
+    def sample_robot_surface_points(self, pose, visualizer=None) -> typing.Tuple[points, points, normals]:
         """Get points on the surface of the robot that could be possible contact locations
         pose[0] and pose[1] are the position and orientation (quaternion) of the end effector, respectively.
+        Also return the correspnoding surface normals for each of the points.
         """
 
 
@@ -78,14 +86,21 @@ class ContactDetectorPlanar(ContactDetector):
 
     def isolate_contact(self, ee_force_torque, pose, q=None, visualizer=None):
         # 2D
-        link_frame_pts, pts = self.sample_robot_surface_points(pose, visualizer=visualizer)
+        link_frame_pts, pts, normals = self.sample_robot_surface_points(pose, visualizer=visualizer)
+        F_c = torch.tensor(ee_force_torque[:2], dtype=pts.dtype)
+        T_ee = torch.tensor(ee_force_torque[-1], dtype=pts.dtype)
+
+        # reject points where force is sufficiently away from surface normal
+        from_normal = math_utils.angle_between(normals[:, :2], -F_c.view(1, -1))
+        valid = from_normal < self.max_friction_cone_angle
+        valid = valid.view(-1)
+        pts = pts[valid]
+        link_frame_pts = link_frame_pts[valid]
+
         # get relative to end effector origin
         rel_pts = pts - torch.tensor(pose[0])
         J = self.get_jacobian(rel_pts, q=q)
         # J_{r_c}^T F_c
-        F_c = torch.tensor(ee_force_torque[:2], dtype=J.dtype)
-        T_ee = torch.tensor(ee_force_torque[-1], dtype=J.dtype)
-
         expected_residual = J @ F_c
 
         # the below is the case for full residual; however we can shortcut since we only need to compare torque
