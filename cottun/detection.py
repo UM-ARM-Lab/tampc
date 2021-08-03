@@ -1,5 +1,6 @@
 import torch
 import abc
+from collections import deque
 
 import pytorch_kinematics.transforms as tf
 import typing
@@ -24,23 +25,14 @@ class ContactDetector:
         self.residual_precision = residual_precision
         self.residual_threshold = residual_threshold
         self.num_sample_points = num_sample_points
-        self._last_contact_point = None
-        # by default off since this could be expensive
-        self._isolating = False
+        self.observation_history = deque(maxlen=500)
 
-    def enable_isolation(self, enable=True):
-        self._isolating = enable
-
-    def observe_residual(self, ee_force_torque, pose=None, **kwargs):
+    def observe_residual(self, ee_force_torque, pose=None):
         """Returns whether this residual implies we are currently in contact and track its location if given pose"""
         epsilon = ee_force_torque.T @ self.residual_precision @ ee_force_torque
         in_contact = epsilon > self.residual_threshold
 
-        # isolate contact
-        if in_contact and self._isolating and pose is not None:
-            self._last_contact_point = self.isolate_contact(ee_force_torque, pose, **kwargs)
-        else:
-            self._last_contact_point = None
+        self.observation_history.append((in_contact, ee_force_torque, pose))
 
         return in_contact
 
@@ -49,14 +41,21 @@ class ContactDetector:
         """Return contact point in link frame that most likely explains the observed residual"""
         # TODO if single pass evaluation doesn't work (e.g. from points being too sparse), try iteratively resampling
 
-    def get_last_contact_location(self, pose):
+    def get_last_contact_location(self, pose, **kwargs):
         """Get last contact point given the current end effector pose"""
-        if self._last_contact_point is None:
+        if len(self.observation_history) == 0:
             return None
+        in_contact, ee_force_torque, prev_pose = self.observation_history[-1]
+        if not in_contact:
+            return None
+
+        # in link frame
+        last_contact_point = self.isolate_contact(ee_force_torque, prev_pose, **kwargs)
+
         x = tf.Translate(*pose[0])
         r = tf.Rotate(pose[1])
         link_to_current_tf = x.compose(r)
-        return link_to_current_tf.transform_point(self._last_contact_point)
+        return link_to_current_tf.transform_point(last_contact_point)
 
     @abc.abstractmethod
     def get_jacobian(self, locations, q=None):
