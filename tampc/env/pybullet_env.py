@@ -97,7 +97,8 @@ class PybulletEnv(Env):
         # potentially also randomize the starting configuration
 
     def close(self):
-        p.stopStateLogging(self.logging_id)
+        if self.log_video:
+            p.stopStateLogging(self.logging_id)
         p.disconnect(self.physics_client)
 
     def draw_user_text(self, text, location_index=1, left_offset=1.0, xy=None):
