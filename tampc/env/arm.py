@@ -514,11 +514,14 @@ class ArmEnv(PybulletEnv):
         state = np.concatenate((self._observe_ee(), self._observe_reaction_force_torque()[0]))
         return state
 
-    def _observe_ee(self, return_z=True):
+    def _observe_ee(self, return_z=True, return_orientation=False):
         link_info = p.getLinkState(self.armId, self.endEffectorIndex, computeForwardKinematics=True)
         pos = link_info[4]
         if not return_z:
             pos = pos[:2]
+        if return_orientation:
+            rot = link_info[5]
+            pos = pos, rot
         return pos
 
     def _observe_reaction_force_torque(self):
@@ -564,10 +567,14 @@ class ArmEnv(PybulletEnv):
 
     def _observe_raw_reaction_force(self, info, reaction_force, reaction_torque, visualize=True):
         # can estimate change in state only when in contact
-        new_ee_pos = self._observe_ee(return_z=True)
-        if self.contact_detector.observe_residual(np.r_[reaction_force, reaction_torque]):
+        new_ee_pos, new_ee_orientation = self._observe_ee(return_z=True, return_orientation=True)
+        if self.contact_detector.observe_residual(np.r_[reaction_force, reaction_torque],
+                                                  (new_ee_pos, new_ee_orientation)):
             info[InfoKeys.DEE_IN_CONTACT] = np.subtract(new_ee_pos, self.last_ee_pos)
         self.last_ee_pos = new_ee_pos
+
+        # save end effector pose
+        info[InfoKeys.HIGH_FREQ_EE_POSE] = np.r_[new_ee_pos, new_ee_orientation]
 
         # save reaction force
         info[InfoKeys.HIGH_FREQ_REACTION_T] = reaction_torque
@@ -583,7 +590,11 @@ class ArmEnv(PybulletEnv):
             # assume at most single body in contact
             if len(contactInfo):
                 self._mini_step_contact['id'][mini_step] = bodyId
+                pt = contactInfo[0][ContactInfo.POS_A]
+                info[InfoKeys.HIGH_FREQ_CONTACT_POINT] = pt
                 break
+        else:
+            info[InfoKeys.HIGH_FREQ_CONTACT_POINT] = [0, 0, 0]
 
         if step_since_start is self._steps_since_start_to_get_reaction:
             self._mini_step_contact['full'][mini_step] = reaction_force
@@ -931,8 +942,8 @@ class PlanarArmEnv(ArmEnv):
     def __init__(self, goal=(1.0, -0.4), init=(0.5, 0.8), **kwargs):
         super(PlanarArmEnv, self).__init__(goal=goal, init=tuple(init) + (FIXED_Z,), **kwargs)
 
-    def _observe_ee(self, return_z=False):
-        return super(PlanarArmEnv, self)._observe_ee(return_z=return_z)
+    def _observe_ee(self, return_z=False, **kwargs):
+        return super(PlanarArmEnv, self)._observe_ee(return_z=return_z, **kwargs)
 
     def _observe_reaction_force_torque(self):
         r, t = super(PlanarArmEnv, self)._observe_reaction_force_torque()
@@ -1070,11 +1081,13 @@ class FloatingGripperEnv(PlanarArmEnv):
         return ContactDetectorPlanarPybulletGripper(self.robot_id, self.endEffectorOrientation, [0, 0],
                                                     residual_precision, residual_threshold)
 
-    def _observe_ee(self, return_z=False):
+    def _observe_ee(self, return_z=False, return_orientation=False):
         gripperPose = p.getBasePositionAndOrientation(self.gripperId)
         pos = gripperPose[0]
         if not return_z:
             pos = pos[:2]
+        if return_orientation:
+            pos = pos, gripperPose[1]
         return pos
 
     def _open_gripper(self):
