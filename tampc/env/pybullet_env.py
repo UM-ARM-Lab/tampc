@@ -45,6 +45,27 @@ def make_cylinder(radius, height, position, euler_angles, mass=1., lateral_frict
     return obj_id
 
 
+_CONTACT_TESTER_ID = -1
+
+
+def closest_point_on_surface(object_id, query_point):
+    # create query object if it doesn't exist
+    global _CONTACT_TESTER_ID
+    if _CONTACT_TESTER_ID is -1:
+        col_id = p.createCollisionShape(p.GEOM_SPHERE, radius=1e-8)
+        vis_id = p.createVisualShape(p.GEOM_SPHERE, radius=0.003, rgbaColor=[0.1, 0.9, 0.3, 0.6])
+        _CONTACT_TESTER_ID = p.createMultiBody(0, col_id, vis_id, basePosition=query_point)
+
+    p.resetBasePositionAndOrientation(_CONTACT_TESTER_ID, query_point, [0, 0, 0, 1])
+    p.performCollisionDetection()
+    pts_on_surface = p.getClosestPoints(object_id, _CONTACT_TESTER_ID, 100, linkIndexB=-1)
+    pts_on_surface = sorted(pts_on_surface, key=lambda c: c[ContactInfo.DISTANCE])
+
+    # move out the way
+    p.resetBasePositionAndOrientation(_CONTACT_TESTER_ID, [0, 0, 100], [0, 0, 0, 1])
+    return pts_on_surface[0]
+
+
 class PybulletEnv(Env):
     def __init__(self, mode=Mode.DIRECT, log_video=False, default_debug_height=0, camera_dist=1.5):
         self.log_video = log_video

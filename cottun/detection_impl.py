@@ -6,7 +6,7 @@ import torch
 from cottun.detection import ContactDetectorPlanar
 from pytorch_kinematics import transforms as tf
 from tampc import cfg
-from tampc.env.pybullet_env import ContactInfo
+from tampc.env.pybullet_env import ContactInfo, closest_point_on_surface
 
 
 class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
@@ -38,10 +38,6 @@ class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
         self._cached_points = []
         self._cached_normals = []
 
-        # initialize tester
-        tester_id = p.loadURDF(os.path.join(cfg.ROOT_DIR, "tester.urdf"), useFixedBase=True,
-                               basePosition=canonical_pos, globalScaling=0.001)
-
         if evenly_sample:
             r = 0.115
             # sample evenly in terms of angles, but leave out the section in between the fingers
@@ -49,36 +45,25 @@ class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
             angles = np.linspace(leave_out, np.pi * 2 - leave_out, self.num_sample_points)
             for angle in angles:
                 pt = [np.cos(angle) * r, np.sin(angle) * r, z]
-                p.resetBasePositionAndOrientation(tester_id, pt, [0, 0, 0, 1])
-                p.performCollisionDetection()
-                pts_on_surface = p.getClosestPoints(self.robot_id, tester_id, 100, linkIndexB=-1)
-                pts_on_surface = sorted(pts_on_surface, key=lambda c: c[ContactInfo.DISTANCE])
-                min_pt = pts_on_surface[0][ContactInfo.POS_A]
-                min_pt_at_z = [min_pt[0], min_pt[1], z]
+                min_pt = closest_point_on_surface(self.robot_id, pt)
+                min_pt_at_z = [min_pt[ContactInfo.POS_A][0], min_pt[ContactInfo.POS_A][1], z]
                 if len(self._cached_points) > 0:
                     d = np.subtract(self._cached_points, min_pt_at_z)
                     d = np.linalg.norm(d, axis=1)
                     if np.any(d < self._sample_pt_min_separation):
                         continue
                 self._cached_points.append(min_pt_at_z)
-                normal = pts_on_surface[0][ContactInfo.POS_B + 1]
+                normal = min_pt[ContactInfo.POS_B + 1]
                 self._cached_normals.append([-normal[0], -normal[1], 0])
         else:
             # randomly sample
             sigma = 0.2
             while len(self._cached_points) < self.num_sample_points:
                 pt = np.r_[np.random.randn(2) * sigma, z]
-                # sample an object at random points around this object and find closest point to it
-                p.resetBasePositionAndOrientation(tester_id, pt, [0, 0, 0, 1])
-                p.performCollisionDetection()
-                pts_on_surface = p.getClosestPoints(self.robot_id, tester_id, 100, linkIndexB=-1)
-                # don't want penetration since that could lead to closest being along z instead of x-y
-                pts_on_surface = [pt for pt in pts_on_surface if pt[ContactInfo.DISTANCE] > 0]
-                if not len(pts_on_surface):
+                min_pt = closest_point_on_surface(self.robot_id, pt)
+                if min_pt[ContactInfo.DISTANCE] < 0:
                     continue
-                pts_on_surface = sorted(pts_on_surface, key=lambda c: c[ContactInfo.DISTANCE])
-                min_pt = pts_on_surface[0][ContactInfo.POS_A]
-                min_pt_at_z = [min_pt[0], min_pt[1], z]
+                min_pt_at_z = [min_pt[ContactInfo.POS_A][0], min_pt[ContactInfo.POS_A][1], z]
                 if len(self._cached_points) > 0:
                     d = np.subtract(self._cached_points, min_pt_at_z)
                     d = np.linalg.norm(d, axis=1)
@@ -105,7 +90,6 @@ class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
         #         visualizer.draw_point(f'c{t}', min_pt_at_z, color=(t, t, 1 - t))
 
         p.resetBasePositionAndOrientation(self.robot_id, orig_pos, orig_orientation)
-        p.removeBody(tester_id)
 
     def sample_robot_surface_points(self, pose, visualizer=None):
         if self._cached_points is None:
