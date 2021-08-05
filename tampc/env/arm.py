@@ -568,8 +568,8 @@ class ArmEnv(PybulletEnv):
     def _observe_raw_reaction_force(self, info, reaction_force, reaction_torque, visualize=True):
         # can estimate change in state only when in contact
         new_ee_pos, new_ee_orientation = self._observe_ee(return_z=True, return_orientation=True)
-        if self.contact_detector.observe_residual(np.r_[reaction_force, reaction_torque],
-                                                  (new_ee_pos, new_ee_orientation)):
+        pose = (new_ee_pos, new_ee_orientation)
+        if self.contact_detector.observe_residual(np.r_[reaction_force, reaction_torque], pose):
             info[InfoKeys.DEE_IN_CONTACT] = np.subtract(new_ee_pos, self.last_ee_pos)
         self.last_ee_pos = new_ee_pos
 
@@ -1078,8 +1078,10 @@ class FloatingGripperEnv(PlanarArmEnv):
     def create_contact_detector(self, residual_threshold, residual_precision) -> ContactDetector:
         if residual_precision is None:
             residual_precision = np.diag([1, 1, 1, 50, 50, 50])
-        return ContactDetectorPlanarPybulletGripper(self.robot_id, self.endEffectorOrientation, [0, 0],
-                                                    residual_precision, residual_threshold)
+        return ContactDetectorPlanarPybulletGripper("floating_gripper", residual_precision, residual_threshold,
+                                                    robot_id=self.robot_id,
+                                                    base_orientation=self.endEffectorOrientation,
+                                                    default_joint_config=[0, 0])
 
     def _observe_ee(self, return_z=False, return_orientation=False):
         gripperPose = p.getBasePositionAndOrientation(self.gripperId)

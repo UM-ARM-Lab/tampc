@@ -1,4 +1,6 @@
 import os
+import logging
+import pickle
 
 import numpy as np
 import pybullet as p
@@ -8,12 +10,16 @@ from pytorch_kinematics import transforms as tf
 from tampc import cfg
 from tampc.env.pybullet_env import ContactInfo, closest_point_on_surface
 
+logger = logging.getLogger(__name__)
+
 
 class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
-    """Leverage pybullet to sample points on the robot"""
+    """Leverage pybullet to sample points on the robot;
+    if the sampled robot points and normals are cached then pybullet information can be omitted."""
 
-    def __init__(self, robot_id, base_orientation, default_joint_config, *args, sample_pt_min_separation=0.005,
-                 **kwargs):
+    def __init__(self, name, *args, sample_pt_min_separation=0.005, robot_id=None,
+                 base_orientation=None, default_joint_config=None, **kwargs):
+        self.name = name
         self.robot_id = robot_id
         self._base_orientation = base_orientation
         self._default_joint_config = default_joint_config
@@ -26,6 +32,13 @@ class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
         self._init_sample_surface_points_in_canonical_pose()
 
     def _init_sample_surface_points_in_canonical_pose(self, visualizer=None):
+        # load if possible; otherwise would require a running pybullet instance
+        fullname = os.path.join(cfg.DATA_DIR, f'detection_{self.name}_cache.pkl')
+        if os.path.exists(fullname):
+            self._cached_points, self._cached_normals = torch.load(fullname)
+            logger.info("cached robot points and normals loaded from %s", fullname)
+            return
+
         evenly_sample = True
         orig_pos, orig_orientation = p.getBasePositionAndOrientation(self.robot_id)
         z = orig_pos[2]
@@ -82,6 +95,9 @@ class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
         trans = x.compose(r).inverse()
         self._cached_points = trans.transform_points(torch.tensor(self._cached_points))
         self._cached_normals = trans.transform_normals(torch.tensor(self._cached_normals))
+
+        torch.save((self._cached_points, self._cached_normals), fullname)
+        logger.info("robot points and normals saved to %s", fullname)
 
         # p.resetBasePositionAndOrientation(self.robot_id, [0, 0, 0], [0, 0, 0, 1])
         # if visualizer is not None:
