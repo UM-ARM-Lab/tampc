@@ -55,6 +55,7 @@ class ArmGetter(EnvGetter):
             'dynamics_minimum_window': 3,
             'max_trap_weight': 1,
             'nonnominal_dynamics_penalty_tolerance': 0.01,
+            'contact_detector': env.contact_detector,
         }
         mpc_opts = {
             'num_samples': 500,

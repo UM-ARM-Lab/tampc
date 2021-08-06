@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 from cottun.defines import NO_CONTACT_ID, RunKey, CONTACT_RES_FILE, RUN_AMBIGUITY, CONTACT_ID
 from cottun.script_utils import extract_env_and_level_from_string, dict_to_namespace_str, record_metric, \
     plot_cluster_res, load_runs_results, get_file_metainfo, clustering_metrics
+from cottun.detection_impl import ContactDetectorPlanarPybulletGripper
 from sklearn.cluster import DBSCAN
 from sklearn.cluster import KMeans
 from sklearn.cluster import Birch
@@ -51,6 +52,7 @@ def our_method_factory(contact_object_class: Type[tracking.ContactObject] = trac
         contact_params = ArmGetter.contact_parameters(env_class, **kwargs)
         d = get_device()
         dtype = torch.float32
+        contact_detector = ContactDetectorPlanarPybulletGripper("floating_gripper", np.diag([1, 1, 1, 50, 50, 50]), 1.)
 
         def create_contact_object():
             return contact_object_class(None, contact_params)
@@ -65,10 +67,17 @@ def our_method_factory(contact_object_class: Type[tracking.ContactObject] = trac
         for i in range(len(X) - 1):
             this_info = {
                 InfoKeys.OBJ_POSES: {obj_id: obj_pose[i] for obj_id, obj_pose in info[InfoKeys.OBJ_POSES].items()},
-                InfoKeys.DEE_IN_CONTACT: info[InfoKeys.DEE_IN_CONTACT][i]
             }
-            c, cc = contact_set.update(x[i], u[i], env_class.state_difference(x[i + 1], x[i]).reshape(-1), r[i + 1],
-                                       this_info)
+            for key in [InfoKeys.DEE_IN_CONTACT, InfoKeys.HIGH_FREQ_REACTION_F, InfoKeys.HIGH_FREQ_REACTION_T,
+                        InfoKeys.HIGH_FREQ_EE_POSE]:
+                this_info[key] = info[key][i]
+            # isolate to get contact point and feed that in instead of contact configuration
+            ee_force_torque = np.r_[
+                this_info[InfoKeys.HIGH_FREQ_REACTION_F][-1], this_info[InfoKeys.HIGH_FREQ_REACTION_T][-1]]
+            pose = (this_info[InfoKeys.HIGH_FREQ_EE_POSE][-1][:3], this_info[InfoKeys.HIGH_FREQ_EE_POSE][-1][3:])
+            contact_detector.observe_residual(ee_force_torque, pose)
+            c, cc = contact_set.update(x[i], u[i], env_class.state_difference(x[i + 1], x[i]).reshape(-1),
+                                       contact_detector, r[i + 1], this_info)
             if c is None:
                 labels[i] = NO_CONTACT_ID
             else:
@@ -90,7 +99,7 @@ def our_method_factory(contact_object_class: Type[tracking.ContactObject] = trac
         # pass where we think contact will be made
         contact_pts = torch.cat([cc.points for cc in contact_set], dim=0)
         pt_weights = torch.cat([cc.weight.repeat(len(cc.points)) for cc in contact_set], dim=0)
-        return labels, param_str_values, contact_pts.cpu().numpy(), pt_weights.cpu().numpy()
+        return labels, param_str_values, contact_pts.cpu().numpy(), pt_weights.cpu().numpy(), True
 
     return our_method
 
@@ -138,7 +147,7 @@ def our_soft_method_factory(**kwargs):
         contact_pts = contact_set.pts
         # TODO compute weights
         pt_weights = torch.ones(contact_pts.shape[0])
-        return labels, param_str_values, contact_pts.cpu().numpy(), pt_weights.cpu().numpy()
+        return labels, param_str_values, contact_pts.cpu().numpy(), pt_weights.cpu().numpy(), True
 
     return our_method
 
@@ -166,7 +175,7 @@ def sklearn_method_factory(method, **kwargs):
         labels = np.ones(len(valid)) * NO_CONTACT_ID
         res.labels_ = process_labels_with_noise(res.labels_)
         labels[valid] = res.labels_
-        return labels, dict_to_namespace_str(kwargs), xx, np.ones(len(xx))
+        return labels, dict_to_namespace_str(kwargs), xx, np.ones(len(xx)), False
 
     return sklearn_method
 
@@ -184,13 +193,13 @@ def online_sklearn_method_factory(online_class, method, inertia_ratio=0.5, **kwa
         labels = np.ones(len(valid)) * NO_CONTACT_ID
         labels[valid] = process_labels_with_noise(online_method.final_labels())
         moved_pts = online_method.moved_data()
-        return labels, dict_to_namespace_str(kwargs), moved_pts, np.ones(len(moved_pts))
+        return labels, dict_to_namespace_str(kwargs), moved_pts, np.ones(len(moved_pts)), False
 
     return sklearn_method
 
 
 def compute_contact_error(before_moving_pts, moved_pts, env_cls: Type[arm.ArmEnv], level, obj_poses,
-                          visualize=False):
+                          visualize=False, contact_points_instead_of_contact_config=False):
     contact_error = []
     if moved_pts is not None:
         # set the gripper away from other objects so that physics don't deform the fingers
@@ -203,6 +212,12 @@ def compute_contact_error(before_moving_pts, moved_pts, env_cls: Type[arm.ArmEnv
             orientation = poses[-1, 3:]
             p.resetBasePositionAndOrientation(obj_id, pos, orientation)
 
+        test_obj_id = env.robot_id
+        if contact_points_instead_of_contact_config:
+            col_id = p.createCollisionShape(p.GEOM_SPHERE, radius=1e-8)
+            vis_id = p.createVisualShape(p.GEOM_SPHERE, radius=0.003, rgbaColor=[0.1, 0.9, 0.3, 0.6])
+            test_obj_id = p.createMultiBody(0, col_id, vis_id, basePosition=[0, 0, 0.1])
+
         if visualize:
             # visualize all the moved points
             state_c, action_c = env_base.state_action_color_pairs[0]
@@ -213,12 +228,15 @@ def compute_contact_error(before_moving_pts, moved_pts, env_cls: Type[arm.ArmEnv
             env._dd.clear_visualization_after("premovepts", 0)
 
         for point in moved_pts:
-            env.set_state(np.r_[point, 0, 0])
+            if contact_points_instead_of_contact_config:
+                p.resetBasePositionAndOrientation(test_obj_id, [point[0], point[1], 0.1], [0, 0, 0, 1])
+            else:
+                env.set_state(np.r_[point, 0, 0])
             p.performCollisionDetection()
 
             distances = []
             for obj_id in env.movable + env.immovable:
-                c = p.getClosestPoints(obj_id, env.robot_id, 100000)
+                c = p.getClosestPoints(obj_id, test_obj_id, 100000)
 
                 if visualize:
                     # visualize the points on the robot and object
@@ -324,15 +342,18 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
     save_and_close_fig(f, '')
 
     in_contact = contact_id[:-1] != NO_CONTACT_ID
-    for method_name, method in methods.items():
-        # additional info to pass to methods for debugging
-        info = {InfoKeys.OBJ_POSES: obj_poses, InfoKeys.DEE_IN_CONTACT: d[InfoKeys.DEE_IN_CONTACT]}
+    info = {k: d[k] for k in [InfoKeys.DEE_IN_CONTACT, InfoKeys.HIGH_FREQ_REACTION_F, InfoKeys.HIGH_FREQ_REACTION_T,
+                              InfoKeys.HIGH_FREQ_EE_POSE]}
+    # additional info to pass to methods for debugging
+    info[InfoKeys.OBJ_POSES] = obj_poses
 
-        labels, param_values, moved_points, pt_weights = method(X, U, reactions, env_cls, info)
+    for method_name, method in methods.items():
+        labels, param_values, moved_points, pt_weights, returns_contact_points = method(X, U, reactions, env_cls, info)
         run_key = RunKey(level=level, seed=seed, method=method_name, params=param_values)
         m = clustering_metrics(contact_id[:-1][in_contact], labels[in_contact])
         contact_error = compute_contact_error(X[:-1][in_contact], moved_points, env_cls, level,
-                                              obj_poses)
+                                              obj_poses,
+                                              contact_points_instead_of_contact_config=returns_contact_points)
         cme = np.mean(np.abs(contact_error))
         # normalize weights
         pt_weights = pt_weights / np.sum(pt_weights)

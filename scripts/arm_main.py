@@ -750,12 +750,17 @@ def replay_trajectory(traj_data_name, upto_index, *args, save_control=False, res
             # if need_to_compute_commands:
             #     ctrl.command(X[i].cpu().numpy())
             if i > 0:
+                ee_force_torque = np.r_[
+                    d[InfoKeys.HIGH_FREQ_REACTION_F][i - 1][-1], d[InfoKeys.HIGH_FREQ_REACTION_T][i - 1][-1]]
+                pose = (d[InfoKeys.HIGH_FREQ_EE_POSE][i - 1][-1][:3], d[InfoKeys.HIGH_FREQ_EE_POSE][i - 1][-1][3:])
+                env.contact_detector.observe_residual(ee_force_torque, pose)
+
                 # remove contact dynamics to speed up execution
                 for obj in ctrl.contact_set:
                     obj.dynamics = None
                 # will do worse than actual execution because we don't protect against immovable obstacle contact here
                 c, cc = ctrl.contact_set.update(XT[i - 1], UT[i - 1], ctrl.compare_to_goal(XT[i], XT[i - 1])[0],
-                                                XT[i, -2:],
+                                                env.contact_detector, XT[i, -2:],
                                                 info={InfoKeys.DEE_IN_CONTACT: d[InfoKeys.DEE_IN_CONTACT][i - 1]})
                 env.visualize_contact_set(ctrl.contact_set)
 
@@ -955,10 +960,11 @@ if __name__ == "__main__":
             task_names=task_names, success_min_dist=0.04, plot_success_vs_steps=True, plot_min_scatter=False)
 
     else:
+        # OfflineDataCollection.tracking(Levels.SELECT3, seed_offset=42, trials=1, force_gui=True)
         replay_trajectory(
-            'arm/gripper12/42.mat',
+            'arm/gripper10/11.mat',
             300,
-            seed=42, level=Levels.SELECT3, use_tsf=ut,
+            seed=11, level=Levels.SELECT1, use_tsf=ut,
             assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
             visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
             override_tampc_params=tampc_params, override_mpc_params=mpc_params,

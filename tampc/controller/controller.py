@@ -398,7 +398,8 @@ class MPC(ControllerWithModelPrediction):
             self.pred_error_log.append(self.diff_predicted.abs())
             logger.debug("diff normalized error %.2f", self.diff_predicted.norm())
 
-        self.context = [info, self.diff_predicted]
+        self.context = {'diff_predicted': self.diff_predicted}
+        self.context.update(info)
 
         u = self._mpc_command(obs)
         if self.u_max is not None:

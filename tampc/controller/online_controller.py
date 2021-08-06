@@ -9,7 +9,7 @@ from arm_pytorch_utilities import tensor_utils, preprocess
 from tampc.dynamics import hybrid_model
 from tampc.controller import controller, gating_function
 from tampc import cost
-from cottun import tracking
+from cottun import tracking, detection
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +177,7 @@ class TAMPC(OnlineMPC):
                  known_immovable_obstacles=None,
                  reuse_escape_as_demonstration=True,
                  contact_params: tracking.ContactParameters = None,
+                 contact_detector: detection.ContactDetector = None,
                  **kwargs):
         self.known_immovable_obstacles = known_immovable_obstacles
         self.state_to_pos = None
@@ -234,6 +235,7 @@ class TAMPC(OnlineMPC):
         # contact tracking parameters
         # state distance between making contacts for distinguishing separate contacts
         self.p = contact_params
+        self.contact_detector = contact_detector
         self.in_contact_with_known_immovable = False
         self.contact_set = tracking.ContactSetHard(self.p,
                                                    immovable_collision_checker=self._known_immovable_obstacle_collision_check,
@@ -671,7 +673,8 @@ class TAMPC(OnlineMPC):
             px = self.x_history[-2]  # note that x is already latest in list
             # only update if we're making contact with unknown object
             if not self.in_contact_with_known_immovable:
-                self.contact_set.update(px, self.u_history[-1], self.compare_to_goal(x, px)[0], reaction)
+                self.contact_set.update(px, self.u_history[-1], self.compare_to_goal(x, px)[0], self.contact_detector,
+                                        reaction, info=self.context)
 
         # in non-nominal dynamics
         if self._in_non_nominal_dynamics():

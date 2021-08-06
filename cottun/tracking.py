@@ -7,6 +7,7 @@ import abc
 import enum
 import math
 from arm_pytorch_utilities import tensor_utils, optim, serialization, linalg, math_utils, draw
+from cottun.detection import ContactDetector
 from torch.distributions.multivariate_normal import MultivariateNormal
 from cottun.filters.ukf import EnvConditionedUKF
 from tampc.env.env import InfoKeys
@@ -75,8 +76,6 @@ def freespace_consistency(obs_pt, obs_act, pts, acts, approx_robot_radius, requi
 class ContactObject(serialization.Serializable):
     def __init__(self, empty_local_model: typing.Optional[typing.Any], params: ContactParameters,
                  assume_linear_scaling=True):
-        # (x, u, dx) tuples associated with this object for fitting local model
-        self.transitions = []
         # points on this object that are tracked
         self.points = None
         self.actions = None
@@ -127,26 +126,24 @@ class ContactObject(serialization.Serializable):
             return False
         return True
 
-    def add_transition(self, x, u, dx):
-        dtype = torch.float64 if not torch.is_tensor(x) else x.dtype
-        x, u, dx = tensor_utils.ensure_tensor(optim.get_device(), dtype, x, u, dx)
-        # save only positions
-        x = self.state_to_pos(x)
+    def add_transition(self, pt, u, dpt):
+        dtype = torch.float64 if not torch.is_tensor(pt) else pt.dtype
+        pt, u, dpt = tensor_utils.ensure_tensor(optim.get_device(), dtype, pt, u, dpt)
         if self.points is None:
-            self.points = x.clone().view(1, -1)
+            self.points = pt.clone().view(1, -1)
             self.actions = u.clone().view(1, -1)
         else:
-            self.points = torch.cat((self.points, x.view(1, -1)))
+            self.points = torch.cat((self.points, pt.view(1, -1)))
             self.actions = torch.cat((self.actions, u.view(1, -1)))
 
         if self.dynamics is not None:
-            centered_x = x - self.center_point
+            centered_x = pt - self.center_point
 
             if self.assume_linear_scaling:
                 u_scale = u.norm()
                 u = u / u_scale
-                dx = dx / u_scale
-            self.dynamics.update(centered_x, u.view(1, -1), centered_x + dx)
+                dpt = dpt / u_scale
+            self.dynamics.update(centered_x, u.view(1, -1), centered_x + dpt)
 
     def move_all_points(self, dpos):
         self.points += dpos
@@ -169,34 +166,35 @@ class ContactObject(serialization.Serializable):
         accepted = partitioned_dist < self.p.length
         return torch.all(accepted)
 
-    @tensor_utils.ensure_2d_input
-    def predict_dpos(self, pos, u, **kwargs):
-        # pos is relative to the object center
-        u_scale = 1
-        if self.assume_linear_scaling:
-            u_scale = u.norm(dim=1)
-            to_scale = u_scale != 0
-            u[to_scale] /= u_scale[to_scale].view(-1, 1)
-
-        # nx here is next position relative to center point
-        nx = self.dynamics.predict(None, None, self.pos_to_state(pos), u, **kwargs)
-
-        npos = self.state_to_pos(nx)
-        dpos = npos - pos
-        if self.assume_linear_scaling:
-            dpos *= u_scale.view(-1, 1)
-        return dpos
-
-    @tensor_utils.ensure_2d_input
-    def predict(self, x, u, **kwargs):
-        x = self.state_to_pos(x)
-        x = x - self.center_point
-
-        dpos = self.predict_dpos(x, u, **kwargs)
-        npos = x + dpos
-
-        npos = npos + self.center_point
-        return self.pos_to_state(npos), dpos
+    # TODO dynamics is different now that we store contact points instead of contact configurations
+    # @tensor_utils.ensure_2d_input
+    # def predict_dpos(self, pos, u, **kwargs):
+    #     # pos is relative to the object center
+    #     u_scale = 1
+    #     if self.assume_linear_scaling:
+    #         u_scale = u.norm(dim=1)
+    #         to_scale = u_scale != 0
+    #         u[to_scale] /= u_scale[to_scale].view(-1, 1)
+    #
+    #     # nx here is next position relative to center point
+    #     nx = self.dynamics.predict(None, None, self.pos_to_state(pos), u, **kwargs)
+    #
+    #     npos = self.state_to_pos(nx)
+    #     dpos = npos - pos
+    #     if self.assume_linear_scaling:
+    #         dpos *= u_scale.view(-1, 1)
+    #     return dpos
+    #
+    # @tensor_utils.ensure_2d_input
+    # def predict(self, x, u, **kwargs):
+    #     x = self.state_to_pos(x)
+    #     x = x - self.center_point
+    #
+    #     dpos = self.predict_dpos(x, u, **kwargs)
+    #     npos = x + dpos
+    #
+    #     npos = npos + self.center_point
+    #     return self.pos_to_state(npos), dpos
 
     def clusters_to_object(self, x, u, length_parameter, u_similarity, candidates=None, act=None, pts=None,
                            x_is_pos=False):
@@ -270,27 +268,7 @@ class ContactObject(serialization.Serializable):
 
     def dynamics_fn(self, state, action, environment):
         """Predict change in object center position"""
-        return state + self.state_to_pos(environment['dx'])
-
-    def dynamics_fn_cluster_per_sample(self, state, action, environment):
-        # version of dynamics function where instead of assuming all input is clustered/expected movement, we cluster
-        # each input sample
-        robot_position = environment['robot']
-        dx = environment['dx']
-        new_state = state.clone()
-        # first check if we cluster into it
-        # only relative position matters, so instead of translating the contact points, we translate the robot position
-        # assume first element is mean, so we get relative translation
-        dpos_input = state - state[0]
-        # to get the same effect, we translate the robot in the opposite direction and magnitude
-        robot_translated_pos = robot_position - dpos_input
-        in_contact, none = self.clusters_to_object(robot_translated_pos, action, self.length_parameter,
-                                                   self.u_similarity, x_is_pos=True)
-        if none:
-            return new_state
-
-        new_state[in_contact] += dx
-        return new_state
+        return state + self.state_to_pos(environment['dobj'])
 
     def dynamics_no_movement_fn(self, state, action, environment):
         return state
@@ -386,14 +364,13 @@ class ContactUKF(ContactObject):
                                                         self.dynamics_fn if expect_movement else self.dynamics_no_movement_fn,
                                                         environment=environment)
 
-    def add_transition(self, x, u, dx):
-        dtype = torch.float64 if not torch.is_tensor(x) else x.dtype
-        x = tensor_utils.ensure_tensor(self.device, dtype, x)
-        x = self.state_to_pos(x)
-        dx = dx[:x.numel()]
+    def add_transition(self, pt, u, dpt):
+        dtype = torch.float64 if not torch.is_tensor(pt) else pt.dtype
+        pt = tensor_utils.ensure_tensor(self.device, dtype, pt)
+        dpt = dpt[:pt.numel()]
         if self.mu is None:
-            self.mu = x.clone().view(1, -1)
-        return super(ContactUKF, self).add_transition(x, u, dx)
+            self.mu = pt.clone().view(1, -1)
+        return super(ContactUKF, self).add_transition(pt, u, dpt)
 
 
 import matplotlib.pyplot as plt
@@ -638,7 +615,7 @@ class ContactSet(serialization.Serializable):
         self.immovable_collision_checker = immovable_collision_checker
 
     @abc.abstractmethod
-    def update(self, x, u, dx, reaction, info=None):
+    def update(self, x, u, dx, contact_detector: ContactDetector, reaction, info=None):
         """Update contact set with observed transition"""
 
     @abc.abstractmethod
@@ -742,20 +719,20 @@ class ContactSetHard(ContactSet):
         weights = torch.tensor([c.weight for c in self._obj], dtype=d.dtype, device=d.device)
         return (1 / d * weights.view(-1, 1)).sum(dim=0)
 
-    def check_which_object_applies(self, x, u) -> typing.Tuple[typing.List[ContactObject], typing.List[int]]:
+    def check_which_object_applies(self, pt, u) -> typing.Tuple[typing.List[ContactObject], typing.List[int]]:
         res_c = []
         res_i = []
         if not self._obj:
             return res_c, res_i
 
-        d = (self.center_points - self.p.state_to_pos(x)).norm(dim=1).view(-1)
+        d = (self.center_points - pt).norm(dim=1).view(-1)
 
         for i, cc in enumerate(self._obj):
             # first use heuristic to filter out points based on state distance to object centers
             if d[i] > 2 * self.p.length:
                 continue
             # we're using the x before contact because our estimate of the object points haven't moved yet
-            clustered, _ = cc.clusters_to_object(x.view(1, -1), u.view(1, -1), self.p.length,
+            clustered, _ = cc.clusters_to_object(pt.view(1, -1), u.view(1, -1), self.p.length,
                                                  self.p.control_similarity)
             if clustered[0]:
                 res_c.append(cc)
@@ -763,19 +740,26 @@ class ContactSetHard(ContactSet):
 
         return res_c, res_i
 
-    def update(self, x, u, dx, reaction, info=None):
+    def update(self, x, u, dx, contact_detector: ContactDetector, reaction, info=None):
         """Returns updated contact object"""
-        environment = {'robot': self.p.state_to_pos(x), 'control': u, 'dx': dx, 'dobj': dx}
-        # debugging info
+        environment = {'robot': self.p.state_to_pos(x), 'control': u, 'dx': dx, 'dobj': self.p.state_to_pos(dx)}
         if info is not None:
+            # debugging info
             environment['obj'] = info.get(InfoKeys.OBJ_POSES, None)
-            environment['dobj'] = info[InfoKeys.DEE_IN_CONTACT]
-        if reaction.norm() < self.p.force_threshold:
+            # TODO have a better way of selecting 2-D / 3-D
+            environment['dobj'] = info[InfoKeys.DEE_IN_CONTACT][:2]
+
+        cur_pt = contact_detector.get_last_contact_location()
+        if cur_pt is None:
             self.stepped_without_contact(u, environment)
             return None, None
 
+        # where contact point would be without this movement
+        cur_pt = cur_pt[:2]
+        prev_pt = cur_pt - environment['dobj']
+
         # associate each contact to a single object (max likelihood estimate on which object it is)
-        cc, ii = self.check_which_object_applies(x, u)
+        cc, ii = self.check_which_object_applies(prev_pt, u)
         # couldn't find an existing contact
         if not len(cc):
             # if using object-centered model, don't use preprocessor, else use default
@@ -784,7 +768,7 @@ class ContactSetHard(ContactSet):
         else:
             c = cc[0]
 
-        c.add_transition(x, u, environment['dobj'])
+        c.add_transition(prev_pt, u, environment['dobj'])
         # matches more than 1 contact set, combine them
         if len(cc) > 1:
             c = self.merge_objects(ii)
@@ -799,7 +783,7 @@ class ContactSetHard(ContactSet):
                 ci.filter_predict(u, environment, expect_movement=True)
                 # where the contact point center would be taking last point into account
                 if c.measurement_type == MeasurementType.POSITION:
-                    c.filter_update(c.points.mean(dim=0) + self.p.state_to_pos(dx), environment, observed_movement=True)
+                    c.filter_update(c.points.mean(dim=0) + environment['dobj'], environment, observed_movement=True)
                 elif c.measurement_type == MeasurementType.REACTION:
                     c.filter_update(unit_reaction, environment, observed_movement=True)
                 else:
@@ -817,6 +801,8 @@ class ContactSetHard(ContactSet):
         return center_points, points, actions
 
     def dynamics(self, x, u, contact_data):
+        raise RuntimeError(
+            "dynamics need to be refactored after switching to storing contact points instead of configurations")
         center_points, points, actions = contact_data
         assert len(x.shape) == 2 and len(x.shape) == len(u.shape)
         total_num = x.shape[0]
@@ -912,7 +898,7 @@ class ContactSetSoft(ContactSet):
         # sampled_pts = self.pts.repeat(self.n_particles, 1, 1)
         self.sampled_pts[adjacent] += self.p.state_to_pos(dx)
 
-    def update(self, x, u, dx, reaction, info=None):
+    def update(self, x, u, dx, contact_detector: ContactDetector, reaction, info=None):
         environment = {'robot': self.p.state_to_pos(x), 'control': u, 'dx': dx}
         # debugging info
         if info is not None:
