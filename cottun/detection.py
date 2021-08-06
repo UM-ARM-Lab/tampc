@@ -48,6 +48,13 @@ class ContactDetector:
         """Return contact point in link frame that most likely explains the observed residual"""
         # TODO if single pass evaluation doesn't work (e.g. from points being too sparse), try iteratively resampling
 
+    def in_contact(self):
+        """Whether our last observed residual indicates that we are currently in contact"""
+        if len(self.observation_history) == 0:
+            return False
+        in_contact, ee_force_torque, prev_pose = self.observation_history[-1]
+        return in_contact
+
     def get_last_contact_location(self, pose=None, **kwargs):
         """Get last contact point given the current end effector pose"""
         if len(self.observation_history) == 0:

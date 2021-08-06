@@ -1427,6 +1427,9 @@ class ObjectRetrievalEnv(FloatingGripperEnv):
         self.target_object_id = p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbCrackerBox', "model.urdf"),
                                            [self.goal[0], self.goal[1], z],
                                            p.getQuaternionFromEuler([0, 0, self.goal[2]]), flags=flags)
+        p.changeDynamics(self.target_object_id, -1, mass=10)
+        p.changeDynamics(self.planeId, -1, lateralFriction=0.6, spinningFriction=0.8)
+
         self.movable.append(self.target_object_id)
         if self.level == Levels.NO_CLUTTER:
             pass

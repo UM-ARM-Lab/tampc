@@ -113,11 +113,11 @@ class ArmGetter(EnvGetter):
 class RetrievalGetter(ArmGetter):
     @staticmethod
     def dynamics_prefix() -> str:
-        return "retrieval"
+        return "arm"
 
     @classmethod
     def env(cls, level=Levels.NO_CLUTTER, log_video=True, **kwargs):
         level = Levels(level)
         env = arm.ObjectRetrievalEnv(environment_level=level, log_video=log_video, **kwargs)
-        cls.env_dir = '{}/retrieval'.format(cls.dynamics_prefix())
+        cls.env_dir = '{}/gripper'.format(cls.dynamics_prefix())
         return env
