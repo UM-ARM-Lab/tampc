@@ -24,7 +24,7 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 logger = logging.getLogger(__name__)
 
 
-def evaluate_on_file(datafile, show_in_place=False):
+def evaluate_on_file(datafile, show_in_place=False, log_video=False):
     try:
         env_cls, level, seed = get_file_metainfo(datafile)
     except (RuntimeError, RuntimeWarning) as e:
@@ -34,8 +34,6 @@ def evaluate_on_file(datafile, show_in_place=False):
     # load data
     d = scipy.io.loadmat(datafile)
     # use environment specific state difference function since not all states are R^n
-    dX = env_cls.state_difference(d['X'][1:], d['X'][:-1])
-    dX = dX
     X = d['X']
     U = d['U']
 
@@ -73,7 +71,7 @@ def evaluate_on_file(datafile, show_in_place=False):
             # not saved for the time step, so adjust mask usage
             obj_poses[obj_id] = d[k]
 
-    env = env_cls(environment_level=level, mode=p.GUI if show_in_place else p.DIRECT)
+    env = env_cls(environment_level=level, mode=p.GUI if show_in_place else p.DIRECT, log_video=log_video)
     # get same object ids as stored
     env.reset()
 
@@ -91,6 +89,7 @@ def evaluate_on_file(datafile, show_in_place=False):
             orientation = poses[i, 3:]
             p.resetBasePositionAndOrientation(obj_id, pos, orientation)
         p.performCollisionDetection()
+        # env.draw_user_text("{}".format(i), xy=(0.5, 0.7, -1))
 
         dist_from_actual_contact = []
         r = d['r'][i]
@@ -113,6 +112,7 @@ def evaluate_on_file(datafile, show_in_place=False):
                 dist_from_actual_contact.append(np.linalg.norm(pt.cpu().numpy() - c[j]))
         assert in_contact
         all_dists.append(dist_from_actual_contact)
+        env.contact_detector.observation_history.clear()
 
     env.close()
     return all_dists
@@ -121,13 +121,15 @@ def evaluate_on_file(datafile, show_in_place=False):
 if __name__ == "__main__":
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
 
-    full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper12/42.mat')
-    # dists = evaluate_on_file(full_filename)
+    full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper10/11.mat')
+    # dists = evaluate_on_file(full_filename, show_in_place=True, log_video=True)
     # per_step_dists = [np.mean(d) for d in dists]
     #
     # logger.info(
     #     f"{full_filename}\navg: {np.mean(per_step_dists)}\nmedian: {np.median(per_step_dists)}\n"
     #     f"max: {np.max(per_step_dists)} ({np.argmax(per_step_dists)})")
+    # exit(0)
+    # res = {}
     for res_dir in dirs:
         full_dir = os.path.join(cfg.DATA_DIR, res_dir)
 

@@ -19,7 +19,7 @@ class ContactDetector:
     We additionally assume access to force torque sensors at the end effector, which is our residual."""
 
     def __init__(self, residual_precision, residual_threshold, num_sample_points=100,
-                 max_friction_cone_angle=80 * math.pi / 180):
+                 max_friction_cone_angle=60 * math.pi / 180, window_size=5, dtype=torch.float):
         """
 
         :param residual_precision: sigma_meas^-1 matrix that scales the different residual dimensions based on their
@@ -33,6 +33,8 @@ class ContactDetector:
         self.num_sample_points = num_sample_points
         self.max_friction_cone_angle = max_friction_cone_angle
         self.observation_history = deque(maxlen=500)
+        self._window_size = window_size
+        self.dtype = dtype
 
     def observe_residual(self, ee_force_torque, pose=None):
         """Returns whether this residual implies we are currently in contact and track its location if given pose"""
@@ -65,8 +67,27 @@ class ContactDetector:
         if pose is None:
             pose = prev_pose
 
+        # use history of points to handle jitter
+        ee_ft = [ee_force_torque]
+        pp = [prev_pose]
+        for i in range(2, self._window_size):
+            if i > len(self.observation_history):
+                break
+            in_contact, ee_force_torque, prev_pose = self.observation_history[-i]
+            # look back until we leave contact
+            if not in_contact:
+                break
+            ee_ft.append(ee_force_torque)
+            pp.append(prev_pose)
+        ee_ft = torch.tensor(ee_ft, dtype=self.dtype)
+        # assume we don't move that much in a short amount of time and we can just use the latest pose
+        pp = tuple(torch.tensor(p, dtype=self.dtype) for p in pp[0])
+        # pos = torch.tensor([p[0] for p in pp], dtype=self.dtype)
+        # orientation = torch.tensor([p[1] for p in pp], dtype=self.dtype)
+        # pp = (pos, orientation)
+
         # in link frame
-        last_contact_point = self.isolate_contact(ee_force_torque, prev_pose, **kwargs)
+        last_contact_point = self.isolate_contact(ee_ft, pp, **kwargs)
 
         x = tf.Translate(*pose[0])
         r = tf.Rotate(pose[1])
@@ -96,22 +117,22 @@ class ContactDetectorPlanar(ContactDetector):
     def isolate_contact(self, ee_force_torque, pose, q=None, visualizer=None):
         # 2D
         link_frame_pts, pts, normals = self.sample_robot_surface_points(pose, visualizer=visualizer)
-        dtype = pts.dtype
-        F_c = torch.tensor(ee_force_torque[:2], dtype=dtype)
-        T_ee = torch.tensor(ee_force_torque[-1], dtype=dtype)
+        F_c = ee_force_torque[:, :2]
+        T_ee = ee_force_torque[:, -1]
 
         # reject points where force is sufficiently away from surface normal
-        from_normal = math_utils.angle_between(normals[:, :2], -F_c.view(1, -1))
+        from_normal = math_utils.angle_between(normals[:, :2], -F_c)
         valid = from_normal < self.max_friction_cone_angle
-        valid = valid.view(-1)
+        # validity has to hold across all experienced forces
+        valid = valid.all(dim=1)
         pts = pts[valid]
         link_frame_pts = link_frame_pts[valid]
 
         # get relative to end effector origin
-        rel_pts = pts - torch.tensor(pose[0], dtype=dtype)
+        rel_pts = pts - pose[0]
         J = self.get_jacobian(rel_pts, q=q)
         # J_{r_c}^T F_c
-        expected_residual = J @ F_c
+        expected_residual = J @ F_c.transpose(-1, -2)
 
         # the below is the case for full residual; however we can shortcut since we only need to compare torque
         # error = ee_force_torque - expected_residual
@@ -119,7 +140,7 @@ class ContactDetectorPlanar(ContactDetector):
 
         error = expected_residual[:, -1] - T_ee
         # don't have to worry about normalization since it's just the torque dimension
-        combined_error = error.abs()
+        combined_error = error.abs().sum(dim=1)
 
         min_err_i = torch.argmin(combined_error)
 
