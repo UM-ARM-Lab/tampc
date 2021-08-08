@@ -120,11 +120,19 @@ class ContactDetectorPlanar(ContactDetector):
         F_c = ee_force_torque[:, :2]
         T_ee = ee_force_torque[:, -1]
 
-        # reject points where force is sufficiently away from surface normal
-        from_normal = math_utils.angle_between(normals[:, :2], -F_c)
-        valid = from_normal < self.max_friction_cone_angle
-        # validity has to hold across all experienced forces
-        valid = valid.all(dim=1)
+        while True:
+            # reject points where force is sufficiently away from surface normal
+            from_normal = math_utils.angle_between(normals[:, :2], -F_c)
+            valid = from_normal < self.max_friction_cone_angle
+            # validity has to hold across all experienced forces
+            valid = valid.all(dim=1)
+            # remove a single element of the constraint if we don't have any satisfying them
+            if valid.any():
+                break
+            else:
+                F_c = F_c[:-1]
+                T_ee = T_ee[:-1]
+
         pts = pts[valid]
         link_frame_pts = link_frame_pts[valid]
 
