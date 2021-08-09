@@ -1,7 +1,7 @@
+import abc
 from typing import Type
 
 import torch
-import time
 import pickle
 import logging
 import os
@@ -13,6 +13,7 @@ import pybullet as p
 import re
 
 import matplotlib.pyplot as plt
+import typing
 from cottun.defines import NO_CONTACT_ID, RunKey, CONTACT_RES_FILE, RUN_AMBIGUITY, CONTACT_ID
 from cottun.script_utils import extract_env_and_level_from_string, dict_to_namespace_str, record_metric, \
     plot_cluster_res, load_runs_results, get_file_metainfo, clustering_metrics
@@ -46,17 +47,25 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 logger = logging.getLogger(__name__)
 
 
-def our_method_factory(contact_object_class: Type[tracking.ContactObject] = tracking.ContactUKF, **kwargs):
-    def our_method(X, U, reactions, env_class, info, contact_detector, contact_pts):
+class OurMethodFactory:
+    def __init__(self, **kwargs):
+        self.env_kwargs = kwargs
+
+    @abc.abstractmethod
+    def create_contact_set(self, contact_params) -> tracking.ContactSet:
+        """Create a contact set"""
+
+    @abc.abstractmethod
+    def get_contact_point_results(self, contact_set) -> typing.Tuple[torch.tensor, torch.tensor]:
+        """After running an experiment, retrieve the contact points and weights from a contact set"""
+
+    def our_method(self, X, U, reactions, env_class, info, contact_detector, contact_pts):
         # TODO select getter based on env class
-        contact_params = ArmGetter.contact_parameters(env_class, **kwargs)
+        contact_params = ArmGetter.contact_parameters(env_class, **self.env_kwargs)
         d = get_device()
         dtype = torch.float32
 
-        def create_contact_object():
-            return contact_object_class(None, contact_params)
-
-        contact_set = tracking.ContactSetHard(contact_params, contact_object_factory=create_contact_object)
+        contact_set = self.create_contact_set(contact_params)
         labels = np.zeros(len(X) - 1)
         x = torch.from_numpy(X).to(device=d, dtype=dtype)
         u = torch.from_numpy(U).to(device=d, dtype=dtype)
@@ -78,6 +87,7 @@ def our_method_factory(contact_object_class: Type[tracking.ContactObject] = trac
             contact_detector.observe_residual(ee_force_torque, pose)
             c, cc = contact_set.update(x[i], u[i], env_class.state_difference(x[i + 1], x[i]).reshape(-1),
                                        contact_detector, r[i + 1], this_info)
+
             if c is None:
                 labels[i] = NO_CONTACT_ID
             else:
@@ -97,67 +107,37 @@ def our_method_factory(contact_object_class: Type[tracking.ContactObject] = trac
         param_values = [param for param in param_values if '<' not in param]
         param_str_values = f"{start}({','.join(param_values)}"
         # pass where we think contact will be made
+        contact_pts, pt_weights = self.get_contact_point_results(contact_set)
+        return labels, param_str_values, contact_pts.cpu().numpy(), pt_weights.cpu().numpy()
+
+
+class OurMethodHard(OurMethodFactory):
+    def __init__(self, contact_object_class: Type[tracking.ContactObject] = tracking.ContactUKF, **kwargs):
+        self.contact_object_class = contact_object_class
+        super(OurMethodHard, self).__init__(**kwargs)
+
+    def create_contact_set(self, contact_params) -> tracking.ContactSet:
+        def create_contact_object():
+            return self.contact_object_class(None, contact_params)
+
+        return tracking.ContactSetHard(contact_params, contact_object_factory=create_contact_object)
+
+    def get_contact_point_results(self, contact_set: tracking.ContactSetHard) -> typing.Tuple[
+        torch.tensor, torch.tensor]:
         contact_pts = torch.cat([cc.points for cc in contact_set], dim=0)
         pt_weights = torch.cat([cc.weight.repeat(len(cc.points)) for cc in contact_set], dim=0)
-        return labels, param_str_values, contact_pts.cpu().numpy(), pt_weights.cpu().numpy()
-
-    return our_method
+        return contact_pts, pt_weights
 
 
-def our_soft_method_factory(**kwargs):
-    def our_method(X, U, reactions, env_class, info, contact_detector, contact_pts):
-        # TODO select getter based on env class
-        contact_params = ArmGetter.contact_parameters(env_class, **kwargs)
-        d = get_device()
-        dtype = torch.float32
+class OurMethodSoft(OurMethodFactory):
+    def create_contact_set(self, contact_params) -> tracking.ContactSet:
+        return tracking.ContactSetSoft(contact_params)
 
-        contact_set = tracking.ContactSetSoft(contact_params)
-        labels = np.zeros(len(X) - 1)
-        x = torch.from_numpy(X).to(device=d, dtype=dtype)
-        u = torch.from_numpy(U).to(device=d, dtype=dtype)
-        r = torch.from_numpy(reactions).to(device=d, dtype=dtype)
-        info[InfoKeys.DEE_IN_CONTACT] = torch.from_numpy(info[InfoKeys.DEE_IN_CONTACT]).to(device=d, dtype=dtype)
-        obj_id = 0
-        for i in range(len(X) - 1):
-            this_info = {
-                InfoKeys.OBJ_POSES: {obj_id: obj_pose[i] for obj_id, obj_pose in info[InfoKeys.OBJ_POSES].items()},
-            }
-            for key in [InfoKeys.DEE_IN_CONTACT, InfoKeys.HIGH_FREQ_REACTION_F, InfoKeys.HIGH_FREQ_REACTION_T,
-                        InfoKeys.HIGH_FREQ_EE_POSE]:
-                this_info[key] = info[key][i]
-            # isolate to get contact point and feed that in instead of contact configuration
-            ee_force_torque = np.r_[
-                this_info[InfoKeys.HIGH_FREQ_REACTION_F][-1], this_info[InfoKeys.HIGH_FREQ_REACTION_T][-1]]
-            pose = (this_info[InfoKeys.HIGH_FREQ_EE_POSE][-1][:3], this_info[InfoKeys.HIGH_FREQ_EE_POSE][-1][3:])
-            contact_detector.clear()
-            contact_detector.observe_residual(ee_force_torque, pose)
-            c, cc = contact_set.update(x[i], u[i], env_class.state_difference(x[i + 1], x[i]).reshape(-1),
-                                       contact_detector, r[i + 1], this_info)
-            if c is None:
-                labels[i] = NO_CONTACT_ID
-            else:
-                this_obj_id = getattr(c, 'id', None)
-                if this_obj_id is None:
-                    setattr(c, 'id', obj_id)
-                    obj_id += 1
-                labels[i] = c.id
-                # merged, have to set all labels previously assigned to new obj
-                if len(cc) > 1:
-                    for other_c in cc:
-                        labels[labels == other_c.id] = c.id
-        param_values = str(contact_params).split('(')
-        start = param_values[0]
-        param_values = param_values[1].split(',')
-        # remove the functional values
-        param_values = [param for param in param_values if '<' not in param]
-        param_str_values = f"{start}({','.join(param_values)}"
-        # pass where we think contact will be made
-        contact_pts = contact_set.pts
-        # TODO compute weights
-        pt_weights = torch.ones(contact_pts.shape[0])
-        return labels, param_str_values, contact_pts.cpu().numpy(), pt_weights.cpu().numpy()
-
-    return our_method
+    def get_contact_point_results(self, contact_set: tracking.ContactSetSoft) -> typing.Tuple[
+        torch.tensor, torch.tensor]:
+        contact_pts = torch.cat([cc.points for cc in contact_set], dim=0)
+        pt_weights = torch.cat([cc.weight.repeat(len(cc.points)) for cc in contact_set], dim=0)
+        return contact_pts, pt_weights
 
 
 def process_labels_with_noise(labels):
@@ -423,18 +403,18 @@ if __name__ == "__main__":
 
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
-        # 'ours soft': our_soft_method_factory(length=0.1),
-        # 'ours UKF': our_method_factory(length=0.1),
-        # 'ours UKF convexity merge constraint': our_method_factory(length=0.1),
-        # 'ours PF': our_method_factory(contact_object_class=contact.ContactPF, length=0.1),
+        'ours soft': OurMethodSoft(length=0.1),
+        # 'ours UKF': OurMethodHard(length=0.1),
+        # 'ours UKF convexity merge constraint': OurMethodHard(length=0.1),
+        # 'ours PF': OurMethodHard(contact_object_class=tracking.ContactPF, length=0.1),
         # 'kmeans': sklearn_method_factory(KMeansWithAutoK),
         # 'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
         # 'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
         # 'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
         #                                                random_state=0),
-        'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
-        'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
-                                                      threshold=1.5)
+        # 'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
+        # 'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
+        #                                               threshold=1.5)
     }
 
     # full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper12/17.mat')
