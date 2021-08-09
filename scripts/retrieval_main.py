@@ -213,6 +213,22 @@ def create_contact_object():
     return tracking.ContactUKF(None, contact_params)
 
 
+def object_robot_penetration_score(object_id, robot_id, object_transform):
+    """Compute the penetration between object and robot for a given transform of the object"""
+    o_pos, o_orientation = p.getBasePositionAndOrientation(object_id)
+    yaw = torch.atan2(object_transform[1, 0], object_transform[0, 0])
+    t = np.r_[object_transform[:2, 2], o_pos[2]]
+    # temporarily move object with transform
+    p.resetBasePositionAndOrientation(object_id, t, p.getQuaternionFromEuler([0, 0, yaw]))
+
+    p.performCollisionDetection()
+    closest = p.getClosestPoints(object_id, robot_id, 100)
+    d = min(c[ContactInfo.DISTANCE] for c in closest)
+
+    p.resetBasePositionAndOrientation(object_id, o_pos, o_orientation)
+    return -d
+
+
 ds, pm = RetrievalGetter.prior(env, use_tsf=UseTsf.NO_TRANSFORM)
 contact_set = tracking.ContactSetHard(contact_params, contact_object_factory=create_contact_object)
 u_min, u_max = env.get_control_bounds()
@@ -232,6 +248,7 @@ mph[:, -1] = 1
 ctrl.set_goal(env.goal[:2])
 info = None
 simTime = 0
+best_tsf_guess = None
 while True:
     simTime += 1
     env.draw_user_text("{}".format(simTime), xy=(0.5, 0.7, -1))
@@ -240,12 +257,26 @@ while True:
     env.visualize_contact_set(contact_set)
     if env.contact_detector.in_contact():
         for c in contact_set:
-            T, distances, i = icp.icp_3(c.points, model_points[:, :2])
+            T, distances, i = icp.icp_3(c.points, model_points[:, :2], given_init_pose=best_tsf_guess, batch=30)
+            penetration = [object_robot_penetration_score(env.target_object_id, env.robot_id, T[b].inverse()) for b in
+                           range(T.shape[0])]
+            score = np.abs(penetration)
+            best_tsf_index = np.argmin(score)
+            best_tsf_guess = T[best_tsf_index]
+
             for b in range(T.shape[0]):
                 transformed_model_points = mph @ T[b].inverse().transpose(-1, -2)
                 for i, pt in enumerate(transformed_model_points):
-                    pt = [pt[0], pt[1], z]
-                    env._dd.draw_point(f"tmpt{b}-{i}", pt, color=(0, 1, b / T.shape[0]), length=0.003)
+                    if i % 2 == 0:
+                        pt = [pt[0], pt[1], z]
+                        env._dd.draw_point(f"tmpt{b}-{i}", pt, color=(0, 1, b / T.shape[0]), length=0.003)
+
+            transformed_model_points = mph @ T[best_tsf_index].inverse().transpose(-1, -2)
+            for i, pt in enumerate(transformed_model_points):
+                if i % 2 == 0:
+                    continue
+                pt = [pt[0], pt[1], z]
+                env._dd.draw_point(f"tmptbest-{i}", pt, color=(0, 0, 1), length=0.008)
 
     if torch.is_tensor(action):
         action = action.cpu()

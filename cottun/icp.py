@@ -307,13 +307,13 @@ def icp_2(A, B, init_pose=None, max_iterations=20, tolerance=0.001):
     return T, distances, i
 
 
-def icp_3(A, B, init_pose=None, max_iterations=20, tolerance=0.001, batch=5):
+def icp_3(A, B, given_init_pose=None, max_iterations=20, tolerance=0.001, batch=5):
     '''
     The Iterative Closest Point method: finds best-fit transform that maps points A on to points B
     Input:
         A: Mxm numpy array of source mD points
         B: Nxm numpy array of destination mD point
-        init_pose: (m+1)x(m+1) homogeneous transformation
+        given_init_pose: (m+1)x(m+1) homogeneous transformation
         max_iterations: exit algorithm after max_iterations
         tolerance: convergence criteria
     Output:
@@ -333,23 +333,23 @@ def icp_3(A, B, init_pose=None, max_iterations=20, tolerance=0.001, batch=5):
     src = src.repeat(batch, 1, 1)
     dst = dst.repeat(batch, 1, 1)
 
-    if batch > 1 and init_pose is None:
-        # apply some random initial poses
-        if m > 2:
-            import pytorch_kinematics.transforms as tf
-            R = tf.random_rotations(batch, dtype=A.dtype, device=A.device)
-        else:
-            theta = torch.rand(batch, dtype=A.dtype, device=A.device) * math.pi * 2
-            Rtop = torch.cat([torch.cos(theta).view(-1, 1), -torch.sin(theta).view(-1, 1)], dim=1)
-            Rbot = torch.cat([torch.sin(theta).view(-1, 1), torch.cos(theta).view(-1, 1)], dim=1)
-            R = torch.cat((Rtop.unsqueeze(-1), Rbot.unsqueeze(-1)), dim=-1)
+    # apply some random initial poses
+    if m > 2:
+        import pytorch_kinematics.transforms as tf
+        R = tf.random_rotations(batch, dtype=A.dtype, device=A.device)
+    else:
+        theta = torch.rand(batch, dtype=A.dtype, device=A.device) * math.pi * 2
+        Rtop = torch.cat([torch.cos(theta).view(-1, 1), -torch.sin(theta).view(-1, 1)], dim=1)
+        Rbot = torch.cat([torch.sin(theta).view(-1, 1), torch.cos(theta).view(-1, 1)], dim=1)
+        R = torch.cat((Rtop.unsqueeze(-1), Rbot.unsqueeze(-1)), dim=-1)
 
-        init_pose = torch.eye(m + 1, dtype=A.dtype, device=A.device).repeat(batch, 1, 1)
-        init_pose[:, :m, :m] = R[:, :m, :m]
+    init_pose = torch.eye(m + 1, dtype=A.dtype, device=A.device).repeat(batch, 1, 1)
+    init_pose[:, :m, :m] = R[:, :m, :m]
+    if given_init_pose is not None:
+        init_pose[0] = given_init_pose
 
     # apply the initial pose estimation
-    if init_pose is not None:
-        src = init_pose @ src
+    src = init_pose @ src
 
     prev_error = 0
 
