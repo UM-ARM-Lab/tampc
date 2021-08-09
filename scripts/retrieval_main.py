@@ -223,8 +223,11 @@ ctrl = RetrievalController(env.contact_detector, env.nu, pm.dyn_net, cost_to_go,
 obs = env.reset()
 z = env._observe_ee(return_z=True)[-1]
 
+rand.seed(0)
 model_points = sample_model_points(env.target_object_id, num_points=50, force_z=z, seed=0, name="cheezit")
 mp = model_points[:, :2].cpu().numpy()
+mph = model_points.clone().to(dtype=torch.float64)
+mph[:, -1] = 1
 
 ctrl.set_goal(env.goal[:2])
 info = None
@@ -237,11 +240,8 @@ while True:
     env.visualize_contact_set(contact_set)
     if env.contact_detector.in_contact():
         for c in contact_set:
-            T, distances, i = icp.icp_2(c.points.cpu().numpy(), mp)
-            # transformed_contact_points = np.dot(np.c_[contact_points, np.ones((contact_points.shape[0], 1))], T.T)
-            # T, distances, i = icp.icp_2(model_points[:, :2], contact_points)
-            transformed_model_points = np.dot(np.c_[mp, np.ones((model_points.shape[0], 1))],
-                                              np.linalg.inv(T).T)
+            T, distances, i = icp.icp_3(c.points, model_points[:, :2])
+            transformed_model_points = mph @ T[0].inverse().transpose(-1, -2)
             for i, pt in enumerate(transformed_model_points):
                 pt = [pt[0], pt[1], z]
                 env._dd.draw_point(f"tmpt{i}", pt, color=(0, 1, 0), length=0.003)

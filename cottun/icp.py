@@ -198,8 +198,8 @@ def nearest_neighbor_torch(src, dst):
     '''
     Find the nearest (Euclidean) neighbor in dst for each point in src
     Input:
-        src: Mxm array of points
-        dst: Nxm array of points
+        src: bxMxm array of points
+        dst: bxNxm array of points
     Output:
         distances: Euclidean distances of the nearest neighbor
         indices: dst indices of the nearest neighbor
@@ -214,22 +214,23 @@ def best_fit_transform_torch(A, B):
     '''
     Calculates the least-squares best-fit transform that maps corresponding points A to B in m spatial dimensions
     Input:
-      A: Nxm numpy array of corresponding points
-      B: Nxm numpy array of corresponding points
+      A: bxNxm numpy array of corresponding points
+      B: bxNxm numpy array of corresponding points
     Returns:
-      T: (m+1)x(m+1) homogeneous transformation matrix that maps A on to B
-      R: mxm rotation matrix
-      t: mx1 translation vector
+      T: bx(m+1)x(m+1) homogeneous transformation matrix that maps A on to B
+      R: bxmxm rotation matrix
+      t: bxmx1 translation vector
     '''
 
     assert A.shape == B.shape
 
     # get number of dimensions
-    m = A.shape[1]
+    m = A.shape[-1]
+    b = A.shape[0]
 
     # translate points to their centroids
-    centroid_A = torch.mean(A, dim=0)
-    centroid_B = torch.mean(B, dim=0)
+    centroid_A = torch.mean(A, dim=-2, keepdim=True)
+    centroid_B = torch.mean(B, dim=-2, keepdim=True)
     AA = A - centroid_A
     BB = B - centroid_B
 
@@ -239,17 +240,17 @@ def best_fit_transform_torch(A, B):
     R = Vt.transpose(-1, -2) @ U.transpose(-1, -2)
 
     # special reflection case
-    if torch.det(R) < 0:
-        Vt[m - 1, :] *= -1
-        R = Vt.transpose(-1, -2) @ U.transpose(-1, -2)
+    reflected = torch.det(R) < 0
+    Vt[reflected, m - 1, :] *= -1
+    R[reflected] = Vt[reflected].transpose(-1, -2) @ U[reflected].transpose(-1, -2)
 
     # translation
-    t = centroid_B - (R @ centroid_A)
+    t = centroid_B.transpose(-1, -2) - (R @ centroid_A.transpose(-1, -2))
 
     # homogeneous transformation
-    T = torch.eye(m + 1, dtype=A.dtype)
-    T[:m, :m] = R
-    T[:m, m] = t
+    T = torch.eye(m + 1, dtype=A.dtype).repeat(b, 1, 1)
+    T[:, :m, :m] = R
+    T[:, :m, m] = t.view(b, -1)
 
     return T, R, t
 
@@ -306,7 +307,7 @@ def icp_2(A, B, init_pose=None, max_iterations=20, tolerance=0.001):
     return T, distances, i
 
 
-def icp_3(A, B, init_pose=None, max_iterations=20, tolerance=0.001):
+def icp_3(A, B, init_pose=None, max_iterations=20, tolerance=0.001, batch=5):
     '''
     The Iterative Closest Point method: finds best-fit transform that maps points A on to points B
     Input:
@@ -326,26 +327,31 @@ def icp_3(A, B, init_pose=None, max_iterations=20, tolerance=0.001):
 
     # make points homogeneous, copy them to maintain the originals
     src = torch.ones((m + 1, A.shape[0]), dtype=A.dtype)
-    dst = torch.ones((m + 1, B.shape[0]), dtype=A.dtype)
+    dst = torch.ones((B.shape[0], m + 1), dtype=A.dtype)
     src[:m, :] = torch.clone(A.transpose(0, 1))
-    dst[:m, :] = torch.clone(B.transpose(0, 1))
+    dst[:, :m] = torch.clone(B)
+    src = src.repeat(batch, 1, 1)
+    dst = dst.repeat(batch, 1, 1)
 
     # apply the initial pose estimation
     if init_pose is not None:
         src = init_pose @ src
-        # src = np.dot(init_pose, src)
 
     prev_error = 0
 
     for i in range(max_iterations):
         # find the nearest neighbors between the current source and destination points
-        distances, indices = nearest_neighbor_torch(src[:m, :].transpose(-2, -1), dst[:m, :].transpose(-2, -1))
+        distances, indices = nearest_neighbor_torch(src[:, :m, :].transpose(-2, -1), dst[:, :, :m])
         # currently only have a single batch so flatten
-        distances = distances.view(-1)
-        indices = indices.view(-1)
+        distances = distances.view(batch, -1)
+        indices = indices.view(batch, -1)
 
+        to_fit = []
+        for b in range(batch):
+            to_fit.append(dst[b, indices[b], :m])
+        to_fit = torch.stack(to_fit)
         # compute the transformation between the current source and nearest destination points
-        T, _, _ = best_fit_transform_torch(src[:m, :].transpose(-2, -1), dst[:m, indices].transpose(-2, -1))
+        T, _, _ = best_fit_transform_torch(src[:, :m, :].transpose(-2, -1), to_fit)
 
         # update the current source
         # src = np.dot(T, src)
@@ -358,6 +364,6 @@ def icp_3(A, B, init_pose=None, max_iterations=20, tolerance=0.001):
         prev_error = mean_error
 
     # calculate final transformation
-    T, _, _ = best_fit_transform_torch(A, src[:m, :].transpose(-2, -1))
+    T, _, _ = best_fit_transform_torch(A.repeat(batch, 1, 1), src[:, :m, :].transpose(-2, -1))
 
     return T, distances, i
