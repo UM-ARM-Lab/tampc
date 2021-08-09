@@ -241,10 +241,11 @@ while True:
     if env.contact_detector.in_contact():
         for c in contact_set:
             T, distances, i = icp.icp_3(c.points, model_points[:, :2])
-            transformed_model_points = mph @ T[0].inverse().transpose(-1, -2)
-            for i, pt in enumerate(transformed_model_points):
-                pt = [pt[0], pt[1], z]
-                env._dd.draw_point(f"tmpt{i}", pt, color=(0, 1, 0), length=0.003)
+            for b in range(T.shape[0]):
+                transformed_model_points = mph @ T[b].inverse().transpose(-1, -2)
+                for i, pt in enumerate(transformed_model_points):
+                    pt = [pt[0], pt[1], z]
+                    env._dd.draw_point(f"tmpt{b}-{i}", pt, color=(0, 1, b / T.shape[0]), length=0.003)
 
     if torch.is_tensor(action):
         action = action.cpu()

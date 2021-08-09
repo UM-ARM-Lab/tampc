@@ -248,7 +248,7 @@ def best_fit_transform_torch(A, B):
     t = centroid_B.transpose(-1, -2) - (R @ centroid_A.transpose(-1, -2))
 
     # homogeneous transformation
-    T = torch.eye(m + 1, dtype=A.dtype).repeat(b, 1, 1)
+    T = torch.eye(m + 1, dtype=A.dtype, device=A.device).repeat(b, 1, 1)
     T[:, :m, :m] = R
     T[:, :m, m] = t.view(b, -1)
 
@@ -326,12 +326,26 @@ def icp_3(A, B, init_pose=None, max_iterations=20, tolerance=0.001, batch=5):
     m = A.shape[1]
 
     # make points homogeneous, copy them to maintain the originals
-    src = torch.ones((m + 1, A.shape[0]), dtype=A.dtype)
-    dst = torch.ones((B.shape[0], m + 1), dtype=A.dtype)
+    src = torch.ones((m + 1, A.shape[0]), dtype=A.dtype, device=A.device)
+    dst = torch.ones((B.shape[0], m + 1), dtype=A.dtype, device=A.device)
     src[:m, :] = torch.clone(A.transpose(0, 1))
     dst[:, :m] = torch.clone(B)
     src = src.repeat(batch, 1, 1)
     dst = dst.repeat(batch, 1, 1)
+
+    if batch > 1 and init_pose is None:
+        # apply some random initial poses
+        if m > 2:
+            import pytorch_kinematics.transforms as tf
+            R = tf.random_rotations(batch, dtype=A.dtype, device=A.device)
+        else:
+            theta = torch.rand(batch, dtype=A.dtype, device=A.device) * math.pi * 2
+            Rtop = torch.cat([torch.cos(theta).view(-1, 1), -torch.sin(theta).view(-1, 1)], dim=1)
+            Rbot = torch.cat([torch.sin(theta).view(-1, 1), torch.cos(theta).view(-1, 1)], dim=1)
+            R = torch.cat((Rtop.unsqueeze(-1), Rbot.unsqueeze(-1)), dim=-1)
+
+        init_pose = torch.eye(m + 1, dtype=A.dtype, device=A.device).repeat(batch, 1, 1)
+        init_pose[:, :m, :m] = R[:, :m, :m]
 
     # apply the initial pose estimation
     if init_pose is not None:
