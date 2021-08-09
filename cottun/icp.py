@@ -1,6 +1,7 @@
 import math
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
+import torch
 
 
 # from https://github.com/richardos/icp
@@ -193,6 +194,66 @@ def nearest_neighbor(src, dst):
     return distances.ravel(), indices.ravel()
 
 
+def nearest_neighbor_torch(src, dst):
+    '''
+    Find the nearest (Euclidean) neighbor in dst for each point in src
+    Input:
+        src: Mxm array of points
+        dst: Nxm array of points
+    Output:
+        distances: Euclidean distances of the nearest neighbor
+        indices: dst indices of the nearest neighbor
+    '''
+
+    dist = torch.cdist(src, dst)
+    knn = dist.topk(1, largest=False)
+    return knn
+
+
+def best_fit_transform_torch(A, B):
+    '''
+    Calculates the least-squares best-fit transform that maps corresponding points A to B in m spatial dimensions
+    Input:
+      A: Nxm numpy array of corresponding points
+      B: Nxm numpy array of corresponding points
+    Returns:
+      T: (m+1)x(m+1) homogeneous transformation matrix that maps A on to B
+      R: mxm rotation matrix
+      t: mx1 translation vector
+    '''
+
+    assert A.shape == B.shape
+
+    # get number of dimensions
+    m = A.shape[1]
+
+    # translate points to their centroids
+    centroid_A = torch.mean(A, dim=0)
+    centroid_B = torch.mean(B, dim=0)
+    AA = A - centroid_A
+    BB = B - centroid_B
+
+    # rotation matrix
+    H = AA.transpose(-1, -2) @ BB
+    U, S, Vt = torch.svd(H)
+    R = Vt.transpose(-1, -2) @ U.transpose(-1, -2)
+
+    # special reflection case
+    if torch.det(R) < 0:
+        Vt[m - 1, :] *= -1
+        R = Vt.transpose(-1, -2) @ U.transpose(-1, -2)
+
+    # translation
+    t = centroid_B - (R @ centroid_A)
+
+    # homogeneous transformation
+    T = torch.eye(m + 1, dtype=A.dtype)
+    T[:m, :m] = R
+    T[:m, m] = t
+
+    return T, R, t
+
+
 def icp_2(A, B, init_pose=None, max_iterations=20, tolerance=0.001):
     '''
     The Iterative Closest Point method: finds best-fit transform that maps points A on to points B
@@ -241,5 +302,62 @@ def icp_2(A, B, init_pose=None, max_iterations=20, tolerance=0.001):
 
     # calculate final transformation
     T, _, _ = best_fit_transform(A, src[:m, :].T)
+
+    return T, distances, i
+
+
+def icp_3(A, B, init_pose=None, max_iterations=20, tolerance=0.001):
+    '''
+    The Iterative Closest Point method: finds best-fit transform that maps points A on to points B
+    Input:
+        A: Mxm numpy array of source mD points
+        B: Nxm numpy array of destination mD point
+        init_pose: (m+1)x(m+1) homogeneous transformation
+        max_iterations: exit algorithm after max_iterations
+        tolerance: convergence criteria
+    Output:
+        T: final homogeneous transformation that maps A on to B
+        distances: Euclidean distances (errors) of the nearest neighbor
+        i: number of iterations to converge
+    '''
+
+    # get number of dimensions
+    m = A.shape[1]
+
+    # make points homogeneous, copy them to maintain the originals
+    src = torch.ones((m + 1, A.shape[0]), dtype=A.dtype)
+    dst = torch.ones((m + 1, B.shape[0]), dtype=A.dtype)
+    src[:m, :] = torch.clone(A.transpose(0, 1))
+    dst[:m, :] = torch.clone(B.transpose(0, 1))
+
+    # apply the initial pose estimation
+    if init_pose is not None:
+        src = init_pose @ src
+        # src = np.dot(init_pose, src)
+
+    prev_error = 0
+
+    for i in range(max_iterations):
+        # find the nearest neighbors between the current source and destination points
+        distances, indices = nearest_neighbor_torch(src[:m, :].transpose(-2, -1), dst[:m, :].transpose(-2, -1))
+        # currently only have a single batch so flatten
+        distances = distances.view(-1)
+        indices = indices.view(-1)
+
+        # compute the transformation between the current source and nearest destination points
+        T, _, _ = best_fit_transform_torch(src[:m, :].transpose(-2, -1), dst[:m, indices].transpose(-2, -1))
+
+        # update the current source
+        # src = np.dot(T, src)
+        src = T @ src
+
+        # check error
+        mean_error = torch.mean(distances)
+        if torch.abs(prev_error - mean_error) < tolerance:
+            break
+        prev_error = mean_error
+
+    # calculate final transformation
+    T, _, _ = best_fit_transform_torch(A, src[:m, :].transpose(-2, -1))
 
     return T, distances, i
