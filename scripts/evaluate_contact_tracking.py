@@ -47,12 +47,11 @@ logger = logging.getLogger(__name__)
 
 
 def our_method_factory(contact_object_class: Type[tracking.ContactObject] = tracking.ContactUKF, **kwargs):
-    def our_method(X, U, reactions, env_class, info):
+    def our_method(X, U, reactions, env_class, info, contact_detector, contact_pts):
         # TODO select getter based on env class
         contact_params = ArmGetter.contact_parameters(env_class, **kwargs)
         d = get_device()
         dtype = torch.float32
-        contact_detector = ContactDetectorPlanarPybulletGripper("floating_gripper", np.diag([1, 1, 1, 50, 50, 50]), 1.)
 
         def create_contact_object():
             return contact_object_class(None, contact_params)
@@ -75,6 +74,7 @@ def our_method_factory(contact_object_class: Type[tracking.ContactObject] = trac
             ee_force_torque = np.r_[
                 this_info[InfoKeys.HIGH_FREQ_REACTION_F][-1], this_info[InfoKeys.HIGH_FREQ_REACTION_T][-1]]
             pose = (this_info[InfoKeys.HIGH_FREQ_EE_POSE][-1][:3], this_info[InfoKeys.HIGH_FREQ_EE_POSE][-1][3:])
+            contact_detector.clear()
             contact_detector.observe_residual(ee_force_torque, pose)
             c, cc = contact_set.update(x[i], u[i], env_class.state_difference(x[i + 1], x[i]).reshape(-1),
                                        contact_detector, r[i + 1], this_info)
@@ -99,13 +99,13 @@ def our_method_factory(contact_object_class: Type[tracking.ContactObject] = trac
         # pass where we think contact will be made
         contact_pts = torch.cat([cc.points for cc in contact_set], dim=0)
         pt_weights = torch.cat([cc.weight.repeat(len(cc.points)) for cc in contact_set], dim=0)
-        return labels, param_str_values, contact_pts.cpu().numpy(), pt_weights.cpu().numpy(), True
+        return labels, param_str_values, contact_pts.cpu().numpy(), pt_weights.cpu().numpy()
 
     return our_method
 
 
 def our_soft_method_factory(**kwargs):
-    def our_method(X, U, reactions, env_class, info):
+    def our_method(X, U, reactions, env_class, info, contact_detector, contact_pts):
         # TODO select getter based on env class
         contact_params = ArmGetter.contact_parameters(env_class, **kwargs)
         d = get_device()
@@ -121,10 +121,18 @@ def our_soft_method_factory(**kwargs):
         for i in range(len(X) - 1):
             this_info = {
                 InfoKeys.OBJ_POSES: {obj_id: obj_pose[i] for obj_id, obj_pose in info[InfoKeys.OBJ_POSES].items()},
-                InfoKeys.DEE_IN_CONTACT: info[InfoKeys.DEE_IN_CONTACT][i]
             }
-            c, cc = contact_set.update(x[i], u[i], env_class.state_difference(x[i + 1], x[i]).reshape(-1), r[i + 1],
-                                       this_info)
+            for key in [InfoKeys.DEE_IN_CONTACT, InfoKeys.HIGH_FREQ_REACTION_F, InfoKeys.HIGH_FREQ_REACTION_T,
+                        InfoKeys.HIGH_FREQ_EE_POSE]:
+                this_info[key] = info[key][i]
+            # isolate to get contact point and feed that in instead of contact configuration
+            ee_force_torque = np.r_[
+                this_info[InfoKeys.HIGH_FREQ_REACTION_F][-1], this_info[InfoKeys.HIGH_FREQ_REACTION_T][-1]]
+            pose = (this_info[InfoKeys.HIGH_FREQ_EE_POSE][-1][:3], this_info[InfoKeys.HIGH_FREQ_EE_POSE][-1][3:])
+            contact_detector.clear()
+            contact_detector.observe_residual(ee_force_torque, pose)
+            c, cc = contact_set.update(x[i], u[i], env_class.state_difference(x[i + 1], x[i]).reshape(-1),
+                                       contact_detector, r[i + 1], this_info)
             if c is None:
                 labels[i] = NO_CONTACT_ID
             else:
@@ -147,7 +155,7 @@ def our_soft_method_factory(**kwargs):
         contact_pts = contact_set.pts
         # TODO compute weights
         pt_weights = torch.ones(contact_pts.shape[0])
-        return labels, param_str_values, contact_pts.cpu().numpy(), pt_weights.cpu().numpy(), True
+        return labels, param_str_values, contact_pts.cpu().numpy(), pt_weights.cpu().numpy()
 
     return our_method
 
@@ -163,10 +171,10 @@ def process_labels_with_noise(labels):
 
 
 def sklearn_method_factory(method, **kwargs):
-    def sklearn_method(X, U, reactions, env_class, info):
+    def sklearn_method(X, U, reactions, env_class, info, contact_detector, contact_pts):
         # simple baselines
-        # cluster in [pos, next reaction force, action] space
-        xx = np.concatenate([X[:-1, :2], reactions[1:], U[:-1]], axis=1)
+        # cluster in [contact point, next reaction force, action] space
+        xx = np.concatenate([contact_pts, reactions[1:], U[:-1]], axis=1)
         valid = np.linalg.norm(reactions[1:], axis=1) > 0.1
         xx = xx[valid]
         # give it some help by telling it the number of clusters as unique contacts IDs
@@ -175,31 +183,31 @@ def sklearn_method_factory(method, **kwargs):
         labels = np.ones(len(valid)) * NO_CONTACT_ID
         res.labels_ = process_labels_with_noise(res.labels_)
         labels[valid] = res.labels_
-        return labels, dict_to_namespace_str(kwargs), xx, np.ones(len(xx)), False
+        return labels, dict_to_namespace_str(kwargs), xx, np.ones(len(xx))
 
     return sklearn_method
 
 
 def online_sklearn_method_factory(online_class, method, inertia_ratio=0.5, **kwargs):
-    def sklearn_method(X, U, reactions, env_class, info):
+    def sklearn_method(X, U, reactions, env_class, info, contact_detector, contact_pts):
         online_method = online_class(method(**kwargs), inertia_ratio=inertia_ratio)
         valid = np.linalg.norm(reactions[1:], axis=1) > 0.1
         for i in range(len(X) - 1):
             if not valid[i]:
                 continue
             # intermediate labels in case we want plotting of movement
-            labels = online_method.update(X[i], U[i], info[InfoKeys.DEE_IN_CONTACT][i],
+            labels = online_method.update(contact_pts[i], U[i], info[InfoKeys.DEE_IN_CONTACT][i],
                                           reactions[i + 1])
         labels = np.ones(len(valid)) * NO_CONTACT_ID
         labels[valid] = process_labels_with_noise(online_method.final_labels())
         moved_pts = online_method.moved_data()
-        return labels, dict_to_namespace_str(kwargs), moved_pts, np.ones(len(moved_pts)), False
+        return labels, dict_to_namespace_str(kwargs), moved_pts, np.ones(len(moved_pts))
 
     return sklearn_method
 
 
 def compute_contact_error(before_moving_pts, moved_pts, env_cls: Type[arm.ArmEnv], level, obj_poses,
-                          visualize=False, contact_points_instead_of_contact_config=False):
+                          visualize=False, contact_points_instead_of_contact_config=True):
     contact_error = []
     if moved_pts is not None:
         # set the gripper away from other objects so that physics don't deform the fingers
@@ -254,6 +262,28 @@ def compute_contact_error(before_moving_pts, moved_pts, env_cls: Type[arm.ArmEnv
         logger.info(f"largest penetration: {round(min(contact_error), 4)}")
         env.close()
     return contact_error
+
+
+def get_contact_point_history(data):
+    """Return the contact points; for each pts[i], report the point of contact before u[i]"""
+    contact_detector = ContactDetectorPlanarPybulletGripper("floating_gripper", np.diag([1, 1, 1, 50, 50, 50]), 1.)
+    pts = []
+    for i in range(len(data['X']) - 1):
+        for j in range(len(data[InfoKeys.HIGH_FREQ_REACTION_F][i])):
+            ee_force_torque = np.r_[
+                data[InfoKeys.HIGH_FREQ_REACTION_F][i][j], data[InfoKeys.HIGH_FREQ_REACTION_T][i][j]]
+            pose = (data[InfoKeys.HIGH_FREQ_EE_POSE][i][j][:3], data[InfoKeys.HIGH_FREQ_EE_POSE][i][j][3:])
+            contact_detector.observe_residual(ee_force_torque, pose)
+        pt = contact_detector.get_last_contact_location()
+        if pt is None:
+            pt = np.r_[0, 0, 0]
+        else:
+            # get the point before this action
+            pt = pt.cpu().numpy() - data[InfoKeys.DEE_IN_CONTACT][i]
+        pts.append(pt)
+
+    pts = np.stack(pts)
+    return contact_detector, pts
 
 
 def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
@@ -347,13 +377,14 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
     # additional info to pass to methods for debugging
     info[InfoKeys.OBJ_POSES] = obj_poses
 
+    contact_detector, contact_pts = get_contact_point_history(d)
+
     for method_name, method in methods.items():
-        labels, param_values, moved_points, pt_weights, returns_contact_points = method(X, U, reactions, env_cls, info)
+        labels, param_values, moved_points, pt_weights = method(X, U, reactions, env_cls, info, contact_detector,
+                                                                contact_pts)
         run_key = RunKey(level=level, seed=seed, method=method_name, params=param_values)
         m = clustering_metrics(contact_id[:-1][in_contact], labels[in_contact])
-        contact_error = compute_contact_error(X[:-1][in_contact], moved_points, env_cls, level,
-                                              obj_poses,
-                                              contact_points_instead_of_contact_config=returns_contact_points)
+        contact_error = compute_contact_error(X[:-1][in_contact], moved_points, env_cls, level, obj_poses)
         cme = np.mean(np.abs(contact_error))
         # normalize weights
         pt_weights = pt_weights / np.sum(pt_weights)
@@ -393,7 +424,7 @@ if __name__ == "__main__":
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
         # 'ours soft': our_soft_method_factory(length=0.1),
-        'ours UKF': our_method_factory(length=0.1),
+        # 'ours UKF': our_method_factory(length=0.1),
         # 'ours UKF convexity merge constraint': our_method_factory(length=0.1),
         # 'ours PF': our_method_factory(contact_object_class=contact.ContactPF, length=0.1),
         # 'kmeans': sklearn_method_factory(KMeansWithAutoK),
@@ -401,9 +432,9 @@ if __name__ == "__main__":
         # 'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
         # 'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
         #                                                random_state=0),
-        # 'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
-        # 'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
-        #                                               threshold=1.5)
+        'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
+        'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
+                                                      threshold=1.5)
     }
 
     # full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper12/17.mat')

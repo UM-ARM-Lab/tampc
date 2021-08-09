@@ -45,6 +45,9 @@ class ContactDetector:
 
         return in_contact
 
+    def clear(self):
+        self.observation_history.clear()
+
     @abc.abstractmethod
     def isolate_contact(self, ee_force_torque, pose, q=None, visualizer=None):
         """Return contact point in link frame that most likely explains the observed residual"""
