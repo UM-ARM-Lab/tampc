@@ -10,3 +10,4 @@ RUN_INFO_KEYWORDS = [RUN_AMBIGUITY, CONTACT_ID]
 
 RunKey = namedtuple('RunKey', ['level', 'seed', 'method', 'params'])
 CONTACT_RES_FILE = os.path.join(cfg.DATA_DIR, 'contact_res.pkl')
+CONTACT_POINT_CACHE = os.path.join(cfg.DATA_DIR, 'contact_point_history.pkl')

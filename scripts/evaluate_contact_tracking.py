@@ -14,7 +14,7 @@ import re
 
 import matplotlib.pyplot as plt
 import typing
-from cottun.defines import NO_CONTACT_ID, RunKey, CONTACT_RES_FILE, RUN_AMBIGUITY, CONTACT_ID
+from cottun.defines import NO_CONTACT_ID, RunKey, CONTACT_RES_FILE, RUN_AMBIGUITY, CONTACT_ID, CONTACT_POINT_CACHE
 from cottun.script_utils import extract_env_and_level_from_string, dict_to_namespace_str, record_metric, \
     plot_cluster_res, load_runs_results, get_file_metainfo, clustering_metrics
 from cottun.detection_impl import ContactDetectorPlanarPybulletGripper
@@ -244,8 +244,17 @@ def compute_contact_error(before_moving_pts, moved_pts, env_cls: Type[arm.ArmEnv
     return contact_error
 
 
-def get_contact_point_history(data):
+def get_contact_point_history(data, filename):
     """Return the contact points; for each pts[i], report the point of contact before u[i]"""
+    if os.path.exists(CONTACT_POINT_CACHE):
+        with open(CONTACT_POINT_CACHE, 'rb') as f:
+            cache = pickle.load(f)
+            pts = cache.get(filename, None)
+            if pts is not None:
+                return pts
+    else:
+        cache = {}
+
     contact_detector = ContactDetectorPlanarPybulletGripper("floating_gripper", np.diag([1, 1, 1, 50, 50, 50]), 1.)
     pts = []
     for i in range(len(data['X']) - 1):
@@ -263,6 +272,10 @@ def get_contact_point_history(data):
         pts.append(pt)
 
     pts = np.stack(pts)
+    cache[filename] = pts
+    with open(CONTACT_POINT_CACHE, 'wb') as f:
+        pickle.dump(cache, f)
+
     return contact_detector, pts
 
 
@@ -357,7 +370,7 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
     # additional info to pass to methods for debugging
     info[InfoKeys.OBJ_POSES] = obj_poses
 
-    contact_detector, contact_pts = get_contact_point_history(d)
+    contact_detector, contact_pts = get_contact_point_history(d, datafile)
 
     for method_name, method in methods.items():
         labels, param_values, moved_points, pt_weights = method(X, U, reactions, env_cls, info, contact_detector,
