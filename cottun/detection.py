@@ -19,7 +19,7 @@ class ContactDetector:
     We additionally assume access to force torque sensors at the end effector, which is our residual."""
 
     def __init__(self, residual_precision, residual_threshold, num_sample_points=100,
-                 max_friction_cone_angle=60 * math.pi / 180, window_size=5, dtype=torch.float):
+                 max_friction_cone_angle=50 * math.pi / 180, window_size=5, dtype=torch.float):
         """
 
         :param residual_precision: sigma_meas^-1 matrix that scales the different residual dimensions based on their
@@ -156,11 +156,12 @@ class ContactDetectorPlanar(ContactDetector):
         min_err_i = torch.argmin(combined_error)
 
         if visualizer is not None:
-            visualizer.draw_point(f'most likely contact', pts[min_err_i], color=(0, 1, 0))
             # also draw some other likely points
             likely_pt_index = torch.argsort(combined_error)
-            for i in range(1, 6):
+            for i in reversed(range(1, 10)):
                 pt = pts[likely_pt_index[i]]
-                visualizer.draw_point(f'likely{i}', pt, height=pt[2] + 0.001, color=(0, 1 - i / 8, 0))
+                visualizer.draw_point(f'likely{i}', pt, height=pt[2] + 0.001,
+                                      color=(0, 1 - 0.8 * i / 10, 0))
+            visualizer.draw_point(f'most likely contact', pts[min_err_i], color=(0, 1, 0))
 
         return link_frame_pts[min_err_i]
