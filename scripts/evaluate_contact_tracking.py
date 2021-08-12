@@ -29,7 +29,7 @@ from cottun import tracking
 from tampc.env import pybullet_env as env_base, arm
 from tampc.env.env import InfoKeys
 from tampc.env_getters.arm import ArmGetter
-from tampc.env.pybullet_env import ContactInfo
+from tampc.env.pybullet_env import ContactInfo, closest_point_on_surface
 
 from cottun.cluster_baseline import KMeansWithAutoK
 from cottun.cluster_baseline import OnlineSklearnFixedClusters
@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 class OurMethodFactory:
     def __init__(self, **kwargs):
         self.env_kwargs = kwargs
+        self.env_class = None
 
     @abc.abstractmethod
     def create_contact_set(self, contact_params) -> tracking.ContactSet:
@@ -59,7 +60,14 @@ class OurMethodFactory:
     def get_contact_point_results(self, contact_set) -> typing.Tuple[torch.tensor, torch.tensor]:
         """After running an experiment, retrieve the contact points and weights from a contact set"""
 
-    def our_method(self, X, U, reactions, env_class, info, contact_detector, contact_pts):
+    def get_final_labels(self, labels, contact_set):
+        return labels
+
+    def update_labels_single_res(self, labels, i, latest_obj_id, *update_return):
+        return latest_obj_id
+
+    def __call__(self, X, U, reactions, env_class, info, contact_detector, contact_pts):
+        self.env_class = env_class
         # TODO select getter based on env class
         contact_params = ArmGetter.contact_parameters(env_class, **self.env_kwargs)
         d = get_device()
@@ -91,15 +99,8 @@ class OurMethodFactory:
             if c is None:
                 labels[i] = NO_CONTACT_ID
             else:
-                this_obj_id = getattr(c, 'id', None)
-                if this_obj_id is None:
-                    setattr(c, 'id', obj_id)
-                    obj_id += 1
-                labels[i] = c.id
-                # merged, have to set all labels previously assigned to new obj
-                if len(cc) > 1:
-                    for other_c in cc:
-                        labels[labels == other_c.id] = c.id
+                obj_id = self.update_labels_single_res(labels, i, obj_id, c, cc)
+        labels = self.get_final_labels(labels, contact_set)
         param_values = str(contact_params).split('(')
         start = param_values[0]
         param_values = param_values[1].split(',')
@@ -116,6 +117,19 @@ class OurMethodHard(OurMethodFactory):
         self.contact_object_class = contact_object_class
         super(OurMethodHard, self).__init__(**kwargs)
 
+    def update_labels_single_res(self, labels, i, latest_obj_id, *update_return):
+        c, cc = update_return
+        this_obj_id = getattr(c, 'id', None)
+        if this_obj_id is None:
+            setattr(c, 'id', latest_obj_id)
+            latest_obj_id += 1
+        labels[i] = c.id
+        # merged, have to set all labels previously assigned to new obj
+        if len(cc) > 1:
+            for other_c in cc:
+                labels[labels == other_c.id] = c.id
+        return this_obj_id
+
     def create_contact_set(self, contact_params) -> tracking.ContactSet:
         def create_contact_object():
             return self.contact_object_class(None, contact_params)
@@ -130,13 +144,57 @@ class OurMethodHard(OurMethodFactory):
 
 
 class OurMethodSoft(OurMethodFactory):
+    def __init__(self, visualize=False, **kwargs):
+        super(OurMethodSoft, self).__init__(**kwargs)
+        self.env = None
+        self.visualize = visualize
+        self.contact_indices = []
+
+    def _pt_to_config_dist(self, configs, pts):
+        if self.env is None:
+            self.env = self.env_class(mode=p.GUI if self.visualize else p.DIRECT)
+
+        M = configs.shape[0]
+        N = pts.shape[0]
+        dist = torch.zeros((M, N), dtype=pts.dtype, device=pts.device)
+
+        orig_pos, orig_orientation = p.getBasePositionAndOrientation(self.env.robot_id)
+        z = orig_pos[2]
+
+        if self.visualize:
+            for i, pt in enumerate(pts):
+                self.env._dd.draw_point(f't{i}', pt, color=(1, 0, 0), height=z)
+
+        for i in range(M):
+            p.resetBasePositionAndOrientation(self.env.robot_id, [configs[i][0], configs[i][1], z], orig_orientation)
+            for j in range(N):
+                closest = closest_point_on_surface(self.env.robot_id, [pts[j][0], pts[j][1], z])
+                dist[i, j] = closest[ContactInfo.DISTANCE]
+
+        # p.resetBasePositionAndOrientation(self.env.robot_id, orig_pos, orig_orientation)
+        return dist
+
     def create_contact_set(self, contact_params) -> tracking.ContactSet:
-        return tracking.ContactSetSoft(contact_params)
+        return tracking.ContactSetSoft(self._pt_to_config_dist, contact_params)
+
+    def update_labels_single_res(self, labels, i, latest_obj_id, *update_return):
+        self.contact_indices.append(i)
+        return latest_obj_id
+
+    def get_final_labels(self, labels, contact_set: tracking.ContactSetSoft):
+        groups = contact_set.get_hard_assignment(0.5)
+        contact_indices = torch.tensor(self.contact_indices, device=groups[0].device)
+        for group_id, group in enumerate(groups):
+            labels[contact_indices[group]] = group_id + 1
+        if self.env is not None:
+            self.env.close()
+        return labels
 
     def get_contact_point_results(self, contact_set: tracking.ContactSetSoft) -> typing.Tuple[
         torch.tensor, torch.tensor]:
-        contact_pts = torch.cat([cc.points for cc in contact_set], dim=0)
-        pt_weights = torch.cat([cc.weight.repeat(len(cc.points)) for cc in contact_set], dim=0)
+        contact_pts = contact_set.get_posterior_points()
+        # TODO consider some way of weighing the individual points rather than particles?
+        pt_weights = torch.ones(contact_pts.shape[0], device=contact_pts.device, dtype=contact_pts.dtype)
         return contact_pts, pt_weights
 
 
@@ -246,16 +304,16 @@ def compute_contact_error(before_moving_pts, moved_pts, env_cls: Type[arm.ArmEnv
 
 def get_contact_point_history(data, filename):
     """Return the contact points; for each pts[i], report the point of contact before u[i]"""
+    contact_detector = ContactDetectorPlanarPybulletGripper("floating_gripper", np.diag([1, 1, 1, 50, 50, 50]), 1.)
     if os.path.exists(CONTACT_POINT_CACHE):
         with open(CONTACT_POINT_CACHE, 'rb') as f:
             cache = pickle.load(f)
             pts = cache.get(filename, None)
             if pts is not None:
-                return pts
+                return contact_detector, pts
     else:
         cache = {}
 
-    contact_detector = ContactDetectorPlanarPybulletGripper("floating_gripper", np.diag([1, 1, 1, 50, 50, 50]), 1.)
     pts = []
     for i in range(len(data['X']) - 1):
         for j in range(len(data[InfoKeys.HIGH_FREQ_REACTION_F][i])):
@@ -377,7 +435,7 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
                                                                 contact_pts)
         run_key = RunKey(level=level, seed=seed, method=method_name, params=param_values)
         m = clustering_metrics(contact_id[:-1][in_contact], labels[in_contact])
-        contact_error = compute_contact_error(X[:-1][in_contact], moved_points, env_cls, level, obj_poses)
+        contact_error = compute_contact_error(contact_pts[in_contact], moved_points, env_cls, level, obj_poses, visualize=True)
         cme = np.mean(np.abs(contact_error))
         # normalize weights
         pt_weights = pt_weights / np.sum(pt_weights)
@@ -430,20 +488,20 @@ if __name__ == "__main__":
         #                                               threshold=1.5)
     }
 
-    # full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper12/17.mat')
-    # evaluate_methods_on_file(full_filename, runs, methods_to_run)
+    full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper13/25.mat')
+    evaluate_methods_on_file(full_filename, runs, methods_to_run)
 
-    for res_dir in dirs:
-        full_dir = os.path.join(cfg.DATA_DIR, res_dir)
-
-        files = os.listdir(full_dir)
-        files = sorted(files)
-
-        for file in files:
-            full_filename = '{}/{}'.format(full_dir, file)
-            if os.path.isdir(full_filename):
-                continue
-            evaluate_methods_on_file(full_filename, runs, methods_to_run)
+    # for res_dir in dirs:
+    #     full_dir = os.path.join(cfg.DATA_DIR, res_dir)
+    #
+    #     files = os.listdir(full_dir)
+    #     files = sorted(files)
+    #
+    #     for file in files:
+    #         full_filename = '{}/{}'.format(full_dir, file)
+    #         if os.path.isdir(full_filename):
+    #             continue
+    #         evaluate_methods_on_file(full_filename, runs, methods_to_run)
 
     with open(CONTACT_RES_FILE, 'wb') as f:
         pickle.dump(runs, f)

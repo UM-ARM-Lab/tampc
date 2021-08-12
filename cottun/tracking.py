@@ -42,37 +42,6 @@ def approx_conic_similarity(a_norm, a_origin, b_norm, b_origin):
     return dd
 
 
-def freespace_consistency(obs_pt, obs_act, pts, acts, approx_robot_radius, required_cosim=0.):
-    """Test whether a group of {(p,u)} is free space consistent with an observed (p,u)
-
-    An observed (p,u) implies freespace inside the body of the robot when it is at p.
-    If any (p,u) implies a contact made inside the body of the robot then it is freespace inconsistent.
-    We use an approximate spherical model for the robot, and assume a point contact.
-    We also assume a minimum value for the angle of the friction cone (that some friction exists), which is
-    reflected in the required_cosim parameter in [0, 1), where 0 extends the friction cone to a half plane
-    and 1 reduces it to a line (in the case of no friction)."""
-    # TODO use robot geometry and estimated contact points
-
-    # first off only need to check those that are within radius distance to the observed point
-    dpts = pts - obs_pt
-    d = torch.norm(dpts, dim=1, keepdim=True)
-    candidate = d <= approx_robot_radius
-    if not torch.any(candidate):
-        return True
-    # next check if any lies within the assumed minimum friction cone extending from the observed action
-    dpts = dpts[candidate.view(-1)]
-    # -obs_act is the center axis of the friction cone
-    dir_sim = torch.cosine_similarity(dpts, -obs_act, dim=-1)
-    if torch.any(dir_sim > required_cosim):
-        return False
-    # TODO? also consider the other way around, if the new point is in the freespace of any points
-
-    # TODO consider just angular distance
-    # ang_dist = torch.angle(dpts + obs_act)
-
-    return True
-
-
 class ContactObject(serialization.Serializable):
     def __init__(self, empty_local_model: typing.Optional[typing.Any], params: ContactParameters,
                  assume_linear_scaling=True):
@@ -610,9 +579,11 @@ def squared_error(x, y, sigma=1.):
 
 
 class ContactSet(serialization.Serializable):
-    def __init__(self, params: ContactParameters, immovable_collision_checker=None):
+    def __init__(self, params: ContactParameters, immovable_collision_checker=None, device='cpu', visualizer=None):
+        self.device = device
         self.p = params
         self.immovable_collision_checker = immovable_collision_checker
+        self.visualizer = visualizer
 
     @abc.abstractmethod
     def update(self, x, u, dx, contact_detector: ContactDetector, reaction, info=None):
@@ -853,32 +824,86 @@ class ContactSetHard(ContactSet):
 
 
 class ContactSetSoft(ContactSet):
-    def __init__(self, *args, n_particles=100, **kwargs):
+    """
+    Track contact points and contact configurations without hard object assignments (partitions of points that move
+    together). Implemented using a particle filter with each particle being the set of all contact points and configs.
+    """
+
+    def __init__(self, pt_to_config_dist, *args, n_particles=100, n_eff_threshold=0.8, **kwargs):
         super(ContactSetSoft, self).__init__(*args, **kwargs)
+        self.pt_to_config_dist = pt_to_config_dist
         self.adjacency = None
         self.connection_prob = None
         self.n_particles = n_particles
+        self.n_eff_threshold = n_eff_threshold
 
+        self.weights = torch.ones(self.n_particles, device=self.device) / self.n_particles
+        self.weights_normalization = 1
+
+        # each observation has a contact point (on robot surface) and contact config (pose of end effector)
         self.pts = None
+        self.configs = None
         self.acts = None
 
+        # [n_particles, N, D] where N is the number of data points, and D is data dimensionality
         self.sampled_pts = None
+        self.sampled_configs = None
 
-    def _compute_full_adjacency(self):
+    def _compute_full_adjacency(self, pts):
         # don't typically need to compute full adjacency
         total_num = self.pts.shape[0]
-        dd = approx_conic_similarity(self.acts, self.pts,
+        dd = approx_conic_similarity(self.acts, pts,
                                      self.acts.repeat(total_num, 1, 1).transpose(0, -2),
-                                     self.pts.repeat(total_num, 1, 1).transpose(0, -2))
+                                     pts.repeat(total_num, 1, 1).transpose(0, -2))
         self.adjacency = self._distance_to_probability(dd)
         return self.adjacency
 
-    def _distance_to_probability(self, distance):
+    def get_posterior_points(self):
+        # TODO cluster then take center of biggest cluster?
+        return self.map_particle
+
+    def _partition_points(self, adjacent):
+        # holds a partition of indices 0..N-1
+        groups = []
+        N = adjacent.shape[0]
+        all_selected = torch.zeros(N, device=adjacent.device, dtype=torch.bool)
+        i = 0
+        while not all_selected.all():
+            if all_selected[i]:
+                i += 1
+                continue
+            this_group = adjacent[i].clone()
+            # TODO should use some graph clique finding algorithm; for simplicity for now just look at 1 depth
+            for j in range(N):
+                if this_group[j]:
+                    this_group |= adjacent[j]
+            groups.append(this_group)
+            all_selected |= this_group
+        return groups
+
+    def get_hard_assignment(self, threshold=None):
+        pts = self.get_posterior_points()
+        connection_prob = self._compute_full_adjacency(pts)
+
+        if threshold is None:
+            threshold = torch.rand_like(connection_prob)
+
+        adjacent = threshold < connection_prob
+        return self._partition_points(adjacent)
+
+    def get_partitioned_points(self, threshold):
+        pts = self.get_posterior_points()
+        partitions = self.get_hard_assignment(threshold)
+        return [pts[partition] for partition in partitions]
+
+    def _distance_to_probability(self, distance, sigma=None):
         # parameter where higher means a greater drop off in probability with distance
-        sigma = self.p.length
+        if sigma is None:
+            sigma = self.p.length * 50
         return torch.exp(-sigma * distance)
 
     def predict_particles(self, dx):
+        """Apply action to all particles"""
         # assume we just added latest pt and act to self
         dd = approx_conic_similarity(self.acts[-1], self.pts[-1],
                                      self.acts.repeat(self.n_particles, 1, 1),
@@ -896,31 +921,102 @@ class ContactSetSoft(ContactSet):
         # don't actually need to label connected components because we just need to propagate for the latest
         # apply dx to each particle's cluster that contains the latest x
         # sampled_pts = self.pts.repeat(self.n_particles, 1, 1)
-        self.sampled_pts[adjacent] += self.p.state_to_pos(dx)
+        self.sampled_pts[adjacent] += dx
+        # also move the configurations the same amount
+        self.sampled_configs[adjacent] += dx
+        return adjacent
+
+    def update_particles(self, adjacent):
+        """Update the weight of each particle corresponding to their ability to explain the observation"""
+        # all contact points should be outside the robot
+        obs_weights = torch.ones(self.n_particles, device=self.device, dtype=self.pts.dtype)
+        self.penetration_sigma = self.p.length * 3000
+
+        for i in range(self.n_particles):
+            # for efficiency, just consider the last configuration (should probably consider all points, but may be enough)
+            config = self.sampled_configs[i, -1]
+            query_points = self.sampled_pts[i]
+            d = self.pt_to_config_dist(config.view(1, -1), query_points).view(-1)
+            # negative distance indicates penetration
+            d = d[d < 0]
+            if len(d) > 0:
+                cum_prob = self._distance_to_probability(-d, sigma=self.penetration_sigma)
+                obs_weights[i] = cum_prob.prod()
+            # also consider the last point against all other configs
+            query_point = self.sampled_pts[i, -1]
+            configs = self.sampled_configs[i]
+            d = self.pt_to_config_dist(configs, query_point.view(1, -1)).view(-1)
+            d = d[d < 0]
+            if len(d) > 0:
+                cum_prob = self._distance_to_probability(-d, sigma=self.penetration_sigma)
+                obs_weights[i] *= cum_prob.prod()
+
+        min_weight = 1e-15
+        self.weights = self.weights * obs_weights
+        self.weights[self.weights < min_weight] = min_weight
+
+        # normalize weights to resampling probabilities
+        self.weights_normalization = self.weights.sum()
+        self.weights = self.weights / self.weights_normalization
+
+        # from pfilter
+        # Compute effective sample size and entropy of weighting vector.
+        # These are useful statistics for adaptive particle filtering.
+        self.n_eff = (1.0 / (self.weights ** 2).sum()) / self.n_particles
+        self.weight_entropy = torch.sum(self.weights * torch.log(self.weights))
+        logger.debug("PF total weights: %f n_eff %f", self.weights_normalization.item(), self.n_eff.item())
+
+        # preserve current sample set before any replenishment
+        self.original_particles = self.sampled_pts.clone(), self.sampled_configs.clone()
+
+        # store MAP estimate
+        argmax_weight = torch.argmax(self.weights)
+        self.map_particle = self.sampled_pts[argmax_weight]
+
+        # resampling (systematic resampling) step
+        if self.n_eff < self.n_eff_threshold:
+            indices = resample(self.weights)
+            self.sampled_pts = self.sampled_pts[indices, :]
+            self.sampled_configs = self.sampled_configs[indices, :]
+            self.weights = torch.ones(self.n_particles, device=self.device) / self.n_particles
 
     def update(self, x, u, dx, contact_detector: ContactDetector, reaction, info=None):
-        environment = {'robot': self.p.state_to_pos(x), 'control': u, 'dx': dx}
+        environment = {'robot': self.p.state_to_pos(x), 'control': u, 'dx': dx, 'dobj': self.p.state_to_pos(dx)}
         # debugging info
         if info is not None:
-            environment['obj'] = info[InfoKeys.OBJ_POSES]
-        if reaction.norm() < self.p.force_threshold:
+            # debugging info
+            environment['obj'] = info.get(InfoKeys.OBJ_POSES, None)
+            # TODO have a better way of selecting 2-D / 3-D
+            environment['dobj'] = info[InfoKeys.DEE_IN_CONTACT][:2]
+        cur_pt = contact_detector.get_last_contact_location()
+        if cur_pt is None:
             # TODO step without contact
             return None, None
 
-        x = self.p.state_to_pos(x)
+        # where contact point would be without this movement
+        cur_pt = cur_pt[:2]
+        prev_pt = cur_pt - environment['dobj']
+        prev_config = self.p.state_to_pos(x + dx) - environment['dobj']
 
         if self.pts is None:
-            self.pts = x.view(1, -1)
+            self.pts = prev_pt.view(1, -1)
+            self.configs = prev_config.view(1, -1)
             self.acts = u.view(1, -1)
             self.sampled_pts = self.pts.repeat(self.n_particles, 1, 1)
+            self.sampled_configs = self.configs.repeat(self.n_particles, 1, 1)
         else:
-            self.pts = torch.cat((self.pts, x.view(1, -1)))
+            self.pts = torch.cat((self.pts, prev_pt.view(1, -1)))
+            self.configs = torch.cat((self.configs, prev_config.view(1, -1)))
             self.acts = torch.cat((self.acts, u.view(1, -1)))
-            self.sampled_pts = torch.cat([self.sampled_pts, x.view(1, -1).repeat(self.n_particles, 1, 1)], dim=1)
+            self.sampled_pts = torch.cat([self.sampled_pts, prev_pt.view(1, -1).repeat(self.n_particles, 1, 1)], dim=1)
+            self.sampled_configs = torch.cat(
+                [self.sampled_configs, prev_config.view(1, -1).repeat(self.n_particles, 1, 1)], dim=1)
 
-        self.predict_particles(dx)
-        # TODO update step
-        return None, None
+        # classic alternation of predict and update steps
+        adjacent = self.predict_particles(environment['dobj'])
+        self.update_particles(adjacent)
+
+        return True, True
 
     def dynamics(self, x, u, contact_data):
         raise NotImplementedError()
