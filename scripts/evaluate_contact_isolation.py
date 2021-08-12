@@ -82,6 +82,7 @@ def evaluate_on_file(datafile, show_in_place=False, log_video=False):
     # go through previous data and see where the contact detector will isolate the contact to be
     for i in range(len(X)):
         if contact_id[i] == NO_CONTACT_ID:
+            env.contact_detector.observation_history.clear()
             continue
         env.set_state(X[i], U[i])
         for obj_id, poses in obj_poses.items():
@@ -108,11 +109,11 @@ def evaluate_on_file(datafile, show_in_place=False, log_video=False):
                 if show_in_place:
                     env._dd.draw_point(f'c', pt, height=pt[2] + 0.001, color=(0, 0, 1))
                     env._dd.draw_point(f'true_c', c[j], height=pt[2] + 0.001, color=(0.7, 0.7, 0))
+                    env._draw_reaction_force(r[j], InfoKeys.HIGH_FREQ_REACTION_F, (1, 0, 1))
 
                 dist_from_actual_contact.append(np.linalg.norm(pt.cpu().numpy() - c[j]))
         assert in_contact
         all_dists.append(dist_from_actual_contact)
-        env.contact_detector.observation_history.clear()
 
     env.close()
     return all_dists
@@ -121,15 +122,15 @@ def evaluate_on_file(datafile, show_in_place=False, log_video=False):
 if __name__ == "__main__":
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
 
-    full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper10/11.mat')
-    # dists = evaluate_on_file(full_filename, show_in_place=True, log_video=True)
-    # per_step_dists = [np.mean(d) for d in dists]
-    #
-    # logger.info(
-    #     f"{full_filename}\navg: {np.mean(per_step_dists)}\nmedian: {np.median(per_step_dists)}\n"
-    #     f"max: {np.max(per_step_dists)} ({np.argmax(per_step_dists)})")
-    # exit(0)
-    # res = {}
+    full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper10/14.mat')
+    dists = evaluate_on_file(full_filename, show_in_place=True, log_video=True)
+    per_step_dists = [np.mean(d) for d in dists]
+
+    logger.info(
+        f"{full_filename}\navg: {np.mean(per_step_dists)}\nmedian: {np.median(per_step_dists)}\n"
+        f"max: {np.max(per_step_dists)} ({np.argmax(per_step_dists)})")
+    exit(0)
+    res = {}
     for res_dir in dirs:
         full_dir = os.path.join(cfg.DATA_DIR, res_dir)
 
@@ -144,7 +145,13 @@ if __name__ == "__main__":
             if dists is None:
                 continue
             per_step_dists = [np.mean(d) for d in dists]
+            res[full_filename] = (np.mean(per_step_dists), np.median(per_step_dists), np.max(per_step_dists))
 
             logger.info(
-                f"{full_filename}\navg: {np.mean(per_step_dists)}\nmedian: {np.median(per_step_dists)}\n"
-                f"max: {np.max(per_step_dists)} ({np.argmax(per_step_dists)})")
+                f"{full_filename}\navg: {res[full_filename][0]}\nmedian: {res[full_filename][1]}\n"
+                f"max: {res[full_filename][2]} ({np.argmax(per_step_dists)})")
+
+    sorted_runs = {k: v for k, v in sorted(res.items(), key=lambda item: item[1][0])}
+    for k, v in sorted_runs.items():
+        logger.info(f"{k} : {[round(metric, 2) for metric in v]}")
+    logger.info(f"all : {[np.round(np.mean(metric), 2) for metric in zip(*sorted_runs.values())]}")
