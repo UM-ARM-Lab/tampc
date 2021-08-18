@@ -149,30 +149,12 @@ class OurMethodSoft(OurMethodFactory):
         self.env = None
         self.visualize = visualize
         self.contact_indices = []
+        self.max_robot_radius = 0.2
 
     def _pt_to_config_dist(self, configs, pts):
         if self.env is None:
             self.env = self.env_class(mode=p.GUI if self.visualize else p.DIRECT)
-
-        M = configs.shape[0]
-        N = pts.shape[0]
-        dist = torch.zeros((M, N), dtype=pts.dtype, device=pts.device)
-
-        orig_pos, orig_orientation = p.getBasePositionAndOrientation(self.env.robot_id)
-        z = orig_pos[2]
-
-        if self.visualize:
-            for i, pt in enumerate(pts):
-                self.env._dd.draw_point(f't{i}', pt, color=(1, 0, 0), height=z)
-
-        for i in range(M):
-            p.resetBasePositionAndOrientation(self.env.robot_id, [configs[i][0], configs[i][1], z], orig_orientation)
-            for j in range(N):
-                closest = closest_point_on_surface(self.env.robot_id, [pts[j][0], pts[j][1], z])
-                dist[i, j] = closest[ContactInfo.DISTANCE]
-
-        # p.resetBasePositionAndOrientation(self.env.robot_id, orig_pos, orig_orientation)
-        return dist
+        return arm.pt_to_config_dist(self.env, self.max_robot_radius, configs, pts)
 
     def create_contact_set(self, contact_params) -> tracking.ContactSet:
         return tracking.ContactSetSoft(self._pt_to_config_dist, contact_params)
@@ -184,10 +166,12 @@ class OurMethodSoft(OurMethodFactory):
     def get_final_labels(self, labels, contact_set: tracking.ContactSetSoft):
         groups = contact_set.get_hard_assignment(0.5)
         contact_indices = torch.tensor(self.contact_indices, device=groups[0].device)
+        self.contact_indices = []
         for group_id, group in enumerate(groups):
             labels[contact_indices[group]] = group_id + 1
         if self.env is not None:
             self.env.close()
+            self.env = None
         return labels
 
     def get_contact_point_results(self, contact_set: tracking.ContactSetSoft) -> typing.Tuple[
@@ -435,7 +419,8 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
                                                                 contact_pts)
         run_key = RunKey(level=level, seed=seed, method=method_name, params=param_values)
         m = clustering_metrics(contact_id[:-1][in_contact], labels[in_contact])
-        contact_error = compute_contact_error(contact_pts[in_contact], moved_points, env_cls, level, obj_poses, visualize=True)
+        contact_error = compute_contact_error(contact_pts[in_contact], moved_points, env_cls, level, obj_poses,
+                                              visualize=False)
         cme = np.mean(np.abs(contact_error))
         # normalize weights
         pt_weights = pt_weights / np.sum(pt_weights)
@@ -474,7 +459,9 @@ if __name__ == "__main__":
 
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
-        'ours soft': OurMethodSoft(length=0.1),
+        # 'ours soft': OurMethodSoft(length=0.1),
+        # 'ours soft sq dist': OurMethodSoft(length=0.1),
+        'ours soft sq dist elim freespace': OurMethodSoft(length=0.1),
         # 'ours UKF': OurMethodHard(length=0.1),
         # 'ours UKF convexity merge constraint': OurMethodHard(length=0.1),
         # 'ours PF': OurMethodHard(contact_object_class=tracking.ContactPF, length=0.1),
@@ -488,20 +475,20 @@ if __name__ == "__main__":
         #                                               threshold=1.5)
     }
 
-    full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper13/25.mat')
-    evaluate_methods_on_file(full_filename, runs, methods_to_run)
+    # full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper13/25.mat')
+    # evaluate_methods_on_file(full_filename, runs, methods_to_run)
 
-    # for res_dir in dirs:
-    #     full_dir = os.path.join(cfg.DATA_DIR, res_dir)
-    #
-    #     files = os.listdir(full_dir)
-    #     files = sorted(files)
-    #
-    #     for file in files:
-    #         full_filename = '{}/{}'.format(full_dir, file)
-    #         if os.path.isdir(full_filename):
-    #             continue
-    #         evaluate_methods_on_file(full_filename, runs, methods_to_run)
+    for res_dir in dirs:
+        full_dir = os.path.join(cfg.DATA_DIR, res_dir)
+
+        files = os.listdir(full_dir)
+        files = sorted(files)
+
+        for file in files:
+            full_filename = '{}/{}'.format(full_dir, file)
+            if os.path.isdir(full_filename):
+                continue
+            evaluate_methods_on_file(full_filename, runs, methods_to_run)
 
     with open(CONTACT_RES_FILE, 'wb') as f:
         pickle.dump(runs, f)
