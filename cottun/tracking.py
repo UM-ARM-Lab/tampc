@@ -586,7 +586,7 @@ class ContactSet(serialization.Serializable):
         self.visualizer = visualizer
 
     @abc.abstractmethod
-    def update(self, x, u, dx, contact_detector: ContactDetector, reaction, info=None):
+    def update(self, x, u, dx, contact_detector: ContactDetector, reaction, info=None, visualizer=None):
         """Update contact set with observed transition"""
 
     @abc.abstractmethod
@@ -711,7 +711,7 @@ class ContactSetHard(ContactSet):
 
         return res_c, res_i
 
-    def update(self, x, u, dx, contact_detector: ContactDetector, reaction, info=None):
+    def update(self, x, u, dx, contact_detector: ContactDetector, reaction, info=None, visualizer=None):
         """Returns updated contact object"""
         environment = {'robot': self.p.state_to_pos(x), 'control': u, 'dx': dx, 'dobj': self.p.state_to_pos(dx)}
         if info is not None:
@@ -848,6 +848,7 @@ class ContactSetSoft(ContactSet):
         # [n_particles, N, D] where N is the number of data points, and D is data dimensionality
         self.sampled_pts = None
         self.sampled_configs = None
+        self.map_particle = None
 
     def _compute_full_adjacency(self, pts):
         # don't typically need to compute full adjacency
@@ -899,18 +900,20 @@ class ContactSetSoft(ContactSet):
     def _distance_to_probability(self, distance, sigma=None):
         # parameter where higher means a greater drop off in probability with distance
         if sigma is None:
-            sigma = self.p.length * 50
+            sigma = self.p.length * 100
         return torch.exp(-sigma * distance)
 
     def predict_particles(self, dx):
         """Apply action to all particles"""
         # assume we just added latest pt and act to self
-        dd = approx_conic_similarity(self.acts[-1], self.pts[-1],
-                                     self.acts.repeat(self.n_particles, 1, 1),
-                                     self.sampled_pts)
+        # dd = approx_conic_similarity(self.acts[-1], self.pts[-1],
+        #                              self.acts.repeat(self.n_particles, 1, 1),
+        #                              self.sampled_pts)
+
+        dd = (self.pts[-1] - self.sampled_pts).norm(dim=-1)
 
         # convert to probability
-        connection_prob = self._distance_to_probability(dd)
+        connection_prob = self._distance_to_probability(dd ** 2)
 
         # sample particles which make hard assignments
         # independently sample uniform [0, 1) and compare against prob - note that connections are symmetric
@@ -932,13 +935,14 @@ class ContactSetSoft(ContactSet):
         obs_weights = torch.ones(self.n_particles, device=self.device, dtype=self.pts.dtype)
         self.penetration_sigma = self.p.length * 3000
 
+        tol = 0.005
         for i in range(self.n_particles):
             # for efficiency, just consider the last configuration (should probably consider all points, but may be enough)
             config = self.sampled_configs[i, -1]
             query_points = self.sampled_pts[i]
             d = self.pt_to_config_dist(config.view(1, -1), query_points).view(-1)
             # negative distance indicates penetration
-            d = d[d < 0]
+            d = d[d < -tol]
             if len(d) > 0:
                 cum_prob = self._distance_to_probability(-d, sigma=self.penetration_sigma)
                 obs_weights[i] = cum_prob.prod()
@@ -946,7 +950,7 @@ class ContactSetSoft(ContactSet):
             query_point = self.sampled_pts[i, -1]
             configs = self.sampled_configs[i]
             d = self.pt_to_config_dist(configs, query_point.view(1, -1)).view(-1)
-            d = d[d < 0]
+            d = d[d < -tol]
             if len(d) > 0:
                 cum_prob = self._distance_to_probability(-d, sigma=self.penetration_sigma)
                 obs_weights[i] *= cum_prob.prod()
@@ -964,7 +968,7 @@ class ContactSetSoft(ContactSet):
         # These are useful statistics for adaptive particle filtering.
         self.n_eff = (1.0 / (self.weights ** 2).sum()) / self.n_particles
         self.weight_entropy = torch.sum(self.weights * torch.log(self.weights))
-        logger.debug("PF total weights: %f n_eff %f", self.weights_normalization.item(), self.n_eff.item())
+        logger.debug(f"PF total weights: {self.weights_normalization.item()} n_eff {self.n_eff.item()}")
 
         # preserve current sample set before any replenishment
         self.original_particles = self.sampled_pts.clone(), self.sampled_configs.clone()
@@ -980,7 +984,7 @@ class ContactSetSoft(ContactSet):
             self.sampled_configs = self.sampled_configs[indices, :]
             self.weights = torch.ones(self.n_particles, device=self.device) / self.n_particles
 
-    def update(self, x, u, dx, contact_detector: ContactDetector, reaction, info=None):
+    def update(self, x, u, dx, contact_detector: ContactDetector, reaction, info=None, visualizer=None):
         environment = {'robot': self.p.state_to_pos(x), 'control': u, 'dx': dx, 'dobj': self.p.state_to_pos(dx)}
         # debugging info
         if info is not None:
@@ -994,9 +998,13 @@ class ContactSetSoft(ContactSet):
             return None, None
 
         # where contact point would be without this movement
+        z = cur_pt[2]
         cur_pt = cur_pt[:2]
         prev_pt = cur_pt - environment['dobj']
         prev_config = self.p.state_to_pos(x + dx) - environment['dobj']
+
+        if visualizer is not None:
+            visualizer.draw_point(f'c', prev_pt, height=z,  color=(0, 0, 1))
 
         if self.pts is None:
             self.pts = prev_pt.view(1, -1)
