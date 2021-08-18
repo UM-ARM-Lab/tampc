@@ -414,21 +414,25 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
 
     contact_detector, contact_pts = get_contact_point_history(d, datafile)
 
-    for method_name, method in methods.items():
-        labels, param_values, moved_points, pt_weights = method(X, U, reactions, env_cls, info, contact_detector,
-                                                                contact_pts)
-        run_key = RunKey(level=level, seed=seed, method=method_name, params=param_values)
-        m = clustering_metrics(contact_id[:-1][in_contact], labels[in_contact])
-        contact_error = compute_contact_error(contact_pts[in_contact], moved_points, env_cls, level, obj_poses,
-                                              visualize=False)
-        cme = np.mean(np.abs(contact_error))
-        # normalize weights
-        pt_weights = pt_weights / np.sum(pt_weights)
-        wcme = np.sum(np.abs(contact_error) @ pt_weights)
-        run_res[run_key] = list(m) + [cme, wcme]
+    for method_name, method_list in methods.items():
+        if not isinstance(method_list, (list, tuple)):
+            method_list = [method_list]
 
-        f = plot_cluster_res(labels, X[:-1], f"Task {level} {datafile.split('/')[-1]} {method_name}")
-        save_and_close_fig(f, f"{method_name} {param_values.replace('.', '_')}")
+        for method in method_list:
+            labels, param_values, moved_points, pt_weights = method(X, U, reactions, env_cls, info, contact_detector,
+                                                                    contact_pts)
+            run_key = RunKey(level=level, seed=seed, method=method_name, params=param_values)
+            m = clustering_metrics(contact_id[:-1][in_contact], labels[in_contact])
+            contact_error = compute_contact_error(contact_pts[in_contact], moved_points, env_cls, level, obj_poses,
+                                                  visualize=False)
+            cme = np.mean(np.abs(contact_error))
+            # normalize weights
+            pt_weights = pt_weights / np.sum(pt_weights)
+            wcme = np.sum(np.abs(contact_error) @ pt_weights)
+            run_res[run_key] = list(m) + [cme, wcme]
+
+            f = plot_cluster_res(labels, X[:-1], f"Task {level} {datafile.split('/')[-1]} {method_name}")
+            save_and_close_fig(f, f"{method_name} {param_values.replace('.', '_')}")
 
     # plt.show()
 
