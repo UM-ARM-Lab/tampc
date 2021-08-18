@@ -59,6 +59,11 @@ def closest_point_on_surface(object_id, query_point):
     p.resetBasePositionAndOrientation(_CONTACT_TESTER_ID, query_point, [0, 0, 0, 1])
     p.performCollisionDetection()
     pts_on_surface = p.getClosestPoints(object_id, _CONTACT_TESTER_ID, 100, linkIndexB=-1)
+    # if the pybullet environment is reset and the object doesn't exist; this will not catch all cases
+    if len(pts_on_surface) < 1:
+        _CONTACT_TESTER_ID = -1
+        return closest_point_on_surface(object_id, query_point)
+
     pts_on_surface = sorted(pts_on_surface, key=lambda c: c[ContactInfo.DISTANCE])
 
     # move out the way
