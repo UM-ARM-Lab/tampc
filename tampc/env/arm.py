@@ -16,7 +16,7 @@ from pybullet_object_models import ycb_objects
 
 from arm_pytorch_utilities import tensor_utils
 from tampc.env.pybullet_env import PybulletEnv, get_total_contact_force, make_box, state_action_color_pairs, \
-    ContactInfo, make_cylinder
+    ContactInfo, make_cylinder, closest_point_on_surface
 from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource, InfoKeys
 from tampc.env.peg_in_hole import PandaJustGripperID
 from tampc.env.pybullet_sim import PybulletSim
@@ -447,33 +447,54 @@ class ArmEnv(PybulletEnv):
                 self._dd.draw_2d_line(name, p, actions[j], color=action_c, scale=action_scale)
 
     def visualize_contact_set(self, contact_set: tracking.ContactSetHard):
-        # clear all previous markers because we don't know which one was removed
-        if len(self._contact_debug_names) > len(contact_set):
-            for name in self._contact_debug_names:
-                self._dd.clear_visualizations(name)
-            self._contact_debug_names = []
+        if isinstance(contact_set, tracking.ContactSetHard):
+            # clear all previous markers because we don't know which one was removed
+            if len(self._contact_debug_names) > len(contact_set):
+                for name in self._contact_debug_names:
+                    self._dd.clear_visualizations(name)
+                self._contact_debug_names = []
+            for i, c in enumerate(contact_set):
+                color, u_color = state_action_color_pairs[i % len(state_action_color_pairs)]
+                if i >= len(self._contact_debug_names):
+                    self._contact_debug_names.append(set())
+                # represent the uncertainty of the center point
+                name = 'cp{}'.format(i)
+                eigval, eigvec = torch.eig(c.cov[0], eigenvectors=True)
+                yx_ratio = eigval[1, 0] / eigval[0, 0]
+                rot = math.atan2(eigvec[1, 0], eigvec[0, 0])
+                l = eigval[0, 0] * 100
+                w = c.weight
+                self._dd.draw_point(name, self.get_ee_pos(c.mu[0]), length=l.item(), length_ratio=yx_ratio, rot=rot,
+                                    color=color)
+                self._contact_debug_names[i].add(name)
 
-        for i, c in enumerate(contact_set):
-            color, u_color = state_action_color_pairs[i % len(state_action_color_pairs)]
-            if i >= len(self._contact_debug_names):
-                self._contact_debug_names.append(set())
-            # represent the uncertainty of the center point
-            name = 'cp{}'.format(i)
-            eigval, eigvec = torch.eig(c.cov[0], eigenvectors=True)
-            yx_ratio = eigval[1, 0] / eigval[0, 0]
-            rot = math.atan2(eigvec[1, 0], eigvec[0, 0])
-            l = eigval[0, 0] * 100
-            w = c.weight
-            self._dd.draw_point(name, self.get_ee_pos(c.mu[0]), length=l.item(), length_ratio=yx_ratio, rot=rot,
-                                color=color)
-            self._contact_debug_names[i].add(name)
+                base_name = str(i)
+                self.visualize_state_actions(base_name, c.points, c.actions, color, u_color, 0.1 * w)
 
-            base_name = str(i)
-            self.visualize_state_actions(base_name, c.points, c.actions, color, u_color, 0.1 * w)
+                for j in range(len(c.points)):
+                    self._contact_debug_names[i].add('{}{}'.format(base_name, j))
+                    self._contact_debug_names[i].add('{}{}a'.format(base_name, j))
+        elif isinstance(contact_set, tracking.ContactSetSoft):
+            pts = contact_set.get_posterior_points()
+            if pts is None:
+                return
+            groups = contact_set.get_hard_assignment(0.5)
+            # clear all previous markers because we don't know which one was removed
+            if len(self._contact_debug_names) > len(groups):
+                for name in self._contact_debug_names:
+                    self._dd.clear_visualizations(name)
+                self._contact_debug_names = []
+            for i, indices in enumerate(groups):
+                color, u_color = state_action_color_pairs[i % len(state_action_color_pairs)]
+                if i >= len(self._contact_debug_names):
+                    self._contact_debug_names.append(set())
+                # represent the uncertainty of the center point
+                base_name = str(i)
+                self.visualize_state_actions(base_name, pts[indices], contact_set.acts[indices], color, u_color, 0.1)
+                for j in range(len(pts[indices])):
+                    self._contact_debug_names[i].add('{}{}'.format(base_name, j))
+                    self._contact_debug_names[i].add('{}{}a'.format(base_name, j))
 
-            for j in range(len(c.points)):
-                self._contact_debug_names[i].add('{}{}'.format(base_name, j))
-                self._contact_debug_names[i].add('{}{}a'.format(base_name, j))
         # clean up any old visualization
         # for i in range(len(contact_set), len(self._contact_debug_names)):
         #     self._dd.clear_visualizations(self._contact_debug_names[i])
@@ -1472,3 +1493,33 @@ class ArmDataSource(EnvDataSource):
         loader_map = {ArmEnv: ArmLoader, ArmJointEnv: ArmLoader, PlanarArmEnv: ArmLoader, FloatingGripperEnv: ArmLoader,
                       ObjectRetrievalEnv: ArmLoader}
         return loader_map.get(env_type, None)
+
+
+def pt_to_config_dist(env, max_robot_radius, configs, pts):
+    M = configs.shape[0]
+    N = pts.shape[0]
+    dist = torch.zeros((M, N), dtype=pts.dtype, device=pts.device)
+
+    orig_pos, orig_orientation = p.getBasePositionAndOrientation(env.robot_id)
+    z = orig_pos[2]
+
+    # to speed up distance checking, we compute distance from center of robot config to point
+    # and avoid the expensive check of distance to surface for those that are too far away
+    center_dist = torch.cdist(configs[:, :2].view(-1, 2), pts[:, :2].view(-1, 2))
+
+    # if visualize:
+    #     for i, pt in enumerate(pts):
+    #         env._dd.draw_point(f't{i}', pt, color=(1, 0, 0), height=z)
+
+    for i in range(M):
+        p.resetBasePositionAndOrientation(env.robot_id, [configs[i][0], configs[i][1], z], orig_orientation)
+        for j in range(N):
+            if center_dist[i, j] > max_robot_radius:
+                # just have to report something > 0
+                dist[i, j] = 1
+            else:
+                closest = closest_point_on_surface(env.robot_id, [pts[j][0], pts[j][1], z])
+                dist[i, j] = closest[ContactInfo.DISTANCE]
+
+    p.resetBasePositionAndOrientation(env.robot_id, orig_pos, orig_orientation)
+    return dist

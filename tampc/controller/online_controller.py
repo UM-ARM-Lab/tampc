@@ -178,6 +178,7 @@ class TAMPC(OnlineMPC):
                  reuse_escape_as_demonstration=True,
                  contact_params: tracking.ContactParameters = None,
                  contact_detector: detection.ContactDetector = None,
+                 pt_to_config_dist=None,
                  **kwargs):
         self.known_immovable_obstacles = known_immovable_obstacles
         self.state_to_pos = None
@@ -237,9 +238,13 @@ class TAMPC(OnlineMPC):
         self.p = contact_params
         self.contact_detector = contact_detector
         self.in_contact_with_known_immovable = False
-        self.contact_set = tracking.ContactSetHard(self.p,
-                                                   immovable_collision_checker=self._known_immovable_obstacle_collision_check,
-                                                   contact_object_factory=self._create_contact_object)
+        if pt_to_config_dist is not None:
+            self.contact_set = tracking.ContactSetSoft(pt_to_config_dist, self.p,
+                                                       immovable_collision_checker=self._known_immovable_obstacle_collision_check)
+        else:
+            self.contact_set = tracking.ContactSetHard(self.p,
+                                                       immovable_collision_checker=self._known_immovable_obstacle_collision_check,
+                                                       contact_object_factory=self._create_contact_object)
         self.contact_cost = None
         self.contact_use_prior = contact_use_prior
         if self.p is not None:

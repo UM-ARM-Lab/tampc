@@ -18,6 +18,7 @@ import os
 import argparse
 from datetime import datetime
 import pprint
+from functools import partial
 
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.optim import get_device
@@ -296,6 +297,8 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
     env = ArmGetter.env(level=level, mode=p.GUI)
     logger.info("initial random seed %d", rand.seed(seed))
 
+
+
     ds, pm = ArmGetter.prior(env, use_tsf, rep_name=rep_name)
 
     dss = [ds]
@@ -368,6 +371,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                         never_estimate_error_dynamics=never_estimate_error,
                         known_immovable_obstacles=env.immovable,
                         contact_params=ArmGetter.contact_parameters(env),
+                        pt_to_config_dist=partial(arm.pt_to_config_dist, env, 0.2),
                         **tampc_opts, )
         if low_level_mpc is controller.ExperimentalMPPI:
             mpc = controller.ExperimentalMPPI(ctrl.mpc_apply_dynamics, ctrl.mpc_running_cost, ctrl.nx,
@@ -756,12 +760,15 @@ def replay_trajectory(traj_data_name, upto_index, *args, save_control=False, res
                 env.contact_detector.observe_residual(ee_force_torque, pose)
 
                 # remove contact dynamics to speed up execution
-                for obj in ctrl.contact_set:
-                    obj.dynamics = None
+                if isinstance(ctrl.contact_set, tracking.ContactSetHard):
+                    for obj in ctrl.contact_set:
+                        obj.dynamics = None
+
                 # will do worse than actual execution because we don't protect against immovable obstacle contact here
                 c, cc = ctrl.contact_set.update(XT[i - 1], UT[i - 1], ctrl.compare_to_goal(XT[i], XT[i - 1])[0],
                                                 env.contact_detector, XT[i, -2:],
-                                                info={InfoKeys.DEE_IN_CONTACT: d[InfoKeys.DEE_IN_CONTACT][i - 1]})
+                                                info={InfoKeys.DEE_IN_CONTACT: d[InfoKeys.DEE_IN_CONTACT][i - 1]},
+                                                visualizer=env._dd)
                 env.visualize_contact_set(ctrl.contact_set)
 
             # obs, rew, done, info = env.step(U[i])
@@ -962,9 +969,9 @@ if __name__ == "__main__":
     else:
         # OfflineDataCollection.tracking(Levels.SELECT3, seed_offset=42, trials=1, force_gui=True)
         replay_trajectory(
-            'arm/gripper10/11.mat',
+            'arm/gripper13/24.mat',
             300,
-            seed=11, level=Levels.SELECT1, use_tsf=ut,
+            seed=24, level=Levels.SELECT4, use_tsf=ut,
             assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
             visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
             override_tampc_params=tampc_params, override_mpc_params=mpc_params,
