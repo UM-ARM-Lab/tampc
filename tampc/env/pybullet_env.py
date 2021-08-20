@@ -297,6 +297,8 @@ class DebugDrawer:
         if names is None:
             names = list(self._debug_ids.keys())
         for name in names:
+            if name not in self._debug_ids:
+                continue
             uids = self._debug_ids.pop(name)
             if type(uids) is int:
                 uids = [uids]
