@@ -929,8 +929,11 @@ class ContactSetSoft(ContactSet):
         self.sampled_configs[adjacent] += dx
         return adjacent
 
-    def update_particles(self, adjacent):
+    def update_particles(self, adjacent, config):
         """Update the weight of each particle corresponding to their ability to explain the observation"""
+        if self.pts is None:
+            return
+
         # all contact points should be outside the robot
         obs_weights = torch.ones(self.n_particles, device=self.device, dtype=self.pts.dtype)
         self.penetration_sigma = self.p.length * 3000
@@ -938,11 +941,11 @@ class ContactSetSoft(ContactSet):
         tol = 0.005
         for i in range(self.n_particles):
             # for efficiency, just consider the last configuration (should probably consider all points, but may be enough)
-            config = self.sampled_configs[i, -1]
             query_points = self.sampled_pts[i]
             d = self.pt_to_config_dist(config.view(1, -1), query_points).view(-1)
             # negative distance indicates penetration
-            d = d[d < -tol]
+            d += tol
+            d = d[d < 0]
             if len(d) > 0:
                 cum_prob = self._distance_to_probability(-d, sigma=self.penetration_sigma)
                 obs_weights[i] = cum_prob.prod()
@@ -950,7 +953,8 @@ class ContactSetSoft(ContactSet):
             query_point = self.sampled_pts[i, -1]
             configs = self.sampled_configs[i]
             d = self.pt_to_config_dist(configs, query_point.view(1, -1)).view(-1)
-            d = d[d < -tol]
+            d += tol
+            d = d[d < 0]
             if len(d) > 0:
                 cum_prob = self._distance_to_probability(-d, sigma=self.penetration_sigma)
                 obs_weights[i] *= cum_prob.prod()
@@ -993,18 +997,20 @@ class ContactSetSoft(ContactSet):
             # TODO have a better way of selecting 2-D / 3-D
             environment['dobj'] = info[InfoKeys.DEE_IN_CONTACT][:2]
         cur_pt = contact_detector.get_last_contact_location()
+        cur_config = self.p.state_to_pos(x + dx)
         if cur_pt is None:
-            # TODO step without contact
+            # step without contact, eliminate particles that conflict with this config in freespace
+            # self.update_particles(None, cur_config)
             return None, None
 
         # where contact point would be without this movement
         z = cur_pt[2]
         cur_pt = cur_pt[:2]
         prev_pt = cur_pt - environment['dobj']
-        prev_config = self.p.state_to_pos(x + dx) - environment['dobj']
+        prev_config = cur_config - environment['dobj']
 
         if visualizer is not None:
-            visualizer.draw_point(f'c', prev_pt, height=z,  color=(0, 0, 1))
+            visualizer.draw_point(f'c', prev_pt, height=z, color=(0, 0, 1))
 
         if self.pts is None:
             self.pts = prev_pt.view(1, -1)
@@ -1022,7 +1028,8 @@ class ContactSetSoft(ContactSet):
 
         # classic alternation of predict and update steps
         adjacent = self.predict_particles(environment['dobj'])
-        self.update_particles(adjacent)
+        # update with latest config
+        self.update_particles(adjacent, self.sampled_configs[0, -1])
 
         return True, True
 
