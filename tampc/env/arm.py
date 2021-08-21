@@ -478,7 +478,7 @@ class ArmEnv(PybulletEnv):
             pts = contact_set.get_posterior_points()
             if pts is None:
                 return
-            groups = contact_set.get_hard_assignment(0.5)
+            groups = contact_set.get_hard_assignment(0.05)
             # clear all previous markers because we don't know which one was removed
             if len(self._contact_debug_names) > len(groups):
                 for name in self._contact_debug_names:
@@ -1523,3 +1523,33 @@ def pt_to_config_dist(env, max_robot_radius, configs, pts):
 
     p.resetBasePositionAndOrientation(env.robot_id, orig_pos, orig_orientation)
     return dist
+
+
+class PointToConfig:
+    def __init__(self, env):
+        import trimesh
+        hand = trimesh.load(os.path.join(cfg.ROOT_DIR, "meshes/collision/hand.obj"))
+        lf = trimesh.load(os.path.join(cfg.ROOT_DIR, "meshes/collision/finger.obj"))
+        lf.apply_transform(trimesh.transformations.translation_matrix([0, 0, 0.0584]))
+        rf = trimesh.load(os.path.join(cfg.ROOT_DIR, "meshes/collision/finger.obj"))
+        rf.apply_transform(
+            trimesh.transformations.concatenate_matrices(trimesh.transformations.euler_matrix(0, 0, np.pi),
+                                                         trimesh.transformations.translation_matrix(
+                                                             [0, 0, 0.0584])))
+        self.mesh = trimesh.util.concatenate([hand, lf, rf])
+        # TODO get resting orientation from environment?
+        self.mesh.apply_transform(trimesh.transformations.euler_matrix(0, np.pi / 2, 0))
+
+    def __call__(self, configs, pts):
+        M = configs.shape[0]
+        N = pts.shape[0]
+        # take advantage of the fact our system has no rotation to just translate points; otherwise would need full tsf
+        query_pts = pts.repeat(M, 1, 1).transpose(0, 1)
+        # needed transpose to allow broadcasting
+        query_pts -= configs
+        query = torch.cat(
+            [query_pts.transpose(0, 1).view(M * N, -1), torch.zeros((M * N, 1), device=pts.device, dtype=pts.dtype)],
+            dim=1)
+
+        d = self.mesh.nearest.signed_distance(query.cpu().numpy())
+        return -torch.tensor(d, dtype=pts.dtype, device=pts.device).view(M, N)
