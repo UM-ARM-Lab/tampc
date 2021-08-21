@@ -1539,17 +1539,40 @@ class PointToConfig:
         self.mesh = trimesh.util.concatenate([hand, lf, rf])
         # TODO get resting orientation from environment?
         self.mesh.apply_transform(trimesh.transformations.euler_matrix(0, np.pi / 2, 0))
+        # cache points inside bounding box of robot to accelerate lookup
+        self.min_x, self.min_y = self.mesh.bounding_box.bounds[0, :2]
+        self.max_x, self.max_y = self.mesh.bounding_box.bounds[1, :2]
+        self.cache_resolution = 0.001
+        # create mesh grid
+        x = np.arange(self.min_x, self.max_x + self.cache_resolution, self.cache_resolution)
+        y = np.arange(self.min_y, self.max_y + self.cache_resolution, self.cache_resolution)
+        xx, yy = np.meshgrid(x, y, indexing='ij')
+        pts = np.vstack([xx.ravel(), yy.ravel(), np.zeros(np.prod(xx.shape))]).T
+        d = self.mesh.nearest.signed_distance(pts)
+        # rearrange back to 2D shape
+        self.cache_y_len = len(y)
+        self.d_cache = -d
+        # round ( value - min / self.cache_resolution ) to get index
 
     def __call__(self, configs, pts):
+        if not torch.is_tensor(self.d_cache):
+            self.d_cache = torch.tensor(self.d_cache, device=pts.device, dtype=pts.dtype)
         M = configs.shape[0]
         N = pts.shape[0]
         # take advantage of the fact our system has no rotation to just translate points; otherwise would need full tsf
         query_pts = pts.repeat(M, 1, 1).transpose(0, 1)
         # needed transpose to allow broadcasting
         query_pts -= configs
-        query = torch.cat(
-            [query_pts.transpose(0, 1).view(M * N, -1), torch.zeros((M * N, 1), device=pts.device, dtype=pts.dtype)],
-            dim=1)
-
-        d = self.mesh.nearest.signed_distance(query.cpu().numpy())
-        return -torch.tensor(d, dtype=pts.dtype, device=pts.device).view(M, N)
+        # flatten
+        query_pts = query_pts.transpose(0, 1).view(M * N, -1)
+        d = torch.ones(M * N, dtype=pts.dtype, device=pts.device)
+        # eliminate points outside bounding box
+        valid = (self.min_x <= query_pts[:, 0]) & (query_pts[:, 0] <= self.max_x) & \
+                (self.min_y <= query_pts[:, 1]) & (query_pts[:, 1] <= self.max_y)
+        # convert coordinates to indices
+        query = query_pts[valid]
+        x_id = torch.round((query[:, 0] - self.min_x) / self.cache_resolution).to(dtype=torch.long)
+        y_id = torch.round((query[:, 1] - self.min_y) / self.cache_resolution).to(dtype=torch.long)
+        idx = x_id * self.cache_y_len + y_id
+        d[valid] = self.d_cache[idx]
+        return d.view(M, N)
