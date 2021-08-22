@@ -931,30 +931,40 @@ class ContactSetSoft(ContactSet):
         self.sampled_configs[adjacent] += dx
         return adjacent
 
-    def update_particles(self, adjacent, config):
+    def update_particles(self, adjacent, config=None):
         """Update the weight of each particle corresponding to their ability to explain the observation"""
         if self.pts is None:
             return
 
         # all contact points should be outside the robot
         tol = self.p.intersection_tolerance
-        # for efficiency, just consider the given configuration (should probably consider all points, but may be enough)
-        query_points = self.sampled_pts.view(-1, self.sampled_pts.shape[-1])
-        d = self.pt_to_config_dist(config.view(1, -1), query_points).view(self.n_particles, -1)
-        # negative distance indicates penetration
-        d += tol
-        d[d > 0] = 0
-        # collect sum then offset by max to prevent obs_weights from going to 0
-        obs_weights = d.sum(dim=1)
-        for i in range(self.n_particles):
-            # also consider the last point against all other configs
-            query_point = self.sampled_pts[i, -1]
-            configs = self.sampled_configs[i]
-            d = self.pt_to_config_dist(configs, query_point.view(1, -1)).view(-1)
+        # if given an explicit config to check against
+        if config is not None:
+            # for efficiency, just consider the given configuration (should probably consider all points, but may be enough)
+            query_points = self.sampled_pts.view(-1, self.sampled_pts.shape[-1])
+            d = self.pt_to_config_dist(config.view(1, -1), query_points).view(self.n_particles, -1)
+            # negative distance indicates penetration
             d += tol
-            d = d[d < 0]
-            if len(d) > 0:
-                obs_weights[i] += d.sum()
+            d[d > 0] = 0
+            # collect sum then offset by max to prevent obs_weights from going to 0
+            obs_weights = d.sum(dim=1)
+            for i in range(self.n_particles):
+                # also consider the last point against all other configs
+                query_point = self.sampled_pts[i, -1]
+                configs = self.sampled_configs[i]
+                d = self.pt_to_config_dist(configs, query_point.view(1, -1)).view(-1)
+                d += tol
+                d = d[d < 0]
+                if len(d) > 0:
+                    obs_weights[i] += d.sum()
+        else:
+            # otherwise check all configs against all points for each particle
+            obs_weights = torch.zeros(self.n_particles, dtype=self.pts.dtype, device=self.pts.device)
+            for i in range(self.n_particles):
+                d = self.pt_to_config_dist(self.sampled_configs[i], self.sampled_pts[i])
+                d += tol
+                d = d[d < 0]
+                obs_weights[i] = d.sum()
 
         # prevent every particle going to 0
         obs_weights -= obs_weights.max()
@@ -1032,7 +1042,9 @@ class ContactSetSoft(ContactSet):
         # classic alternation of predict and update steps
         adjacent = self.predict_particles(environment['dobj'])
         # update with latest config
-        self.update_particles(adjacent, self.sampled_configs[0, -1])
+        # self.update_particles(adjacent, self.sampled_configs[0, -1])
+        # check all configs against all points
+        self.update_particles(adjacent, None)
 
         return True, True
 

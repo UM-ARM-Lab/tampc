@@ -51,6 +51,7 @@ class OurMethodFactory:
     def __init__(self, **kwargs):
         self.env_kwargs = kwargs
         self.env_class = None
+        self.p: typing.Optional[tracking.ContactParameters] = None
 
     @abc.abstractmethod
     def create_contact_set(self, contact_params) -> tracking.ContactSet:
@@ -70,6 +71,7 @@ class OurMethodFactory:
         self.env_class = env_class
         # TODO select getter based on env class
         contact_params = ArmGetter.contact_parameters(env_class, **self.env_kwargs)
+        self.p = contact_params
         d = get_device()
         dtype = torch.float32
 
@@ -78,7 +80,8 @@ class OurMethodFactory:
         x = torch.from_numpy(X).to(device=d, dtype=dtype)
         u = torch.from_numpy(U).to(device=d, dtype=dtype)
         r = torch.from_numpy(reactions).to(device=d, dtype=dtype)
-        info[InfoKeys.DEE_IN_CONTACT] = torch.from_numpy(info[InfoKeys.DEE_IN_CONTACT]).to(device=d, dtype=dtype)
+        if not torch.is_tensor(info[InfoKeys.DEE_IN_CONTACT]):
+            info[InfoKeys.DEE_IN_CONTACT] = torch.from_numpy(info[InfoKeys.DEE_IN_CONTACT]).to(device=d, dtype=dtype)
         obj_id = 0
         for i in range(len(X) - 1):
             this_info = {
@@ -149,12 +152,12 @@ class OurMethodSoft(OurMethodFactory):
         self.env = None
         self.visualize = visualize
         self.contact_indices = []
-        self.max_robot_radius = 0.2
 
     def _pt_to_config_dist(self, configs, pts):
         if self.env is None:
             self.env = self.env_class(mode=p.GUI if self.visualize else p.DIRECT)
-        return arm.pt_to_config_dist(self.env, self.max_robot_radius, configs, pts)
+            self._dist_calc = arm.PointToConfig(self.env)
+        return self._dist_calc(configs, pts)
 
     def create_contact_set(self, contact_params) -> tracking.ContactSet:
         return tracking.ContactSetSoft(self._pt_to_config_dist, contact_params)
@@ -164,7 +167,7 @@ class OurMethodSoft(OurMethodFactory):
         return latest_obj_id
 
     def get_final_labels(self, labels, contact_set: tracking.ContactSetSoft):
-        groups = contact_set.get_hard_assignment(0.5)
+        groups = contact_set.get_hard_assignment(self.p.hard_assignment_threshold)
         contact_indices = torch.tensor(self.contact_indices, device=groups[0].device)
         self.contact_indices = []
         for group_id, group in enumerate(groups):
@@ -464,8 +467,13 @@ if __name__ == "__main__":
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
         # 'ours soft': OurMethodSoft(length=0.1),
-        # 'ours soft sq dist': OurMethodSoft(length=0.1),
-        'ours soft sq dist elim freespace': OurMethodSoft(length=0.1),
+        # 'ours soft sq dist': [OurMethodSoft(length=0.1)],
+        'ours soft full check': [OurMethodSoft(length=0.5, hard_assignment_threshold=0.02),
+                                 OurMethodSoft(length=0.5, hard_assignment_threshold=0.005),
+                                 OurMethodSoft(length=0.8, hard_assignment_threshold=0.005),
+                                 OurMethodSoft(length=1, hard_assignment_threshold=0.005),
+                                 ],
+        # 'ours soft sq dist elim freespace': [OurMethodSoft(length=0.05), OurMethodSoft(length=0.02)],
         # 'ours UKF': OurMethodHard(length=0.1),
         # 'ours UKF convexity merge constraint': OurMethodHard(length=0.1),
         # 'ours PF': OurMethodHard(contact_object_class=tracking.ContactPF, length=0.1),
