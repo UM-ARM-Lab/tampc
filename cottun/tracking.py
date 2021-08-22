@@ -999,7 +999,32 @@ class ContactSetSoft(ContactSet):
             indices = resample(self.weights)
             self.sampled_pts = self.sampled_pts[indices, :]
             self.sampled_configs = self.sampled_configs[indices, :]
+
+            # if even after resampling we have bad points, replace those points with good points
+            resampled_weights = self.weights[indices]
+            resampled_n_eff = (1.0 / (resampled_weights ** 2).sum()) / self.n_particles
+            if resampled_n_eff < self.n_eff_threshold:
+                self.replace_bad_points()
+
             self.weights = torch.ones(self.n_particles, device=self.device) / self.n_particles
+
+    def replace_bad_points(self):
+        # for points that remain low probability, replace them with a non penetrating one
+        for i in range(self.n_particles):
+            d = self.pt_to_config_dist(self.sampled_configs[i], self.sampled_pts[i])
+            d += self.p.intersection_tolerance
+            d[d > 0] = 0
+            # each column is the distance of that point to each config
+            bad_pts = d.sum(dim=0) < 0
+            if not torch.any(bad_pts):
+                continue
+            good_pts = ~bad_pts
+            # find the distance of bad points wrt good points
+            d_to_good = torch.cdist(self.sampled_pts[i, bad_pts], self.sampled_pts[i, good_pts])
+            # replace the bad point with a copy of the closest good point
+            closest_idx = torch.argmin(d_to_good, dim=1)
+            self.sampled_pts[i, bad_pts] = self.sampled_pts[i, good_pts][closest_idx]
+            self.sampled_configs[i, bad_pts] = self.sampled_configs[i, good_pts][closest_idx]
 
     def update(self, x, u, dx, contact_detector: ContactDetector, reaction, info=None, visualizer=None):
         environment = {'robot': self.p.state_to_pos(x), 'control': u, 'dx': dx, 'dobj': self.p.state_to_pos(dx)}
