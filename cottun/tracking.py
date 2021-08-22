@@ -1019,6 +1019,9 @@ class ContactSetSoft(ContactSet):
             if not torch.any(bad_pts):
                 continue
             good_pts = ~bad_pts
+            # can't do anything if we have no good points...
+            if not torch.any(good_pts):
+                continue
             # find the distance of bad points wrt good points
             d_to_good = torch.cdist(self.sampled_pts[i, bad_pts], self.sampled_pts[i, good_pts])
             # replace the bad point with a copy of the closest good point
