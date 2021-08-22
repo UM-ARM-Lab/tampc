@@ -1527,6 +1527,7 @@ def pt_to_config_dist(env, max_robot_radius, configs, pts):
 
 class PointToConfig:
     def __init__(self, env):
+        self.env = env
         import trimesh
         hand = trimesh.load(os.path.join(cfg.ROOT_DIR, "meshes/collision/hand.obj"))
         lf = trimesh.load(os.path.join(cfg.ROOT_DIR, "meshes/collision/finger.obj"))
@@ -1546,13 +1547,22 @@ class PointToConfig:
         # create mesh grid
         x = np.arange(self.min_x, self.max_x + self.cache_resolution, self.cache_resolution)
         y = np.arange(self.min_y, self.max_y + self.cache_resolution, self.cache_resolution)
-        xx, yy = np.meshgrid(x, y, indexing='ij')
-        pts = np.vstack([xx.ravel(), yy.ravel(), np.zeros(np.prod(xx.shape))]).T
-        d = self.mesh.nearest.signed_distance(pts)
-        # rearrange back to 2D shape
         self.cache_y_len = len(y)
-        self.d_cache = -d
-        # round ( value - min / self.cache_resolution ) to get index
+        # try loading cache
+        fullname = os.path.join(cfg.DATA_DIR, f'arm_point_to_config.pkl')
+        if os.path.exists(fullname):
+            self.d_cache = torch.load(fullname)
+        else:
+            orig_pos, orig_orientation = p.getBasePositionAndOrientation(env.robot_id)
+            p.resetBasePositionAndOrientation(env.robot_id, [0, 0, 0], orig_orientation)
+            d = np.zeros((len(x), len(y)))
+            for i, xi in enumerate(x):
+                for j, yj in enumerate(y):
+                    closest = closest_point_on_surface(env.robot_id, [xi, yj, 0])
+                    d[i, j] = closest[ContactInfo.DISTANCE]
+            self.d_cache = d.reshape(-1)
+            torch.save(self.d_cache, fullname)
+        # for debugging, view a = self.d_cache.reshape(len(x), len(y))
 
     def __call__(self, configs, pts):
         if not torch.is_tensor(self.d_cache):
@@ -1575,4 +1585,5 @@ class PointToConfig:
         y_id = torch.round((query[:, 1] - self.min_y) / self.cache_resolution).to(dtype=torch.long)
         idx = x_id * self.cache_y_len + y_id
         d[valid] = self.d_cache[idx]
+
         return d.view(M, N)
