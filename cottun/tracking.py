@@ -902,7 +902,7 @@ class ContactSetSoft(ContactSet):
     def _distance_to_probability(self, distance, sigma=None):
         # parameter where higher means a greater drop off in probability with distance
         if sigma is None:
-            sigma = self.p.length * 100
+            sigma = 1 / self.p.length
         return torch.exp(-sigma * distance)
 
     def predict_particles(self, dx):
@@ -969,8 +969,8 @@ class ContactSetSoft(ContactSet):
         # prevent every particle going to 0
         obs_weights -= obs_weights.max()
         # convert to probability
-        self.penetration_sigma = self.p.length * 3000
-        obs_weights = self._distance_to_probability(-obs_weights, sigma=self.penetration_sigma)
+        self.penetration_sigma = 1 / (self.p.length * 0.1)
+        obs_weights = self._distance_to_probability(obs_weights ** 2, sigma=self.penetration_sigma)
 
         min_weight = 1e-15
         self.weights = self.weights * obs_weights
