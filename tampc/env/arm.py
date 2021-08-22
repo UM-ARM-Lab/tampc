@@ -1528,31 +1528,33 @@ def pt_to_config_dist(env, max_robot_radius, configs, pts):
 class PointToConfig:
     def __init__(self, env):
         self.env = env
-        import trimesh
-        hand = trimesh.load(os.path.join(cfg.ROOT_DIR, "meshes/collision/hand.obj"))
-        lf = trimesh.load(os.path.join(cfg.ROOT_DIR, "meshes/collision/finger.obj"))
-        lf.apply_transform(trimesh.transformations.translation_matrix([0, 0, 0.0584]))
-        rf = trimesh.load(os.path.join(cfg.ROOT_DIR, "meshes/collision/finger.obj"))
-        rf.apply_transform(
-            trimesh.transformations.concatenate_matrices(trimesh.transformations.euler_matrix(0, 0, np.pi),
-                                                         trimesh.transformations.translation_matrix(
-                                                             [0, 0, 0.0584])))
-        self.mesh = trimesh.util.concatenate([hand, lf, rf])
-        # TODO get resting orientation from environment?
-        self.mesh.apply_transform(trimesh.transformations.euler_matrix(0, np.pi / 2, 0))
-        # cache points inside bounding box of robot to accelerate lookup
-        self.min_x, self.min_y = self.mesh.bounding_box.bounds[0, :2]
-        self.max_x, self.max_y = self.mesh.bounding_box.bounds[1, :2]
-        self.cache_resolution = 0.001
-        # create mesh grid
-        x = np.arange(self.min_x, self.max_x + self.cache_resolution, self.cache_resolution)
-        y = np.arange(self.min_y, self.max_y + self.cache_resolution, self.cache_resolution)
-        self.cache_y_len = len(y)
         # try loading cache
         fullname = os.path.join(cfg.DATA_DIR, f'arm_point_to_config.pkl')
         if os.path.exists(fullname):
-            self.d_cache = torch.load(fullname)
+            self.d_cache, self.min_x, self.min_y, self.max_x, self.max_y, self.cache_resolution, self.cache_y_len = torch.load(
+                fullname)
         else:
+            import trimesh
+            hand = trimesh.load(os.path.join(cfg.ROOT_DIR, "meshes/collision/hand.obj"))
+            lf = trimesh.load(os.path.join(cfg.ROOT_DIR, "meshes/collision/finger.obj"))
+            lf.apply_transform(trimesh.transformations.translation_matrix([0, 0, 0.0584]))
+            rf = trimesh.load(os.path.join(cfg.ROOT_DIR, "meshes/collision/finger.obj"))
+            rf.apply_transform(
+                trimesh.transformations.concatenate_matrices(trimesh.transformations.euler_matrix(0, 0, np.pi),
+                                                             trimesh.transformations.translation_matrix(
+                                                                 [0, 0, 0.0584])))
+            self.mesh = trimesh.util.concatenate([hand, lf, rf])
+            # TODO get resting orientation from environment?
+            self.mesh.apply_transform(trimesh.transformations.euler_matrix(0, np.pi / 2, 0))
+            # cache points inside bounding box of robot to accelerate lookup
+            self.min_x, self.min_y = self.mesh.bounding_box.bounds[0, :2]
+            self.max_x, self.max_y = self.mesh.bounding_box.bounds[1, :2]
+            self.cache_resolution = 0.001
+            # create mesh grid
+            x = np.arange(self.min_x, self.max_x + self.cache_resolution, self.cache_resolution)
+            y = np.arange(self.min_y, self.max_y + self.cache_resolution, self.cache_resolution)
+            self.cache_y_len = len(y)
+
             orig_pos, orig_orientation = p.getBasePositionAndOrientation(env.robot_id)
             p.resetBasePositionAndOrientation(env.robot_id, [0, 0, 0], orig_orientation)
             d = np.zeros((len(x), len(y)))
@@ -1561,7 +1563,9 @@ class PointToConfig:
                     closest = closest_point_on_surface(env.robot_id, [xi, yj, 0])
                     d[i, j] = closest[ContactInfo.DISTANCE]
             self.d_cache = d.reshape(-1)
-            torch.save(self.d_cache, fullname)
+            torch.save(
+                [self.d_cache, self.min_x, self.min_y, self.max_x, self.max_y, self.cache_resolution, self.cache_y_len],
+                fullname)
         # for debugging, view a = self.d_cache.reshape(len(x), len(y))
 
     def __call__(self, configs, pts):
