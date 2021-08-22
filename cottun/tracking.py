@@ -26,6 +26,8 @@ class ContactParameters:
     weight_multiplier: float = 0.1
     ignore_below_weight: float = 0.2
     force_threshold: float = 0.5
+    hard_assignment_threshold: float = 0.05  # for soft assignment, probability threshold for belonging to same component
+    intersection_tolerance: float = 0.002  # how much intersection into the robot's surface we ignore
     # approx_robot_radius: float = 0.1
     # min_friction_cossim: float = 0.3  # (0,1) where 0 means very high friction and 1 means no friction
 
@@ -935,19 +937,16 @@ class ContactSetSoft(ContactSet):
             return
 
         # all contact points should be outside the robot
+        tol = self.p.intersection_tolerance
+        # for efficiency, just consider the given configuration (should probably consider all points, but may be enough)
+        query_points = self.sampled_pts.view(-1, self.sampled_pts.shape[-1])
+        d = self.pt_to_config_dist(config.view(1, -1), query_points).view(self.n_particles, -1)
+        # negative distance indicates penetration
+        d += tol
+        d[d > 0] = 0
         # collect sum then offset by max to prevent obs_weights from going to 0
-        obs_weights = torch.zeros(self.n_particles, device=self.device, dtype=self.pts.dtype)
-
-        tol = 0.005
+        obs_weights = d.sum(dim=1)
         for i in range(self.n_particles):
-            # for efficiency, just consider the given configuration (should probably consider all points, but may be enough)
-            query_points = self.sampled_pts[i]
-            d = self.pt_to_config_dist(config.view(1, -1), query_points).view(-1)
-            # negative distance indicates penetration
-            d += tol
-            d = d[d < 0]
-            if len(d) > 0:
-                obs_weights[i] = d.sum()
             # also consider the last point against all other configs
             query_point = self.sampled_pts[i, -1]
             configs = self.sampled_configs[i]
@@ -958,11 +957,11 @@ class ContactSetSoft(ContactSet):
                 obs_weights[i] += d.sum()
 
         # prevent every particle going to 0
-        obs_weights -= obs_weights.min()
+        obs_weights -= obs_weights.max()
         # convert to probability
         self.penetration_sigma = self.p.length * 3000
         obs_weights = self._distance_to_probability(-obs_weights, sigma=self.penetration_sigma)
-        
+
         min_weight = 1e-15
         self.weights = self.weights * obs_weights
         self.weights[self.weights < min_weight] = min_weight
