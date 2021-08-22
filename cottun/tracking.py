@@ -935,20 +935,19 @@ class ContactSetSoft(ContactSet):
             return
 
         # all contact points should be outside the robot
-        obs_weights = torch.ones(self.n_particles, device=self.device, dtype=self.pts.dtype)
-        self.penetration_sigma = self.p.length * 3000
+        # collect sum then offset by max to prevent obs_weights from going to 0
+        obs_weights = torch.zeros(self.n_particles, device=self.device, dtype=self.pts.dtype)
 
         tol = 0.005
         for i in range(self.n_particles):
-            # for efficiency, just consider the last configuration (should probably consider all points, but may be enough)
+            # for efficiency, just consider the given configuration (should probably consider all points, but may be enough)
             query_points = self.sampled_pts[i]
             d = self.pt_to_config_dist(config.view(1, -1), query_points).view(-1)
             # negative distance indicates penetration
             d += tol
             d = d[d < 0]
             if len(d) > 0:
-                cum_prob = self._distance_to_probability(-d, sigma=self.penetration_sigma)
-                obs_weights[i] = cum_prob.prod()
+                obs_weights[i] = d.sum()
             # also consider the last point against all other configs
             query_point = self.sampled_pts[i, -1]
             configs = self.sampled_configs[i]
@@ -956,9 +955,14 @@ class ContactSetSoft(ContactSet):
             d += tol
             d = d[d < 0]
             if len(d) > 0:
-                cum_prob = self._distance_to_probability(-d, sigma=self.penetration_sigma)
-                obs_weights[i] *= cum_prob.prod()
+                obs_weights[i] += d.sum()
 
+        # prevent every particle going to 0
+        obs_weights -= obs_weights.min()
+        # convert to probability
+        self.penetration_sigma = self.p.length * 3000
+        obs_weights = self._distance_to_probability(-obs_weights, sigma=self.penetration_sigma)
+        
         min_weight = 1e-15
         self.weights = self.weights * obs_weights
         self.weights[self.weights < min_weight] = min_weight
@@ -1000,7 +1004,7 @@ class ContactSetSoft(ContactSet):
         cur_config = self.p.state_to_pos(x + dx)
         if cur_pt is None:
             # step without contact, eliminate particles that conflict with this config in freespace
-            # self.update_particles(None, cur_config)
+            self.update_particles(None, cur_config)
             return None, None
 
         # where contact point would be without this movement
