@@ -552,7 +552,7 @@ def resample(weights):
     n = len(weights)
     indices = []
     C = [0.0] + [torch.sum(weights[: i + 1]) for i in range(n)]
-    u0, j = torch.rand((1,)), 0
+    u0, j = torch.rand((1,), device=weights.device), 0
     for u in [(u0 + i) / n for i in range(n)]:
         while j < len(C) and u > C[j]:
             j += 1
@@ -1031,14 +1031,16 @@ class ContactSetSoft(ContactSet):
 
     def update(self, x, u, dx, contact_detector: ContactDetector, reaction, info=None, visualizer=None):
         environment = {'robot': self.p.state_to_pos(x), 'control': u, 'dx': dx, 'dobj': self.p.state_to_pos(dx)}
+        d = self.device
+        dtype = contact_detector.dtype
         # debugging info
         if info is not None:
             # debugging info
             environment['obj'] = info.get(InfoKeys.OBJ_POSES, None)
             # TODO have a better way of selecting 2-D / 3-D
-            environment['dobj'] = info[InfoKeys.DEE_IN_CONTACT][:2]
+            environment['dobj'] = tensor_utils.ensure_tensor(d, dtype, info[InfoKeys.DEE_IN_CONTACT][:2])
         cur_pt = contact_detector.get_last_contact_location()
-        cur_config = self.p.state_to_pos(x + dx)
+        cur_config = tensor_utils.ensure_tensor(d, dtype, self.p.state_to_pos(x + dx))
         if cur_pt is None:
             # step without contact, eliminate particles that conflict with this config in freespace
             self.update_particles(None, cur_config)
@@ -1051,7 +1053,7 @@ class ContactSetSoft(ContactSet):
         prev_config = cur_config - environment['dobj']
 
         if visualizer is not None:
-            visualizer.draw_point(f'c', prev_pt, height=z, color=(0, 0, 1))
+            visualizer.draw_point(f'c', prev_pt.cpu(), height=z.item(), color=(0, 0, 1))
 
         if self.pts is None:
             self.pts = prev_pt.view(1, -1)

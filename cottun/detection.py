@@ -19,7 +19,7 @@ class ContactDetector:
     We additionally assume access to force torque sensors at the end effector, which is our residual."""
 
     def __init__(self, residual_precision, residual_threshold, num_sample_points=100,
-                 max_friction_cone_angle=50 * math.pi / 180, window_size=5, dtype=torch.float):
+                 max_friction_cone_angle=50 * math.pi / 180, window_size=5, dtype=torch.float, device='cpu'):
         """
 
         :param residual_precision: sigma_meas^-1 matrix that scales the different residual dimensions based on their
@@ -35,6 +35,13 @@ class ContactDetector:
         self.observation_history = deque(maxlen=500)
         self._window_size = window_size
         self.dtype = dtype
+        self.device = device
+
+    def to(self, device=None, dtype=None):
+        if device is not None:
+            self.device = device
+        if dtype is not None:
+            self.dtype = dtype
 
     def observe_residual(self, ee_force_torque, pose=None):
         """Returns whether this residual implies we are currently in contact and track its location if given pose"""
@@ -82,9 +89,9 @@ class ContactDetector:
                 break
             ee_ft.append(ee_force_torque)
             pp.append(prev_pose)
-        ee_ft = torch.tensor(ee_ft, dtype=self.dtype)
+        ee_ft = torch.tensor(ee_ft, dtype=self.dtype, device=self.device)
         # assume we don't move that much in a short amount of time and we can just use the latest pose
-        pp = tuple(torch.tensor(p, dtype=self.dtype) for p in pp[0])
+        pp = tuple(torch.tensor(p, dtype=self.dtype, device=self.device) for p in pp[0])
         # pos = torch.tensor([p[0] for p in pp], dtype=self.dtype)
         # orientation = torch.tensor([p[1] for p in pp], dtype=self.dtype)
         # pp = (pos, orientation)
@@ -92,8 +99,8 @@ class ContactDetector:
         # in link frame
         last_contact_point = self.isolate_contact(ee_ft, pp, **kwargs)
 
-        x = tf.Translate(*pose[0])
-        r = tf.Rotate(pose[1])
+        x = tf.Translate(*pose[0], dtype=self.dtype, device=self.device)
+        r = tf.Rotate(pose[1], dtype=self.dtype, device=self.device)
         link_to_current_tf = x.compose(r)
         return link_to_current_tf.transform_points(last_contact_point.view(1, -1))[0]
 
@@ -115,7 +122,9 @@ class ContactDetector:
 class ContactDetectorPlanar(ContactDetector):
     def get_jacobian(self, locations, q=None):
         """For planar robots, this kind of Jacobian is configuration independent"""
-        return torch.stack([torch.tensor([[1., 0.], [0., 1.], [-loc[1], loc[0]]]) for loc in locations])
+        return torch.stack(
+            [torch.tensor([[1., 0.], [0., 1.], [-loc[1], loc[0]]], device=self.device, dtype=self.dtype) for loc in
+             locations])
 
     def isolate_contact(self, ee_force_torque, pose, q=None, visualizer=None):
         # 2D

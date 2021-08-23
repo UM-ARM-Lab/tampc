@@ -240,11 +240,13 @@ class TAMPC(OnlineMPC):
         self.in_contact_with_known_immovable = False
         if pt_to_config_dist is not None:
             self.contact_set = tracking.ContactSetSoft(pt_to_config_dist, self.p,
-                                                       immovable_collision_checker=self._known_immovable_obstacle_collision_check)
+                                                       immovable_collision_checker=self._known_immovable_obstacle_collision_check,
+                                                       device=self.d)
         else:
             self.contact_set = tracking.ContactSetHard(self.p,
                                                        immovable_collision_checker=self._known_immovable_obstacle_collision_check,
-                                                       contact_object_factory=self._create_contact_object)
+                                                       contact_object_factory=self._create_contact_object,
+                                                       device=self.d)
         self.contact_cost = None
         self.contact_use_prior = contact_use_prior
         if self.p is not None:

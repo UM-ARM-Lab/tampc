@@ -14,6 +14,7 @@ import matplotlib.cm as cmx
 
 from pybullet_object_models import ycb_objects
 
+from arm_pytorch_utilities.optim import get_device
 from arm_pytorch_utilities import tensor_utils
 from tampc.env.pybullet_env import PybulletEnv, get_total_contact_force, make_box, state_action_color_pairs, \
     ContactInfo, make_cylinder, closest_point_on_surface
@@ -1102,7 +1103,7 @@ class FloatingGripperEnv(PlanarArmEnv):
         return ContactDetectorPlanarPybulletGripper("floating_gripper", residual_precision, residual_threshold,
                                                     robot_id=self.robot_id,
                                                     base_orientation=self.endEffectorOrientation,
-                                                    default_joint_config=[0, 0])
+                                                    default_joint_config=[0, 0], device=get_device())
 
     def _observe_ee(self, return_z=False, return_orientation=False):
         gripperPose = p.getBasePositionAndOrientation(self.gripperId)

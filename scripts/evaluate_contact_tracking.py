@@ -74,6 +74,7 @@ class OurMethodFactory:
         self.p = contact_params
         d = get_device()
         dtype = torch.float32
+        contact_detector.to(device=d, dtype=dtype)
 
         contact_set = self.create_contact_set(contact_params)
         labels = np.zeros(len(X) - 1)
@@ -137,7 +138,8 @@ class OurMethodHard(OurMethodFactory):
         def create_contact_object():
             return self.contact_object_class(None, contact_params)
 
-        return tracking.ContactSetHard(contact_params, contact_object_factory=create_contact_object)
+        return tracking.ContactSetHard(contact_params, contact_object_factory=create_contact_object,
+                                       device=get_device())
 
     def get_contact_point_results(self, contact_set: tracking.ContactSetHard) -> typing.Tuple[
         torch.tensor, torch.tensor]:
@@ -160,7 +162,7 @@ class OurMethodSoft(OurMethodFactory):
         return self._dist_calc(configs, pts)
 
     def create_contact_set(self, contact_params) -> tracking.ContactSet:
-        return tracking.ContactSetSoft(self._pt_to_config_dist, contact_params)
+        return tracking.ContactSetSoft(self._pt_to_config_dist, contact_params, device=get_device())
 
     def update_labels_single_res(self, labels, i, latest_obj_id, *update_return):
         self.contact_indices.append(i)
@@ -171,7 +173,7 @@ class OurMethodSoft(OurMethodFactory):
         contact_indices = torch.tensor(self.contact_indices, device=groups[0].device)
         self.contact_indices = []
         for group_id, group in enumerate(groups):
-            labels[contact_indices[group]] = group_id + 1
+            labels[contact_indices[group].cpu().numpy()] = group_id + 1
         if self.env is not None:
             self.env.close()
             self.env = None
@@ -473,7 +475,12 @@ if __name__ == "__main__":
         #                          OurMethodSoft(length=0.8, hard_assignment_threshold=0.005),
         #                          OurMethodSoft(length=1, hard_assignment_threshold=0.005),
         #                          ],
-        'ours soft replace': [OurMethodSoft(length=0.02, hard_assignment_threshold=0.005),],
+        'ours soft replace': [OurMethodSoft(length=0.02, hard_assignment_threshold=0.002),
+                              OurMethodSoft(length=0.01, hard_assignment_threshold=0.002),
+                              OurMethodSoft(length=0.015, hard_assignment_threshold=0.002),
+                              OurMethodSoft(length=0.01, hard_assignment_threshold=0.005),
+                              OurMethodSoft(length=0.03, hard_assignment_threshold=0.005),
+                              ],
         # 'ours soft sq dist elim freespace': [OurMethodSoft(length=0.05), OurMethodSoft(length=0.02)],
         # 'ours UKF': OurMethodHard(length=0.1),
         # 'ours UKF convexity merge constraint': OurMethodHard(length=0.1),

@@ -90,8 +90,8 @@ class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
                 visualizer.draw_point(f'c{t}', min_pt_at_z, color=(t, t, 1 - t))
 
         # convert points back to link frame
-        x = tf.Translate(*canonical_pos)
-        r = tf.Rotate(self._base_orientation)
+        x = tf.Translate(*canonical_pos, device=self.device, dtype=self.dtype)
+        r = tf.Rotate(self._base_orientation, device=self.device, dtype=self.dtype)
         trans = x.compose(r).inverse()
         self._cached_points = trans.transform_points(torch.tensor(self._cached_points))
         self._cached_normals = trans.transform_normals(torch.tensor(self._cached_normals))
@@ -110,9 +110,12 @@ class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
     def sample_robot_surface_points(self, pose, visualizer=None):
         if self._cached_points is None:
             self._init_sample_surface_points_in_canonical_pose()
+        if self._cached_points.dtype != self.dtype or self._cached_points.device != self.device:
+            self._cached_points = self._cached_points.to(device=self.device, dtype=self.dtype)
+            self._cached_normals = self._cached_normals.to(device=self.device, dtype=self.dtype)
 
-        x = tf.Translate(*pose[0])
-        r = tf.Rotate(pose[1])
+        x = tf.Translate(*pose[0], device=self.device, dtype=self.dtype)
+        r = tf.Rotate(pose[1], device=self.device, dtype=self.dtype)
         link_to_current_tf = x.compose(r)
         pts = link_to_current_tf.transform_points(self._cached_points)
         normals = link_to_current_tf.transform_normals(self._cached_normals)
