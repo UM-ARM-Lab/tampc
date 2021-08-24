@@ -479,7 +479,7 @@ class ArmEnv(PybulletEnv):
             pts = contact_set.get_posterior_points()
             if pts is None:
                 return
-            groups = contact_set.get_hard_assignment(0.05)
+            groups = contact_set.get_hard_assignment(contact_set.p.hard_assignment_threshold)
             # clear all previous markers because we don't know which one was removed
             if len(self._contact_debug_names) > len(groups):
                 for name in self._contact_debug_names:
