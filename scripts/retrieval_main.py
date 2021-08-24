@@ -229,8 +229,14 @@ def object_robot_penetration_score(object_id, robot_id, object_transform):
     return -d
 
 
+using_soft_contact = True
+dtype = torch.float32
+
 ds, pm = RetrievalGetter.prior(env, use_tsf=UseTsf.NO_TRANSFORM)
-contact_set = tracking.ContactSetHard(contact_params, contact_object_factory=create_contact_object)
+if using_soft_contact:
+    contact_set = tracking.ContactSetSoft(arm.PointToConfig(env), contact_params)
+else:
+    contact_set = tracking.ContactSetHard(contact_params, contact_object_factory=create_contact_object)
 u_min, u_max = env.get_control_bounds()
 
 ctrl = RetrievalController(env.contact_detector, env.nu, pm.dyn_net, cost_to_go, contact_set, u_min, u_max,
@@ -242,7 +248,7 @@ z = env._observe_ee(return_z=True)[-1]
 rand.seed(0)
 model_points = sample_model_points(env.target_object_id, num_points=50, force_z=z, seed=0, name="cheezit")
 mp = model_points[:, :2].cpu().numpy()
-mph = model_points.clone().to(dtype=torch.float64)
+mph = model_points.clone().to(dtype=dtype)
 mph[:, -1] = 1
 
 ctrl.set_goal(env.goal[:2])
@@ -256,8 +262,12 @@ while True:
     action = ctrl.command(obs, info)
     env.visualize_contact_set(contact_set)
     if env.contact_detector.in_contact():
-        for c in contact_set:
-            T, distances, i = icp.icp_3(c.points, model_points[:, :2], given_init_pose=best_tsf_guess, batch=30)
+        pts = contact_set.get_posterior_points() if using_soft_contact else None
+        to_iter = contact_set.get_hard_assignment(
+            contact_set.p.hard_assignment_threshold) if using_soft_contact else contact_set
+        for c in to_iter:
+            this_pts = pts[c] if using_soft_contact else c.points
+            T, distances, _ = icp.icp_3(this_pts, model_points[:, :2], given_init_pose=best_tsf_guess, batch=30)
             penetration = [object_robot_penetration_score(env.target_object_id, env.robot_id, T[b].inverse()) for b in
                            range(T.shape[0])]
             score = np.abs(penetration)
