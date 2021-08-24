@@ -389,7 +389,7 @@ class PushAgainstWallEnv(PybulletEnv):
         T = len(trap_set)
         for t in range(T):
             c = (t + 1) / (T + 1)
-            if len(trap_set[t]) is 2:
+            if len(trap_set[t]) == 2:
                 state, action = trap_set[t]
                 self._draw_action(action.cpu().numpy(), old_state=state.cpu().numpy(), debug=t + 1)
             else:
@@ -425,7 +425,7 @@ class PushAgainstWallEnv(PybulletEnv):
         self._dd.draw_2d_line(name, start, r, size=np.linalg.norm(r), scale=0.03, color=color)
 
     def draw_user_text(self, text, location_index=1, left_offset=1.0, xy=None):
-        if location_index is 0:
+        if location_index == 0:
             raise RuntimeError("Can't use same location index (0) as cost")
         self._dd.draw_text('user{}_{}'.format(location_index, left_offset), text, location_index, left_offset)
 

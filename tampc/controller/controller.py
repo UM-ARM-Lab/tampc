@@ -352,9 +352,9 @@ class MPC(ControllerWithModelPrediction):
 
     def _terminal_cost(self, state, action):
         # extract the last state; assume if given 3 dimensions then it's (B x T x nx) or (M x B x T x nx)
-        if len(state.shape) is 3:
+        if len(state.shape) == 3:
             state = state[:, -1, :]
-        elif len(state.shape) is 4:
+        elif len(state.shape) == 4:
             state = state[:, :, -1, :]
         state_loss = self.terminal_cost_multiplier * self.cost(state, terminal=True)
         total_loss = state_loss
@@ -405,7 +405,7 @@ class MPC(ControllerWithModelPrediction):
         if self.u_max is not None:
             u = math_utils.clip(u, self.u_min, self.u_max)
 
-        self.u_history.append(u if len(u.shape) is 1 else u[0])
+        self.u_history.append(u if len(u.shape) == 1 else u[0])
         self.predicted_next_state = self.predict_next_state(obs, u)
         return u.cpu().numpy()
 

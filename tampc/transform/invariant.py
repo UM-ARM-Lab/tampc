@@ -147,7 +147,7 @@ class InvariantTransform(LearnableParameterizedModel):
             batch_losses = list(self._evaluate_batch(X, U, Y, tsf=tsf))
             # evaluate validation MSE in original space to allow for comparison across transforms
             for i, name in enumerate(self.loss_names()):
-                if name is "mse_loss":
+                if name == "mse_loss":
                     X_orig, U_orig, Y_orig = self._setup_evaluate_metrics_on_whole_set(validation, move_params,
                                                                                        output_in_orig_space=True,
                                                                                        ds_test=ds_test)

@@ -128,7 +128,7 @@ class StateToPositionTransformer(preprocess.SingleTransformer):
 
     def transform(self, X):
         pos = self.state_to_pos(X) / self.length_scale
-        if len(pos.shape) is 1:
+        if len(pos.shape) == 1:
             pos = pos.view(1, -1)
         if self.nu:
             pos = torch.cat((pos, X[:, -self.nu:]), dim=1)
@@ -749,7 +749,7 @@ class TAMPC(OnlineMPC):
         return u
 
     def normalize_trapset_cost_to_state(self, x):
-        if self.trap_cost is None or len(self.trap_set) is 0:
+        if self.trap_cost is None or len(self.trap_set) == 0:
             return
         x = x.view(1, -1)
         goal_cost_at_state = self.goal_cost(x)

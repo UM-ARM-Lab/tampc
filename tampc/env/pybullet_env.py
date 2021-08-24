@@ -51,7 +51,7 @@ _CONTACT_TESTER_ID = -1
 def closest_point_on_surface(object_id, query_point):
     # create query object if it doesn't exist
     global _CONTACT_TESTER_ID
-    if _CONTACT_TESTER_ID is -1:
+    if _CONTACT_TESTER_ID == -1:
         col_id = p.createCollisionShape(p.GEOM_SPHERE, radius=1e-8)
         vis_id = p.createVisualShape(p.GEOM_SPHERE, radius=0.003, rgbaColor=[0.1, 0.9, 0.3, 0.6])
         _CONTACT_TESTER_ID = p.createMultiBody(0, col_id, vis_id, basePosition=query_point)
@@ -131,7 +131,7 @@ class PybulletEnv(Env):
         if xy:
             self._dd.draw_screen_text('user_{}'.format(xy), text, xy)
         else:
-            if location_index is 0:
+            if location_index == 0:
                 raise RuntimeError("Can't use same location index (0) as cost")
             self._dd.draw_text('user{}_{}'.format(location_index, left_offset), text, location_index, left_offset)
 
@@ -322,7 +322,7 @@ class DebugDrawer:
         uid = self._debug_ids[name]
 
         self._debug_ids[name] = p.addUserDebugLine(start, np.add(start, [diff[0] * scale, diff[1] * scale,
-                                                                         diff[2] * scale if len(diff) is 3 else 0]),
+                                                                         diff[2] * scale if len(diff) == 3 else 0]),
                                                    color, lineWidth=size, replaceItemUniqueId=uid)
         return self._debug_ids[name]
 

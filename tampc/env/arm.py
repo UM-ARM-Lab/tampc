@@ -370,7 +370,7 @@ class ArmEnv(PybulletEnv):
         """In GUI mode, show how the sequence of states will look like"""
         if rollout is None:
             return
-        if type(rollout) is tuple and len(rollout) is 3:
+        if type(rollout) is tuple and len(rollout) == 3:
             states, contact_model_active, center_points = rollout
         else:
             states = rollout
@@ -424,7 +424,7 @@ class ArmEnv(PybulletEnv):
         for t in range(T):
             c = (t + 1) / (T + 1)
             # decide whether we're given state and action or just state
-            if len(trap_set[t]) is 2:
+            if len(trap_set[t]) == 2:
                 state, action = trap_set[t]
                 self._draw_action(action.cpu().numpy(), old_state=state.cpu().numpy(), debug=t + 1)
             else:

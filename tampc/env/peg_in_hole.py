@@ -297,7 +297,7 @@ class PegInHoleEnv(PybulletEnv):
                            p.getQuaternionFromEuler([0, 0, np.pi / 2]), useFixedBase=True,
                            globalScaling=0.06))
 
-        elif self.level is 5:
+        elif self.level == 5:
             self._set_hole([0, 0.2])
             self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0., 0.17, wall_z],
                                          p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
@@ -315,7 +315,7 @@ class PegInHoleEnv(PybulletEnv):
                                          p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
                                          globalScaling=0.06))
 
-        elif self.level is 6:
+        elif self.level == 6:
             self._set_hole([-0.04, 0.125])
             self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0., 0.17, wall_z],
                                          p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
@@ -329,7 +329,7 @@ class PegInHoleEnv(PybulletEnv):
             self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "wall.urdf"), [0, 0.075, wall_z],
                                          p.getQuaternionFromEuler([0, 0, np.pi / 2]), useFixedBase=True,
                                          globalScaling=0.06))
-        elif self.level is 7:
+        elif self.level == 7:
             translation = 10
             self._set_hole([-0.04 + translation, 0.125 + translation])
             self.walls.append(
@@ -364,18 +364,18 @@ class PegInHoleEnv(PybulletEnv):
                            p.getQuaternionFromEuler([0, 0, np.pi / 2]), useFixedBase=True,
                            globalScaling=0.06))
             shifted_down = 0.1
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "short_wall.urdf"), [-width*2, 0.16, wall_z],
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "short_wall.urdf"), [-width * 2, 0.16, wall_z],
                                          p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
                                          globalScaling=0.06))
-            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "short_wall.urdf"), [width*2, 0.16, wall_z],
+            self.walls.append(p.loadURDF(os.path.join(cfg.ROOT_DIR, "short_wall.urdf"), [width * 2, 0.16, wall_z],
                                          p.getQuaternionFromEuler([0, 0, 0]), useFixedBase=True,
                                          globalScaling=0.06))
             self.walls.append(
-                p.loadURDF(os.path.join(cfg.ROOT_DIR, "short_wall.urdf"), [width*3, y - shifted_down, wall_z],
+                p.loadURDF(os.path.join(cfg.ROOT_DIR, "short_wall.urdf"), [width * 3, y - shifted_down, wall_z],
                            p.getQuaternionFromEuler([0, 0, np.pi / 2]), useFixedBase=True,
                            globalScaling=0.06))
             self.walls.append(
-                p.loadURDF(os.path.join(cfg.ROOT_DIR, "short_wall.urdf"), [-width*3, y - shifted_down, wall_z],
+                p.loadURDF(os.path.join(cfg.ROOT_DIR, "short_wall.urdf"), [-width * 3, y - shifted_down, wall_z],
                            p.getQuaternionFromEuler([0, 0, np.pi / 2]), useFixedBase=True,
                            globalScaling=0.06))
 
@@ -473,7 +473,7 @@ class PegInHoleEnv(PybulletEnv):
         for t in range(T):
             c = (t + 1) / (T + 1)
             # decide whether we're given state and action or just state
-            if len(trap_set[t]) is 2:
+            if len(trap_set[t]) ==2:
                 state, action = trap_set[t]
                 self._draw_action(action.cpu().numpy(), old_state=state.cpu().numpy(), debug=t + 1)
             else:
@@ -513,7 +513,7 @@ class PegInHoleEnv(PybulletEnv):
         self._dd.draw_2d_line(name, start, r, size=np.linalg.norm(r), scale=0.03, color=color)
 
     def draw_user_text(self, text, location_index=1, left_offset=1, xy=None):
-        if location_index is 0:
+        if location_index ==0:
             raise RuntimeError("Can't use same location index (0) as cost")
         self._dd.draw_text('user{}'.format(location_index), text, location_index, left_offset)
 

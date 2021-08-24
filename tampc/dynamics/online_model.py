@@ -52,7 +52,7 @@ class OnlineDynamicsModel(model.DynamicsBase, serialization.Serializable):
     def _make_2d_tensor(self, *args):
         if args[0] is None:
             return args
-        oned = len(args[0].shape) is 1
+        oned = len(args[0].shape) == 1
         if not torch.is_tensor(args[0]):
             args = (torch.from_numpy(value).to(device=self.d) if value is not None else None for value in args)
         if oned:
@@ -310,7 +310,7 @@ class NominalModelManager:
             self.nominal_in_orig_space = False
 
     def forward(self, x, dim=None):
-        if dim is 0 or dim is None or self.last_pred is None or self.last_pred.shape[1] != x.shape[0]:
+        if dim == 0 or dim is None or self.last_pred is None or self.last_pred.shape[1] != x.shape[0]:
             orig_x = x
             if self.nominal_model is not None:
                 input_key = x.sum().item() * x.numel()
