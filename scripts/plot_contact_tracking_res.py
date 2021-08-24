@@ -20,7 +20,7 @@ MAX_PENETRATION = 0.133
 
 class ContactTrackingResultsPlot:
     def __init__(self, runs, methods_to_run, aggregate_method=np.median, filter_on_ambiguity=None, plot_aggregate=False,
-                 aggregate_perturbation=0., represent_cme_as_ratio=True):
+                 aggregate_perturbation=0., represent_cme_as_ratio=True, plot_only_best_params_on_metric=None):
         """
         :param runs:
         :param methods_to_run:
@@ -31,6 +31,9 @@ class ContactTrackingResultsPlot:
         distinguish different series, only relevant when plot_aggregate is true
         :param represent_cme_as_ratio: whether the contact manifold error is in absolute units (m) or as relative to the
         max reported penetration
+        :param plot_only_best_params_on_metric: if None, plot all param runs, else we expect a string in the form of
+        [<>]metric_name tuple for use to sort runs from different param values based on metric mean; < or > prefix
+        decides sorting order
         """
         self.runs = runs
         self.methods_to_run = methods_to_run
@@ -38,6 +41,7 @@ class ContactTrackingResultsPlot:
         self.filter_on_ambiguity = filter_on_ambiguity
         self.plot_aggregate = plot_aggregate
         self.represent_cme_as_ratio = represent_cme_as_ratio
+        self.plot_only_best_params_on_metric = plot_only_best_params_on_metric
 
         self.f = plt.figure()
         self.ax = plt.gca()
@@ -62,7 +66,7 @@ class ContactTrackingResultsPlot:
             sorted_runs = {k: v for k, v in sorted(this_method_runs.items(), key=lambda item: item[1][-1])}
             for k, v in sorted_runs.items():
                 am = run_mean_ambiguity[(k.level, k.seed)]
-                # logger.info(f"{k} : {[round(metric, 2) for metric in v]} ambiguity in contact {am}")
+                logger.info(f"{k} : {[round(metric, 2) for metric in v]} ambiguity in contact {am}")
 
             runs_per_param_value = {}
             for k, v in this_method_runs.items():
@@ -74,6 +78,8 @@ class ContactTrackingResultsPlot:
                     continue
                 runs_per_param_value[k.params].append((am, v))
 
+            # unpack values
+            temp = {}
             for params, values in runs_per_param_value.items():
                 a, metrics = zip(*values)
                 # Fowlkes-Mallows index and contact manifold error
@@ -81,9 +87,20 @@ class ContactTrackingResultsPlot:
                 if self.represent_cme_as_ratio:
                     cme = [v / MAX_PENETRATION for v in cme]
                     wcme = [v / MAX_PENETRATION for v in wcme]
-                method_label = f"{method} {params}" if len(runs_per_param_value) > 1 else method
-
                 data = {'ambiguity': a, 'fmi': fmi, 'cme': cme, 'wcme': wcme}
+                temp[params] = data
+            runs_per_param_value = temp
+
+            if self.plot_only_best_params_on_metric is not None:
+                items = sorted(runs_per_param_value.items(), reverse=self.plot_only_best_params_on_metric[0] == '>',
+                               key=lambda item: np.mean(item[1][self.plot_only_best_params_on_metric[1:]]))
+                # keep only the first one
+                runs_per_param_value = {items[0][0]: items[0][1]}
+                logger.info(
+                    f"plot only best param runs on {self.plot_only_best_params_on_metric} which was {items[0][0]}")
+
+            for params, data in runs_per_param_value.items():
+                method_label = f"{method} {params}" if len(runs_per_param_value) > 1 else method
                 x, y = self._select_x_y(data)
 
                 if self.plot_aggregate:
@@ -97,9 +114,9 @@ class ContactTrackingResultsPlot:
                 else:
                     self.ax.scatter(x, y, alpha=0.4, label=method_label)
 
-                self._log_metric(method_label, "fmi", fmi, 2)
-                self._log_metric(method_label, "contact error", cme, 3)
-                self._log_metric(method_label, "weighted contact error", wcme, 3)
+                self._log_metric(method_label, "fmi", data['fmi'], 2)
+                self._log_metric(method_label, "contact error", data['cme'], 3)
+                self._log_metric(method_label, "weighted contact error", data['wcme'], 3)
 
         self.ax.legend()
 
@@ -157,17 +174,27 @@ if __name__ == "__main__":
     all_methods = set([k.method for k in all_runs.keys() if k.method not in RUN_INFO_KEYWORDS])
     logger.info(f"all methods: {all_methods}")
     methods = [
-        "ours UKF convexity merge constraint",
-        "ours UKF all cluster",
-        "ours UKF 0 dyn",
+        # "ours UKF convexity merge constraint",
+        # "ours UKF all cluster",
+        # "ours UKF 0 dyn",
+        "ours soft",
+        # "ours soft sq dist",
+        # "ours soft sq dist sub tol",
         "ours UKF",
-        "ours PF",
-        "online-kmeans",
-        "online-dbscan",
-        "online-birch"
+        # "ours soft cached pts",
+        # "ours soft full check",
+        # "ours soft replace pts",
+        # "ours soft replace",
+        "ours soft good",
+        # "ours soft sq dist elim freespace"
+        # "ours PF",
+        # "online-kmeans",
+        # "online-dbscan",
+        # "online-birch"
     ]
 
-    manifold_error_vs_fmi = PlotContactManifoldErrorVsFMI(all_runs, methods, plot_aggregate=True, weight_cme=True,
-                                                          represent_cme_as_ratio=True, aggregate_perturbation=0.00)
+    manifold_error_vs_fmi = PlotContactManifoldErrorVsFMI(all_runs, methods, plot_aggregate=True, weight_cme=False,
+                                                          represent_cme_as_ratio=True, aggregate_perturbation=0.00,
+                                                          plot_only_best_params_on_metric='<cme')
 
     plt.show()
