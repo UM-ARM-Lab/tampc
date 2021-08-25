@@ -12,7 +12,7 @@ from datetime import datetime
 from arm_pytorch_utilities import math_utils
 
 import pybullet_data
-from tampc.env.env import Mode, Env
+from tampc.env.env import Mode, Env, Visualizer
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +210,7 @@ def get_lateral_friction_forces(contact, flip=True):
     return fyd, fxd
 
 
-class DebugDrawer:
+class DebugDrawer(Visualizer):
     def __init__(self, default_height, camera_height):
         self._debug_ids = {}
         self._camera_pos = None
