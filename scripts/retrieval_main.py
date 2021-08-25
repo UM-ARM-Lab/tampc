@@ -234,7 +234,7 @@ dtype = torch.float32
 
 ds, pm = RetrievalGetter.prior(env, use_tsf=UseTsf.NO_TRANSFORM)
 if using_soft_contact:
-    contact_set = tracking.ContactSetSoft(arm.PointToConfig(env), contact_params)
+    contact_set = tracking.ContactSetSoft(arm.PlanarPointToConfig(env), contact_params)
 else:
     contact_set = tracking.ContactSetHard(contact_params, contact_object_factory=create_contact_object)
 u_min, u_max = env.get_control_bounds()
