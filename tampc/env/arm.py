@@ -1102,7 +1102,7 @@ class FloatingGripperEnv(PlanarArmEnv):
             residual_precision = np.diag([1, 1, 1, 50, 50, 50])
         return ContactDetectorPlanarPybulletGripper("floating_gripper", residual_precision, residual_threshold,
                                                     robot_id=self.robot_id,
-                                                    base_orientation=self.endEffectorOrientation,
+                                                    canonical_orientation=self.endEffectorOrientation,
                                                     default_joint_config=[0, 0], device=get_device())
 
     def _observe_ee(self, return_z=False, return_orientation=False):

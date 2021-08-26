@@ -52,6 +52,9 @@ class ContactDetector:
 
         return in_contact
 
+    def __len__(self):
+        return len(self.observation_history)
+
     def clear(self):
         self.observation_history.clear()
 
@@ -120,6 +123,8 @@ class ContactDetector:
 
 
 class ContactDetectorPlanar(ContactDetector):
+    """Contact detector for planar environments without rotation"""
+
     def get_jacobian(self, locations, q=None):
         """For planar robots, this kind of Jacobian is configuration independent"""
         return torch.stack(
@@ -148,6 +153,7 @@ class ContactDetectorPlanar(ContactDetector):
         pts = pts[valid]
         link_frame_pts = link_frame_pts[valid]
 
+        # NOTE: if our system is able to rotate, would have to transform points by rotation too
         # get relative to end effector origin
         rel_pts = pts - pose[0]
         J = self.get_jacobian(rel_pts, q=q)

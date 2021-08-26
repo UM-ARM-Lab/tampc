@@ -18,10 +18,10 @@ class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
     if the sampled robot points and normals are cached then pybullet information can be omitted."""
 
     def __init__(self, name, *args, sample_pt_min_separation=0.005, robot_id=None,
-                 base_orientation=None, default_joint_config=None, **kwargs):
+                 canonical_orientation=None, default_joint_config=None, visualizer=None, **kwargs):
         self.name = name
         self.robot_id = robot_id
-        self._base_orientation = base_orientation
+        self._canonical_orientation = canonical_orientation
         self._default_joint_config = default_joint_config
 
         self._sample_pt_min_separation = sample_pt_min_separation
@@ -29,7 +29,7 @@ class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
 
         self._cached_points = None
         self._cached_normals = None
-        self._init_sample_surface_points_in_canonical_pose()
+        self._init_sample_surface_points_in_canonical_pose(visualizer)
 
     def _init_sample_surface_points_in_canonical_pose(self, visualizer=None):
         # load if possible; otherwise would require a running pybullet instance
@@ -45,7 +45,7 @@ class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
 
         # first reset to canonical location
         canonical_pos = [0, 0, z]
-        p.resetBasePositionAndOrientation(self.robot_id, canonical_pos, self._base_orientation)
+        p.resetBasePositionAndOrientation(self.robot_id, canonical_pos, self._canonical_orientation)
         for i, joint_value in enumerate(self._default_joint_config):
             p.resetJointState(self.robot_id, i, joint_value)
         self._cached_points = []
@@ -91,7 +91,7 @@ class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
 
         # convert points back to link frame
         x = tf.Translate(*canonical_pos, device=self.device, dtype=self.dtype)
-        r = tf.Rotate(self._base_orientation, device=self.device, dtype=self.dtype)
+        r = tf.Rotate(self._canonical_orientation, device=self.device, dtype=self.dtype)
         trans = x.compose(r).inverse()
         self._cached_points = trans.transform_points(torch.tensor(self._cached_points))
         self._cached_normals = trans.transform_normals(torch.tensor(self._cached_normals))
