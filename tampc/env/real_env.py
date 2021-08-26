@@ -49,12 +49,17 @@ class DebugRvizDrawer(Visualizer):
         self.max_nom_model_error = max_nominal_model_error
         # self.array_pub = rospy.Publisher("visualization_marker_array", MarkerArray, queue_size=0)
 
+    def _extract_ns_id_from_name(self, name):
+        tokens = name.split('.')
+        id = int(tokens[1]) if len(tokens) == 2 else 0
+        return tokens[0], id
+
     def draw_point(self, name, point, color=(0, 0, 0), length=0.01, length_ratio=1, rot=0, height=None, label=None,
-                   scale=2):
-        ns, this_id = name.split('.')
-        marker = self.make_marker()
+                   scale=1):
+        ns, this_id = self._extract_ns_id_from_name(name)
+        marker = self.make_marker(scale=self.BASE_SCALE * scale)
         marker.ns = ns
-        marker.id = int(this_id)
+        marker.id = this_id
         z = height if height is not None else point[2]
 
         p = Point()
@@ -75,7 +80,32 @@ class DebugRvizDrawer(Visualizer):
         pass
 
     def draw_2d_line(self, name, start, diff, color=(0, 0, 0), size=2., scale=0.4):
-        pass
+        ns, this_id = self._extract_ns_id_from_name(name)
+        marker = self.make_marker(marker_type=Marker.LINE_LIST)
+        marker.ns = ns
+        marker.id = int(this_id)
+        z = start[2] if len(start) > 2 else 0
+
+        p = Point()
+        p.x = start[0]
+        p.y = start[1]
+        p.z = z
+        marker.points.append(p)
+        p = Point()
+        p.x = start[0] + diff[0] * scale
+        p.y = start[1] + diff[1] * scale
+        p.z = start[2] + diff[2] * scale if len(diff) > 2 else z
+        marker.points.append(p)
+
+        c = ColorRGBA()
+        c.a = 1
+        c.r = color[0]
+        c.g = color[1]
+        c.b = color[2]
+        marker.colors.append(c)
+        marker.colors.append(c)
+        self.marker_pub.publish(marker)
+        return p
 
     def make_marker(self, scale=BASE_SCALE, marker_type=Marker.POINTS):
         marker = Marker()
