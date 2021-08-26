@@ -61,7 +61,6 @@ class ContactDetector:
     @abc.abstractmethod
     def isolate_contact(self, ee_force_torque, pose, q=None, visualizer=None):
         """Return contact point in link frame that most likely explains the observed residual"""
-        # TODO if single pass evaluation doesn't work (e.g. from points being too sparse), try iteratively resampling
 
     def in_contact(self):
         """Whether our last observed residual indicates that we are currently in contact"""
@@ -173,10 +172,10 @@ class ContactDetectorPlanar(ContactDetector):
         if visualizer is not None:
             # also draw some other likely points
             likely_pt_index = torch.argsort(combined_error)
-            for i in reversed(range(1, 10)):
+            for i in reversed(range(1, min(10, len(pts)))):
                 pt = pts[likely_pt_index[i]]
-                visualizer.draw_point(f'likely{i}', pt, height=pt[2] + 0.001,
+                visualizer.draw_point(f'likely.{i}', pt, height=pt[2] + 0.001,
                                       color=(0, 1 - 0.8 * i / 10, 0))
-            visualizer.draw_point(f'most likely contact', pts[min_err_i], color=(0, 1, 0))
+            visualizer.draw_point(f'most likely contact', pts[min_err_i], color=(0, 1, 0), scale=2)
 
         return link_frame_pts[min_err_i]

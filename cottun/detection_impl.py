@@ -109,7 +109,7 @@ class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
 
     def sample_robot_surface_points(self, pose, visualizer=None):
         if self._cached_points is None:
-            self._init_sample_surface_points_in_canonical_pose()
+            self._init_sample_surface_points_in_canonical_pose(visualizer)
         if self._cached_points.dtype != self.dtype or self._cached_points.device != self.device:
             self._cached_points = self._cached_points.to(device=self.device, dtype=self.dtype)
             self._cached_normals = self._cached_normals.to(device=self.device, dtype=self.dtype)
@@ -121,7 +121,7 @@ class ContactDetectorPlanarPybulletGripper(ContactDetectorPlanar):
         normals = link_to_current_tf.transform_normals(self._cached_normals)
         if visualizer is not None:
             for i, pt in enumerate(pts):
-                visualizer.draw_point(f't{i}', pt, color=(1, 0, 0), height=pt[2])
-                visualizer.draw_2d_line(f'n{i}', pt, normals[i], color=(0.5, 0, 0), size=2., scale=0.1)
+                visualizer.draw_point(f't.{i}', pt, color=(1, 0, 0), height=pt[2])
+                visualizer.draw_2d_line(f'n.{i}', pt, normals[i], color=(0.5, 0, 0), size=2., scale=0.1)
 
         return self._cached_points, pts, normals
