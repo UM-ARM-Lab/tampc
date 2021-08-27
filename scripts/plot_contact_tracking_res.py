@@ -97,7 +97,7 @@ class ContactTrackingResultsPlot:
                 # keep only the first one
                 runs_per_param_value = {items[0][0]: items[0][1]}
                 logger.info(
-                    f"plot only best param runs on {self.plot_only_best_params_on_metric} which was {items[0][0]}")
+                    f"plot only best param runs on {self.plot_only_best_params_on_metric} which was {method} {items[0][0]}")
 
             for params, data in runs_per_param_value.items():
                 method_label = f"{method} {params}" if len(runs_per_param_value) > 1 else method
@@ -177,7 +177,7 @@ if __name__ == "__main__":
         # "ours UKF convexity merge constraint",
         # "ours UKF all cluster",
         # "ours UKF 0 dyn",
-        "ours soft",
+        # "ours soft",
         # "ours soft sq dist",
         # "ours soft sq dist sub tol",
         "ours UKF",
@@ -186,6 +186,7 @@ if __name__ == "__main__":
         # "ours soft replace pts",
         # "ours soft replace",
         "ours soft good",
+        "ours soft simplified",
         # "ours soft sq dist elim freespace"
         # "ours PF",
         # "online-kmeans",
@@ -195,6 +196,7 @@ if __name__ == "__main__":
 
     manifold_error_vs_fmi = PlotContactManifoldErrorVsFMI(all_runs, methods, plot_aggregate=True, weight_cme=False,
                                                           represent_cme_as_ratio=True, aggregate_perturbation=0.00,
-                                                          plot_only_best_params_on_metric='<cme')
+                                                          plot_only_best_params_on_metric='<cme'
+                                                          )
 
     plt.show()

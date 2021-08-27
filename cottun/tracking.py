@@ -907,11 +907,6 @@ class ContactSetSoft(ContactSet):
 
     def predict_particles(self, dx):
         """Apply action to all particles"""
-        # assume we just added latest pt and act to self
-        # dd = approx_conic_similarity(self.acts[-1], self.pts[-1],
-        #                              self.acts.repeat(self.n_particles, 1, 1),
-        #                              self.sampled_pts)
-
         dd = (self.pts[-1] - self.sampled_pts).norm(dim=-1)
 
         # convert to probability
@@ -948,15 +943,6 @@ class ContactSetSoft(ContactSet):
             d[d > 0] = 0
             # collect sum then offset by max to prevent obs_weights from going to 0
             obs_weights = d.sum(dim=1)
-            for i in range(self.n_particles):
-                # also consider the last point against all other configs
-                query_point = self.sampled_pts[i, -1]
-                configs = self.sampled_configs[i]
-                d = self.pt_to_config_dist(configs, query_point.view(1, -1)).view(-1)
-                d += tol
-                d = d[d < 0]
-                if len(d) > 0:
-                    obs_weights[i] += d.sum()
         else:
             # otherwise check all configs against all points for each particle
             obs_weights = torch.zeros(self.n_particles, dtype=self.pts.dtype, device=self.pts.device)
@@ -1071,8 +1057,6 @@ class ContactSetSoft(ContactSet):
 
         # classic alternation of predict and update steps
         adjacent = self.predict_particles(environment['dobj'])
-        # update with latest config
-        # self.update_particles(adjacent, self.sampled_configs[0, -1])
         # check all configs against all points
         self.update_particles(adjacent, None)
 
