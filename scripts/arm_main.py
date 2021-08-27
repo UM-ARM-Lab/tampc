@@ -372,7 +372,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                         known_immovable_obstacles=env.immovable,
                         contact_params=ArmGetter.contact_parameters(env),
                         # pt_to_config_dist=partial(arm.pt_to_config_dist, env, 0.2),
-                        pt_to_config_dist=arm.PointToConfig(env),
+                        pt_to_config_dist=arm.ArmPointToConfig(env),
                         **tampc_opts, )
         if low_level_mpc is controller.ExperimentalMPPI:
             mpc = controller.ExperimentalMPPI(ctrl.mpc_apply_dynamics, ctrl.mpc_running_cost, ctrl.nx,
@@ -970,9 +970,9 @@ if __name__ == "__main__":
     else:
         # OfflineDataCollection.tracking(Levels.SELECT3, seed_offset=42, trials=1, force_gui=True)
         replay_trajectory(
-            'arm/gripper13/38.mat',
+            'arm/gripper13/24.mat',
             300,
-            seed=38, level=Levels.SELECT4, use_tsf=ut,
+            seed=24, level=Levels.SELECT4, use_tsf=ut,
             assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
             visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
             override_tampc_params=tampc_params, override_mpc_params=mpc_params,

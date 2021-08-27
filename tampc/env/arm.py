@@ -18,7 +18,8 @@ from arm_pytorch_utilities.optim import get_device
 from arm_pytorch_utilities import tensor_utils
 from tampc.env.pybullet_env import PybulletEnv, get_total_contact_force, make_box, state_action_color_pairs, \
     ContactInfo, make_cylinder, closest_point_on_surface
-from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource, InfoKeys
+from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource, InfoKeys, \
+    PlanarPointToConfig
 from tampc.env.peg_in_hole import PandaJustGripperID
 from tampc.env.pybullet_sim import PybulletSim
 from tampc import cfg
@@ -1526,14 +1527,12 @@ def pt_to_config_dist(env, max_robot_radius, configs, pts):
     return dist
 
 
-class PointToConfig:
+class ArmPointToConfig(PlanarPointToConfig):
     def __init__(self, env):
-        self.env = env
         # try loading cache
         fullname = os.path.join(cfg.DATA_DIR, f'arm_point_to_config.pkl')
         if os.path.exists(fullname):
-            self.d_cache, self.min_x, self.min_y, self.max_x, self.max_y, self.cache_resolution, self.cache_y_len = torch.load(
-                fullname)
+            super(ArmPointToConfig, self).__init__(*torch.load(fullname))
         else:
             import trimesh
             hand = trimesh.load(os.path.join(cfg.ROOT_DIR, "meshes/collision/hand.obj"))
@@ -1544,17 +1543,17 @@ class PointToConfig:
                 trimesh.transformations.concatenate_matrices(trimesh.transformations.euler_matrix(0, 0, np.pi),
                                                              trimesh.transformations.translation_matrix(
                                                                  [0, 0, 0.0584])))
-            self.mesh = trimesh.util.concatenate([hand, lf, rf])
+            mesh = trimesh.util.concatenate([hand, lf, rf])
             # TODO get resting orientation from environment?
-            self.mesh.apply_transform(trimesh.transformations.euler_matrix(0, np.pi / 2, 0))
+            mesh.apply_transform(trimesh.transformations.euler_matrix(0, np.pi / 2, 0))
             # cache points inside bounding box of robot to accelerate lookup
-            self.min_x, self.min_y = self.mesh.bounding_box.bounds[0, :2]
-            self.max_x, self.max_y = self.mesh.bounding_box.bounds[1, :2]
-            self.cache_resolution = 0.001
+            min_x, min_y = mesh.bounding_box.bounds[0, :2]
+            max_x, max_y = mesh.bounding_box.bounds[1, :2]
+            cache_resolution = 0.001
             # create mesh grid
-            x = np.arange(self.min_x, self.max_x + self.cache_resolution, self.cache_resolution)
-            y = np.arange(self.min_y, self.max_y + self.cache_resolution, self.cache_resolution)
-            self.cache_y_len = len(y)
+            x = np.arange(min_x, max_x + cache_resolution, cache_resolution)
+            y = np.arange(min_y, max_y + cache_resolution, cache_resolution)
+            cache_y_len = len(y)
 
             orig_pos, orig_orientation = p.getBasePositionAndOrientation(env.robot_id)
             p.resetBasePositionAndOrientation(env.robot_id, [0, 0, 0], orig_orientation)
@@ -1563,32 +1562,7 @@ class PointToConfig:
                 for j, yj in enumerate(y):
                     closest = closest_point_on_surface(env.robot_id, [xi, yj, 0])
                     d[i, j] = closest[ContactInfo.DISTANCE]
-            self.d_cache = d.reshape(-1)
-            torch.save(
-                [self.d_cache, self.min_x, self.min_y, self.max_x, self.max_y, self.cache_resolution, self.cache_y_len],
-                fullname)
-        # for debugging, view a = self.d_cache.reshape(len(x), len(y))
-
-    def __call__(self, configs, pts):
-        if not torch.is_tensor(self.d_cache):
-            self.d_cache = torch.tensor(self.d_cache, device=pts.device, dtype=pts.dtype)
-        M = configs.shape[0]
-        N = pts.shape[0]
-        # take advantage of the fact our system has no rotation to just translate points; otherwise would need full tsf
-        query_pts = pts.repeat(M, 1, 1).transpose(0, 1)
-        # needed transpose to allow broadcasting
-        query_pts -= configs
-        # flatten
-        query_pts = query_pts.transpose(0, 1).view(M * N, -1)
-        d = torch.ones(M * N, dtype=pts.dtype, device=pts.device)
-        # eliminate points outside bounding box
-        valid = (self.min_x <= query_pts[:, 0]) & (query_pts[:, 0] <= self.max_x) & \
-                (self.min_y <= query_pts[:, 1]) & (query_pts[:, 1] <= self.max_y)
-        # convert coordinates to indices
-        query = query_pts[valid]
-        x_id = torch.round((query[:, 0] - self.min_x) / self.cache_resolution).to(dtype=torch.long)
-        y_id = torch.round((query[:, 1] - self.min_y) / self.cache_resolution).to(dtype=torch.long)
-        idx = x_id * self.cache_y_len + y_id
-        d[valid] = self.d_cache[idx]
-
-        return d.view(M, N)
+            d_cache = d.reshape(-1)
+            data = [d_cache, min_x, min_y, max_x, max_y, cache_resolution, cache_y_len]
+            torch.save(data, fullname)
+            super(ArmPointToConfig, self).__init__(*data)

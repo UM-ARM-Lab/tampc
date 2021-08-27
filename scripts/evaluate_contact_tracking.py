@@ -158,7 +158,7 @@ class OurMethodSoft(OurMethodFactory):
     def _pt_to_config_dist(self, configs, pts):
         if self.env is None:
             self.env = self.env_class(mode=p.GUI if self.visualize else p.DIRECT)
-            self._dist_calc = arm.PointToConfig(self.env)
+            self._dist_calc = arm.ArmPointToConfig(self.env)
         return self._dist_calc(configs, pts)
 
     def create_contact_set(self, contact_params) -> tracking.ContactSet:
@@ -411,13 +411,16 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
                          label_function=cluster_id_to_str)
     save_and_close_fig(f, '')
 
-    in_contact = contact_id[:-1] != NO_CONTACT_ID
     info = {k: d[k] for k in [InfoKeys.DEE_IN_CONTACT, InfoKeys.HIGH_FREQ_REACTION_F, InfoKeys.HIGH_FREQ_REACTION_T,
                               InfoKeys.HIGH_FREQ_EE_POSE]}
     # additional info to pass to methods for debugging
     info[InfoKeys.OBJ_POSES] = obj_poses
 
     contact_detector, contact_pts = get_contact_point_history(d, datafile)
+    # those not in contact are marked as 0,0,0
+    in_contact = np.linalg.norm(contact_pts, axis=1) > 0
+    # some of those points in actual contact are not labelled, so evaluate some metrics on only these
+    in_label_contact = contact_id[:-1] != NO_CONTACT_ID
 
     for method_name, method_list in methods.items():
         if not isinstance(method_list, (list, tuple)):
@@ -427,7 +430,7 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
             labels, param_values, moved_points, pt_weights = method(X, U, reactions, env_cls, info, contact_detector,
                                                                     contact_pts)
             run_key = RunKey(level=level, seed=seed, method=method_name, params=param_values)
-            m = clustering_metrics(contact_id[:-1][in_contact], labels[in_contact])
+            m = clustering_metrics(contact_id[:-1][in_label_contact], labels[in_label_contact])
             contact_error = compute_contact_error(contact_pts[in_contact], moved_points, env_cls, level, obj_poses,
                                                   visualize=False)
             cme = np.mean(np.abs(contact_error))
@@ -475,12 +478,12 @@ if __name__ == "__main__":
         #                          OurMethodSoft(length=0.8, hard_assignment_threshold=0.005),
         #                          OurMethodSoft(length=1, hard_assignment_threshold=0.005),
         #                          ],
-        'ours soft replace': [OurMethodSoft(length=0.02, hard_assignment_threshold=0.002),
-                              OurMethodSoft(length=0.01, hard_assignment_threshold=0.002),
-                              OurMethodSoft(length=0.015, hard_assignment_threshold=0.002),
-                              OurMethodSoft(length=0.01, hard_assignment_threshold=0.005),
-                              OurMethodSoft(length=0.03, hard_assignment_threshold=0.005),
-                              ],
+        'ours soft simplified': [OurMethodSoft(length=0.02, hard_assignment_threshold=0.001),
+                                 # OurMethodSoft(length=0.02, hard_assignment_threshold=0.002),
+                                 # OurMethodSoft(length=0.02, hard_assignment_threshold=0.003),
+                                 # OurMethodSoft(length=0.02, hard_assignment_threshold=0.002,
+                                 #               intersection_tolerance=0.001),
+                                 ],
         # 'ours soft sq dist elim freespace': [OurMethodSoft(length=0.05), OurMethodSoft(length=0.02)],
         # 'ours UKF': OurMethodHard(length=0.1),
         # 'ours UKF convexity merge constraint': OurMethodHard(length=0.1),
