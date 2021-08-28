@@ -74,14 +74,17 @@ class DebugRvizDrawer(Visualizer):
         marker.colors.append(c)
         marker.points.append(p)
         self.marker_pub.publish(marker)
+        if label is not None:
+            self.draw_text(f"{ns}_text", label, [point[0], point[1], z], id=this_id, absolute_pos=True)
+
         return p
 
     def draw_2d_pose(self, name, pose, color=(0, 0, 0), length=0.15 / 2, height=None):
         pass
 
-    def draw_2d_line(self, name, start, diff, color=(0, 0, 0), size=2., scale=0.4):
+    def draw_2d_line(self, name, start, diff, color=(0, 0, 0), size=2., scale=0.4, arrow=True):
         ns, this_id = self._extract_ns_id_from_name(name)
-        marker = self.make_marker(marker_type=Marker.LINE_LIST)
+        marker = self.make_marker(marker_type=Marker.ARROW if arrow else Marker.LINE_LIST)
         marker.ns = ns
         marker.id = int(this_id)
         z = start[2] if len(start) > 2 else 0
@@ -102,8 +105,11 @@ class DebugRvizDrawer(Visualizer):
         c.r = color[0]
         c.g = color[1]
         c.b = color[2]
-        marker.colors.append(c)
-        marker.colors.append(c)
+        if arrow:
+            marker.color = c
+        else:
+            marker.colors.append(c)
+            marker.colors.append(c)
         self.marker_pub.publish(marker)
         return p
 
@@ -234,15 +240,20 @@ class DebugRvizDrawer(Visualizer):
         marker.action = Marker.DELETEALL if delete_all else Marker.DELETE
         self.marker_pub.publish(marker)
 
-    def draw_text(self, label, text, offset, left_offset=0, scale=5):
+    def draw_text(self, label, text, offset, left_offset=0, scale=5, id=0, absolute_pos=False):
         marker = self.make_marker(marker_type=Marker.TEXT_VIEW_FACING, scale=self.BASE_SCALE * scale)
         marker.ns = label
-        marker.id = 0
+        marker.id = id
         marker.text = text
 
-        marker.pose.position.x = 1.4 + offset * self.BASE_SCALE * 6
-        marker.pose.position.y = 0.4 + left_offset * 0.5
-        marker.pose.position.z = 1
+        if absolute_pos:
+            marker.pose.position.x = offset[0]
+            marker.pose.position.y = offset[1]
+            marker.pose.position.z = offset[2] if len(offset) > 2 else 1
+        else:
+            marker.pose.position.x = 1.4 + offset * self.BASE_SCALE * 6
+            marker.pose.position.y = 0.4 + left_offset * 0.5
+            marker.pose.position.z = 1
         marker.pose.orientation.w = 1
 
         marker.color.a = 1
