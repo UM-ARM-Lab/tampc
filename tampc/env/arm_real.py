@@ -15,7 +15,8 @@ from pytorch_kinematics import transforms as tf
 
 from cottun.detection_impl import ContactDetectorPlanarPybulletGripper
 from tampc import cfg
-from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource, Env, Visualizer
+from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource, Env, Visualizer, \
+    PlanarPointToConfig
 
 from cottun.detection import ContactDetector
 from geometry_msgs.msg import Pose
@@ -109,6 +110,10 @@ class RealArmEnv(Env):
 
     REST_POS = [0.8, -0.23, 1.33104]
     REST_ORIENTATION = [-np.pi / 2, -np.pi / 4, 0]
+    BASE_POSE = ([-0.02, -0.1384885, 1.248],
+                 [0.6532814824398555, 0.27059805007378895, 0.270598050072408, 0.6532814824365213])
+    REST_JOINTS = [0.4108605153827254, 0.17765750558338816, 2.864542900145466, 1.476984593157121, -0.08702253835051747,
+                   -0.7335904789968506, -0.583226146785734]
 
     EE_LINK_NAME = "victor_right_arm_link_7"
 
@@ -173,8 +178,10 @@ class RealArmEnv(Env):
             # subscribe to status messages
             self.right_arm_contact_listener = rospy.Subscriber(victor.ns("right_arm/motion_status"), MotionStatus,
                                                                self.contact_listener)
+            self.cleaned_wrench_publisher = rospy.Publisher(victor.ns("right_gripper/cleaned_wrench"), WrenchStamped,
+                                                            queue_size=10)
 
-            victor.plan_to_pose(victor.right_arm_group, self.EE_LINK_NAME, self.REST_POS + self.REST_ORIENTATION)
+            # victor.plan_to_pose(victor.right_arm_group, self.EE_LINK_NAME, self.REST_POS + self.REST_ORIENTATION)
             base_pose = pose_msg_to_pos_quaternion(victor.get_link_pose('victor_right_arm_mount'))
             status = victor.get_right_arm_status()
             canonical_joints = [status.measured_joint_position.joint_1, status.measured_joint_position.joint_2,
@@ -198,6 +205,7 @@ class RealArmEnv(Env):
             self._contact_detector.clear()
             rospy.sleep(1)
             start = time.time()
+            # collect them in the frame we detect them
             while len(self.contact_detector) < 50:
                 rospy.sleep(0.1)
 
@@ -226,19 +234,25 @@ class RealArmEnv(Env):
         if self.contact_detector is None:
             return
         w = status.estimated_external_wrench
-        wrench = np.array([w.x, w.y, w.z, w.a, w.b, w.c]) - self.static_wrench
         # convert wrench to world frame
         wr = WrenchStamped()
         wr.header.frame_id = self.EE_LINK_NAME
-        wr.wrench.force.x = wrench[0]
-        wr.wrench.force.y = wrench[1]
-        wr.wrench.force.z = wrench[2]
-        wr.wrench.torque.x = wrench[3]
-        wr.wrench.torque.y = wrench[4]
-        wr.wrench.torque.z = wrench[5]
+        wr.wrench.force.x = w.x
+        wr.wrench.force.y = w.y
+        wr.wrench.force.z = w.z
+        wr.wrench.torque.x = w.a
+        wr.wrench.torque.y = w.b
+        wr.wrench.torque.z = w.c
         wr_world = self.victor.tf_wrapper.transform_to_frame(wr, "victor_root")
         wr = wr_world.wrench
-        wr_np = np.array([wr.force.x, wr.force.y, wr.force.z, wr.torque.x, wr.torque.y, wr.torque.z])
+        # clean with static wrench
+        wr_np = np.array(
+            [wr.force.x, wr.force.y, wr.force.z, wr.torque.x, wr.torque.y, wr.torque.z]) - self.static_wrench
+
+        wr = WrenchStamped()
+        wr.header.frame_id = "victor_root"
+        wr.wrench.force.x, wr.wrench.force.y, wr.wrench.force.z, wr.wrench.torque.x, wr.wrench.torque.y, wr.wrench.torque.z = wr_np
+        self.cleaned_wrench_publisher.publish(wr)
 
         pose = pose_msg_to_pos_quaternion(self.victor.get_link_pose(self.EE_LINK_NAME))
         # manually make observed point planar
@@ -306,34 +320,18 @@ class RealArmEnv(Env):
     def close(self):
         pass
 
-
-class ArmRealDataSource(EnvDataSource):
-    loader_map = {RealArmEnv: ArmRealLoader}
-
-    @staticmethod
-    def _default_data_dir():
-        return DIR
-
-    @staticmethod
-    def _loader_map(env_type):
-        return ArmRealDataSource.loader_map.get(env_type, None)
-
-
-class ContactDetectorPlanarRealArm(ContactDetectorPlanarPybulletGripper):
-    """Contact detector for real robot, with init points loaded from pybullet"""
-
-    def __init__(self, *args, base_pose=None, canonical_pos=None, **kwargs):
-        self._base_pose = base_pose
-        self._canonical_pos = canonical_pos
-        super().__init__(*args, robot_id=None, **kwargs)
-
-    def _init_sample_surface_points_in_canonical_pose(self, visualizer: typing.Optional[CombinedVisualizer] = None):
-        # load if possible; otherwise would require a running pybullet instance
-        fullname = os.path.join(cfg.DATA_DIR, f'detection_{self.name}_cache.pkl')
-        if os.path.exists(fullname):
-            self._cached_points, self._cached_normals = torch.load(fullname)
-            print(f"cached robot points and normals loaded from {fullname}")
-            return
+    @classmethod
+    def create_sim_robot_and_gripper(cls, base_pose=None, canonical_joint=None, canonical_pos=None,
+                                     canonical_orientation=None,
+                                     visualizer: typing.Optional[CombinedVisualizer] = None):
+        if base_pose is None:
+            base_pose = cls.BASE_POSE
+        if canonical_pos is None:
+            canonical_pos = cls.REST_POS
+        if canonical_joint is None:
+            canonical_joint = cls.REST_JOINTS
+        if canonical_orientation is None:
+            canonical_orientation = cls.REST_ORIENTATION
 
         # create pybullet environment and load kuka arm
         p.connect(p.GUI)
@@ -341,35 +339,34 @@ class ContactDetectorPlanarRealArm(ContactDetectorPlanarPybulletGripper):
         if visualizer is not None:
             if visualizer.sim is None:
                 visualizer.init_sim(0, 1.8)
-                visualizer.sim.set_camera_position(self._canonical_pos, yaw=90)
+                visualizer.sim.set_camera_position(canonical_pos, yaw=90)
                 visualizer.sim.toggle_3d(True)
 
         p.setAdditionalSearchPath(pybullet_data.getDataPath())  # optionally
 
         p.loadURDF("plane.urdf", [0, 0, 0], useFixedBase=True)
         # get base pose relative to the world frame
-        self.robot_id = p.loadURDF("kuka_iiwa/model.urdf", self._base_pose[0], self._base_pose[1], useFixedBase=True)
+        robot_id = p.loadURDF("kuka_iiwa/model.urdf", base_pose[0], base_pose[1], useFixedBase=True)
         # base pose actually doesn't matter as long as our EE is sufficiently close to canonical
-        visual_data = p.getVisualShapeData(self.robot_id)
+        visual_data = p.getVisualShapeData(robot_id)
         for link in visual_data:
             link_id = link[1]
             rgba = list(link[7])
             rgba[3] = 0.5
-            p.changeVisualShape(self.robot_id, link_id, rgbaColor=rgba)
+            p.changeVisualShape(robot_id, link_id, rgbaColor=rgba)
 
         # move robot EE to desired base pose
         ee_index = 6
-        for i, v in enumerate(self._default_joint_config):
-            p.resetJointState(self.robot_id, i, v)
+        for i, v in enumerate(canonical_joint):
+            p.resetJointState(robot_id, i, v)
 
-        data = p.getLinkState(self.robot_id, ee_index)
+        data = p.getLinkState(robot_id, ee_index)
         # compare against desired pose
         pos, orientation = data[4], data[5]
-        z = pos[2]
 
         # confirm simmed position and orientation sufficiently close
-        d_pos = np.linalg.norm(np.subtract(pos, self._canonical_pos))
-        qd = p.getDifferenceQuaternion(orientation, p.getQuaternionFromEuler(self._canonical_orientation))
+        d_pos = np.linalg.norm(np.subtract(pos, canonical_pos))
+        qd = p.getDifferenceQuaternion(orientation, p.getQuaternionFromEuler(canonical_orientation))
         d_orientation = 2 * math.atan2(np.linalg.norm(qd[:3]), qd[-1])
         if d_pos > 0.05 or d_orientation > 0.03:
             raise RuntimeError(f"sim EE can't arrive at desired EE d pos {d_pos} d orientation {d_orientation}")
@@ -427,6 +424,40 @@ class ContactDetectorPlanarRealArm(ContactDetectorPlanarPybulletGripper):
                                        linkParentIndices=[0 for _ in col_ids],
                                        linkJointTypes=[p.JOINT_FIXED for _ in col_ids],
                                        linkJointAxis=[[0, 0, 1] for _ in col_ids])
+
+        return robot_id, gripper_id, pos, orientation
+
+
+class ArmRealDataSource(EnvDataSource):
+    loader_map = {RealArmEnv: ArmRealLoader}
+
+    @staticmethod
+    def _default_data_dir():
+        return DIR
+
+    @staticmethod
+    def _loader_map(env_type):
+        return ArmRealDataSource.loader_map.get(env_type, None)
+
+
+class ContactDetectorPlanarRealArm(ContactDetectorPlanarPybulletGripper):
+    """Contact detector for real robot, with init points loaded from pybullet"""
+
+    def __init__(self, *args, base_pose=None, canonical_pos=None, **kwargs):
+        self._base_pose = base_pose
+        self._canonical_pos = canonical_pos
+        super().__init__(*args, robot_id=None, **kwargs)
+
+    def _init_sample_surface_points_in_canonical_pose(self, visualizer: typing.Optional[CombinedVisualizer] = None):
+        # load if possible; otherwise would require a running pybullet instance
+        fullname = os.path.join(cfg.DATA_DIR, f'detection_{self.name}_cache.pkl')
+        if os.path.exists(fullname):
+            self._cached_points, self._cached_normals = torch.load(fullname)
+            print(f"cached robot points and normals loaded from {fullname}")
+            return
+
+        self.robot_id, gripper_id, pos, orientation = RealArmEnv.create_sim_robot_and_gripper(visualizer=visualizer)
+        z = pos[2]
         # p.removeBody(gripper_id)
 
         self._cached_points = []
@@ -434,11 +465,11 @@ class ContactDetectorPlanarRealArm(ContactDetectorPlanarPybulletGripper):
 
         r = 0.2
         # sample evenly in terms of angles, but leave out the section in between the fingers
-        leave_out = 0.9
+        leave_out = 0.8
         start_angle = -np.pi / 2
         angles = np.linspace(start_angle + leave_out, np.pi * 2 - leave_out + start_angle, self.num_sample_points)
 
-        offset_y = 0.1
+        offset_y = 0.2
         for angle in angles:
             pt = [np.cos(angle) * r + pos[0], np.sin(angle) * r + pos[1] + offset_y, z]
             # visualizer.sim.draw_point(f't', pt, color=(0, 0, 0))
@@ -460,7 +491,7 @@ class ContactDetectorPlanarRealArm(ContactDetectorPlanarPybulletGripper):
         if visualizer is not None:
             for i, min_pt_at_z in enumerate(self._cached_points):
                 t = i / len(self._cached_points)
-                visualizer.sim.draw_point(f'c{t}', min_pt_at_z, color=(t, t, 1 - t))
+                visualizer.sim.draw_point(f'c.{i}', min_pt_at_z, color=(t, t, 1 - t))
         # visualizer.sim.clear_visualizations()
         # convert points back to link frame
         # note that we're using the actual simmed pos and orientation instead of the canonical one since IK doesn't
@@ -494,3 +525,54 @@ class ContactDetectorPlanarRealArm(ContactDetectorPlanarPybulletGripper):
                 visualizer.ros.draw_point(f'c.{i}', min_pt_at_z, color=(t, t, 1 - t))
 
         p.disconnect()
+
+
+class RealArmPointToConfig(PlanarPointToConfig):
+    def __init__(self, env: RealArmEnv):
+        # try loading cache
+        fullname = os.path.join(cfg.DATA_DIR, f'arm_real_point_to_config.pkl')
+        if os.path.exists(fullname):
+            super(RealArmPointToConfig, self).__init__(*torch.load(fullname))
+        else:
+            robot_id, gripper_id, pos, orientation = RealArmEnv.create_sim_robot_and_gripper(visualizer=env.vis)
+            mins = []
+            maxs = []
+            for i in range(-1, p.getNumJoints(gripper_id)):
+                aabb_min, aabb_max = p.getAABB(gripper_id, i)
+                mins.append(aabb_min)
+                maxs.append(aabb_max)
+            # total AABB
+            aabb_min = np.min(mins, axis=0)
+            aabb_max = np.max(maxs, axis=0)
+
+            extents = np.subtract(aabb_max, aabb_min)
+            aabb_vis_id = p.createVisualShape(p.GEOM_BOX, halfExtents=extents / 2, rgbaColor=(1, 0, 0, 0.3))
+            aabb_id = p.createMultiBody(baseMass=0, baseVisualShapeIndex=aabb_vis_id,
+                                        basePosition=np.mean([aabb_min, aabb_max], axis=0))
+            p.removeBody(aabb_id)
+
+            # cache points inside bounding box of robot to accelerate lookup
+            min_x, min_y = aabb_min[:2]
+            max_x, max_y = aabb_max[:2]
+            cache_resolution = 0.001
+            # create mesh grid
+            x = np.arange(min_x, max_x + cache_resolution, cache_resolution)
+            y = np.arange(min_y, max_y + cache_resolution, cache_resolution)
+            cache_y_len = len(y)
+
+            d = np.zeros((len(x), len(y)))
+            for i, xi in enumerate(x):
+                for j, yj in enumerate(y):
+                    pt = [xi, yj, pos[2]]
+                    closest_arm = closest_point_on_surface(robot_id, pt)
+                    closest_gripper = closest_point_on_surface(gripper_id, pt)
+                    d[i, j] = min(closest_arm[ContactInfo.DISTANCE], closest_gripper[ContactInfo.DISTANCE])
+            d_cache = d.reshape(-1)
+            # save things in (rotated) link frame, so subtract the REST PSO
+            min_x -= pos[0]
+            max_x -= pos[0]
+            min_y -= pos[1]
+            max_y -= pos[1]
+            data = [d_cache, min_x, min_y, max_x, max_y, cache_resolution, cache_y_len]
+            torch.save(data, fullname)
+            super(RealArmPointToConfig, self).__init__(*data)

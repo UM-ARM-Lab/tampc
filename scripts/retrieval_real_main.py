@@ -19,8 +19,7 @@ from arm_robots.victor import Victor
 from geometry_msgs.msg import Pose
 from tf.transformations import quaternion_from_euler
 
-from tampc.env.arm_real import ContactDetectorPlanarRealArm, RealArmEnv
-from victor_hardware_interface_msgs.msg import ControlMode, MotionStatus
+from tampc.env import arm_real
 
 ask_before_moving = True
 
@@ -35,16 +34,34 @@ def main():
     np.set_printoptions(suppress=True, precision=2, linewidth=200)
     colorama.init(autoreset=True)
 
-    env = RealArmEnv()
+    env = arm_real.RealArmEnv()
+    pt_to_config = arm_real.RealArmPointToConfig(env)
+
+    # rospy.sleep(1)
+    # env.victor.open_right_gripper()
+    # rospy.sleep(1)
+    # env.victor.close_right_gripper()
+
+    # confirm pt to config implementation
+    # config = env.state
+    # from arm_pytorch_utilities import rand
+    # import torch
+    # rand.seed(1)
+    # pts = (torch.rand((10, 2)) - 0.5) * 0.3
+    # pts += config
+    # pts[:, 1] += 0.1
+    # d = pt_to_config(torch.from_numpy(config).view(1, -1), pts)
+    # d = d.view(-1)
+    # for i, pt in enumerate(pts):
+    #     env.vis.ros.draw_point(f'temp.{i}', pt, height=env.REST_POS[2], label=str(round(d[i].item(), 2)),
+    #                            color=(1, 1, 1, 1))
+    #     print(d[i])
+
     while True:
         loc = env.contact_detector.get_last_contact_location(visualizer=env.vis.ros)
         if loc is not None:
             print(f"contact at {loc}")
 
-    # rospy.sleep(1)
-    # victor.open_left_gripper()
-    # rospy.sleep(1)
-    # victor.close_left_gripper()
     # rospy.sleep(1)
     # victor.open_right_gripper()
     # rospy.sleep(1)
