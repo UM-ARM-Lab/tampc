@@ -25,7 +25,7 @@ class ContactParameters:
     length: float = 0.1
     weight_multiplier: float = 0.1
     ignore_below_weight: float = 0.2
-    hard_assignment_threshold: float = 0.05  # for soft assignment, probability threshold for belonging to same component
+    hard_assignment_threshold: float = 0.2  # for soft assignment, probability threshold for belonging to same component
     intersection_tolerance: float = 0.002  # how much intersection into the robot's surface we ignore
     # approx_robot_radius: float = 0.1
     # min_friction_cossim: float = 0.3  # (0,1) where 0 means very high friction and 1 means no friction
@@ -853,12 +853,8 @@ class ContactSetSoft(ContactSet):
 
     def _compute_full_adjacency(self, pts):
         # don't typically need to compute full adjacency
-        total_num = self.pts.shape[0]
-        dd = approx_conic_similarity(self.acts, pts,
-                                     self.acts.repeat(total_num, 1, 1).transpose(0, -2),
-                                     pts.repeat(total_num, 1, 1).transpose(0, -2))
-        self.adjacency = self._distance_to_probability(dd)
-        return self.adjacency
+        dd = torch.cdist(pts, pts)
+        return self._distance_to_probability(dd)
 
     def get_posterior_points(self):
         # TODO cluster then take center of biggest cluster?
@@ -902,14 +898,14 @@ class ContactSetSoft(ContactSet):
         # parameter where higher means a greater drop off in probability with distance
         if sigma is None:
             sigma = 1 / self.p.length
-        return torch.exp(-sigma * distance)
+        return torch.exp(-sigma * distance ** 2)
 
     def predict_particles(self, dx):
         """Apply action to all particles"""
         dd = (self.pts[-1] - self.sampled_pts).norm(dim=-1)
 
         # convert to probability
-        connection_prob = self._distance_to_probability(dd ** 2)
+        connection_prob = self._distance_to_probability(dd)
 
         # sample particles which make hard assignments
         # independently sample uniform [0, 1) and compare against prob - note that connections are symmetric
@@ -955,7 +951,7 @@ class ContactSetSoft(ContactSet):
         obs_weights -= obs_weights.max()
         # convert to probability
         self.penetration_sigma = 1 / (self.p.length * 0.1)
-        obs_weights = self._distance_to_probability(obs_weights ** 2, sigma=self.penetration_sigma)
+        obs_weights = self._distance_to_probability(obs_weights, sigma=self.penetration_sigma)
 
         min_weight = 1e-15
         self.weights = self.weights * obs_weights

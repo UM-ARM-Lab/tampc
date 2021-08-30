@@ -79,7 +79,7 @@ class ArmGetter(EnvGetter):
                                             state_to_reaction=env.get_ee_reaction,
                                             max_pos_move_per_action=env.MAX_PUSH_DIST,
                                             length=0.02,
-                                            hard_assignment_threshold=0.001,
+                                            hard_assignment_threshold=0.4,
                                             weight_multiplier=0.1,
                                             ignore_below_weight=0.2)
         if kwargs is not None:

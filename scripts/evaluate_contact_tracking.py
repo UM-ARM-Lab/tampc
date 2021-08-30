@@ -470,23 +470,22 @@ if __name__ == "__main__":
 
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
-        'ours full': [OurMethodSoft(length=0.02, hard_assignment_threshold=0.001),
-                      OurMethodSoft(length=0.02, hard_assignment_threshold=0.002),
-                      OurMethodSoft(length=0.02, hard_assignment_threshold=0.003),
-                      OurMethodSoft(length=0.02, hard_assignment_threshold=0.002,
-                                    intersection_tolerance=0.001),
-                      ],
+        'ours': [OurMethodSoft(length=0.02, hard_assignment_threshold=0.2),
+                 OurMethodSoft(length=0.02, hard_assignment_threshold=0.3),
+                 OurMethodSoft(length=0.02, hard_assignment_threshold=0.4),
+                 OurMethodSoft(length=0.02, hard_assignment_threshold=0.5),
+                 ],
         # 'ours UKF': OurMethodHard(length=0.1),
         # 'ours UKF convexity merge constraint': OurMethodHard(length=0.1),
         # 'ours PF': OurMethodHard(contact_object_class=tracking.ContactPF, length=0.1),
-        'kmeans': sklearn_method_factory(KMeansWithAutoK),
-        'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
-        'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
-        'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
-                                                       random_state=0),
-        'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
-        'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
-                                                      threshold=1.5)
+        # 'kmeans': sklearn_method_factory(KMeansWithAutoK),
+        # 'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
+        # 'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
+        # 'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
+        #                                                random_state=0),
+        # 'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
+        # 'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
+        #                                               threshold=1.5)
     }
 
     # full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper13/25.mat')
