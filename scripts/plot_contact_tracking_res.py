@@ -144,16 +144,16 @@ class PlotAmbiguityVsFMI(ContactTrackingResultsPlot):
         return data['ambiguity'], data['fmi']
 
 
-class PlotContactManifoldErrorVsFMI(ContactTrackingResultsPlot):
+class PlotContactErrorVsFMI(ContactTrackingResultsPlot):
     def __init__(self, *args, weight_cme=True, **kwargs):
         self.weight_cme = weight_cme
-        super(PlotContactManifoldErrorVsFMI, self).__init__(*args, **kwargs)
+        super(PlotContactErrorVsFMI, self).__init__(*args, **kwargs)
 
     def _set_title_and_lims(self, f, ax):
         xlabel = []
         if self.weight_cme:
             xlabel.append('weighted')
-        xlabel.append('contact manifold error')
+        xlabel.append('contact error')
         if self.represent_cme_as_ratio:
             xlabel.append('(relative to max penetration dist)')
             ax.set_xlim(0, 1)
@@ -180,23 +180,26 @@ if __name__ == "__main__":
         # "ours soft",
         # "ours soft sq dist",
         # "ours soft sq dist sub tol",
-        "ours UKF",
+        # "ours UKF",
         # "ours soft cached pts",
         # "ours soft full check",
         # "ours soft replace pts",
         # "ours soft replace",
-        "ours soft good",
-        "ours soft simplified",
+        # "ours soft good",
+        "ours full",
         # "ours soft sq dist elim freespace"
         # "ours PF",
-        # "online-kmeans",
-        # "online-dbscan",
-        # "online-birch"
+        # "kmeans",
+        # "birch",
+        # "dbscan",
+        "online-kmeans",
+        "online-dbscan",
+        "online-birch"
     ]
 
-    manifold_error_vs_fmi = PlotContactManifoldErrorVsFMI(all_runs, methods, plot_aggregate=True, weight_cme=False,
-                                                          represent_cme_as_ratio=True, aggregate_perturbation=0.00,
-                                                          plot_only_best_params_on_metric='<cme'
-                                                          )
+    contact_error_vs_fmi = PlotContactErrorVsFMI(all_runs, methods, plot_aggregate=True, weight_cme=False,
+                                                 represent_cme_as_ratio=False, aggregate_perturbation=0.00,
+                                                 plot_only_best_params_on_metric='<cme'
+                                                 )
 
     plt.show()

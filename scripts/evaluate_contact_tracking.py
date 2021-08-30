@@ -200,11 +200,10 @@ def process_labels_with_noise(labels):
 def sklearn_method_factory(method, **kwargs):
     def sklearn_method(X, U, reactions, env_class, info, contact_detector, contact_pts):
         # simple baselines
-        # cluster in [contact point, next reaction force, action] space
-        xx = np.concatenate([contact_pts, reactions[1:], U[:-1]], axis=1)
-        valid = np.linalg.norm(reactions[1:], axis=1) > 0.1
+        # cluster in [contact point] space
+        xx = contact_pts[:, :2]
+        valid = np.linalg.norm(contact_pts, axis=1) > 0.
         xx = xx[valid]
-        # give it some help by telling it the number of clusters as unique contacts IDs
         res = method(**kwargs).fit(xx)
         # return res.labels_, dict_to_namespace_str(kwargs)
         labels = np.ones(len(valid)) * NO_CONTACT_ID
@@ -218,13 +217,13 @@ def sklearn_method_factory(method, **kwargs):
 def online_sklearn_method_factory(online_class, method, inertia_ratio=0.5, **kwargs):
     def sklearn_method(X, U, reactions, env_class, info, contact_detector, contact_pts):
         online_method = online_class(method(**kwargs), inertia_ratio=inertia_ratio)
-        valid = np.linalg.norm(reactions[1:], axis=1) > 0.1
+        valid = np.linalg.norm(contact_pts, axis=1) > 0.
+        dobj = info[InfoKeys.DEE_IN_CONTACT].cpu().numpy()
         for i in range(len(X) - 1):
             if not valid[i]:
                 continue
             # intermediate labels in case we want plotting of movement
-            labels = online_method.update(contact_pts[i], U[i], info[InfoKeys.DEE_IN_CONTACT][i],
-                                          reactions[i + 1])
+            labels = online_method.update(contact_pts[i], U[i], dobj[i])
         labels = np.ones(len(valid)) * NO_CONTACT_ID
         labels[valid] = process_labels_with_noise(online_method.final_labels())
         moved_pts = online_method.moved_data()
@@ -471,31 +470,23 @@ if __name__ == "__main__":
 
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
-        # 'ours soft': OurMethodSoft(length=0.1),
-        # 'ours soft sq dist': [OurMethodSoft(length=0.1)],
-        # 'ours soft full check': [OurMethodSoft(length=0.5, hard_assignment_threshold=0.02),
-        #                          OurMethodSoft(length=0.5, hard_assignment_threshold=0.005),
-        #                          OurMethodSoft(length=0.8, hard_assignment_threshold=0.005),
-        #                          OurMethodSoft(length=1, hard_assignment_threshold=0.005),
-        #                          ],
-        'ours soft simplified': [OurMethodSoft(length=0.02, hard_assignment_threshold=0.001),
-                                 # OurMethodSoft(length=0.02, hard_assignment_threshold=0.002),
-                                 # OurMethodSoft(length=0.02, hard_assignment_threshold=0.003),
-                                 # OurMethodSoft(length=0.02, hard_assignment_threshold=0.002,
-                                 #               intersection_tolerance=0.001),
-                                 ],
-        # 'ours soft sq dist elim freespace': [OurMethodSoft(length=0.05), OurMethodSoft(length=0.02)],
+        'ours full': [OurMethodSoft(length=0.02, hard_assignment_threshold=0.001),
+                      OurMethodSoft(length=0.02, hard_assignment_threshold=0.002),
+                      OurMethodSoft(length=0.02, hard_assignment_threshold=0.003),
+                      OurMethodSoft(length=0.02, hard_assignment_threshold=0.002,
+                                    intersection_tolerance=0.001),
+                      ],
         # 'ours UKF': OurMethodHard(length=0.1),
         # 'ours UKF convexity merge constraint': OurMethodHard(length=0.1),
         # 'ours PF': OurMethodHard(contact_object_class=tracking.ContactPF, length=0.1),
-        # 'kmeans': sklearn_method_factory(KMeansWithAutoK),
-        # 'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
-        # 'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
-        # 'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
-        #                                                random_state=0),
-        # 'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
-        # 'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
-        #                                               threshold=1.5)
+        'kmeans': sklearn_method_factory(KMeansWithAutoK),
+        'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
+        'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
+        'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
+                                                       random_state=0),
+        'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
+        'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
+                                                      threshold=1.5)
     }
 
     # full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper13/25.mat')

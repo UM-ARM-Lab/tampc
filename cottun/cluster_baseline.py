@@ -39,8 +39,8 @@ class OnlineSklearnContactSet:
 
         self.data = None
 
-    def update(self, x, u, dx, reaction):
-        xx = np.concatenate([x[:2], reaction, u]).reshape(1, -1)
+    def update(self, x, u, dx):
+        xx = x[:2].reshape(1, -1)
         if self.data is None:
             self.data = xx
             self.cluster_method.fit(self.data)
@@ -54,9 +54,7 @@ class OnlineSklearnContactSet:
         # noise labels aren't actually clusters
         if this_cluster != -1:
             members_of_this_cluster = self.cluster_method.labels_ == this_cluster
-            # don't move everything if reaction force too low
-            if np.linalg.norm(reaction) > 2:
-                self.data[members_of_this_cluster, :2] += dx[:2]
+            self.data[members_of_this_cluster, :2] += dx[:2]
         return self.cluster_method.labels_
 
     def _fit_online(self):
