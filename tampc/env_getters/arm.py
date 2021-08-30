@@ -81,8 +81,7 @@ class ArmGetter(EnvGetter):
                                             length=0.02,
                                             hard_assignment_threshold=0.001,
                                             weight_multiplier=0.1,
-                                            ignore_below_weight=0.2,
-                                            force_threshold=0.5)
+                                            ignore_below_weight=0.2)
         if kwargs is not None:
             for k, v in kwargs.items():
                 setattr(params, k, v)

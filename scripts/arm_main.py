@@ -111,7 +111,7 @@ class OfflineDataCollection:
             ctrl = controller.GreedyControllerWithRandomWalkOnContact(env.nu, pm.dyn_net, cost_to_go, contact_set,
                                                                       u_min,
                                                                       u_max,
-                                                                      force_threshold=contact_params.force_threshold,
+                                                                      force_threshold=0.5,
                                                                       walk_length=6)
             # random position
             intersects_existing_objects = True

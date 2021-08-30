@@ -25,7 +25,6 @@ class ContactParameters:
     length: float = 0.1
     weight_multiplier: float = 0.1
     ignore_below_weight: float = 0.2
-    force_threshold: float = 0.5
     hard_assignment_threshold: float = 0.05  # for soft assignment, probability threshold for belonging to same component
     intersection_tolerance: float = 0.002  # how much intersection into the robot's surface we ignore
     # approx_robot_radius: float = 0.1
