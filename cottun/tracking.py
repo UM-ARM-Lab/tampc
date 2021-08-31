@@ -830,13 +830,15 @@ class ContactSetSoft(ContactSet):
     together). Implemented using a particle filter with each particle being the set of all contact points and configs.
     """
 
-    def __init__(self, pt_to_config_dist, *args, n_particles=100, n_eff_threshold=0.8, **kwargs):
+    def __init__(self, pt_to_config_dist, *args, n_particles=100, n_eff_threshold=0.8, replace_bad_points=True,
+                 **kwargs):
         super(ContactSetSoft, self).__init__(*args, **kwargs)
         self.pt_to_config_dist = pt_to_config_dist
         self.adjacency = None
         self.connection_prob = None
         self.n_particles = n_particles
         self.n_eff_threshold = n_eff_threshold
+        self._do_replace_bad_points = replace_bad_points
 
         self.weights = torch.ones(self.n_particles, device=self.device) / self.n_particles
         self.weights_normalization = 1
@@ -984,7 +986,7 @@ class ContactSetSoft(ContactSet):
             # if even after resampling we have bad points, replace those points with good points
             resampled_weights = self.weights[indices]
             resampled_n_eff = (1.0 / (resampled_weights ** 2).sum()) / self.n_particles
-            if resampled_n_eff < self.n_eff_threshold:
+            if resampled_n_eff < self.n_eff_threshold and self._do_replace_bad_points:
                 self.replace_bad_points()
 
             self.weights = torch.ones(self.n_particles, device=self.device) / self.n_particles
