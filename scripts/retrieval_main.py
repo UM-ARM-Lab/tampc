@@ -25,14 +25,14 @@ from arm_pytorch_utilities import draw
 from tampc import cfg
 from cottun import tracking
 from tampc.controller import controller
-from tampc.transform import invariant
-from tampc.dynamics import hybrid_model
 from tampc.env import arm
 from tampc.env.arm import task_map, Levels
 from tampc.env_getters.arm import RetrievalGetter
 from tampc.env.pybullet_env import ContactInfo, state_action_color_pairs, closest_point_on_surface
 from cottun import icp
 from cottun import detection
+
+from pytorch_kinematics import transforms as tf
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
@@ -44,6 +44,11 @@ logging.basicConfig(level=logging.DEBUG,
 logging.getLogger('matplotlib.font_manager').disabled = True
 
 logger = logging.getLogger(__name__)
+
+
+def rot_2d_mat_to_angle(T):
+    """T: bx3x3 homogenous transforms or bx2x2 rotation matrices"""
+    return torch.atan2(T[:, 1, 0], T[:, 0, 0])
 
 
 class RetrievalController(controller.Controller):
@@ -93,6 +98,37 @@ class RetrievalController(controller.Controller):
             costs = self.cost(torch.from_numpy(self.goal).to(device=d, dtype=dtype), next_state)
             min_i = torch.argmin(costs)
             u = u[min_i].cpu().numpy()
+
+        self.u_history.append(u)
+        return u
+
+
+class RetrievalPredeterminedController(controller.Controller):
+
+    def __init__(self, contact_detector: detection.ContactDetector, contact_set: tracking.ContactSetHard, controls):
+        super().__init__()
+        self.contact_detector = contact_detector
+        self.controls = controls
+        self.i = 0
+
+        self.x_history = []
+        self.u_history = []
+
+        self.contact_set = contact_set
+
+    def command(self, obs, info=None):
+        self.x_history.append(obs)
+
+        if self.contact_detector.in_contact():
+            self.contact_set.update(self.x_history[-2], torch.tensor(self.u_history[-1]),
+                                    self.x_history[-1] - self.x_history[-2],
+                                    self.contact_detector, torch.tensor(info['reaction']), info=info)
+
+        if self.i < len(self.controls):
+            u = self.controls[self.i]
+            self.i += 1
+        else:
+            u = [0 for _ in range(len(self.controls[0]))]
 
         self.u_history.append(u)
         return u
@@ -201,7 +237,7 @@ def test_icp(env):
 
 
 force_gui = True
-env = RetrievalGetter.env(level=Levels.NO_CLUTTER, mode=p.GUI if force_gui else p.DIRECT)
+env = RetrievalGetter.env(level=Levels.SIMPLE_CLUTTER, mode=p.GUI if force_gui else p.DIRECT)
 contact_params = RetrievalGetter.contact_parameters(env)
 
 
@@ -230,22 +266,43 @@ def object_robot_penetration_score(object_id, robot_id, object_transform):
 
 
 using_soft_contact = True
-dtype = torch.float32
+using_predetermined_control = True
 
-ds, pm = RetrievalGetter.prior(env, use_tsf=UseTsf.NO_TRANSFORM)
+dtype = torch.float32
 if using_soft_contact:
-    contact_set = tracking.ContactSetSoft(arm.PlanarPointToConfig(env), contact_params)
+    contact_set = tracking.ContactSetSoft(arm.ArmPointToConfig(env), contact_params)
 else:
     contact_set = tracking.ContactSetHard(contact_params, contact_object_factory=create_contact_object)
-u_min, u_max = env.get_control_bounds()
 
-ctrl = RetrievalController(env.contact_detector, env.nu, pm.dyn_net, cost_to_go, contact_set, u_min, u_max,
-                           walk_length=6)
+# TODO have this seed be selectable
+rand.seed(0)
+if using_predetermined_control:
+    predetermined_control = {}
+
+    ctrl = [[0.7, -1]] * 5
+    ctrl += [[0.4, 0.4], [.5, -1]] * 6
+    ctrl += [[-0.2, 1]] * 4
+    ctrl += [[0.3, -0.3], [0.4, 1]] * 4
+    ctrl += [[1., -1]] * 3
+    ctrl += [[1., 0.6], [-0.7, 0.5]] * 4
+    ctrl += [[0., 1]] * 5
+    ctrl += [[1., 0]] * 4
+    ctrl += [[0.4, -1.], [0.4, 0.5]] * 4
+    noise = (np.random.rand(len(ctrl), 2) - 0.5) * 0.5
+    ctrl = np.add(ctrl, noise)
+    predetermined_control[Levels.SIMPLE_CLUTTER] = ctrl
+
+    ctrl = RetrievalPredeterminedController(env.contact_detector, contact_set,
+                                            predetermined_control[env.level])
+else:
+    ds, pm = RetrievalGetter.prior(env, use_tsf=UseTsf.NO_TRANSFORM)
+    u_min, u_max = env.get_control_bounds()
+    ctrl = RetrievalController(env.contact_detector, env.nu, pm.dyn_net, cost_to_go, contact_set, u_min, u_max,
+                               walk_length=6)
 
 obs = env.reset()
 z = env._observe_ee(return_z=True)[-1]
 
-rand.seed(0)
 model_points = sample_model_points(env.target_object_id, num_points=50, force_z=z, seed=0, name="cheezit")
 mp = model_points[:, :2].cpu().numpy()
 mph = model_points.clone().to(dtype=dtype)
@@ -256,6 +313,7 @@ info = None
 simTime = 0
 best_tsf_guess = None
 while True:
+    best_distance = None
     simTime += 1
     env.draw_user_text("{}".format(simTime), xy=(0.5, 0.7, -1))
 
@@ -265,28 +323,42 @@ while True:
         pts = contact_set.get_posterior_points() if using_soft_contact else None
         to_iter = contact_set.get_hard_assignment(
             contact_set.p.hard_assignment_threshold) if using_soft_contact else contact_set
+        dist_per_est_obj = []
         for c in to_iter:
             this_pts = pts[c] if using_soft_contact else c.points
             T, distances, _ = icp.icp_3(this_pts, model_points[:, :2], given_init_pose=best_tsf_guess, batch=30)
-            penetration = [object_robot_penetration_score(env.target_object_id, env.robot_id, T[b].inverse()) for b in
+            T = T.inverse()
+            penetration = [object_robot_penetration_score(env.target_object_id, env.robot_id, T[b]) for b in
                            range(T.shape[0])]
             score = np.abs(penetration)
             best_tsf_index = np.argmin(score)
-            best_tsf_guess = T[best_tsf_index]
 
-            for b in range(T.shape[0]):
-                transformed_model_points = mph @ T[b].inverse().transpose(-1, -2)
-                for i, pt in enumerate(transformed_model_points):
-                    if i % 2 == 0:
-                        pt = [pt[0], pt[1], z]
-                        env._dd.draw_point(f"tmpt{b}-{i}", pt, color=(0, 1, b / T.shape[0]), length=0.003)
 
-            transformed_model_points = mph @ T[best_tsf_index].inverse().transpose(-1, -2)
-            for i, pt in enumerate(transformed_model_points):
-                if i % 2 == 0:
-                    continue
-                pt = [pt[0], pt[1], z]
-                env._dd.draw_point(f"tmptbest-{i}", pt, color=(0, 0, 1), length=0.008)
+            yaws = rot_2d_mat_to_angle(T)
+            translations = T[:, :2, 2]
+            best_tsf_distances = (translations.var(dim=0).sum()).item()
+            # best_tsf_distances = distances[best_tsf_index].mean().item()
+
+            dist_per_est_obj.append(best_tsf_distances)
+            if best_distance is None or best_tsf_distances < best_distance:
+                best_distance = best_tsf_distances
+                best_tsf_guess = T[best_tsf_index].inverse()
+
+
+            # for b in range(T.shape[0]):
+            #     transformed_model_points = mph @ T[b].transpose(-1, -2)
+            #     for i, pt in enumerate(transformed_model_points):
+            #         if i % 2 == 0:
+            #             pt = [pt[0], pt[1], z]
+            #             env._dd.draw_point(f"tmpt{b}-{i}", pt, color=(0, 1, b / T.shape[0]), length=0.003)
+
+        logger.info(f"err each obj {np.round(dist_per_est_obj, 4)}")
+        transformed_model_points = mph @ best_tsf_guess.inverse().transpose(-1, -2)
+        for i, pt in enumerate(transformed_model_points):
+            if i % 2 == 0:
+                continue
+            pt = [pt[0], pt[1], z]
+            env._dd.draw_point(f"tmptbest-{i}", pt, color=(0, 0, 1), length=0.008)
 
     if torch.is_tensor(action):
         action = action.cpu()

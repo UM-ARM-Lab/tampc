@@ -80,6 +80,7 @@ class ArmGetter(EnvGetter):
                                             max_pos_move_per_action=env.MAX_PUSH_DIST,
                                             length=0.02,
                                             hard_assignment_threshold=0.4,
+                                            intersection_tolerance=0.002,
                                             weight_multiplier=0.1,
                                             ignore_below_weight=0.2)
         if kwargs is not None:
@@ -120,4 +121,6 @@ class RetrievalGetter(ArmGetter):
         level = Levels(level)
         env = arm.ObjectRetrievalEnv(environment_level=level, log_video=log_video, **kwargs)
         cls.env_dir = '{}/gripper'.format(cls.dynamics_prefix())
+        if level is Levels.SIMPLE_CLUTTER:
+            env.set_task_config(goal=[0.5, -0.1, 0])
         return env
