@@ -58,9 +58,7 @@ def main():
     #     print(d[i])
 
     while True:
-        loc = env.contact_detector.get_last_contact_location(visualizer=env.vis.ros)
-        if loc is not None:
-            print(f"contact at {loc}")
+        env.contact_detector.get_last_contact_location(visualizer=env.vis.ros)
 
     # rospy.sleep(1)
     # victor.open_right_gripper()

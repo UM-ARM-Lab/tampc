@@ -108,12 +108,13 @@ class RealArmEnv(Env):
     MAX_PUSH_DIST = 0.02
     RESET_RAISE_BY = 0.025
 
-    REST_POS = [0.8, -0.23, 1.33104]
+    REST_POS = [0.7841804139585614, -0.34821761121288775, 0.9786928519851419]
     REST_ORIENTATION = [-np.pi / 2, -np.pi / 4, 0]
+    # REST_ORIENTATION = [-0.6459689821498171, -0.27422891448504616, -0.2708397749310969, 0.6589145565822289]
     BASE_POSE = ([-0.02, -0.1384885, 1.248],
                  [0.6532814824398555, 0.27059805007378895, 0.270598050072408, 0.6532814824365213])
-    REST_JOINTS = [0.4108605153827254, 0.17765750558338816, 2.864542900145466, 1.476984593157121, -0.08702253835051747,
-                   -0.7335904789968506, -0.583226146785734]
+    REST_JOINTS = [-0.40732265237653803, 0.14285717400670142, 2.8701364771763327, 1.3355278357811362,
+                   0.5678056730613428, -1.0869363621413048, -1.578528368928102]
 
     EE_LINK_NAME = "victor_right_arm_link_7"
 
@@ -180,8 +181,17 @@ class RealArmEnv(Env):
                                                                self.contact_listener)
             self.cleaned_wrench_publisher = rospy.Publisher(victor.ns("right_gripper/cleaned_wrench"), WrenchStamped,
                                                             queue_size=10)
+            self.large_wrench_publisher = rospy.Publisher(victor.ns("right_gripper/large_wrench"), WrenchStamped,
+                                                          queue_size=10)
+            self.large_wrench_world_publisher = rospy.Publisher(victor.ns("right_gripper/large_wrench_world"),
+                                                                WrenchStamped, queue_size=10)
 
+            # to reset the rest pose, manually jog it there then read the values
+            # rest_pose = pose_msg_to_pos_quaternion(victor.get_link_pose(self.EE_LINK_NAME))
+
+            # reset to rest position
             # victor.plan_to_pose(victor.right_arm_group, self.EE_LINK_NAME, self.REST_POS + self.REST_ORIENTATION)
+
             base_pose = pose_msg_to_pos_quaternion(victor.get_link_pose('victor_right_arm_mount'))
             status = victor.get_right_arm_status()
             canonical_joints = [status.measured_joint_position.joint_1, status.measured_joint_position.joint_2,
@@ -243,16 +253,29 @@ class RealArmEnv(Env):
         wr.wrench.torque.x = w.a
         wr.wrench.torque.y = w.b
         wr.wrench.torque.z = w.c
+        if np.linalg.norm([w.x, w.y, w.z]) > 10:
+            self.large_wrench_publisher.publish(wr)
         wr_world = self.victor.tf_wrapper.transform_to_frame(wr, "victor_root")
         wr = wr_world.wrench
         # clean with static wrench
         wr_np = np.array(
             [wr.force.x, wr.force.y, wr.force.z, wr.torque.x, wr.torque.y, wr.torque.z]) - self.static_wrench
 
+        # fix torque direction
+        fix_threshold = 0.065
+        torque_mag = np.linalg.norm(wr_np[3:])
+        if wr_np[-1] > fix_threshold or wr_np[-1] < -fix_threshold:
+            wr_np[3:5] = 0
+            wr_np[-1] = torque_mag if wr_np[-1] > fix_threshold else -torque_mag
+            # magnitude also seems to be off
+            wr_np[-1] *= 2.3
+
         wr = WrenchStamped()
         wr.header.frame_id = "victor_root"
         wr.wrench.force.x, wr.wrench.force.y, wr.wrench.force.z, wr.wrench.torque.x, wr.wrench.torque.y, wr.wrench.torque.z = wr_np
         self.cleaned_wrench_publisher.publish(wr)
+        if np.linalg.norm([w.x, w.y, w.z]) > 10:
+            self.large_wrench_world_publisher.publish(wr)
 
         pose = pose_msg_to_pos_quaternion(self.victor.get_link_pose(self.EE_LINK_NAME))
         # manually make observed point planar
