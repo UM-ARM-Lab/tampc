@@ -822,6 +822,32 @@ class EvaluateTask:
         return dists
 
 
+def manually_evaluate_tracking(start, controls, *args, **kwargs):
+    """Evaluate tracking performance with a manual control sequence"""
+
+    def setup(env, ctrl, ds):
+        env.set_task_config(init=start)
+        prev_state = env.reset()
+
+        for i, u in enumerate(controls):
+            env.draw_user_text(str(i), 1)
+            state, _, _, info = env.step(u)
+
+            # remove contact dynamics to speed up execution
+            if isinstance(ctrl.contact_set, tracking.ContactSetHard):
+                for obj in ctrl.contact_set:
+                    obj.dynamics = None
+
+            # will do worse than actual execution because we don't protect against immovable obstacle contact here
+            c, cc = ctrl.contact_set.update(prev_state, torch.tensor(u), ctrl.compare_to_goal(state, prev_state)[0],
+                                            env.contact_detector, state[-2:], info=info, visualizer=env._dd)
+            env.visualize_contact_set(ctrl.contact_set)
+
+        exit(0)
+
+    run_controller('manual', setup, *args, **kwargs)
+
+
 parser = argparse.ArgumentParser(description='Experiments on the 2D grid environment')
 parser.add_argument('command',
                     choices=['collect', 'collect_tracking', 'learn_representation', 'fine_tune_dynamics', 'run',
@@ -968,17 +994,25 @@ if __name__ == "__main__":
             task_names=task_names, success_min_dist=0.04, plot_success_vs_steps=True, plot_min_scatter=False)
 
     else:
-        # OfflineDataCollection.tracking(Levels.SELECT3, seed_offset=42, trials=1, force_gui=True)
-        replay_trajectory(
-            'arm/gripper13/24.mat',
-            300,
-            seed=24, level=Levels.SELECT4, use_tsf=ut,
-            assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
-            visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
-            override_tampc_params=tampc_params, override_mpc_params=mpc_params,
-            autonomous_recovery=online_controller.AutonomousRecovery.MAB,
-            never_estimate_error=args.never_estimate_error,
-            other_baseline=baseline)
+        # replay_trajectory(
+        #     'arm/gripper11/21.mat',
+        #     300,
+        #     seed=21, level=Levels.SELECT2, use_tsf=ut,
+        #     assume_all_nonnominal_dynamics_are_traps=False, num_frames=args.num_frames,
+        #     visualize_rollout=args.visualize_rollout, run_prefix=args.run_prefix,
+        #     override_tampc_params=tampc_params, override_mpc_params=mpc_params,
+        #     autonomous_recovery=online_controller.AutonomousRecovery.MAB,
+        #     never_estimate_error=args.never_estimate_error,
+        #     other_baseline=baseline)
+
+        rand.seed(0)
+        ctrl = [[0.7, -1], [-0.4, 0.]] * 10
+        ctrl += [[0.1, -0.7], [0., 0.6]] * 10
+        ctrl += [[0.3, -1], [0.3, 1]] * 5
+        ctrl += [[0.3, -1], [0.3, 0.1]] * 10
+        noise = (np.random.rand(len(ctrl), 2) - 0.5) * 0.5
+        ctrl = np.add(ctrl, noise)
+        manually_evaluate_tracking([0, 0.35], ctrl, level=Levels.SELECT2, use_tsf=ut)
 
         # d, env, config, ds = ArmGetter.free_space_env_init(0)
         # ds.update_preprocessor(ArmGetter.pre_invariant_preprocessor(use_tsf=use_tsf))
