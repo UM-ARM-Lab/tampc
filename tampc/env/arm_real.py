@@ -9,6 +9,7 @@ import torch
 import rospy
 import time
 import math
+from threading import Lock
 
 import numpy as np
 from pytorch_kinematics import transforms as tf
@@ -16,13 +17,15 @@ from pytorch_kinematics import transforms as tf
 from cottun.detection_impl import ContactDetectorPlanarPybulletGripper
 from tampc import cfg
 from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource, Env, Visualizer, \
-    PlanarPointToConfig
+    PlanarPointToConfig, InfoKeys
 
 from cottun.detection import ContactDetector
 from geometry_msgs.msg import Pose
 
 from tampc.env.pybullet_env import closest_point_on_surface, ContactInfo, DebugDrawer
 from tampc.env.real_env import DebugRvizDrawer
+
+from arm_robots.cartesian import ArmSide
 from victor_hardware_interface_msgs.msg import ControlMode, MotionStatus, MotionCommand, Robotiq3FingerCommand, \
     Robotiq3FingerStatus
 from tf2_geometry_msgs import WrenchStamped
@@ -30,6 +33,7 @@ from arm_robots.victor import Victor
 
 # runner imports
 from arm_pytorch_utilities.optim import get_device
+from arm_pytorch_utilities import tensor_utils
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +121,7 @@ class RealArmEnv(Env):
                    0.5678056730613428, -1.0869363621413048, -1.578528368928102]
 
     EE_LINK_NAME = "victor_right_arm_link_7"
+    WORLD_FRAME = "victor_root"
 
     @staticmethod
     def state_names():
@@ -125,6 +130,11 @@ class RealArmEnv(Env):
     @staticmethod
     def get_ee_pos(state):
         return state[:2]
+
+    @staticmethod
+    @tensor_utils.ensure_2d_input
+    def get_ee_pos_states(states):
+        return states[:, :2]
 
     @classmethod
     @handle_data_format_for_state_diff
@@ -161,21 +171,27 @@ class RealArmEnv(Env):
         return np.diag([1 for _ in range(cls.nu)])
 
     def __init__(self, environment_level=0, dist_for_done=0.015, obs_time=1, stub=False, residual_threshold=50.,
-                 residual_precision=None):
+                 residual_precision=None, vel=0.1):
         self.level = environment_level
         self.dist_for_done = dist_for_done
-        self.static_wrench = 0
+        self.static_wrench = None
         self.obs_time = obs_time
         self._contact_detector = None
         self.vis = CombinedVisualizer()
+        # additional information accumulated in a single step
+        self._single_step_contact_info = {}
+        self.last_ee_pos = None
+        self.vel = vel
 
         if not stub:
             victor = Victor()
             self.victor = victor
-            victor.set_control_mode(control_mode=ControlMode.JOINT_POSITION, vel=0.1)
+            victor.set_control_mode(control_mode=ControlMode.JOINT_POSITION, vel=vel)
             victor.connect()
             self.vis.init_ros()
 
+            self._motion_status_input_lock = Lock()
+            self._temp_wrenches = []
             # subscribe to status messages
             self.right_arm_contact_listener = rospy.Subscriber(victor.ns("right_arm/motion_status"), MotionStatus,
                                                                self.contact_listener)
@@ -190,7 +206,7 @@ class RealArmEnv(Env):
             # rest_pose = pose_msg_to_pos_quaternion(victor.get_link_pose(self.EE_LINK_NAME))
 
             # reset to rest position
-            # victor.plan_to_pose(victor.right_arm_group, self.EE_LINK_NAME, self.REST_POS + self.REST_ORIENTATION)
+            victor.plan_to_pose(victor.right_arm_group, self.EE_LINK_NAME, self.REST_POS + self.REST_ORIENTATION)
 
             base_pose = pose_msg_to_pos_quaternion(victor.get_link_pose('victor_right_arm_mount'))
             status = victor.get_right_arm_status()
@@ -199,6 +215,9 @@ class RealArmEnv(Env):
                                 status.measured_joint_position.joint_5, status.measured_joint_position.joint_6,
                                 status.measured_joint_position.joint_7]
 
+            victor.set_control_mode(control_mode=ControlMode.CARTESIAN_IMPEDANCE, vel=vel)
+
+            self.last_ee_pos = self._observe_ee(return_z=True)
             self.state, _ = self._obs()
 
             if residual_precision is None:
@@ -212,17 +231,20 @@ class RealArmEnv(Env):
                                                                   device=get_device(), visualizer=self.vis)
 
             # listen for static wrench for use in offset
-            self._contact_detector.clear()
             rospy.sleep(1)
-            start = time.time()
-            # collect them in the frame we detect them
-            while len(self.contact_detector) < 50:
-                rospy.sleep(0.1)
+            self.recalibrate_static_wrench()
 
-            wrenches = [wrench for _, wrench, _ in self.contact_detector.observation_history]
-            self.static_wrench = np.mean(wrenches, axis=0)
-            wrench_var = np.var(wrenches, axis=0)
-            print(f"calibrate static wrench elapsed {time.time() - start} {self.static_wrench} {wrench_var}")
+    def recalibrate_static_wrench(self):
+        start = time.time()
+        self._temp_wrenches = []
+        # collect them in the frame we detect them
+        while len(self._temp_wrenches) < 10:
+            rospy.sleep(0.1)
+
+        self.static_wrench = np.mean(self._temp_wrenches, axis=0)
+        wrench_var = np.var(self._temp_wrenches, axis=0)
+        print(f"calibrate static wrench elapsed {time.time() - start} {self.static_wrench} {wrench_var}")
+        self._contact_detector.clear()
 
     @property
     def contact_detector(self) -> ContactDetector:
@@ -243,46 +265,72 @@ class RealArmEnv(Env):
     def contact_listener(self, status: MotionStatus):
         if self.contact_detector is None:
             return
-        w = status.estimated_external_wrench
-        # convert wrench to world frame
-        wr = WrenchStamped()
-        wr.header.frame_id = self.EE_LINK_NAME
-        wr.wrench.force.x = w.x
-        wr.wrench.force.y = w.y
-        wr.wrench.force.z = w.z
-        wr.wrench.torque.x = w.a
-        wr.wrench.torque.y = w.b
-        wr.wrench.torque.z = w.c
-        if np.linalg.norm([w.x, w.y, w.z]) > 10:
-            self.large_wrench_publisher.publish(wr)
-        wr_world = self.victor.tf_wrapper.transform_to_frame(wr, "victor_root")
-        wr = wr_world.wrench
-        # clean with static wrench
-        wr_np = np.array(
-            [wr.force.x, wr.force.y, wr.force.z, wr.torque.x, wr.torque.y, wr.torque.z]) - self.static_wrench
+        with self._motion_status_input_lock:
+            w = status.estimated_external_wrench
+            # convert wrench to world frame
+            wr = WrenchStamped()
+            wr.header.frame_id = self.EE_LINK_NAME
+            wr.wrench.force.x = w.x
+            wr.wrench.force.y = w.y
+            wr.wrench.force.z = w.z
+            wr.wrench.torque.x = w.a
+            wr.wrench.torque.y = w.b
+            wr.wrench.torque.z = w.c
+            wr_world = self.victor.tf_wrapper.transform_to_frame(wr, self.WORLD_FRAME)
+            if np.linalg.norm([w.x, w.y, w.z]) > 10:
+                self.large_wrench_publisher.publish(wr)
+                print(wr_world.wrench)
+            wr = wr_world.wrench
 
-        # fix torque direction
-        fix_threshold = 0.065
+            # clean with static wrench
+            wr_np = np.array([wr.force.x, wr.force.y, wr.force.z, wr.torque.x, wr.torque.y, wr.torque.z])
+            if self.static_wrench is None:
+                self._temp_wrenches.append(wr_np)
+                return
+            wr_np -= self.static_wrench
+
+            wr_np = self._fix_torque_to_planar(wr_np)
+
+            # visualization
+            wr = WrenchStamped()
+            wr.header.frame_id = self.WORLD_FRAME
+            wr.wrench.force.x, wr.wrench.force.y, wr.wrench.force.z, wr.wrench.torque.x, wr.wrench.torque.y, wr.wrench.torque.z = wr_np
+            self.cleaned_wrench_publisher.publish(wr)
+            if np.linalg.norm([w.x, w.y, w.z]) > 10:
+                self.large_wrench_world_publisher.publish(wr)
+
+            # observe and save contact info
+            info = {}
+
+            pose = pose_msg_to_pos_quaternion(self.victor.get_link_pose(self.EE_LINK_NAME))
+            pos = pose[0]
+            # manually make observed point planar
+            orientation = list(p.getEulerFromQuaternion(pose[1]))
+            orientation[1] = 0
+            orientation[2] = 0
+            if self.contact_detector.observe_residual(wr_np, (pos, orientation)):
+                info[InfoKeys.DEE_IN_CONTACT] = np.subtract(pos, self.last_ee_pos)
+            self.last_ee_pos = pos
+
+            info[InfoKeys.HIGH_FREQ_EE_POSE] = np.r_[pose[0], pose[1]]
+
+            # save reaction force
+            info[InfoKeys.HIGH_FREQ_REACTION_F] = wr_np[:3]
+            info[InfoKeys.HIGH_FREQ_REACTION_T] = wr_np[3:]
+
+            for key, value in info.items():
+                if key not in self._single_step_contact_info:
+                    self._single_step_contact_info[key] = []
+                self._single_step_contact_info[key].append(value)
+
+    def _fix_torque_to_planar(self, wr_np, fix_threshold=0.065):
         torque_mag = np.linalg.norm(wr_np[3:])
         if wr_np[-1] > fix_threshold or wr_np[-1] < -fix_threshold:
             wr_np[3:5] = 0
             wr_np[-1] = torque_mag if wr_np[-1] > fix_threshold else -torque_mag
             # magnitude also seems to be off
             wr_np[-1] *= 2.3
-
-        wr = WrenchStamped()
-        wr.header.frame_id = "victor_root"
-        wr.wrench.force.x, wr.wrench.force.y, wr.wrench.force.z, wr.wrench.torque.x, wr.wrench.torque.y, wr.wrench.torque.z = wr_np
-        self.cleaned_wrench_publisher.publish(wr)
-        if np.linalg.norm([w.x, w.y, w.z]) > 10:
-            self.large_wrench_world_publisher.publish(wr)
-
-        pose = pose_msg_to_pos_quaternion(self.victor.get_link_pose(self.EE_LINK_NAME))
-        # manually make observed point planar
-        orientation = list(p.getEulerFromQuaternion(pose[1]))
-        orientation[1] = 0
-        orientation[2] = 0
-        self.contact_detector.observe_residual(wr_np, (pose[0], orientation))
+        return wr_np
 
     def setup_experiment(self):
         pass
@@ -290,11 +338,17 @@ class RealArmEnv(Env):
     # --- observing state
     def _obs(self):
         """Observe current state from ros"""
-        pose = self.victor.get_link_pose(self.EE_LINK_NAME)
         # TODO accumulate other things to put into info during this observation period
-        state = np.array([pose.position.x, pose.position.y])
+        state = self._observe_ee(return_z=False)
         info = state
         return state, info
+
+    def _observe_ee(self, return_z=False):
+        pose = self.victor.get_link_pose(self.EE_LINK_NAME)
+        if return_z:
+            return np.array([pose.position.x, pose.position.y, pose.position.z])
+        else:
+            return np.array([pose.position.x, pose.position.y])
 
     # --- control helpers (rarely overridden)
     def evaluate_cost(self, state, action=None):
@@ -312,32 +366,37 @@ class RealArmEnv(Env):
         # normalize action such that the input can be within a fixed range
         dx, dy = self._unpack_action(action)
 
-        # TODO step
-        action_resp = self.srv_action([dx, dy, dz])
-        # separate obs into state and info
-        self.state, info = self._unpack_raw_obs(action_resp.obs)
+        self.last_ee_pos = self._observe_ee(return_z=True)
+        self._single_step_contact_info = {}
+
+        # TODO set target orientation as rest orientation
+        self.victor.move_delta_cartesian_impedance(ArmSide.RIGHT, dx, dy, target_z=self.REST_POS[2], blocking=True,
+                                                   step_size=0.01)
+        self.state = self._obs()
+        info = self.aggregate_info()
+
         cost, done = self.evaluate_cost(self.state, action)
 
         return np.copy(self.state), -cost, done, info
 
-    def reset(self, action=None):
-        return
-        # TODO reset
-        if action is not None:
-            dx, dy = self._unpack_action(action)
-            action_resp = self.srv_action([dx, dy])
-            self.state, info = self._unpack_raw_obs(action_resp.obs)
+    def aggregate_info(self):
+        with self._motion_status_input_lock:
+            info = {key: np.stack(value, axis=0) for key, value in self._single_step_contact_info.items() if len(value)}
+        # don't need to aggregate external wrench with new contact detector
+        # info['reaction'], info['torque'] = self._observe_reaction_force_torque()
+        name = InfoKeys.DEE_IN_CONTACT
+        if name in info:
+            info[name] = info[name].sum(axis=0)
         else:
-            self.state, info = self._obs()
-            if self.initPeg is not None:
-                # navigate to init peg by first raising and then dropping
-                dx = self.initPeg[0] - self.state[0]
-                dy = self.initPeg[1] - self.state[1]
-                self.srv_action([0, 0, self.RESET_RAISE_BY])
-                self.srv_action([dx, dy, self.RESET_RAISE_BY])
-                action_resp = self.srv_action([0, 0])
-                self.state, info = self._unpack_raw_obs(action_resp.obs)
+            info[name] = np.zeros(3)
+        return info
 
+    def reset(self):
+        self.victor.set_control_mode(control_mode=ControlMode.JOINT_POSITION, vel=self.vel)
+        # reset to rest position
+        self.victor.plan_to_pose(self.victor.right_arm_group, self.EE_LINK_NAME, self.REST_POS + self.REST_ORIENTATION)
+        self.victor.set_control_mode(control_mode=ControlMode.CARTESIAN_IMPEDANCE, vel=self.vel)
+        self.state, info = self._obs()
         return np.copy(self.state), info
 
     def close(self):
