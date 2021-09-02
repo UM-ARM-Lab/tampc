@@ -3,6 +3,9 @@ import colorama
 import numpy as np
 import logging
 
+from tampc.env.arm import Levels
+from tampc.util import EnvGetter
+
 try:
     import rospy
 
@@ -14,20 +17,109 @@ try:
 except RuntimeError as e:
     print("Proceeding without ROS: {}".format(e))
 
-from arc_utilities import ros_init
-from arm_robots.victor import Victor
-from geometry_msgs.msg import Pose
-from tf.transformations import quaternion_from_euler
+import os
+from datetime import datetime
 
+from tampc import cfg
 from tampc.env import arm_real
+from cottun import tracking
 
 ask_before_moving = True
 
+ch = logging.StreamHandler()
+fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
 
-def myinput(msg):
-    global ask_before_moving
-    if ask_before_moving:
-        input(msg)
+logging.basicConfig(level=logging.DEBUG,
+                    format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
+                    datefmt='%m-%d %H:%M:%S', handlers=[ch, fh])
+
+logging.getLogger('matplotlib.font_manager').disabled = True
+
+
+def no_function():
+    raise RuntimeError("This function shouldn't be run!")
+
+
+class RealRetrievalGetter(EnvGetter):
+    @staticmethod
+    def dynamics_prefix() -> str:
+        return "arm_real"
+
+    @classmethod
+    def env(cls, level=Levels.NO_CLUTTER, **kwargs):
+        level = Levels(level)
+        env = arm_real.RealArmEnv(environment_level=level)
+        return env
+
+    @staticmethod
+    def ds(env, data_dir, **kwargs):
+        return None
+
+    @staticmethod
+    def pre_invariant_preprocessor(use_tsf):
+        return None
+
+    @staticmethod
+    def controller_options(env):
+        return None
+
+    @staticmethod
+    def contact_parameters(env: arm_real.RealArmEnv, **kwargs) -> tracking.ContactParameters:
+        params = tracking.ContactParameters(state_to_pos=env.get_ee_pos_states,
+                                            pos_to_state=no_function,
+                                            control_similarity=no_function,
+                                            state_to_reaction=no_function,
+                                            max_pos_move_per_action=env.MAX_PUSH_DIST,
+                                            length=0.02,
+                                            hard_assignment_threshold=0.4,
+                                            intersection_tolerance=0.002,
+                                            weight_multiplier=0.1,
+                                            ignore_below_weight=0.2)
+        if kwargs is not None:
+            for k, v in kwargs.items():
+                setattr(params, k, v)
+        return params
+
+
+def object_robot_penetration_score(pt_to_config, config, object_transform, model_pts):
+    """Compute the penetration between object and robot for a given transform of the object"""
+    # transform model points by object transform
+    transformed_model_points = model_pts @ object_transform.transpose(-1, -2)
+    d = pt_to_config(config.view(1, -1), transformed_model_points)
+    d = min(d)
+    return -d
+
+
+# TODO sample model points of cheezit box
+
+from pynput import keyboard
+
+
+class KeyboardDirPressed():
+    def __init__(self):
+        self._dir = [0, 0]
+        self.listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
+        self.listener.start()
+
+    @property
+    def dir(self):
+        return self._dir
+
+    def on_press(self, key):
+        if key == keyboard.Key.down:
+            self.dir[1] = -1
+        elif key == keyboard.Key.left:
+            self.dir[0] = -1
+        elif key == keyboard.Key.up:
+            self.dir[1] = 1
+        elif key == keyboard.Key.right:
+            self.dir[0] = 1
+
+    def on_release(self, key):
+        if key in [keyboard.Key.down, keyboard.Key.up]:
+            self.dir[1] = 0
+        elif key in [keyboard.Key.left, keyboard.Key.right]:
+            self.dir[0] = 0
 
 
 def main():
@@ -35,12 +127,13 @@ def main():
     colorama.init(autoreset=True)
 
     env = arm_real.RealArmEnv()
-    pt_to_config = arm_real.RealArmPointToConfig(env)
+    contact_params = RealRetrievalGetter.contact_parameters(env)
 
-    # rospy.sleep(1)
-    # env.victor.open_right_gripper()
-    # rospy.sleep(1)
-    # env.victor.close_right_gripper()
+    pt_to_config = arm_real.RealArmPointToConfig(env)
+    contact_set = tracking.ContactSetSoft(pt_to_config, contact_params)
+
+    # while True:
+    #     env.contact_detector.get_last_contact_location(visualizer=env.vis.ros)
 
     # confirm pt to config implementation
     # config = env.state
@@ -57,41 +150,16 @@ def main():
     #                            color=(1, 1, 1, 1))
     #     print(d[i])
 
+    # test basic environment control
+    pushed = KeyboardDirPressed()
+    print("waiting for arrow keys to be pressed to command a movement")
     while True:
         env.contact_detector.get_last_contact_location(visualizer=env.vis.ros)
-
-    # rospy.sleep(1)
-    # victor.open_right_gripper()
-    # rospy.sleep(1)
-    # victor.close_right_gripper()
-    # rospy.sleep(1)
-    #
-    # print("press enter if prompted")
-    #
-    # # Plan to joint config
-    # myinput("Plan to joint config?")
-    # victor.plan_to_joint_config(victor.right_arm_group, [0.35, 1, 0.2, -1, 0.2, -1, 0])
-    #
-    # # Plan to joint config by a named group_state
-    # myinput("Plan to joint config?")
-    # victor.plan_to_joint_config('both_arms', 'zero')
-    #
-    # # Plan to pose
-    # myinput("Plan to pose 1?")
-    # victor.plan_to_pose(victor.right_arm_group, victor.right_tool_name, [0.6, -0.2, 1.0, 4, 1, 0])
-    #
-    # # Or you can use a geometry msgs Pose
-    # myinput("Plan to pose 2?")
-    # pose = Pose()
-    # pose.position.x = 0.7
-    # pose.position.y = -0.2
-    # pose.position.z = 1.0
-    # q = quaternion_from_euler(np.pi, 0, 0)
-    # pose.orientation.x = q[0]
-    # pose.orientation.y = q[1]
-    # pose.orientation.z = q[2]
-    # pose.orientation.w = q[3]
-    # victor.plan_to_pose(victor.right_arm_group, victor.right_tool_name, pose)
+        push = pushed.dir
+        if push[0] != 0 or push[1] != 0:
+            obs, _, done, info = env.step(push)
+            print(f"pushed {push} state {obs}")
+        rospy.sleep(0.1)
 
     # # Or with cartesian planning
     # myinput("Cartersian motion back to pose 3?")
