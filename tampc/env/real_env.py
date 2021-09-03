@@ -1,15 +1,15 @@
 # utilities for real environments that are typically using ROS
 import os.path
-import time
 from datetime import datetime
 
 import rospy
 from geometry_msgs.msg import Point
+from rospy import ServiceException
 from std_msgs.msg import ColorRGBA
 from visualization_msgs.msg import Marker
 from window_recorder.recorder import WindowRecorder
 
-from arm_video_recorder.srv import TriggerVideoRecording
+from arm_video_recorder.srv import TriggerVideoRecording, TriggerVideoRecordingRequest
 from tampc import cfg
 from tampc.env.env import Visualizer
 import logging
@@ -27,8 +27,12 @@ class VideoLogger:
         srv_name = "video_recorder"
         rospy.wait_for_service(srv_name)
         self.srv_video = rospy.ServiceProxy(srv_name, TriggerVideoRecording)
-        self.srv_video(os.path.join(cfg.VIDEO_DIR, '{}_robot.mp4'.format(datetime.now().strftime('%Y_%m_%d_%H_%M_%S'))),
-                       True, 3600)
+        self.req = TriggerVideoRecordingRequest()
+        self.req.filename = os.path.join(cfg.VIDEO_DIR,
+                                         '{}_robot.mp4'.format(datetime.now().strftime('%Y_%m_%d_%H_%M_%S')))
+        self.req.timeout_in_sec = 3600
+        self.req.record = True
+        self.srv_video(self.req)
         self.wr.__enter__()
         return self
 
@@ -37,7 +41,12 @@ class VideoLogger:
         # stop logging video
         self.wr.__exit__()
         if self.srv_video is not None:
-            self.srv_video('{}.mp4'.format(time.time()), False, 3600)
+            self.req.record = False
+            # for some reason service will accept the request but not give a response... ignore for now
+            try:
+                self.srv_video(self.req)
+            except ServiceException:
+                pass
 
 
 class DebugRvizDrawer(Visualizer):
