@@ -117,8 +117,8 @@ class RealArmEnv(Env):
     # REST_ORIENTATION = [ -0.7068252, 0, 0, 0.7073883 ]
     BASE_POSE = ([-0.02, -0.1384885, 1.248],
                  [0.6532814824398555, 0.27059805007378895, 0.270598050072408, 0.6532814824365213])
-    REST_JOINTS = [-0.40732265237653803, 0.14285717400670142, 2.8701364771763327, 1.3355278357811362,
-                   0.5678056730613428, -1.0869363621413048, -1.578528368928102]
+    REST_JOINTS = [1.4741407366569612, -0.37367112858393897, 1.420287584732473, 1.3502012009206756, -0.104535997082166,
+                   -0.9739424384610837, -1.177102973890961]
 
     # wrench offset when in motion but not touching anything along certain directions
     DIR_TO_WRENCH_OFFSET = {
@@ -182,7 +182,7 @@ class RealArmEnv(Env):
     def control_cost(cls):
         return np.diag([1 for _ in range(cls.nu)])
 
-    def __init__(self, environment_level=0, dist_for_done=0.015, obs_time=1, stub=False, residual_threshold=50.,
+    def __init__(self, environment_level=0, dist_for_done=0.015, obs_time=1, stub=False, residual_threshold=10.,
                  residual_precision=None, vel=0.1):
         self.level = environment_level
         self.dist_for_done = dist_for_done
@@ -198,11 +198,10 @@ class RealArmEnv(Env):
         if not stub:
             victor = Victor()
             self.victor = victor
-            victor.set_control_mode(control_mode=ControlMode.JOINT_POSITION, vel=vel)
             victor.connect()
             self.vis.init_ros()
 
-            self._motion_status_input_lock = Lock()
+            self.motion_status_input_lock = Lock()
             self._temp_wrenches = []
             # subscribe to status messages
             self.right_arm_contact_listener = rospy.Subscriber(victor.ns("right_arm/motion_status"), MotionStatus,
@@ -218,7 +217,7 @@ class RealArmEnv(Env):
             # rest_pose = pose_msg_to_pos_quaternion(victor.get_link_pose(self.EE_LINK_NAME))
 
             # reset to rest position
-            victor.plan_to_pose(victor.right_arm_group, self.EE_LINK_NAME, self.REST_POS + self.REST_ORIENTATION)
+            self.return_to_rest()
 
             base_pose = pose_msg_to_pos_quaternion(victor.get_link_pose('victor_right_arm_mount'))
             status = victor.get_right_arm_status()
@@ -226,8 +225,6 @@ class RealArmEnv(Env):
                                 status.measured_joint_position.joint_3, status.measured_joint_position.joint_4,
                                 status.measured_joint_position.joint_5, status.measured_joint_position.joint_6,
                                 status.measured_joint_position.joint_7]
-
-            victor.set_control_mode(control_mode=ControlMode.CARTESIAN_IMPEDANCE, vel=vel)
 
             self.last_ee_pos = self._observe_ee(return_z=True)
             self.state, _ = self._obs()
@@ -246,8 +243,15 @@ class RealArmEnv(Env):
             # rospy.sleep(1)
             # self.recalibrate_static_wrench()
 
+    def return_to_rest(self):
+        self.victor.set_control_mode(control_mode=ControlMode.JOINT_POSITION, vel=self.vel)
+        # victor.plan_to_pose(victor.right_arm_group, self.EE_LINK_NAME, self.REST_POS + self.REST_ORIENTATION)
+        self.victor.plan_to_joint_config(self.victor.right_arm_group, self.REST_JOINTS)
+        self.victor.set_control_mode(control_mode=ControlMode.CARTESIAN_IMPEDANCE, vel=self.vel)
+
     def recalibrate_static_wrench(self):
         start = time.time()
+        self.static_wrench = None
         self._temp_wrenches = []
         # collect them in the frame we detect them
         while len(self._temp_wrenches) < 10:
@@ -277,7 +281,7 @@ class RealArmEnv(Env):
     def contact_listener(self, status: MotionStatus):
         if self.contact_detector is None:
             return
-        with self._motion_status_input_lock:
+        with self.motion_status_input_lock:
             w = status.estimated_external_wrench
             # convert wrench to world frame
             wr = WrenchStamped()
@@ -301,7 +305,7 @@ class RealArmEnv(Env):
                 return
             wr_np -= self.static_wrench
 
-            wr_np = self._fix_torque_to_planar(wr_np)
+            # wr_np = self._fix_torque_to_planar(wr_np)
 
             # visualization
             wr = WrenchStamped()
@@ -313,7 +317,7 @@ class RealArmEnv(Env):
 
             # print residual
             residual = wr_np.T @ self.contact_detector.residual_precision @ wr_np
-            self.vis.ros.draw_text("residualmag", f"{np.round(residual, 2)}", [0.6, -0.6, 1], absolute_pos=True)
+            self.vis.ros.draw_text("residualmag", f"{np.round(residual, 2)}", [0.5, -0.3, 1], absolute_pos=True)
 
             # observe and save contact info
             info = {}
@@ -379,7 +383,7 @@ class RealArmEnv(Env):
 
     def step(self, action, dz=0.):
         action = np.clip(action, *self.get_control_bounds())
-        self.static_wrench = self.DIR_TO_WRENCH_OFFSET[tuple(action)]
+        # self.static_wrench = self.DIR_TO_WRENCH_OFFSET[tuple(action)]
 
         # normalize action such that the input can be within a fixed range
         dx, dy = self._unpack_action(action)
@@ -398,7 +402,7 @@ class RealArmEnv(Env):
         return np.copy(self.state), -cost, done, info
 
     def aggregate_info(self):
-        with self._motion_status_input_lock:
+        with self.motion_status_input_lock:
             info = {key: np.stack(value, axis=0) for key, value in self._single_step_contact_info.items() if len(value)}
         # don't need to aggregate external wrench with new contact detector
         # info['reaction'], info['torque'] = self._observe_reaction_force_torque()

@@ -3,6 +3,8 @@ import colorama
 import numpy as np
 import logging
 
+# from window_recorder.recorder import WindowRecorder
+from tampc.env.real_env import VideoLogger
 from tampc.env.arm import Levels
 from tampc.util import EnvGetter
 
@@ -100,6 +102,7 @@ class KeyboardDirPressed():
         self._dir = [0, 0]
         self.listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
         self.listener.start()
+        self.calibrate = False
 
     @property
     def dir(self):
@@ -114,12 +117,90 @@ class KeyboardDirPressed():
             self.dir[1] = 1
         elif key == keyboard.Key.right:
             self.dir[0] = 1
+        elif key == keyboard.Key.shift:
+            self.calibrate = True
 
     def on_release(self, key):
         if key in [keyboard.Key.down, keyboard.Key.up]:
             self.dir[1] = 0
         elif key in [keyboard.Key.left, keyboard.Key.right]:
             self.dir[0] = 0
+        elif key == keyboard.Key.shift:
+            self.calibrate = False
+
+
+def estimate_wrench_per_dir(env):
+    pushed = KeyboardDirPressed()
+    dir_to_wrench = {}
+    print("waiting for arrow keys to be pressed to command a movement")
+    with VideoLogger():
+        while not rospy.is_shutdown():
+            env.contact_detector.get_last_contact_location(visualizer=env.vis.ros)
+            push = tuple(pushed.dir)
+            if push[0] != 0 or push[1] != 0:
+                if push not in dir_to_wrench:
+                    dir_to_wrench[push] = []
+
+                env.static_wrench = None
+                env._temp_wrenches = []
+                obs, _, done, info = env.step(push)
+                dir_to_wrench[push] += env._temp_wrenches
+
+                print(f"pushed {push} state {obs}")
+            rospy.sleep(0.1)
+
+    for k, v in dir_to_wrench.items():
+        print(f"{k} ({len(v)} points): {np.mean(v, axis=0)} {np.var(v, axis=0)}")
+    print("code copy friendly print")
+    for k, v in dir_to_wrench.items():
+        print(f"{k}: {list(np.mean(v, axis=0))}")
+
+
+def confirm_pt_to_config(env, pt_to_config):
+    # confirm pt to config implementation
+    config = env.state
+    from arm_pytorch_utilities import rand
+    import torch
+    rand.seed(1)
+    pts = (torch.rand((10, 2)) - 0.5) * 0.3
+    pts += config
+    pts[:, 1] += 0.1
+    d = pt_to_config(torch.from_numpy(config).view(1, -1), pts)
+    d = d.view(-1)
+    for i, pt in enumerate(pts):
+        env.vis.ros.draw_point(f'temp.{i}', pt, height=env.REST_POS[2], label=str(round(d[i].item(), 2)),
+                               color=(1, 1, 1, 1))
+        print(d[i])
+
+
+def keyboard_control(env):
+    pushed = KeyboardDirPressed()
+    print("waiting for arrow keys to be pressed to command a movement")
+    with VideoLogger():
+        while not rospy.is_shutdown():
+            env.contact_detector.get_last_contact_location(visualizer=env.vis.ros)
+            if pushed.calibrate:
+                env.recalibrate_static_wrench()
+            push = tuple(pushed.dir)
+            if push[0] != 0 or push[1] != 0:
+                obs, _, done, info = env.step(push)
+                print(f"pushed {push} state {obs}")
+            rospy.sleep(0.1)
+
+
+def predetermined_controls(env, controls):
+    input("enter to start execution")
+    with VideoLogger():
+        for i, u in enumerate(controls):
+            if u is None:
+                env.recalibrate_static_wrench()
+                continue
+            obs, _, done, info = env.step(u)
+            print(f"pushed {u} state {obs}")
+            # TODO add contact set update here, but only update contact set if we're not calibrating on the next action
+            if i + 1 < len(controls) and controls[i + 1] is not None:
+                with env.motion_status_input_lock:
+                    env.contact_detector.get_last_contact_location(visualizer=env.vis.ros)
 
 
 def main():
@@ -135,49 +216,18 @@ def main():
     # while True:
     #     env.contact_detector.get_last_contact_location(visualizer=env.vis.ros)
 
-    # confirm pt to config implementation
-    # config = env.state
-    # from arm_pytorch_utilities import rand
-    # import torch
-    # rand.seed(1)
-    # pts = (torch.rand((10, 2)) - 0.5) * 0.3
-    # pts += config
-    # pts[:, 1] += 0.1
-    # d = pt_to_config(torch.from_numpy(config).view(1, -1), pts)
-    # d = d.view(-1)
-    # for i, pt in enumerate(pts):
-    #     env.vis.ros.draw_point(f'temp.{i}', pt, height=env.REST_POS[2], label=str(round(d[i].item(), 2)),
-    #                            color=(1, 1, 1, 1))
-    #     print(d[i])
-
+    # confirm_pt_to_config(env, pt_to_config)
+    # estimate_wrench_per_dir(env)
+    # keyboard_control(env)
     # test basic environment control
-    pushed = KeyboardDirPressed()
-    print("waiting for arrow keys to be pressed to command a movement")
-    while True:
-        env.contact_detector.get_last_contact_location(visualizer=env.vis.ros)
-        push = pushed.dir
-        if push[0] != 0 or push[1] != 0:
-            obs, _, done, info = env.step(push)
-            print(f"pushed {push} state {obs}")
-        rospy.sleep(0.1)
 
-    # # Or with cartesian planning
-    # myinput("Cartersian motion back to pose 3?")
-    # victor.plan_to_position_cartesian(victor.right_arm_group, victor.right_tool_name, [0.9, -0.4, 0.9], step_size=0.01)
-    # victor.plan_to_position_cartesian(victor.right_arm_group, victor.right_tool_name, [0.7, -0.4, 0.9], step_size=0.01)
-    #
-    # # Move hand straight works either with jacobian following
-    # myinput("Follow jacobian to pose 2?")
-    # victor.store_current_tool_orientations([victor.right_tool_name])
-    # victor.follow_jacobian_to_position(victor.right_arm_group, [victor.right_tool_name], [[[0.7, -0.4, 0.6]]])
-    # victor.follow_jacobian_to_position(victor.right_arm_group, [victor.right_tool_name], [[[0.8, -0.4, 1.0]]])
-    # victor.follow_jacobian_to_position(victor.right_arm_group, [victor.right_tool_name], [[[1.1, -0.4, 0.9]]])
-    # result = victor.follow_jacobian_to_position(group_name=victor.right_arm_group,
-    #                                             tool_names=[victor.right_tool_name],
-    #                                             preferred_tool_orientations=[quaternion_from_euler(np.pi, 0, 0)],
-    #                                             points=[[[1.1, -0.2, 0.8]]])
-
-    # victor.display_robot_traj(result.planning_result.plan, 'jacobian')
+    ctrl = [[0, 0.5], None]
+    ctrl += [[0, 0.8]] * 3
+    ctrl += [[0.4, -1.], None]
+    ctrl += [[1.0, -0.5], None]
+    ctrl += [[0, 0.5], None]
+    ctrl += [[0, 0.8]] * 3
+    predetermined_controls(env, ctrl)
 
 
 if __name__ == "__main__":
