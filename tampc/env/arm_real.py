@@ -114,11 +114,23 @@ class RealArmEnv(Env):
 
     REST_POS = [0.7841804139585614, -0.34821761121288775, 0.9786928519851419]
     REST_ORIENTATION = [-np.pi / 2, -np.pi / 4, 0]
-    # REST_ORIENTATION = [-0.6459689821498171, -0.27422891448504616, -0.2708397749310969, 0.6589145565822289]
+    # REST_ORIENTATION = [ -0.7068252, 0, 0, 0.7073883 ]
     BASE_POSE = ([-0.02, -0.1384885, 1.248],
                  [0.6532814824398555, 0.27059805007378895, 0.270598050072408, 0.6532814824365213])
     REST_JOINTS = [-0.40732265237653803, 0.14285717400670142, 2.8701364771763327, 1.3355278357811362,
                    0.5678056730613428, -1.0869363621413048, -1.578528368928102]
+
+    # wrench offset when in motion but not touching anything along certain directions
+    DIR_TO_WRENCH_OFFSET = {
+        (1, 0): [-1.8784015262873934, -0.7250808645616931, -1.5821010499018018, 0.6314690810798639,
+                 -0.12184900278077879, -0.9379251686254221],
+        (-1, 0): [3.060652066488652, -0.278900294117325, 2.4581658287520023, -0.41360895480824417, -0.13049244257611,
+                  1.1150114160599431],
+        (0, 1): [0.918154416796616, -1.6681806602394513, 0.8791621919347454, -0.12948031689798142, -0.14403387527764017,
+                 0.5246582014863748],
+        (0, -1): [0.5965127785733375, 0.7644968945524556, 0.4452077636056309, 0.16158835731707585, -0.20444817542421875,
+                  -0.1252882285890956]
+    }
 
     EE_LINK_NAME = "victor_right_arm_link_7"
     WORLD_FRAME = "victor_root"
@@ -221,7 +233,7 @@ class RealArmEnv(Env):
             self.state, _ = self._obs()
 
             if residual_precision is None:
-                residual_precision = np.diag([1, 1, 1, 1, 1, 1])
+                residual_precision = np.diag([1, 1, 0, 1, 1, 1])
             # parallel visualizer for ROS and pybullet
             self._contact_detector = ContactDetectorPlanarRealArm("victor", residual_precision, residual_threshold,
                                                                   base_pose=base_pose,
@@ -231,8 +243,8 @@ class RealArmEnv(Env):
                                                                   device=get_device(), visualizer=self.vis)
 
             # listen for static wrench for use in offset
-            rospy.sleep(1)
-            self.recalibrate_static_wrench()
+            # rospy.sleep(1)
+            # self.recalibrate_static_wrench()
 
     def recalibrate_static_wrench(self):
         start = time.time()
@@ -299,6 +311,10 @@ class RealArmEnv(Env):
             if np.linalg.norm([w.x, w.y, w.z]) > 10:
                 self.large_wrench_world_publisher.publish(wr)
 
+            # print residual
+            residual = wr_np.T @ self.contact_detector.residual_precision @ wr_np
+            self.vis.ros.draw_text("residualmag", f"{np.round(residual, 2)}", [0.6, -0.6, 1], absolute_pos=True)
+
             # observe and save contact info
             info = {}
 
@@ -363,6 +379,8 @@ class RealArmEnv(Env):
 
     def step(self, action, dz=0.):
         action = np.clip(action, *self.get_control_bounds())
+        self.static_wrench = self.DIR_TO_WRENCH_OFFSET[tuple(action)]
+
         # normalize action such that the input can be within a fixed range
         dx, dy = self._unpack_action(action)
 
