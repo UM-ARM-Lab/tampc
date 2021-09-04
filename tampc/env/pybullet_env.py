@@ -136,6 +136,10 @@ class PybulletEnv(Env):
             self._dd.draw_text('user{}_{}'.format(location_index, left_offset), text, location_index, left_offset)
 
     @property
+    def vis(self):
+        return self._dd
+
+    @property
     @abc.abstractmethod
     def robot_id(self):
         """Return the unique pybullet ID of the robot"""

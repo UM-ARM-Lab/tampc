@@ -27,8 +27,7 @@ from tampc.env.pybullet_env import closest_point_on_surface, ContactInfo, DebugD
 from tampc.env.real_env import DebugRvizDrawer
 
 from arm_robots.cartesian import ArmSide
-from victor_hardware_interface_msgs.msg import ControlMode, MotionStatus, MotionCommand, Robotiq3FingerCommand, \
-    Robotiq3FingerStatus
+from victor_hardware_interface_msgs.msg import ControlMode, MotionStatus
 from tf2_geometry_msgs import WrenchStamped
 from arm_robots.victor import Victor
 
@@ -181,7 +180,9 @@ class RealArmEnv(Env):
         self.static_wrench = None
         self.obs_time = obs_time
         self._contact_detector = None
-        self.vis = CombinedVisualizer()
+        self._vis = CombinedVisualizer()
+        self._contact_debug_names = []
+
         # additional information accumulated in a single step
         self._single_step_contact_info = {}
         self.last_ee_pos = None
@@ -234,6 +235,10 @@ class RealArmEnv(Env):
             # listen for static wrench for use in offset
             # rospy.sleep(1)
             # self.recalibrate_static_wrench()
+
+    @property
+    def vis(self) -> CombinedVisualizer:
+        return self._vis
 
     def return_to_rest(self):
         self.victor.set_control_mode(control_mode=ControlMode.JOINT_POSITION, vel=self.vel)
@@ -479,6 +484,7 @@ class RealArmEnv(Env):
             actions = actions.cpu()
         for j in range(len(states)):
             p = self.get_ee_pos(states[j])
+            p = [p[0], p[1], self.REST_POS[2]]
             name = '{}{}'.format(base_name, j)
             self.vis.draw_point(name, p, color=state_c)
             if actions is not None:

@@ -90,6 +90,23 @@ class TrajectoryLoader(load_utils.DataLoader):
         return xu, y, info
 
 
+class Visualizer:
+    """Common interface for drawing environment elements"""
+
+    @abc.abstractmethod
+    def draw_point(self, name, point, color=(0, 0, 0), length=0.01, length_ratio=1, rot=0, height=None, label=None,
+                   scale=2):
+        pass
+
+    @abc.abstractmethod
+    def draw_2d_pose(self, name, pose, color=(0, 0, 0), length=0.15 / 2, height=None):
+        pass
+
+    @abc.abstractmethod
+    def draw_2d_line(self, name, start, diff, color=(0, 0, 0), size=2., scale=0.4):
+        pass
+
+
 class Env:
     @property
     @abc.abstractmethod
@@ -152,6 +169,11 @@ class Env:
     def control_cost(cls):
         """Assuming cost function is xQx + uRu, return R"""
         return np.diag([])
+
+    @property
+    @abc.abstractmethod
+    def vis(self) -> Visualizer:
+        """Return the visualizer used to render elements for this environment"""
 
     @abc.abstractmethod
     def create_contact_detector(self, residual_threshold, residual_precision) -> ContactDetector:
@@ -244,23 +266,6 @@ class EnvDataSource(datasource.FileDataSource):
         """Get description of returned info columns in name: col slice format"""
         assert isinstance(self.loader, TrajectoryLoader)
         return self.loader.info_desc
-
-
-class Visualizer:
-    """Common interface for drawing environment elements"""
-
-    @abc.abstractmethod
-    def draw_point(self, name, point, color=(0, 0, 0), length=0.01, length_ratio=1, rot=0, height=None, label=None,
-                   scale=2):
-        pass
-
-    @abc.abstractmethod
-    def draw_2d_pose(self, name, pose, color=(0, 0, 0), length=0.15 / 2, height=None):
-        pass
-
-    @abc.abstractmethod
-    def draw_2d_line(self, name, start, diff, color=(0, 0, 0), size=2., scale=0.4):
-        pass
 
 
 class PlanarPointToConfig:
