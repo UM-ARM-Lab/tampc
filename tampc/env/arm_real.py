@@ -14,6 +14,7 @@ from threading import Lock
 import numpy as np
 from pytorch_kinematics import transforms as tf
 
+from cottun import tracking
 from cottun.detection_impl import ContactDetectorPlanarPybulletGripper
 from tampc import cfg
 from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource, Env, Visualizer, \
@@ -22,7 +23,7 @@ from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, E
 from cottun.detection import ContactDetector
 from geometry_msgs.msg import Pose
 
-from tampc.env.pybullet_env import closest_point_on_surface, ContactInfo, DebugDrawer
+from tampc.env.pybullet_env import closest_point_on_surface, ContactInfo, DebugDrawer, state_action_color_pairs
 from tampc.env.real_env import DebugRvizDrawer
 
 from arm_robots.cartesian import ArmSide
@@ -112,25 +113,16 @@ class RealArmEnv(Env):
     MAX_PUSH_DIST = 0.02
     RESET_RAISE_BY = 0.025
 
-    REST_POS = [0.7841804139585614, -0.34821761121288775, 0.9786928519851419]
+    # REST_POS = [0.7841804139585614, -0.34821761121288775, 0.9786928519851419]
+    REST_POS = [0.7841804139585614, -0.34821761121288775, 0.973]
     REST_ORIENTATION = [-np.pi / 2, -np.pi / 4, 0]
     # REST_ORIENTATION = [ -0.7068252, 0, 0, 0.7073883 ]
     BASE_POSE = ([-0.02, -0.1384885, 1.248],
                  [0.6532814824398555, 0.27059805007378895, 0.270598050072408, 0.6532814824365213])
-    REST_JOINTS = [1.4741407366569612, -0.37367112858393897, 1.420287584732473, 1.3502012009206756, -0.104535997082166,
-                   -0.9739424384610837, -1.177102973890961]
-
-    # wrench offset when in motion but not touching anything along certain directions
-    DIR_TO_WRENCH_OFFSET = {
-        (1, 0): [-1.8784015262873934, -0.7250808645616931, -1.5821010499018018, 0.6314690810798639,
-                 -0.12184900278077879, -0.9379251686254221],
-        (-1, 0): [3.060652066488652, -0.278900294117325, 2.4581658287520023, -0.41360895480824417, -0.13049244257611,
-                  1.1150114160599431],
-        (0, 1): [0.918154416796616, -1.6681806602394513, 0.8791621919347454, -0.12948031689798142, -0.14403387527764017,
-                 0.5246582014863748],
-        (0, -1): [0.5965127785733375, 0.7644968945524556, 0.4452077636056309, 0.16158835731707585, -0.20444817542421875,
-                  -0.1252882285890956]
-    }
+    # REST_JOINTS = [1.4741407366569612, -0.37367112858393897, 1.420287584732473, 1.3502012009206756, -0.104535997082166,
+    #                -0.9739424384610837, -1.177102973890961]
+    REST_JOINTS = [1.4769502583855774, -0.3829121045031008, 1.4203813612731826, 1.3409767633051735, -0.1265017390739062,
+                   -0.9736777669158343, -1.1727687591440739]
 
     EE_LINK_NAME = "victor_right_arm_link_7"
     WORLD_FRAME = "victor_root"
@@ -245,7 +237,7 @@ class RealArmEnv(Env):
 
     def return_to_rest(self):
         self.victor.set_control_mode(control_mode=ControlMode.JOINT_POSITION, vel=self.vel)
-        # victor.plan_to_pose(victor.right_arm_group, self.EE_LINK_NAME, self.REST_POS + self.REST_ORIENTATION)
+        # self.victor.plan_to_pose(self.victor.right_arm_group, self.EE_LINK_NAME, self.REST_POS + self.REST_ORIENTATION)
         self.victor.plan_to_joint_config(self.victor.right_arm_group, self.REST_JOINTS)
         self.victor.set_control_mode(control_mode=ControlMode.CARTESIAN_IMPEDANCE, vel=self.vel)
 
@@ -295,7 +287,6 @@ class RealArmEnv(Env):
             wr_world = self.victor.tf_wrapper.transform_to_frame(wr, self.WORLD_FRAME)
             if np.linalg.norm([w.x, w.y, w.z]) > 10:
                 self.large_wrench_publisher.publish(wr)
-                print(wr_world.wrench)
             wr = wr_world.wrench
 
             # clean with static wrench
@@ -394,7 +385,7 @@ class RealArmEnv(Env):
         # TODO set target orientation as rest orientation
         self.victor.move_delta_cartesian_impedance(ArmSide.RIGHT, dx, dy, target_z=self.REST_POS[2], blocking=True,
                                                    step_size=0.01)
-        self.state = self._obs()
+        self.state, _ = self._obs()
         info = self.aggregate_info()
 
         cost, done = self.evaluate_cost(self.state, action)
@@ -404,14 +395,23 @@ class RealArmEnv(Env):
     def aggregate_info(self):
         with self.motion_status_input_lock:
             info = {key: np.stack(value, axis=0) for key, value in self._single_step_contact_info.items() if len(value)}
-        # don't need to aggregate external wrench with new contact detector
-        # info['reaction'], info['torque'] = self._observe_reaction_force_torque()
+            # don't need to aggregate external wrench with new contact detector
+            info['reaction'], info['torque'] = self._observe_reaction_force_torque(info)
         name = InfoKeys.DEE_IN_CONTACT
         if name in info:
             info[name] = info[name].sum(axis=0)
         else:
             info[name] = np.zeros(3)
         return info
+
+    def _observe_reaction_force_torque(self, info):
+        """Return representative reaction force for simulation steps up to current one since last control step"""
+        fs = info.get(InfoKeys.HIGH_FREQ_REACTION_F, None)
+        if fs is None:
+            return np.zeros(3), np.zeros(3)
+        mag = np.linalg.norm(fs, axis=1)
+        median_mini_step = np.argsort(mag)[len(mag) // 2]
+        return fs[median_mini_step], info[InfoKeys.HIGH_FREQ_REACTION_T][median_mini_step]
 
     def reset(self):
         self.victor.set_control_mode(control_mode=ControlMode.JOINT_POSITION, vel=self.vel)
@@ -423,6 +423,68 @@ class RealArmEnv(Env):
 
     def close(self):
         pass
+
+    def visualize_contact_set(self, contact_set: tracking.ContactSet):
+        if isinstance(contact_set, tracking.ContactSetHard):
+            # clear all previous markers because we don't know which one was removed
+            if len(self._contact_debug_names) > len(contact_set):
+                for name in self._contact_debug_names:
+                    self.vis.ros.clear_markers(name)
+                self._contact_debug_names = []
+            for i, c in enumerate(contact_set):
+                color, u_color = state_action_color_pairs[i % len(state_action_color_pairs)]
+                if i >= len(self._contact_debug_names):
+                    self._contact_debug_names.append(set())
+                # represent the uncertainty of the center point
+                name = 'cp{}'.format(i)
+                eigval, eigvec = torch.eig(c.cov[0], eigenvectors=True)
+                yx_ratio = eigval[1, 0] / eigval[0, 0]
+                rot = math.atan2(eigvec[1, 0], eigvec[0, 0])
+                l = eigval[0, 0] * 100
+                w = c.weight
+                self.vis.draw_point(name, self.get_ee_pos(c.mu[0]), length=l.item(), length_ratio=yx_ratio, rot=rot,
+                                    color=color)
+                self._contact_debug_names[i].add(name)
+
+                base_name = str(i)
+                self.visualize_state_actions(base_name, c.points, c.actions, color, u_color, 0.1 * w)
+
+                for j in range(len(c.points)):
+                    self._contact_debug_names[i].add('{}{}'.format(base_name, j))
+                    self._contact_debug_names[i].add('{}{}a'.format(base_name, j))
+        elif isinstance(contact_set, tracking.ContactSetSoft):
+            pts = contact_set.get_posterior_points()
+            if pts is None:
+                return
+            groups = contact_set.get_hard_assignment(contact_set.p.hard_assignment_threshold)
+            # clear all previous markers because we don't know which one was removed
+            if len(self._contact_debug_names) > len(groups):
+                for name in self._contact_debug_names:
+                    self.vis.ros.clear_markers(name)
+                self._contact_debug_names = []
+            for i, indices in enumerate(groups):
+                color, u_color = state_action_color_pairs[i % len(state_action_color_pairs)]
+                if i >= len(self._contact_debug_names):
+                    self._contact_debug_names.append(set())
+                # represent the uncertainty of the center point
+                base_name = str(i)
+                self.visualize_state_actions(base_name, pts[indices], contact_set.acts[indices], color, u_color, 0.1)
+                for j in range(len(pts[indices])):
+                    self._contact_debug_names[i].add('{}{}'.format(base_name, j))
+                    self._contact_debug_names[i].add('{}{}a'.format(base_name, j))
+
+    def visualize_state_actions(self, base_name, states, actions, state_c, action_c, action_scale):
+        if torch.is_tensor(states):
+            states = states.cpu()
+            actions = actions.cpu()
+        for j in range(len(states)):
+            p = self.get_ee_pos(states[j])
+            name = '{}{}'.format(base_name, j)
+            self.vis.draw_point(name, p, color=state_c)
+            if actions is not None:
+                # draw action
+                name = '{}{}a'.format(base_name, j)
+                self.vis.draw_2d_line(name, p, actions[j], color=action_c, scale=action_scale)
 
     @classmethod
     def create_sim_robot_and_gripper(cls, base_pose=None, canonical_joint=None, canonical_pos=None,

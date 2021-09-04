@@ -1,4 +1,5 @@
-from cottun.retrieval_controller import RetrievalController, RetrievalPredeterminedController
+from cottun.retrieval_controller import RetrievalController, RetrievalPredeterminedController, rot_2d_mat_to_angle, \
+    sample_model_points, pose_error
 from tampc.util import UseTsf
 
 try:
@@ -24,7 +25,7 @@ from cottun import tracking
 from tampc.env import arm
 from tampc.env.arm import Levels
 from tampc.env_getters.arm import RetrievalGetter
-from tampc.env.pybullet_env import ContactInfo, state_action_color_pairs, closest_point_on_surface
+from tampc.env.pybullet_env import ContactInfo, state_action_color_pairs
 from cottun import icp
 
 ch = logging.StreamHandler()
@@ -37,57 +38,6 @@ logging.basicConfig(level=logging.DEBUG,
 logging.getLogger('matplotlib.font_manager').disabled = True
 
 logger = logging.getLogger(__name__)
-
-
-def rot_2d_mat_to_angle(T):
-    """T: bx3x3 homogenous transforms or bx2x2 rotation matrices"""
-    return torch.atan2(T[:, 1, 0], T[:, 0, 0])
-
-
-# sample model points from object
-def sample_model_points(object_id, num_points=100, reject_too_close=0.002, force_z=None, seed=0, name=""):
-    fullname = os.path.join(cfg.DATA_DIR, f'model_points_cache.pkl')
-    if os.path.exists(fullname):
-        cache = torch.load(fullname)
-        if name not in cache:
-            cache[name] = {}
-        if seed in cache[name]:
-            return cache[name][seed]
-    else:
-        cache = {name: {}}
-
-    with rand.SavedRNG():
-        rand.seed(seed)
-        orig_pos, orig_orientation = p.getBasePositionAndOrientation(object_id)
-        z = orig_pos[2]
-        # first reset to canonical location
-        canonical_pos = [0, 0, z]
-        p.resetBasePositionAndOrientation(object_id, canonical_pos, [0, 0, 0, 1])
-
-        points = []
-        sigma = 0.1
-        while len(points) < num_points:
-            tester_pos = np.r_[np.random.randn(2) * sigma, z]
-            # sample an object at random points around this object and find closest point to it
-            closest = closest_point_on_surface(object_id, tester_pos)
-            pt = closest[ContactInfo.POS_A]
-            if force_z is not None:
-                pt = (pt[0], pt[1], force_z)
-            if len(points) > 0:
-                d = np.subtract(points, pt)
-                d = np.linalg.norm(d, axis=1)
-                if np.any(d < reject_too_close):
-                    continue
-            points.append(pt)
-
-    p.resetBasePositionAndOrientation(object_id, orig_pos, orig_orientation)
-
-    points = torch.tensor(points)
-
-    cache[name][seed] = points
-    torch.save(cache, fullname)
-
-    return points
 
 
 def test_icp(env):
@@ -163,17 +113,6 @@ def object_robot_penetration_score(object_id, robot_id, object_transform):
     return -d
 
 
-from arm_pytorch_utilities.math_utils import angular_diff
-
-
-def pose_error(target_pose, guess_pose):
-    # mirrored, so being off by 180 degrees is fine
-    yaw_error = min(abs(angular_diff(target_pose[-1], guess_pose[-1])),
-                    abs(angular_diff(target_pose[-1] + np.pi, guess_pose[-1])))
-    pos_error = np.linalg.norm(np.subtract(target_pose[:2], guess_pose[:2]))
-    return pos_error, yaw_error
-
-
 def run_retrieval(env, seed=0, using_soft_contact=True, using_predetermined_control=True):
     contact_params = RetrievalGetter.contact_parameters(env)
 
@@ -224,8 +163,8 @@ def run_retrieval(env, seed=0, using_soft_contact=True, using_predetermined_cont
     z = env._observe_ee(return_z=True)[-1]
 
     model_points = sample_model_points(env.target_object_id, num_points=50, force_z=z, seed=0, name="cheezit")
-    mp = model_points[:, :2].cpu().numpy()
     mph = model_points.clone().to(dtype=dtype)
+    # make homogeneous [x, y, 1]
     mph[:, -1] = 1
 
     ctrl.set_goal(env.goal[:2])
