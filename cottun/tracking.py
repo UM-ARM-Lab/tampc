@@ -1022,7 +1022,7 @@ class ContactSetSoft(ContactSet):
             environment['obj'] = info.get(InfoKeys.OBJ_POSES, None)
             # TODO have a better way of selecting 2-D / 3-D
             environment['dobj'] = tensor_utils.ensure_tensor(d, dtype, info[InfoKeys.DEE_IN_CONTACT][:2])
-        cur_pt = contact_detector.get_last_contact_location()
+        cur_pt = contact_detector.get_last_contact_location(visualizer=visualizer)
         cur_config = tensor_utils.ensure_tensor(d, dtype, self.p.state_to_pos(x + dx))
         if cur_pt is None:
             # step without contact, eliminate particles that conflict with this config in freespace

@@ -227,7 +227,7 @@ def run_retrieval(env, seed=0, using_soft_contact=True, using_predetermined_cont
                 if i % 2 == 0:
                     continue
                 pt = [pt[0], pt[1], z]
-                env._dd.draw_point(f"tmptbest-{i}", pt, color=(0, 0, 1), length=0.008)
+                env._dd.draw_point(f"tmptbest.{i}", pt, color=(0, 0, 1), length=0.008)
 
         if torch.is_tensor(action):
             action = action.cpu()
