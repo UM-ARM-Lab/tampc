@@ -100,6 +100,8 @@ class ContactDetector:
 
         # in link frame
         last_contact_point = self.isolate_contact(ee_ft, pp, **kwargs)
+        if last_contact_point is None:
+            return None
 
         x = tf.Translate(*pose[0], dtype=self.dtype, device=self.device)
         r = tf.Rotate(pose[1], dtype=self.dtype, device=self.device)
@@ -149,6 +151,10 @@ class ContactDetectorPlanar(ContactDetector):
                 F_c = F_c[:-1]
                 T_ee = T_ee[:-1]
 
+        # no valid point
+        if F_c.numel() == 0:
+            return None
+
         pts = pts[valid]
         link_frame_pts = link_frame_pts[valid]
 
@@ -177,5 +183,7 @@ class ContactDetectorPlanar(ContactDetector):
                 visualizer.draw_point(f'likely.{i}', pt, height=pt[2] + 0.001,
                                       color=(0, 1 - 0.8 * i / 10, 0))
             visualizer.draw_point(f'most likely contact', pts[min_err_i], color=(0, 1, 0), scale=2)
+            visualizer.draw_2d_line('reaction', pts[min_err_i], ee_force_torque.mean(dim=0)[:3], color=(0, 0.2, 1.0),
+                                    scale=0.2)
 
         return link_frame_pts[min_err_i]
