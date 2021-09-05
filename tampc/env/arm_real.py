@@ -21,7 +21,7 @@ from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, E
     PlanarPointToConfig, InfoKeys
 
 from cottun.detection import ContactDetector
-from geometry_msgs.msg import Pose
+from geometry_msgs.msg import Pose, Quaternion
 
 from tampc.env.pybullet_env import closest_point_on_surface, ContactInfo, DebugDrawer, state_action_color_pairs
 from tampc.env.real_env import DebugRvizDrawer
@@ -115,7 +115,7 @@ class RealArmEnv(Env):
     # REST_POS = [0.7841804139585614, -0.34821761121288775, 0.9786928519851419]
     REST_POS = [0.7841804139585614, -0.34821761121288775, 0.973]
     REST_ORIENTATION = [-np.pi / 2, -np.pi / 4, 0]
-    # REST_ORIENTATION = [ -0.7068252, 0, 0, 0.7073883 ]
+    REST_ORIENTATION_QUAT = [-0.7068252, 0, 0, 0.7073883]
     BASE_POSE = ([-0.02, -0.1384885, 1.248],
                  [0.6532814824398555, 0.27059805007378895, 0.270598050072408, 0.6532814824365213])
     # REST_JOINTS = [1.4741407366569612, -0.37367112858393897, 1.420287584732473, 1.3502012009206756, -0.104535997082166,
@@ -174,7 +174,7 @@ class RealArmEnv(Env):
         return np.diag([1 for _ in range(cls.nu)])
 
     def __init__(self, environment_level=0, dist_for_done=0.015, obs_time=1, stub=False, residual_threshold=10.,
-                 residual_precision=None, vel=0.1):
+                 residual_precision=None, vel=0.2):
         self.level = environment_level
         self.dist_for_done = dist_for_done
         self.static_wrench = None
@@ -301,7 +301,7 @@ class RealArmEnv(Env):
                 return
             wr_np -= self.static_wrench
 
-            # wr_np = self._fix_torque_to_planar(wr_np)
+            wr_np = self._fix_torque_to_planar(wr_np)
 
             # visualization
             wr = WrenchStamped()
@@ -340,12 +340,23 @@ class RealArmEnv(Env):
                 self._single_step_contact_info[key].append(value)
 
     def _fix_torque_to_planar(self, wr_np, fix_threshold=0.065):
-        torque_mag = np.linalg.norm(wr_np[3:])
-        if wr_np[-1] > fix_threshold or wr_np[-1] < -fix_threshold:
-            wr_np[3:5] = 0
-            wr_np[-1] = torque_mag if wr_np[-1] > fix_threshold else -torque_mag
+        # make force more rectilinear - tilting along z is too powerful
+        round_ratio_threshold = 0.5
+        if np.abs(wr_np[0]) < np.abs(wr_np[1]) * round_ratio_threshold:
+            wr_np[0] *= 0.2
+        elif np.abs(wr_np[1]) < np.abs(wr_np[0]) * round_ratio_threshold:
+            wr_np[1] *= 0.2
+        # no yaw, must mean pushing at the EE, which in this configuration means pushing straight forward
+        if np.abs(wr_np[-1]) < 0.1:
+            wr_np[1] = 0
+
+        # torque_mag = np.linalg.norm(wr_np[3:])
+        # since we are planar pushing, shouldn't experience torque along world x and y
+        # if wr_np[-1] > fix_threshold or wr_np[-1] < -fix_threshold:
+        #     wr_np[3:5] = 0
+        #     wr_np[-1] = torque_mag if wr_np[-1] > fix_threshold else -torque_mag
             # magnitude also seems to be off
-            wr_np[-1] *= 2.3
+            # wr_np[-1] *= 0.5
         return wr_np
 
     def setup_experiment(self):
@@ -387,9 +398,11 @@ class RealArmEnv(Env):
         self.last_ee_pos = self._observe_ee(return_z=True)
         self._single_step_contact_info = {}
 
-        # TODO set target orientation as rest orientation
+        # set target orientation as rest orientation
+        # orientation = Quaternion(*self.REST_ORIENTATION_QUAT)
+        orientation = None
         self.victor.move_delta_cartesian_impedance(ArmSide.RIGHT, dx, dy, target_z=self.REST_POS[2], blocking=True,
-                                                   step_size=0.01)
+                                                   step_size=0.01, target_orientation=orientation)
         self.state, _ = self._obs()
         info = self.aggregate_info()
 
@@ -433,7 +446,7 @@ class RealArmEnv(Env):
         if isinstance(contact_set, tracking.ContactSetHard):
             # clear all previous markers because we don't know which one was removed
             if len(self._contact_debug_names) > len(contact_set):
-                for name in self._contact_debug_names:
+                for name in set.union(*self._contact_debug_names):
                     self.vis.ros.clear_markers(name)
                 self._contact_debug_names = []
             for i, c in enumerate(contact_set):
@@ -441,7 +454,7 @@ class RealArmEnv(Env):
                 if i >= len(self._contact_debug_names):
                     self._contact_debug_names.append(set())
                 # represent the uncertainty of the center point
-                name = 'cp{}'.format(i)
+                name = 'cp.{}'.format(i)
                 eigval, eigvec = torch.eig(c.cov[0], eigenvectors=True)
                 yx_ratio = eigval[1, 0] / eigval[0, 0]
                 rot = math.atan2(eigvec[1, 0], eigvec[0, 0])
@@ -452,11 +465,9 @@ class RealArmEnv(Env):
                 self._contact_debug_names[i].add(name)
 
                 base_name = str(i)
-                self.visualize_state_actions(base_name, c.points, c.actions, color, u_color, 0.1 * w)
-
-                for j in range(len(c.points)):
-                    self._contact_debug_names[i].add('{}{}'.format(base_name, j))
-                    self._contact_debug_names[i].add('{}{}a'.format(base_name, j))
+                names = self.visualize_state_actions(base_name, c.points, c.actions, color, u_color, 0.1 * w)
+                for name in names:
+                    self._contact_debug_names[i].add(name)
         elif isinstance(contact_set, tracking.ContactSetSoft):
             pts = contact_set.get_posterior_points()
             if pts is None:
@@ -464,7 +475,7 @@ class RealArmEnv(Env):
             groups = contact_set.get_hard_assignment(contact_set.p.hard_assignment_threshold)
             # clear all previous markers because we don't know which one was removed
             if len(self._contact_debug_names) > len(groups):
-                for name in self._contact_debug_names:
+                for name in set.union(*self._contact_debug_names):
                     self.vis.ros.clear_markers(name)
                 self._contact_debug_names = []
             for i, indices in enumerate(groups):
@@ -473,24 +484,28 @@ class RealArmEnv(Env):
                     self._contact_debug_names.append(set())
                 # represent the uncertainty of the center point
                 base_name = str(i)
-                self.visualize_state_actions(base_name, pts[indices], contact_set.acts[indices], color, u_color, 0.1)
-                for j in range(len(pts[indices])):
-                    self._contact_debug_names[i].add('{}{}'.format(base_name, j))
-                    self._contact_debug_names[i].add('{}{}a'.format(base_name, j))
+                names = self.visualize_state_actions(base_name, pts[indices], contact_set.acts[indices], color, u_color,
+                                                     0.1)
+                for name in names:
+                    self._contact_debug_names[i].add(name)
 
     def visualize_state_actions(self, base_name, states, actions, state_c, action_c, action_scale):
         if torch.is_tensor(states):
             states = states.cpu()
             actions = actions.cpu()
+        debug_names_created = []
         for j in range(len(states)):
             p = self.get_ee_pos(states[j])
             p = [p[0], p[1], self.REST_POS[2]]
-            name = '{}{}'.format(base_name, j)
+            name = '{}.{}'.format(base_name, j)
+            debug_names_created.append(name)
             self.vis.draw_point(name, p, color=state_c)
             if actions is not None:
                 # draw action
-                name = '{}{}a'.format(base_name, j)
+                name = '{}a.{}'.format(base_name, j)
                 self.vis.draw_2d_line(name, p, actions[j], color=action_c, scale=action_scale)
+                debug_names_created.append(name)
+        return debug_names_created
 
     @classmethod
     def create_sim_robot_and_gripper(cls, base_pose=None, canonical_joint=None, canonical_pos=None,
@@ -637,7 +652,7 @@ class ContactDetectorPlanarRealArm(ContactDetectorPlanarPybulletGripper):
 
         r = 0.2
         # sample evenly in terms of angles, but leave out the section in between the fingers
-        leave_out = 0.8
+        leave_out = 1.0
         start_angle = -np.pi / 2
         angles = np.linspace(start_angle + leave_out, np.pi * 2 - leave_out + start_angle, self.num_sample_points)
 

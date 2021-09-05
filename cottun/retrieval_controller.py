@@ -66,11 +66,12 @@ class RetrievalController(controller.Controller):
 
 class RetrievalPredeterminedController(controller.Controller):
 
-    def __init__(self, contact_detector: detection.ContactDetector, contact_set: tracking.ContactSet, controls):
+    def __init__(self, contact_detector: detection.ContactDetector, contact_set: tracking.ContactSet, controls, nu=None):
         super().__init__()
         self.contact_detector = contact_detector
         self.controls = controls
         self.i = 0
+        self.nu = nu or len(self.controls[0])
 
         self.x_history = []
         self.u_history = []

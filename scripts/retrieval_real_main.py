@@ -1,4 +1,6 @@
 #! /usr/bin/env python
+import enum
+
 import colorama
 import numpy as np
 import logging
@@ -9,6 +11,12 @@ from cottun.retrieval_controller import RetrievalPredeterminedController, sample
 from tampc.env.real_env import VideoLogger
 from tampc.env.arm import Levels
 from tampc.util import EnvGetter
+import os
+from datetime import datetime
+
+from tampc import cfg
+from tampc.env import arm_real
+from cottun import tracking, icp
 
 try:
     import rospy
@@ -21,19 +29,12 @@ try:
 except RuntimeError as e:
     print("Proceeding without ROS: {}".format(e))
 
-import os
-from datetime import datetime
-
-from tampc import cfg
-from tampc.env import arm_real
-from cottun import tracking, icp
-
 ask_before_moving = True
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
 
-logging.basicConfig(level=logging.DEBUG,
+logging.basicConfig(level=logging.INFO,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
                     datefmt='%m-%d %H:%M:%S', handlers=[ch, fh])
 
@@ -89,8 +90,10 @@ def object_robot_penetration_score(pt_to_config, config, object_transform, model
     """Compute the penetration between object and robot for a given transform of the object"""
     # transform model points by object transform
     transformed_model_points = model_pts @ object_transform.transpose(-1, -2)
-    d = pt_to_config(config.view(1, -1), transformed_model_points)
-    d = min(d)
+    d = pt_to_config(
+        torch.tensor(config, dtype=transformed_model_points.dtype, device=transformed_model_points.device).view(1, -1),
+        transformed_model_points[:, :2])
+    d = d.min().item()
     return -d
 
 
@@ -137,7 +140,6 @@ def estimate_wrench_per_dir(env):
     print("waiting for arrow keys to be pressed to command a movement")
     with VideoLogger():
         while not rospy.is_shutdown():
-            env.contact_detector.get_last_contact_location(visualizer=env.vis.ros)
             push = tuple(pushed.dir)
             if push[0] != 0 or push[1] != 0:
                 if push not in dir_to_wrench:
@@ -156,6 +158,10 @@ def estimate_wrench_per_dir(env):
     print("code copy friendly print")
     for k, v in dir_to_wrench.items():
         print(f"{k}: {list(np.mean(v, axis=0))}")
+
+    combined = sum(dir_to_wrench.values(), [])
+    print(f"var : {list(np.var(combined, axis=0))}")
+    print(f"prec: {list(1 / np.var(combined, axis=0))}")
 
 
 def confirm_pt_to_config(env, pt_to_config):
@@ -201,14 +207,14 @@ class RealRetrievalPredeterminedController(RetrievalPredeterminedController):
             u = self.controls[self.i]
             self.i += 1
         else:
-            u = [0 for _ in range(len(self.controls[0]))]
+            u = [0 for _ in range(self.nu)]
 
         # 3 elements in a control means to perform it but not calibrate (and ignore whether we think we're in contact or not)
-        skip_update = (u is None) or (len(u) > 2) or (self.i < len(self.controls) and self.controls[self.i] is None)
+        # skip if we were calibrating with the last control, or if we are currently calibrating
+        skip_update = (u is None) or (len(self.x_history) < 2) or (
+                (self.u_history[-1] is None) or (len(self.u_history[-1]) > 2))
         if not skip_update:
-            prev_u = self.u_history[-1]
-            if prev_u is not None:
-                prev_u = torch.tensor(prev_u[:2])
+            prev_u = torch.tensor(self.u_history[-1][:2])
             self.contact_set.update(self.x_history[-2], prev_u,
                                     self.x_history[-1] - self.x_history[-2],
                                     self.contact_detector, torch.tensor(info['reaction']), info=info,
@@ -220,7 +226,7 @@ class RealRetrievalPredeterminedController(RetrievalPredeterminedController):
 
 def predetermined_controls(env, controls, pt_to_config, contact_set):
     input("enter to start execution")
-    ctrl = RealRetrievalPredeterminedController(env.contact_detector, contact_set, controls)
+    ctrl = RealRetrievalPredeterminedController(env.contact_detector, contact_set, controls, nu=2)
     obs, info = env._obs()
     dtype = torch.float32
 
@@ -235,6 +241,8 @@ def predetermined_controls(env, controls, pt_to_config, contact_set):
 
     with VideoLogger():
         while not ctrl.done():
+            best_distance = None
+
             with env.motion_status_input_lock:
                 u, skip_update = ctrl.command(obs, info, env.vis.ros)
             env.visualize_contact_set(contact_set)
@@ -266,16 +274,17 @@ def predetermined_controls(env, controls, pt_to_config, contact_set):
 
                 transformed_model_points = mph @ best_T.transpose(-1, -2)
                 for i, pt in enumerate(transformed_model_points):
-                    if i % 2 == 0:
-                        continue
                     pt = [pt[0], pt[1], z]
-                    env._dd.draw_point(f"tmptbest-{i}", pt, color=(0, 0, 1), length=0.008)
+                    env.vis.ros.draw_point(f"tmptbest.{i}", pt, color=(0, 0, 1), length=0.008)
 
             if u is None:
                 env.recalibrate_static_wrench()
+                obs, info = env._obs()
                 continue
             obs, _, done, info = env.step(u[:2])
             print(f"pushed {u} state {obs}")
+
+        # TODO after estimating pose, plan a grasp to it and attempt a grasp
         rospy.sleep(1)
 
 
@@ -283,62 +292,92 @@ def clear_all_markers(env):
     env.vis.ros.clear_markers("residualmag")
     env.vis.ros.clear_markers("t")
     env.vis.ros.clear_markers("n")
+    env.vis.ros.clear_markers("c")
     env.vis.ros.clear_markers("likely")
     env.vis.ros.clear_markers("most likely contact")
     env.vis.ros.clear_markers("reaction")
+    env.vis.ros.clear_markers("tmptbest")
+    for i in range(2):
+        env.vis.ros.clear_markers(f"{i}")
+        env.vis.ros.clear_markers(f"{i}a")
+
+
+class Levels(enum.IntEnum):
+    NO_CLUTTER = 0
 
 
 def main():
+    level = Levels.NO_CLUTTER
+
     np.set_printoptions(suppress=True, precision=2, linewidth=200)
     colorama.init(autoreset=True)
 
-    env = arm_real.RealArmEnv()
+    # from running estimate_wrench_per_dir(env) around initial configuration
+    residual_precision = np.array(
+        [0.2729864752636504, 0.23987382684177347, 0.2675095350336033, 1.7901320984541171, 1.938347931365699,
+         1.3659710517247037])
+    # ignore fz since it's usually large and noisy
+    residual_precision[2] = 0
+
+    env = arm_real.RealArmEnv(residual_precision=np.diag(residual_precision), residual_threshold=3.5)
     contact_params = RealRetrievalGetter.contact_parameters(env)
     clear_all_markers(env)
 
     pt_to_config = arm_real.RealArmPointToConfig(env)
     contact_set = tracking.ContactSetSoft(pt_to_config, contact_params)
 
-    # while True:
-    #     env.contact_detector.get_last_contact_location(visualizer=env.vis.ros)
-
     # confirm_pt_to_config(env, pt_to_config)
     # estimate_wrench_per_dir(env)
     # keyboard_control(env)
     # test basic environment control
 
+    ctrl_per_level = {}
     # get 4 points on the front face
-    ctrl = [[0, 0.5], None]
-    ctrl += [[0, 0.8]] * 2
+    ctrl = [[0, 0.65], None]
+    ctrl += [[0, 1.0]]
     ctrl += [[0.4, -1., None], [1.0, -0.5, None]]
-    ctrl += [[0, 0.5], None]
-    ctrl += [[0, 0.7]] * 2
+    ctrl += [[0, 0.6], None]
+    ctrl += [[0, 0.9]]
     ctrl += [[0.4, -1., None], [1.0, -0.5, None]]
-    ctrl += [[0, 0.5], None]
-    ctrl += [[0, 0.7]] * 2
-    ctrl += [[0.4, -1., None], [1.0, -0.5, None]]
-    ctrl += [[0, 0.5], None]
-    ctrl += [[0, 0.7]] * 2
+    ctrl += [[0, 0.9], None]
+    ctrl += [[0, 1.0]]
+    ctrl += [[0.4, -0.7, None], [1.0, -0.5, None]]
+    ctrl += [[0, 0.7], None]
+    ctrl += [[0, 1.0]]
 
-    # move to the left side of front the cheezit box and poke again
-    ctrl += [[-0.4, -0.6, None]]
+    # # move to the left side of front the cheezit box and poke again
+    ctrl += [[-0.4, -0.9, None]]
     ctrl += [[-1.0, 0], None]
-    ctrl += [[-1.0, 0]] * 4
-    ctrl += [[0., -0.9, None]]
-    ctrl += [[0.0, 0.3], None]
-    ctrl += [[0.0, 0.7]] * 2
-
-    ctrl += [[-1.0, 0], None]
-    ctrl += [[-1.0, 0]] * 3
+    ctrl += [[-1.0, 0]] * 2
     ctrl += [None]
-    ctrl += [[-1.0, 0]] * 3
+    ctrl += [[-1.0, 0]] * 2
+    ctrl += [[0., -0.7, None]]
     ctrl += [[0.0, 0.4], None]
+    ctrl += [[0.0, 1.0]]
+
+    # move to the left side of the cheezit box
+    ctrl += [[-1.0, -0.5], None]
+    ctrl += [[-1.0, 0]] * 3
+    ctrl += [[-0.5, 0]] * 1
+    ctrl += [None]
+    ctrl += [[-1.0, 0]] * 3
+    ctrl += [[0.0, 0.6], None]
     ctrl += [[0.0, 1.0]] * 3
     ctrl += [None]
     ctrl += [[0.0, 1.0]] * 3
+
+    # poke to the right with the side
+    ctrl += [[0.4, 0.], None]
+    ctrl += [[0.6, 0.]]
+    ctrl += [[-0.1, 0.7], None]
+    ctrl += [[0.6, 0.]]
+
+    # last one to force redraw of everything
+    ctrl += [[0.0, 0.]]
+    ctrl_per_level[Levels.NO_CLUTTER] = ctrl
 
     # move to the actual left side
-    predetermined_controls(env, ctrl, pt_to_config, contact_set)
+    predetermined_controls(env, ctrl_per_level[level], pt_to_config, contact_set)
 
 
 if __name__ == "__main__":
