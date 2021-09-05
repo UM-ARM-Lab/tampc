@@ -191,6 +191,8 @@ class RealArmEnv(Env):
         if not stub:
             victor = Victor()
             self.victor = victor
+            # adjust timeout according to velocity (at vel = 0.1 we expect 400s per 1m)
+            self.victor.cartesian._timeout_per_1m = 40 / self.vel
             victor.connect()
             self.vis.init_ros()
 
@@ -244,6 +246,7 @@ class RealArmEnv(Env):
         self.victor.set_control_mode(control_mode=ControlMode.JOINT_POSITION, vel=self.vel)
         # self.victor.plan_to_pose(self.victor.right_arm_group, self.EE_LINK_NAME, self.REST_POS + self.REST_ORIENTATION)
         self.victor.plan_to_joint_config(self.victor.right_arm_group, self.REST_JOINTS)
+        self.victor.close_right_gripper()
         self.victor.set_control_mode(control_mode=ControlMode.CARTESIAN_IMPEDANCE, vel=self.vel)
 
     def recalibrate_static_wrench(self):
@@ -355,8 +358,8 @@ class RealArmEnv(Env):
         # if wr_np[-1] > fix_threshold or wr_np[-1] < -fix_threshold:
         #     wr_np[3:5] = 0
         #     wr_np[-1] = torque_mag if wr_np[-1] > fix_threshold else -torque_mag
-            # magnitude also seems to be off
-            # wr_np[-1] *= 0.5
+        # magnitude also seems to be off
+        # wr_np[-1] *= 0.5
         return wr_np
 
     def setup_experiment(self):
