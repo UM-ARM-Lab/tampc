@@ -14,13 +14,13 @@ import re
 
 import matplotlib.pyplot as plt
 import typing
+
+from sklearn.cluster import Birch, DBSCAN, KMeans
+
 from cottun.defines import NO_CONTACT_ID, RunKey, CONTACT_RES_FILE, RUN_AMBIGUITY, CONTACT_ID, CONTACT_POINT_CACHE
-from cottun.script_utils import extract_env_and_level_from_string, dict_to_namespace_str, record_metric, \
-    plot_cluster_res, load_runs_results, get_file_metainfo, clustering_metrics
+from cottun.script_utils import dict_to_namespace_str, plot_cluster_res, load_runs_results, get_file_metainfo, \
+    clustering_metrics
 from cottun.detection_impl import ContactDetectorPlanarPybulletGripper
-from sklearn.cluster import DBSCAN
-from sklearn.cluster import KMeans
-from sklearn.cluster import Birch
 
 from arm_pytorch_utilities.optim import get_device
 
@@ -29,11 +29,9 @@ from cottun import tracking
 from tampc.env import pybullet_env as env_base, arm
 from tampc.env.env import InfoKeys
 from tampc.env_getters.arm import ArmGetter
-from tampc.env.pybullet_env import ContactInfo, closest_point_on_surface
+from tampc.env.pybullet_env import ContactInfo
 
-from cottun.cluster_baseline import KMeansWithAutoK
-from cottun.cluster_baseline import OnlineSklearnFixedClusters
-from cottun.cluster_baseline import OnlineAgglomorativeClustering
+from cottun.cluster_baseline import process_labels_with_noise, OnlineAgglomorativeClustering, OnlineSklearnFixedClusters
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
@@ -187,16 +185,6 @@ class OurMethodSoft(OurMethodFactory):
         return contact_pts, pt_weights
 
 
-def process_labels_with_noise(labels):
-    noise_label = max(labels) + 1
-    for i in range(len(labels)):
-        # some methods use -1 to indicate noise; in this case we have to assign a cluster so we use a single element
-        if labels[i] == -1:
-            labels[i] = noise_label
-            noise_label += 1
-    return labels
-
-
 def sklearn_method_factory(method, **kwargs):
     def sklearn_method(X, U, reactions, env_class, info, contact_detector, contact_pts):
         # simple baselines
@@ -218,12 +206,12 @@ def online_sklearn_method_factory(online_class, method, inertia_ratio=0.5, **kwa
     def sklearn_method(X, U, reactions, env_class, info, contact_detector, contact_pts):
         online_method = online_class(method(**kwargs), inertia_ratio=inertia_ratio)
         valid = np.linalg.norm(contact_pts, axis=1) > 0.
-        dobj = info[InfoKeys.DEE_IN_CONTACT].cpu().numpy()
+        dobj = info[InfoKeys.DEE_IN_CONTACT]
         for i in range(len(X) - 1):
             if not valid[i]:
                 continue
             # intermediate labels in case we want plotting of movement
-            labels = online_method.update(contact_pts[i], U[i], dobj[i])
+            labels = online_method.update(contact_pts[i] - dobj[i], U[i], dobj[i])
         labels = np.ones(len(valid)) * NO_CONTACT_ID
         labels[valid] = process_labels_with_noise(online_method.final_labels())
         moved_pts = online_method.moved_data()
@@ -470,22 +458,22 @@ if __name__ == "__main__":
 
     dirs = ['arm/gripper10', 'arm/gripper11', 'arm/gripper12', 'arm/gripper13']
     methods_to_run = {
-        'ours': [OurMethodSoft(length=0.02, hard_assignment_threshold=0.2),
-                 OurMethodSoft(length=0.02, hard_assignment_threshold=0.3),
-                 OurMethodSoft(length=0.02, hard_assignment_threshold=0.4),
-                 OurMethodSoft(length=0.02, hard_assignment_threshold=0.5),
-                 ],
+        # 'ours': [OurMethodSoft(length=0.02, hard_assignment_threshold=0.2),
+        #          OurMethodSoft(length=0.02, hard_assignment_threshold=0.3),
+        #          OurMethodSoft(length=0.02, hard_assignment_threshold=0.4),
+        #          OurMethodSoft(length=0.02, hard_assignment_threshold=0.5),
+        #          ],
         # 'ours UKF': OurMethodHard(length=0.1),
         # 'ours UKF convexity merge constraint': OurMethodHard(length=0.1),
         # 'ours PF': OurMethodHard(contact_object_class=tracking.ContactPF, length=0.1),
         # 'kmeans': sklearn_method_factory(KMeansWithAutoK),
         # 'dbscan': sklearn_method_factory(DBSCAN, eps=1.0, min_samples=10),
         # 'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
-        # 'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, n_clusters=1,
-        #                                                random_state=0),
-        # 'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=1.0, min_samples=5),
+        'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, inertia_ratio=0.2,
+                                                       n_clusters=1, random_state=0),
+        # 'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=0.1, min_samples=1),
         # 'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
-        #                                               threshold=1.5)
+        #                                               threshold=0.07)
     }
 
     # full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper13/25.mat')

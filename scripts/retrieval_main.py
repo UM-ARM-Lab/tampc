@@ -1,16 +1,5 @@
 import abc
-
-from cottun.retrieval_controller import RetrievalController, RetrievalPredeterminedController, rot_2d_mat_to_angle, \
-    sample_model_points, pose_error
-from tampc.util import UseTsf
-
-try:
-    import sys
-
-    sys.path.remove('/opt/ros/kinetic/lib/python2.7/dist-packages')
-except:
-    pass
-
+import typing
 import time
 import math
 import torch
@@ -20,10 +9,19 @@ import logging
 import os
 from datetime import datetime
 
-from arm_pytorch_utilities import rand
+from sklearn.cluster import Birch, DBSCAN, KMeans
+
+from cottun.cluster_baseline import process_labels_with_noise, OnlineAgglomorativeClustering, OnlineSklearnFixedClusters
+from cottun.defines import NO_CONTACT_ID
+from cottun.retrieval_controller import RetrievalPredeterminedController, rot_2d_mat_to_angle, \
+    sample_model_points, pose_error
+from tampc.controller import controller
+from tampc.env.env import InfoKeys
+
+from arm_pytorch_utilities import rand, tensor_utils
 
 from tampc import cfg
-from cottun import tracking
+from cottun import tracking, detection
 from tampc.env import arm
 from tampc.env.arm import Levels
 from tampc.env_getters.arm import RetrievalGetter
@@ -200,7 +198,75 @@ class OurHardTrackingMethod(OurTrackingMethod):
         return tracking.ContactUKF(None, self.contact_params)
 
 
-def run_retrieval(env, method: TrackingMethod, seed=0, using_soft_contact=True, ctrl_noise_max=0.01):
+class SklearnPredeterminedController(controller.Controller):
+
+    def __init__(self, online_method, contact_detector: detection.ContactDetector, controls, nu=None):
+        super().__init__()
+        self.online_method = online_method
+        self.contact_detector = contact_detector
+        self.controls = controls
+        self.i = 0
+        self.nu = nu or len(self.controls[0])
+
+        self.x_history = []
+        self.u_history = []
+
+        self.in_contact = []
+
+    def command(self, obs, info=None):
+        self.x_history.append(obs)
+
+        if len(self.x_history) > 1:
+            contact_point = self.contact_detector.get_last_contact_location()
+            if contact_point is not None:
+                self.in_contact.append(True)
+                contact_point = contact_point.cpu().numpy()
+                dobj = info[InfoKeys.DEE_IN_CONTACT]
+                self.online_method.update(contact_point - dobj, self.u_history[-1], dobj)
+            else:
+                self.in_contact.append(False)
+
+        if self.i < len(self.controls):
+            u = self.controls[self.i]
+            self.i += 1
+        else:
+            u = [0 for _ in range(len(self.controls[0]))]
+
+        self.u_history.append(u)
+        return u
+
+
+class SklearnTrackingMethod(TrackingMethod):
+    def __init__(self, env, online_class, method, inertia_ratio=0.5, **kwargs):
+        self.env = env
+        self.online_method = online_class(method(**kwargs), inertia_ratio=inertia_ratio)
+        self.ctrl: typing.Optional[SklearnPredeterminedController] = None
+
+    def __iter__(self):
+        moved_pts = self.online_method.moved_data()
+        return iter(moved_pts)
+
+    def create_predetermined_controller(self, controls):
+        self.ctrl = SklearnPredeterminedController(self.online_method, self.env.contact_detector, controls, nu=2)
+        return self.ctrl
+
+    def visualize_contact_points(self, env):
+        # valid = self.ctrl.in_contact
+        # labels = np.ones(len(valid)) * NO_CONTACT_ID
+        moved_pt_labels = process_labels_with_noise(self.online_method.final_labels())
+        moved_pts = self.online_method.moved_data()
+        # labels[valid] = moved_pt_labels
+        for i, obj_id in enumerate(np.unique(moved_pt_labels)):
+            if obj_id == NO_CONTACT_ID:
+                continue
+
+            indices = moved_pt_labels == obj_id
+            color, u_color = state_action_color_pairs[i % len(state_action_color_pairs)]
+            base_name = str(i)
+            self.env.visualize_state_actions(base_name, moved_pts[indices], None, color, u_color, 0)
+
+
+def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.01):
     dtype = torch.float32
 
     rand.seed(0)
@@ -249,7 +315,9 @@ def run_retrieval(env, method: TrackingMethod, seed=0, using_soft_contact=True, 
         if env.contact_detector.in_contact():
             dist_per_est_obj = []
             for this_pts in method:
-                T, distances, _ = icp.icp_3(this_pts, model_points[:, :2], given_init_pose=best_tsf_guess, batch=30)
+                this_pts = tensor_utils.ensure_tensor(model_points.device, dtype, this_pts)
+                T, distances, _ = icp.icp_3(this_pts.view(-1, 2), model_points[:, :2],
+                                            given_init_pose=best_tsf_guess, batch=30)
                 T = T.inverse()
                 penetration = [object_robot_penetration_score(env.target_object_id, env.robot_id, T[b]) for b in
                                range(T.shape[0])]
@@ -298,12 +366,19 @@ def run_retrieval(env, method: TrackingMethod, seed=0, using_soft_contact=True, 
         obs, rew, done, info = env.step(action)
 
 
-def main():
+def main(method_name):
     force_gui = True
     env = RetrievalGetter.env(level=Levels.SIMPLE_CLUTTER, mode=p.GUI if force_gui else p.DIRECT)
-    method = OurSoftTrackingMethod(env)
-    run_retrieval(env, method, seed=1)
+    methods_to_run = {
+        'ours': OurSoftTrackingMethod(env),
+        'online-kmeans': SklearnTrackingMethod(env, OnlineAgglomorativeClustering, Birch, n_clusters=None,
+                                               threshold=0.07),
+        'online-dbscan': SklearnTrackingMethod(env, OnlineAgglomorativeClustering, DBSCAN, eps=0.1, min_samples=1),
+        'online-birch': SklearnTrackingMethod(env, OnlineSklearnFixedClusters, KMeans, inertia_ratio=0.2, n_clusters=1,
+                                              random_state=0)
+    }
+    run_retrieval(env, methods_to_run[method_name], seed=1)
 
 
 if __name__ == "__main__":
-    main()
+    main("ours")

@@ -61,9 +61,13 @@ class OnlineSklearnContactSet:
         raise NotImplementedError()
 
     def final_labels(self):
+        if self.data is None:
+            return []
         return self.cluster_method.predict(self.data)
 
     def moved_data(self):
+        if self.data is None:
+            return None
         return self.data[:, :2]
 
 
@@ -90,5 +94,19 @@ class OnlineAgglomorativeClustering(OnlineSklearnContactSet):
         self.cluster_method.fit(self.data)
 
     def final_labels(self):
+        if self.data is None:
+            return []
         # some of these don't have predict for some reason
         return self.cluster_method.fit_predict(self.data)
+
+
+def process_labels_with_noise(labels):
+    if len(labels) == 0:
+        return labels
+    noise_label = max(labels) + 1
+    for i in range(len(labels)):
+        # some methods use -1 to indicate noise; in this case we have to assign a cluster so we use a single element
+        if labels[i] == -1:
+            labels[i] = noise_label
+            noise_label += 1
+    return labels

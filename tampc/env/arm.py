@@ -438,7 +438,8 @@ class ArmEnv(PybulletEnv):
     def visualize_state_actions(self, base_name, states, actions, state_c, action_c, action_scale):
         if torch.is_tensor(states):
             states = states.cpu()
-            actions = actions.cpu()
+            if actions is not None:
+                actions = actions.cpu()
         for j in range(len(states)):
             p = self.get_ee_pos(states[j])
             name = '{}{}'.format(base_name, j)
