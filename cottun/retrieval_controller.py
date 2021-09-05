@@ -66,7 +66,8 @@ class RetrievalController(controller.Controller):
 
 class RetrievalPredeterminedController(controller.Controller):
 
-    def __init__(self, contact_detector: detection.ContactDetector, contact_set: tracking.ContactSet, controls, nu=None):
+    def __init__(self, contact_detector: detection.ContactDetector, contact_set: tracking.ContactSet, controls,
+                 nu=None):
         super().__init__()
         self.contact_detector = contact_detector
         self.controls = controls
@@ -81,9 +82,10 @@ class RetrievalPredeterminedController(controller.Controller):
     def command(self, obs, info=None):
         self.x_history.append(obs)
 
-        self.contact_set.update(self.x_history[-2], torch.tensor(self.u_history[-1]),
-                                self.x_history[-1] - self.x_history[-2],
-                                self.contact_detector, torch.tensor(info['reaction']), info=info)
+        if len(self.x_history) > 1:
+            self.contact_set.update(self.x_history[-2], torch.tensor(self.u_history[-1]),
+                                    self.x_history[-1] - self.x_history[-2],
+                                    self.contact_detector, torch.tensor(info['reaction']), info=info)
 
         if self.i < len(self.controls):
             u = self.controls[self.i]
