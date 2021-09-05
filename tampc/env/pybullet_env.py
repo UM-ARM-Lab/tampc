@@ -310,7 +310,7 @@ class DebugDrawer(Visualizer):
                 remove_user_debug_item(id)
 
     def clear_visualization_after(self, prefix, index):
-        name = "{}{}".format(prefix, index)
+        name = "{}.{}".format(prefix, index)
         while name in self._debug_ids:
             uids = self._debug_ids.pop(name)
             if type(uids) is int:
@@ -318,7 +318,7 @@ class DebugDrawer(Visualizer):
             for id in uids:
                 remove_user_debug_item(id)
             index += 1
-            name = "{}{}".format(prefix, index)
+            name = "{}.{}".format(prefix, index)
 
     def draw_2d_line(self, name, start, diff, color=(0, 0, 0), size=2., scale=0.4):
         if name not in self._debug_ids:

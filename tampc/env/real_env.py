@@ -56,7 +56,7 @@ class DebugRvizDrawer(Visualizer):
         self.marker_pub = rospy.Publisher("visualization_marker", Marker, queue_size=0)
         self.action_scale = action_scale
         self.max_nom_model_error = max_nominal_model_error
-        # self.array_pub = rospy.Publisher("visualization_marker_array", MarkerArray, queue_size=0)
+        self._ns = set()
 
     def _extract_ns_id_from_name(self, name):
         tokens = name.split('.')
@@ -66,8 +66,7 @@ class DebugRvizDrawer(Visualizer):
     def draw_point(self, name, point, color=(0, 0, 0), length=0.01, length_ratio=1, rot=0, height=None, label=None,
                    scale=1):
         ns, this_id = self._extract_ns_id_from_name(name)
-        marker = self.make_marker(scale=self.BASE_SCALE * scale)
-        marker.ns = ns
+        marker = self.make_marker(ns, scale=self.BASE_SCALE * scale)
         marker.id = this_id
         z = height if height is not None else point[2]
 
@@ -93,8 +92,7 @@ class DebugRvizDrawer(Visualizer):
 
     def draw_2d_line(self, name, start, diff, color=(0, 0, 0), size=2., scale=0.4, arrow=True):
         ns, this_id = self._extract_ns_id_from_name(name)
-        marker = self.make_marker(marker_type=Marker.ARROW if arrow else Marker.LINE_LIST)
-        marker.ns = ns
+        marker = self.make_marker(ns, marker_type=Marker.ARROW if arrow else Marker.LINE_LIST)
         marker.id = int(this_id)
         z = start[2] if len(start) > 2 else 0
 
@@ -122,8 +120,13 @@ class DebugRvizDrawer(Visualizer):
         self.marker_pub.publish(marker)
         return p
 
-    def make_marker(self, scale=BASE_SCALE, marker_type=Marker.POINTS):
+    def make_marker(self, ns, scale=BASE_SCALE, marker_type=Marker.POINTS, adding_ns=True):
         marker = Marker()
+        marker.ns = ns
+        if adding_ns:
+            self._ns.add(ns)
+        elif ns in self._ns:
+            self._ns.remove(ns)
         marker.header.frame_id = "victor_root"
         marker.type = marker_type
         marker.action = Marker.ADD
@@ -138,8 +141,7 @@ class DebugRvizDrawer(Visualizer):
             0, 1.0 * max(0, self.max_nom_model_error - nominal_model_error) / self.max_nom_model_error, 0),
                             height=height)
         if action is not None:
-            action_marker = self.make_marker(marker_type=Marker.LINE_LIST)
-            action_marker.ns = "action"
+            action_marker = self.make_marker("action", marker_type=Marker.LINE_LIST)
             action_marker.id = 0
             action_marker.points.append(p)
             p = Point()
@@ -158,8 +160,7 @@ class DebugRvizDrawer(Visualizer):
             self.marker_pub.publish(action_marker)
 
     def draw_goal(self, goal):
-        marker = self.make_marker(scale=self.BASE_SCALE * 2)
-        marker.ns = "goal"
+        marker = self.make_marker("goal", scale=self.BASE_SCALE * 2)
         marker.id = 0
         p = Point()
         p.x = goal[0]
@@ -177,8 +178,7 @@ class DebugRvizDrawer(Visualizer):
     def draw_rollouts(self, rollouts):
         if rollouts is None:
             return
-        marker = self.make_marker()
-        marker.ns = "rollouts"
+        marker = self.make_marker("rollouts")
         marker.id = 0
         # assume states is iterable, so could be a bunch of row vectors
         T = len(rollouts)
@@ -200,12 +200,10 @@ class DebugRvizDrawer(Visualizer):
     def draw_trap_set(self, trap_set):
         if trap_set is None:
             return
-        state_marker = self.make_marker(scale=self.BASE_SCALE * 2)
-        state_marker.ns = "trap_state"
+        state_marker = self.make_marker("trap_state", scale=self.BASE_SCALE * 2)
         state_marker.id = 0
 
-        action_marker = self.make_marker(marker_type=Marker.LINE_LIST)
-        action_marker.ns = "trap_action"
+        action_marker = self.make_marker("trap_action", marker_type=Marker.LINE_LIST)
         action_marker.id = 0
 
         T = len(trap_set)
@@ -243,15 +241,19 @@ class DebugRvizDrawer(Visualizer):
         self.marker_pub.publish(state_marker)
         self.marker_pub.publish(action_marker)
 
+    def clear_visualizations(self, names=None):
+        if names is None:
+            names = list(self._ns)
+        for name in names:
+            self.clear_markers(name)
+
     def clear_markers(self, ns, delete_all=True):
-        marker = self.make_marker()
-        marker.ns = ns
+        marker = self.make_marker(ns, adding_ns=False)
         marker.action = Marker.DELETEALL if delete_all else Marker.DELETE
         self.marker_pub.publish(marker)
 
     def draw_text(self, label, text, offset, left_offset=0, scale=5, id=0, absolute_pos=False):
-        marker = self.make_marker(marker_type=Marker.TEXT_VIEW_FACING, scale=self.BASE_SCALE * scale)
-        marker.ns = label
+        marker = self.make_marker(label, marker_type=Marker.TEXT_VIEW_FACING, scale=self.BASE_SCALE * scale)
         marker.id = id
         marker.text = text
 

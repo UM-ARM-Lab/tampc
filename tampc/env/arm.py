@@ -55,6 +55,7 @@ class Levels(enum.IntEnum):
     # levels for object retrieval
     NO_CLUTTER = 20
     SIMPLE_CLUTTER = 21
+    SIMPLE_CLUTTER2 = 22
 
 
 selected_levels = [Levels.SELECT1, Levels.SELECT2, Levels.SELECT3, Levels.SELECT4]
@@ -386,9 +387,9 @@ class ArmEnv(PybulletEnv):
             for t in range(T):
                 pos = self.get_ee_pos(states[t])
                 rgba = cmap.to_rgba(t) if contact_model_active[t] else smap.to_rgba(t)
-                self._dd.draw_point('rx{}{}'.format(state_cmap, t), pos, rgba[:-1])
+                self._dd.draw_point('rx{}.{}'.format(state_cmap, t), pos, rgba[:-1])
                 if t > 0:
-                    self._dd.draw_2d_line('tx{}{}'.format(state_cmap, t), prev_pos, pos - prev_pos, scale=1,
+                    self._dd.draw_2d_line('tx{}.{}'.format(state_cmap, t), prev_pos, pos - prev_pos, scale=1,
                                           color=rgba[:-1])
                 prev_pos = pos
         self._dd.clear_visualization_after('rx{}'.format(state_cmap), T)
@@ -415,7 +416,7 @@ class ArmEnv(PybulletEnv):
         for t in range(T):
             pos = self.get_ee_pos(states[t])
             c = (t + 1) / (T + 1)
-            self._dd.draw_point('gs{}'.format(t), pos, (c, c, c))
+            self._dd.draw_point('gs.{}'.format(t), pos, (c, c, c))
         self._dd.clear_visualization_after('gs', T)
 
     def visualize_trap_set(self, trap_set):
@@ -431,7 +432,7 @@ class ArmEnv(PybulletEnv):
             else:
                 state = trap_set[t]
             pose = self.get_ee_pos(state)
-            self._dd.draw_point('ts{}'.format(t), pose, (1, 0, c))
+            self._dd.draw_point('ts.{}'.format(t), pose, (1, 0, c))
         self._dd.clear_visualization_after('ts', T)
         self._dd.clear_visualization_after('u', T + 1)
 
@@ -440,14 +441,17 @@ class ArmEnv(PybulletEnv):
             states = states.cpu()
             if actions is not None:
                 actions = actions.cpu()
+        j = 0
         for j in range(len(states)):
             p = self.get_ee_pos(states[j])
-            name = '{}{}'.format(base_name, j)
+            name = '{}.{}'.format(base_name, j)
             self._dd.draw_point(name, p, color=state_c)
             if actions is not None:
                 # draw action
-                name = '{}{}a'.format(base_name, j)
+                name = '{}a.{}'.format(base_name, j)
                 self._dd.draw_2d_line(name, p, actions[j], color=action_c, scale=action_scale)
+        self._dd.clear_visualization_after(base_name, j + 1)
+        self._dd.clear_visualization_after('{}a'.format(base_name), j + 1)
 
     def visualize_contact_set(self, contact_set: tracking.ContactSet):
         if isinstance(contact_set, tracking.ContactSetHard):
@@ -524,7 +528,7 @@ class ArmEnv(PybulletEnv):
         start = old_state[:3]
         pointer = action
         if debug:
-            self._dd.draw_2d_line('u{}'.format(debug), start, pointer, (1, debug / 30, debug / 10), scale=0.2)
+            self._dd.draw_2d_line('u.{}'.format(debug), start, pointer, (1, debug / 30, debug / 10), scale=0.2)
         else:
             self._dd.draw_2d_line('u', start, pointer, (1, 0, 0), scale=0.2)
 
@@ -1411,6 +1415,7 @@ class FloatingGripperEnv(PlanarArmEnv):
             p.stepSimulation()
         self.state = self._obs()
         self._dd.draw_point('x0', self.get_ee_pos(self.state), color=(0, 1, 0))
+        self.contact_detector.clear()
         return np.copy(self.state)
 
 
@@ -1436,6 +1441,13 @@ class ObjectRetrievalEnv(FloatingGripperEnv):
     def __init__(self, goal=(0.5, -0.3, 0), init=(-.0, 0.0), **kwargs):
         # here goal is the initial pose of the target object
         super(FloatingGripperEnv, self).__init__(goal=goal, init=init, camera_dist=0.8, **kwargs)
+
+    def _obs(self):
+        return super(ObjectRetrievalEnv, self)._obs()[:2]
+
+    def _draw_state(self):
+        pos = self.get_ee_pos(self.state)
+        self._dd.draw_point('state', pos)
 
     def _setup_objects(self):
         self.immovable = []
@@ -1463,6 +1475,11 @@ class ObjectRetrievalEnv(FloatingGripperEnv):
                                            p.getQuaternionFromEuler([0, 0, 0]), flags=flags, globalScaling=2))
             self.movable.append(p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbTomatoSoupCan', "model.urdf"),
                                            [0.2, -0.3, z],
+                                           p.getQuaternionFromEuler([0, 0, 0]), flags=flags, globalScaling=2))
+        elif self.level == Levels.SIMPLE_CLUTTER2:
+            p.changeDynamics(self.planeId, -1, lateralFriction=0.6, spinningFriction=0.01)
+            self.movable.append(p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbTomatoSoupCan', "model.urdf"),
+                                           [0.2, -0.1, z],
                                            p.getQuaternionFromEuler([0, 0, 0]), flags=flags, globalScaling=2))
         for objId in self.immovable:
             p.changeVisualShape(objId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])

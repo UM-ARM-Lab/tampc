@@ -106,6 +106,10 @@ class Visualizer:
     def draw_2d_line(self, name, start, diff, color=(0, 0, 0), size=2., scale=0.4):
         pass
 
+    @abc.abstractmethod
+    def clear_visualizations(self, names=None):
+        pass
+
 
 class Env:
     @property

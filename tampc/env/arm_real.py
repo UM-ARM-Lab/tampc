@@ -121,7 +121,9 @@ class RealArmEnv(Env):
     # REST_JOINTS = [1.4741407366569612, -0.37367112858393897, 1.420287584732473, 1.3502012009206756, -0.104535997082166,
     #                -0.9739424384610837, -1.177102973890961]
     REST_JOINTS = [1.4769502583855774, -0.3829121045031008, 1.4203813612731826, 1.3409767633051735, -0.1265017390739062,
-                   -0.9736777669158343, -1.1727687591440739]
+                   -0.9736777669158343, -1.1727687591440739 + np.pi]
+    # REST_JOINTS = [1.0269783861054675, -0.400866330952976, 1.8832600640176749, 1.176414060692023, -0.12416865012501638,
+    #                -1.330497996717088, -1.1644768139687487]
 
     EE_LINK_NAME = "victor_right_arm_link_7"
     WORLD_FRAME = "victor_root"
@@ -189,10 +191,10 @@ class RealArmEnv(Env):
         self.vel = vel
 
         if not stub:
-            victor = Victor()
+            victor = Victor(force_trigger=5.0)
             self.victor = victor
             # adjust timeout according to velocity (at vel = 0.1 we expect 400s per 1m)
-            self.victor.cartesian._timeout_per_1m = 40 / self.vel
+            self.victor.cartesian._timeout_per_m = 40 / self.vel
             victor.connect()
             self.vis.init_ros()
 
@@ -440,6 +442,7 @@ class RealArmEnv(Env):
         self.victor.plan_to_pose(self.victor.right_arm_group, self.EE_LINK_NAME, self.REST_POS + self.REST_ORIENTATION)
         self.victor.set_control_mode(control_mode=ControlMode.CARTESIAN_IMPEDANCE, vel=self.vel)
         self.state, info = self._obs()
+        self.contact_detector.clear()
         return np.copy(self.state), info
 
     def close(self):
