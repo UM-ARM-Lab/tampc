@@ -1,3 +1,5 @@
+import abc
+
 from cottun.retrieval_controller import RetrievalController, RetrievalPredeterminedController, rot_2d_mat_to_angle, \
     sample_model_points, pose_error
 from tampc.util import UseTsf
@@ -113,51 +115,115 @@ def object_robot_penetration_score(object_id, robot_id, object_transform):
     return -d
 
 
-def run_retrieval(env, seed=0, using_soft_contact=True, using_predetermined_control=True):
-    contact_params = RetrievalGetter.contact_parameters(env)
+class TrackingMethod:
+    """Common interface for each tracking method including ours and baselines"""
 
-    def cost_to_go(state, goal):
-        return env.state_distance_two_arg(state, goal)
+    @abc.abstractmethod
+    def __iter__(self):
+        """Iterating over this provides a set of contact points corresponding to an object"""
 
-    def create_contact_object():
-        return tracking.ContactUKF(None, contact_params)
+    @abc.abstractmethod
+    def create_predetermined_controller(self, controls):
+        """Return a predetermined controller that updates the method when querying for a command"""
 
+    @abc.abstractmethod
+    def visualize_contact_points(self, env):
+        """Render the tracked contact points in the given environment"""
+
+
+class SoftTrackingIterator:
+    def __init__(self, pts, to_iter):
+        self.pts = pts
+        self.to_iter = to_iter
+
+    def __next__(self):
+        indices = next(self.to_iter)
+        return self.pts[indices]
+
+
+class OurTrackingMethod(TrackingMethod):
+    def __init__(self, env):
+        self.env = env
+
+    @property
+    @abc.abstractmethod
+    def contact_set(self) -> tracking.ContactSet:
+        """Return some contact set"""
+
+    def visualize_contact_points(self, env):
+        env.visualize_contact_set(self.contact_set)
+
+    def create_predetermined_controller(self, controls):
+        return RetrievalPredeterminedController(self.env.contact_detector, self.contact_set, controls)
+
+
+class OurSoftTrackingMethod(OurTrackingMethod):
+    def __init__(self, env):
+        contact_params = RetrievalGetter.contact_parameters(env)
+        self._contact_set = tracking.ContactSetSoft(arm.ArmPointToConfig(env), contact_params)
+        super(OurSoftTrackingMethod, self).__init__(env)
+
+    @property
+    def contact_set(self) -> tracking.ContactSetSoft:
+        return self._contact_set
+
+    def __iter__(self):
+        pts = self.contact_set.get_posterior_points()
+        to_iter = self.contact_set.get_hard_assignment(self.contact_set.p.hard_assignment_threshold)
+        return SoftTrackingIterator(pts, iter(to_iter))
+
+
+class HardTrackingIterator:
+    def __init__(self, contact_objs):
+        self.contact_objs = contact_objs
+
+    def __next__(self):
+        object: tracking.ContactObject = next(self.contact_objs)
+        return object.points
+
+
+class OurHardTrackingMethod(OurTrackingMethod):
+    def __init__(self, env):
+        self.contact_params = RetrievalGetter.contact_parameters(env)
+        self._contact_set = tracking.ContactSetHard(self.contact_params,
+                                                    contact_object_factory=self.create_contact_object)
+        super(OurHardTrackingMethod, self).__init__(env)
+
+    @property
+    def contact_set(self) -> tracking.ContactSetHard:
+        return self._contact_set
+
+    def __iter__(self):
+        return HardTrackingIterator(iter(self.contact_set))
+
+    def create_contact_object(self):
+        return tracking.ContactUKF(None, self.contact_params)
+
+
+def run_retrieval(env, method: TrackingMethod, seed=0, using_soft_contact=True, ctrl_noise_max=0.01):
     dtype = torch.float32
 
-    if using_soft_contact:
-        contact_set = tracking.ContactSetSoft(arm.ArmPointToConfig(env), contact_params)
-    else:
-        contact_set = tracking.ContactSetHard(contact_params, contact_object_factory=create_contact_object)
-
     rand.seed(0)
-    if using_predetermined_control:
-        predetermined_control = {}
+    predetermined_control = {}
 
-        ctrl = [[0.7, -1]] * 5
-        ctrl += [[0.4, 0.4], [.5, -1]] * 6
-        ctrl += [[-0.2, 1]] * 4
-        ctrl += [[0.3, -0.3], [0.4, 1]] * 4
-        ctrl += [[1., -1]] * 3
-        ctrl += [[1., 0.6], [-0.7, 0.5]] * 4
-        ctrl += [[0., 1]] * 5
-        ctrl += [[1., 0]] * 4
-        ctrl += [[0.4, -1.], [0.4, 0.5]] * 4
-        noise = (np.random.rand(len(ctrl), 2) - 0.5) * 0.5
-        ctrl = np.add(ctrl, noise)
-        predetermined_control[Levels.SIMPLE_CLUTTER] = ctrl
+    ctrl = [[0.7, -1]] * 5
+    ctrl += [[0.4, 0.4], [.5, -1]] * 6
+    ctrl += [[-0.2, 1]] * 4
+    ctrl += [[0.3, -0.3], [0.4, 1]] * 4
+    ctrl += [[1., -1]] * 3
+    ctrl += [[1., 0.6], [-0.7, 0.5]] * 4
+    ctrl += [[0., 1]] * 5
+    ctrl += [[1., 0]] * 4
+    ctrl += [[0.4, -1.], [0.4, 0.5]] * 4
+    noise = (np.random.rand(len(ctrl), 2) - 0.5) * 0.5
+    ctrl = np.add(ctrl, noise)
+    predetermined_control[Levels.SIMPLE_CLUTTER] = ctrl
 
-        rand.seed(seed)
-        for k, v in predetermined_control.items():
-            predetermined_control[k] = np.add(v, (np.random.rand(len(v), 2) - 0.5) * 0.02)
+    rand.seed(seed)
+    for k, v in predetermined_control.items():
+        predetermined_control[k] = np.add(v, (np.random.rand(len(v), 2) - 0.5) * ctrl_noise_max)
 
-        ctrl = RetrievalPredeterminedController(env.contact_detector, contact_set,
-                                                predetermined_control[env.level])
-    else:
-        ds, pm = RetrievalGetter.prior(env, use_tsf=UseTsf.NO_TRANSFORM)
-        u_min, u_max = env.get_control_bounds()
-        rand.seed(seed)
-        ctrl = RetrievalController(env.contact_detector, env.nu, pm.dyn_net, cost_to_go, contact_set, u_min, u_max,
-                                   walk_length=6)
+    ctrl = method.create_predetermined_controller(predetermined_control[env.level])
 
     obs = env.reset()
     z = env._observe_ee(return_z=True)[-1]
@@ -179,14 +245,10 @@ def run_retrieval(env, seed=0, using_soft_contact=True, using_predetermined_cont
         env.draw_user_text("{}".format(simTime), xy=(0.5, 0.7, -1))
 
         action = ctrl.command(obs, info)
-        env.visualize_contact_set(contact_set)
+        method.visualize_contact_points(env)
         if env.contact_detector.in_contact():
-            pts = contact_set.get_posterior_points() if using_soft_contact else None
-            to_iter = contact_set.get_hard_assignment(
-                contact_set.p.hard_assignment_threshold) if using_soft_contact else contact_set
             dist_per_est_obj = []
-            for c in to_iter:
-                this_pts = pts[c] if using_soft_contact else c.points
+            for this_pts in method:
                 T, distances, _ = icp.icp_3(this_pts, model_points[:, :2], given_init_pose=best_tsf_guess, batch=30)
                 T = T.inverse()
                 penetration = [object_robot_penetration_score(env.target_object_id, env.robot_id, T[b]) for b in
@@ -239,7 +301,8 @@ def run_retrieval(env, seed=0, using_soft_contact=True, using_predetermined_cont
 def main():
     force_gui = True
     env = RetrievalGetter.env(level=Levels.SIMPLE_CLUTTER, mode=p.GUI if force_gui else p.DIRECT)
-    run_retrieval(env, seed=1)
+    method = OurSoftTrackingMethod(env)
+    run_retrieval(env, method, seed=1)
 
 
 if __name__ == "__main__":
