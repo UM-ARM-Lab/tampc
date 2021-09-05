@@ -55,7 +55,7 @@ class Levels(enum.IntEnum):
     # levels for object retrieval
     NO_CLUTTER = 20
     SIMPLE_CLUTTER = 21
-    SIMPLE_CLUTTER2 = 22
+    TIGHT_CLUTTER = 22
 
 
 selected_levels = [Levels.SELECT1, Levels.SELECT2, Levels.SELECT3, Levels.SELECT4]
@@ -1476,7 +1476,7 @@ class ObjectRetrievalEnv(FloatingGripperEnv):
             self.movable.append(p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbTomatoSoupCan', "model.urdf"),
                                            [0.2, -0.3, z],
                                            p.getQuaternionFromEuler([0, 0, 0]), flags=flags, globalScaling=2))
-        elif self.level == Levels.SIMPLE_CLUTTER2:
+        elif self.level == Levels.TIGHT_CLUTTER:
             p.changeDynamics(self.planeId, -1, lateralFriction=0.6, spinningFriction=0.01)
             self.movable.append(p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbTomatoSoupCan', "model.urdf"),
                                            [0.2, -0.1, z],

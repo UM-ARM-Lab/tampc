@@ -97,19 +97,12 @@ def test_icp(env):
         time.sleep(0.2)
 
 
-def object_robot_penetration_score(object_id, robot_id, object_transform):
+def object_robot_penetration_score(pt_to_config, config, object_transform, model_pts):
     """Compute the penetration between object and robot for a given transform of the object"""
-    o_pos, o_orientation = p.getBasePositionAndOrientation(object_id)
-    yaw = torch.atan2(object_transform[1, 0], object_transform[0, 0])
-    t = np.r_[object_transform[:2, 2], o_pos[2]]
-    # temporarily move object with transform
-    p.resetBasePositionAndOrientation(object_id, t, p.getQuaternionFromEuler([0, 0, yaw]))
-
-    p.performCollisionDetection()
-    closest = p.getClosestPoints(object_id, robot_id, 100)
-    d = min(c[ContactInfo.DISTANCE] for c in closest)
-
-    p.resetBasePositionAndOrientation(object_id, o_pos, o_orientation)
+    # transform model points by object transform
+    transformed_model_points = model_pts @ object_transform.transpose(-1, -2)
+    d = pt_to_config(config[:, :2], transformed_model_points[:, :2])
+    d = d.min().item()
     return -d
 
 
@@ -269,7 +262,6 @@ class SklearnTrackingMethod(TrackingMethod):
 def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.01):
     dtype = torch.float32
 
-    rand.seed(0)
     predetermined_control = {}
 
     ctrl = [[0.7, -1]] * 5
@@ -281,9 +273,26 @@ def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.01):
     ctrl += [[0., 1]] * 5
     ctrl += [[1., 0]] * 4
     ctrl += [[0.4, -1.], [0.4, 0.5]] * 4
+    rand.seed(0)
     noise = (np.random.rand(len(ctrl), 2) - 0.5) * 0.5
     ctrl = np.add(ctrl, noise)
     predetermined_control[Levels.SIMPLE_CLUTTER] = ctrl
+
+    ctrl = [[0.9, -0.3]] * 2
+    ctrl += [[1.0, 0.], [-.2, -0.6]] * 6
+    ctrl += [[0.1, -0.9], [0.8, -0.6]] * 1
+    ctrl += [[0.1, 0.8], [0.1, 0.9], [0.1, -1.0], [0.1, -1.0], [0.2, -1.0]]
+    ctrl += [[0.1, 0.8], [0.1, 0.9], [0.3, 0.8], [0.4, 0.6]]
+    ctrl += [[0.1, -0.8], [0.1, -0.9], [0.3, -0.8]]
+    ctrl += [[-0.2, 0.8], [0.1, 0.9], [0.3, 0.8]]
+    ctrl += [[-0., -0.8], [0.1, -0.7]]
+    ctrl += [[0.4, -0.5], [0.2, -1.0]]
+    ctrl += [[-0.2, -0.5], [0.2, -0.6]]
+    ctrl += [[0.2, 0.4], [0.2, -1.0]]
+    ctrl += [[0.4, 0.4], [0.4, -0.4]] * 3
+    ctrl += [[-0.5, 1.0]] * 3
+    ctrl += [[0.5, 0.], [0, 0.4]] * 3
+    predetermined_control[Levels.TIGHT_CLUTTER] = ctrl
 
     rand.seed(seed)
     for k, v in predetermined_control.items():
@@ -305,7 +314,9 @@ def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.01):
     best_tsf_guess = None
     pose_error_per_step = {}
 
-    while True:
+    pt_to_config = arm.ArmPointToConfig(env)
+
+    while not ctrl.done():
         best_distance = None
         simTime += 1
         env.draw_user_text("{}".format(simTime), xy=(0.5, 0.7, -1))
@@ -313,13 +324,14 @@ def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.01):
         action = ctrl.command(obs, info)
         method.visualize_contact_points(env)
         if env.contact_detector.in_contact():
+            all_configs = torch.tensor(ctrl.x_history, dtype=dtype, device=mph.device).view(-1, env.nx)
             dist_per_est_obj = []
             for this_pts in method:
                 this_pts = tensor_utils.ensure_tensor(model_points.device, dtype, this_pts)
                 T, distances, _ = icp.icp_3(this_pts.view(-1, 2), model_points[:, :2],
                                             given_init_pose=best_tsf_guess, batch=30)
                 T = T.inverse()
-                penetration = [object_robot_penetration_score(env.target_object_id, env.robot_id, T[b]) for b in
+                penetration = [object_robot_penetration_score(pt_to_config, all_configs, T[b], mph) for b in
                                range(T.shape[0])]
                 score = np.abs(penetration)
                 best_tsf_index = np.argmin(score)
@@ -332,13 +344,6 @@ def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.01):
                 if best_distance is None or best_tsf_distances < best_distance:
                     best_distance = best_tsf_distances
                     best_tsf_guess = T[best_tsf_index].inverse()
-
-                # for b in range(T.shape[0]):
-                #     transformed_model_points = mph @ T[b].transpose(-1, -2)
-                #     for i, pt in enumerate(transformed_model_points):
-                #         if i % 2 == 0:
-                #             pt = [pt[0], pt[1], z]
-                #             env._dd.draw_point(f"tmpt{b}-{i}", pt, color=(0, 1, b / T.shape[0]), length=0.003)
 
             logger.info(f"err each obj {np.round(dist_per_est_obj, 4)}")
             best_T = best_tsf_guess.inverse()
@@ -365,10 +370,10 @@ def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.01):
         action = np.array(action).flatten()
         obs, rew, done, info = env.step(action)
 
+    # TODO attempt grasp
 
-def main(method_name):
-    force_gui = True
-    env = RetrievalGetter.env(level=Levels.SIMPLE_CLUTTER, mode=p.GUI if force_gui else p.DIRECT)
+
+def main(env, method_name, seed=0):
     methods_to_run = {
         'ours': OurSoftTrackingMethod(env),
         'online-kmeans': SklearnTrackingMethod(env, OnlineAgglomorativeClustering, Birch, n_clusters=None,
@@ -377,8 +382,12 @@ def main(method_name):
         'online-birch': SklearnTrackingMethod(env, OnlineSklearnFixedClusters, KMeans, inertia_ratio=0.2, n_clusters=1,
                                               random_state=0)
     }
-    run_retrieval(env, methods_to_run[method_name], seed=1)
+    run_retrieval(env, methods_to_run[method_name], seed=seed)
 
 
 if __name__ == "__main__":
-    main("ours")
+    env = RetrievalGetter.env(level=Levels.TIGHT_CLUTTER, mode=p.GUI)
+    for seed in range(10):
+        main(env, "ours", seed=seed)
+        env.vis.clear_visualizations()
+        env.reset()

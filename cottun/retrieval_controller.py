@@ -79,6 +79,9 @@ class RetrievalPredeterminedController(controller.Controller):
 
         self.contact_set = contact_set
 
+    def done(self):
+        return self.i >= len(self.controls)
+
     def command(self, obs, info=None):
         self.x_history.append(obs)
 
@@ -87,11 +90,11 @@ class RetrievalPredeterminedController(controller.Controller):
                                     self.x_history[-1] - self.x_history[-2],
                                     self.contact_detector, torch.tensor(info['reaction']), info=info)
 
-        if self.i < len(self.controls):
+        if self.done():
+            u = [0 for _ in range(self.nu)]
+        else:
             u = self.controls[self.i]
             self.i += 1
-        else:
-            u = [0 for _ in range(len(self.controls[0]))]
 
         self.u_history.append(u)
         return u

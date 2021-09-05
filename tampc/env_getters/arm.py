@@ -123,6 +123,6 @@ class RetrievalGetter(ArmGetter):
         cls.env_dir = '{}/gripper'.format(cls.dynamics_prefix())
         if level is Levels.SIMPLE_CLUTTER:
             env.set_task_config(goal=[0.5, -0.1, 0])
-        elif level is Levels.SIMPLE_CLUTTER2:
+        elif level is Levels.TIGHT_CLUTTER:
             env.set_task_config(init=[0, 0.1], goal=[0.15, 0.05, 0])
         return env
