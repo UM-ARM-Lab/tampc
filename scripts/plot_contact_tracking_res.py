@@ -4,7 +4,7 @@ import logging
 import typing
 import numpy as np
 
-from cottun.script_utils import load_runs_results
+from cottun.evaluation import load_runs_results
 from cottun.defines import RunKey, RUN_INFO_KEYWORDS, RUN_AMBIGUITY, CONTACT_ID, NO_CONTACT_ID
 
 logging.basicConfig(level=logging.INFO,
@@ -158,7 +158,7 @@ class PlotContactErrorVsFMI(ContactTrackingResultsPlot):
             xlabel.append('(relative to max penetration dist)')
             ax.set_xlim(0, 1)
         else:
-            ax.set_xlim(0, 0.15)
+            ax.set_xlim(0, 0.05)
         ax.set_xlabel(' '.join(xlabel))
         ax.set_ylabel('FMI')
         ax.set_ylim(0, 1.1)
@@ -186,7 +186,9 @@ if __name__ == "__main__":
         # "ours soft replace pts",
         # "ours soft replace",
         # "ours soft good",
-        "ours full",
+        "ours",
+        # "ours no replace",
+        # "ours full",
         # "ours soft sq dist elim freespace"
         # "ours PF",
         # "kmeans",

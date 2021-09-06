@@ -106,8 +106,12 @@ class OursRetrievalPredeterminedController(RetrievalPredeterminedController):
         super().__init__(controls, nu=nu)
         self.contact_detector = contact_detector
         self.contact_set = contact_set
+        self.contact_indices = []
 
     def update(self, obs, info):
+        if self.contact_detector.in_contact():
+            self.contact_indices.append(self.i)
+
         self.contact_set.update(self.x_history[-2], torch.tensor(self.u_history[-1]),
                                 self.x_history[-1] - self.x_history[-2],
                                 self.contact_detector, torch.tensor(info['reaction']), info=info)

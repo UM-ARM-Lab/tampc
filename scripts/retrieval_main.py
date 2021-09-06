@@ -14,6 +14,7 @@ from sklearn.cluster import Birch, DBSCAN, KMeans
 
 from cottun.cluster_baseline import process_labels_with_noise, OnlineAgglomorativeClustering, OnlineSklearnFixedClusters
 from cottun.defines import NO_CONTACT_ID
+from cottun.evaluation import compute_contact_error, clustering_metrics
 from cottun.retrieval_controller import RetrievalPredeterminedController, rot_2d_mat_to_angle, \
     sample_model_points, pose_error, OursRetrievalPredeterminedController
 from tampc.controller import controller
@@ -32,7 +33,7 @@ from cottun import icp
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
 
-logging.basicConfig(level=logging.DEBUG,
+logging.basicConfig(level=logging.INFO,
                     format='[%(levelname)s %(asctime)s %(pathname)s:%(lineno)d] %(message)s',
                     datefmt='%m-%d %H:%M:%S', handlers=[ch, fh])
 
@@ -122,6 +123,10 @@ class TrackingMethod:
     def visualize_contact_points(self, env):
         """Render the tracked contact points in the given environment"""
 
+    @abc.abstractmethod
+    def get_labelled_moved_points(self, labels):
+        """Return the final position of the tracked points as well as their object label"""
+
 
 class SoftTrackingIterator:
     def __init__(self, pts, to_iter):
@@ -136,6 +141,7 @@ class SoftTrackingIterator:
 class OurTrackingMethod(TrackingMethod):
     def __init__(self, env):
         self.env = env
+        self.ctrl = None
 
     @property
     @abc.abstractmethod
@@ -146,13 +152,14 @@ class OurTrackingMethod(TrackingMethod):
         env.visualize_contact_set(self.contact_set)
 
     def create_predetermined_controller(self, controls):
-        return OursRetrievalPredeterminedController(self.env.contact_detector, self.contact_set, controls)
+        self.ctrl = OursRetrievalPredeterminedController(self.env.contact_detector, self.contact_set, controls)
+        return self.ctrl
 
 
 class OurSoftTrackingMethod(OurTrackingMethod):
     def __init__(self, env):
-        contact_params = RetrievalGetter.contact_parameters(env)
-        self._contact_set = tracking.ContactSetSoft(arm.ArmPointToConfig(env), contact_params)
+        self.contact_params = RetrievalGetter.contact_parameters(env)
+        self._contact_set = tracking.ContactSetSoft(arm.ArmPointToConfig(env), self.contact_params)
         super(OurSoftTrackingMethod, self).__init__(env)
 
     @property
@@ -163,6 +170,17 @@ class OurSoftTrackingMethod(OurTrackingMethod):
         pts = self.contact_set.get_posterior_points()
         to_iter = self.contact_set.get_hard_assignment(self.contact_set.p.hard_assignment_threshold)
         return SoftTrackingIterator(pts, iter(to_iter))
+
+    def get_labelled_moved_points(self, labels):
+        groups = self.contact_set.get_hard_assignment(self.contact_params.hard_assignment_threshold)
+        contact_indices = torch.tensor(self.ctrl.contact_indices, device=groups[0].device)
+        # self.ctrl.contact_indices = []
+
+        for group_id, group in enumerate(groups):
+            labels[contact_indices[group].cpu().numpy()] = group_id + 1
+
+        contact_pts = self.contact_set.get_posterior_points()
+        return labels, contact_pts
 
 
 class HardTrackingIterator:
@@ -240,6 +258,11 @@ class SklearnTrackingMethod(TrackingMethod):
             base_name = str(i)
             self.env.visualize_state_actions(base_name, moved_pts[indices], None, color, u_color, 0)
 
+    def get_labelled_moved_points(self, labels):
+        labels[1:][self.ctrl.in_contact] = process_labels_with_noise(self.online_method.final_labels())
+        moved_pts = self.online_method.moved_data()
+        return labels, moved_pts
+
 
 def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.005):
     dtype = torch.float32
@@ -299,6 +322,8 @@ def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.005):
 
     pt_to_config = arm.ArmPointToConfig(env)
 
+    contact_id = []
+
     while not ctrl.done():
         best_distance = None
         simTime += 1
@@ -307,6 +332,7 @@ def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.005):
         action = ctrl.command(obs, info)
         method.visualize_contact_points(env)
         if env.contact_detector.in_contact():
+            contact_id.append(info[InfoKeys.CONTACT_ID])
             all_configs = torch.tensor(ctrl.x_history, dtype=dtype, device=mph.device).view(-1, env.nx)
             dist_per_est_obj = []
             for this_pts in method:
@@ -328,7 +354,7 @@ def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.005):
                     best_distance = best_tsf_distances
                     best_tsf_guess = T[best_tsf_index].inverse()
 
-            logger.info(f"err each obj {np.round(dist_per_est_obj, 4)}")
+            logger.debug(f"err each obj {np.round(dist_per_est_obj, 4)}")
             best_T = best_tsf_guess.inverse()
 
             target_pose = p.getBasePositionAndOrientation(env.target_object_id)
@@ -339,19 +365,31 @@ def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.005):
             pos_err, yaw_err = pose_error(target_pose, guess_pose)
 
             pose_error_per_step[simTime] = pos_err + 0.3 * yaw_err
-            logger.info(f"pose error {simTime}: {pos_err} {yaw_err} {pose_error_per_step[simTime]}")
+            logger.debug(f"pose error {simTime}: {pos_err} {yaw_err} {pose_error_per_step[simTime]}")
             transformed_model_points = mph @ best_T.transpose(-1, -2)
             for i, pt in enumerate(transformed_model_points):
                 if i % 2 == 0:
                     continue
                 pt = [pt[0], pt[1], z]
                 env.vis.draw_point(f"tmptbest.{i}", pt, color=(0, 0, 1), length=0.008)
+        else:
+            contact_id.append(NO_CONTACT_ID)
 
         if torch.is_tensor(action):
             action = action.cpu()
 
         action = np.array(action).flatten()
         obs, rew, done, info = env.step(action)
+
+    # evaluate FMI and contact error here
+    labels, moved_points = method.get_labelled_moved_points(np.ones(len(contact_id)) * NO_CONTACT_ID)
+    contact_id = np.array(contact_id)
+
+    in_label_contact = contact_id != NO_CONTACT_ID
+
+    m = clustering_metrics(contact_id[in_label_contact], labels[in_label_contact])
+    contact_error = compute_contact_error(None, moved_points, env=env, visualize=False)
+    cme = np.mean(np.abs(contact_error))
 
     # attempt grasp
     predetermined_grasp_offset = {
@@ -396,24 +434,36 @@ def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.005):
     env.sim_step_wait = None
 
     env.endEffectorOrientation = prev_ee_orientation
+    return m, cme
 
 
 def main(env, method_name, seed=0):
     methods_to_run = {
         'ours': OurSoftTrackingMethod(env),
-        'online-kmeans': SklearnTrackingMethod(env, OnlineAgglomorativeClustering, Birch, n_clusters=None,
-                                               threshold=0.07),
-        'online-dbscan': SklearnTrackingMethod(env, OnlineAgglomorativeClustering, DBSCAN, eps=0.1, min_samples=1),
-        'online-birch': SklearnTrackingMethod(env, OnlineSklearnFixedClusters, KMeans, inertia_ratio=0.2, n_clusters=1,
-                                              random_state=0)
+        'online-birch': SklearnTrackingMethod(env, OnlineAgglomorativeClustering, Birch, n_clusters=None,
+                                              inertia_ratio=0.2,
+                                              threshold=0.07),
+        'online-dbscan': SklearnTrackingMethod(env, OnlineAgglomorativeClustering, DBSCAN, eps=0.05, min_samples=1),
+        'online-kmeans': SklearnTrackingMethod(env, OnlineSklearnFixedClusters, KMeans, inertia_ratio=0.2, n_clusters=1,
+                                               random_state=0)
     }
     env.draw_user_text(f"{method_name} seed {seed}", xy=[-0.1, 0.28, -0.5])
-    run_retrieval(env, methods_to_run[method_name], seed=seed)
+    return run_retrieval(env, methods_to_run[method_name], seed=seed)
 
 
 if __name__ == "__main__":
     env = RetrievalGetter.env(level=Levels.TIGHT_CLUTTER, mode=p.GUI)
+
+    method_name = "online-birch"
+    fmis = []
+    cmes = []
     for seed in range(10):
-        main(env, "ours", seed=seed)
+        m, cme = main(env, method_name, seed=seed)
+        fmi = m[0]
+        fmis.append(fmi)
+        cmes.append(cme)
+        logger.info(f"{method_name} fmi {fmi} cme {cme}")
         env.vis.clear_visualizations()
         env.reset()
+    logger.info(f"{method_name} mean fmi {np.mean(fmis)} median fmi {np.median(fmis)} std fmi {np.std(fmis)} {fmis}\n"
+                f"mean cme {np.mean(cmes)} median cme {np.median(cmes)} std cme {np.std(cmes)} {cmes}")

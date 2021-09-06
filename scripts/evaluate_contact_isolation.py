@@ -7,7 +7,7 @@ import pybullet as p
 import re
 
 from cottun.defines import NO_CONTACT_ID
-from cottun.script_utils import get_file_metainfo
+from cottun.evaluation import get_file_metainfo
 
 from tampc import cfg
 from tampc.env.env import InfoKeys

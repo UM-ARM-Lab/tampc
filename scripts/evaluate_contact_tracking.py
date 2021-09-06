@@ -15,11 +15,11 @@ import re
 import matplotlib.pyplot as plt
 import typing
 
-from sklearn.cluster import Birch, DBSCAN, KMeans
+from sklearn.cluster import KMeans
 
 from cottun.defines import NO_CONTACT_ID, RunKey, CONTACT_RES_FILE, RUN_AMBIGUITY, CONTACT_ID, CONTACT_POINT_CACHE
-from cottun.script_utils import dict_to_namespace_str, plot_cluster_res, load_runs_results, get_file_metainfo, \
-    clustering_metrics
+from cottun.evaluation import dict_to_namespace_str, plot_cluster_res, load_runs_results, get_file_metainfo, \
+    clustering_metrics, compute_contact_error
 from cottun.detection_impl import ContactDetectorPlanarPybulletGripper
 
 from arm_pytorch_utilities.optim import get_device
@@ -29,9 +29,8 @@ from cottun import tracking
 from tampc.env import pybullet_env as env_base, arm
 from tampc.env.env import InfoKeys
 from tampc.env_getters.arm import ArmGetter
-from tampc.env.pybullet_env import ContactInfo
 
-from cottun.cluster_baseline import process_labels_with_noise, OnlineAgglomorativeClustering, OnlineSklearnFixedClusters
+from cottun.cluster_baseline import process_labels_with_noise, OnlineSklearnFixedClusters
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
@@ -220,64 +219,6 @@ def online_sklearn_method_factory(online_class, method, inertia_ratio=0.5, **kwa
     return sklearn_method
 
 
-def compute_contact_error(before_moving_pts, moved_pts, env_cls: Type[arm.ArmEnv], level, obj_poses,
-                          visualize=False, contact_points_instead_of_contact_config=True):
-    contact_error = []
-    if moved_pts is not None:
-        # set the gripper away from other objects so that physics don't deform the fingers
-        env = env_cls(init=(100, 100), environment_level=level, mode=p.GUI if visualize else p.DIRECT, log_video=True)
-        env.extrude_objects_in_z = True
-        # to make object IDs consistent (after a reset the object IDs may not be in previously created order)
-        env.reset()
-        for obj_id, poses in obj_poses.items():
-            pos = poses[-1, :3]
-            orientation = poses[-1, 3:]
-            p.resetBasePositionAndOrientation(obj_id, pos, orientation)
-
-        test_obj_id = env.robot_id
-        if contact_points_instead_of_contact_config:
-            col_id = p.createCollisionShape(p.GEOM_SPHERE, radius=1e-8)
-            vis_id = p.createVisualShape(p.GEOM_SPHERE, radius=0.003, rgbaColor=[0.1, 0.9, 0.3, 0.6])
-            test_obj_id = p.createMultiBody(0, col_id, vis_id, basePosition=[0, 0, 0.1])
-
-        if visualize:
-            # visualize all the moved points
-            state_c, action_c = env_base.state_action_color_pairs[0]
-            env.visualize_state_actions("movedpts", moved_pts, None, state_c, action_c, 0.1)
-            state_c, action_c = env_base.state_action_color_pairs[1]
-            env.visualize_state_actions("premovepts", before_moving_pts, None, state_c, action_c, 0.1)
-            env._dd.clear_visualization_after("movedpts", 0)
-            env._dd.clear_visualization_after("premovepts", 0)
-
-        for point in moved_pts:
-            if contact_points_instead_of_contact_config:
-                p.resetBasePositionAndOrientation(test_obj_id, [point[0], point[1], 0.1], [0, 0, 0, 1])
-            else:
-                env.set_state(np.r_[point, 0, 0])
-            p.performCollisionDetection()
-
-            distances = []
-            for obj_id in env.movable + env.immovable:
-                c = p.getClosestPoints(obj_id, test_obj_id, 100000)
-
-                if visualize:
-                    # visualize the points on the robot and object
-                    for cc in c:
-                        env._dd.draw_point("contactA", cc[ContactInfo.POS_A], color=(1, 0, 0))
-                        env._dd.draw_point("contactB", cc[ContactInfo.POS_B], color=(1, 0, 0))
-                        env._dd.draw_2d_line("contact between", cc[ContactInfo.POS_A],
-                                             np.subtract(cc[ContactInfo.POS_B], cc[ContactInfo.POS_A]), scale=1,
-                                             color=(0, 1, 0))
-                        env.draw_user_text(str(round(cc[ContactInfo.DISTANCE], 3)), xy=(0.3, 0.5, -1))
-
-                # for multi-link bodies, will return 1 per combination; store the min
-                distances.append(min(cc[ContactInfo.DISTANCE] for cc in c))
-            contact_error.append(min(distances))
-        logger.info(f"largest penetration: {round(min(contact_error), 4)}")
-        env.close()
-    return contact_error
-
-
 def get_contact_point_history(data, filename):
     """Return the contact points; for each pts[i], report the point of contact before u[i]"""
     contact_detector = ContactDetectorPlanarPybulletGripper("floating_gripper", np.diag([1, 1, 1, 50, 50, 50]), 1.)
@@ -418,8 +359,8 @@ def evaluate_methods_on_file(datafile, run_res, methods, show_in_place=False):
                                                                     contact_pts)
             run_key = RunKey(level=level, seed=seed, method=method_name, params=param_values)
             m = clustering_metrics(contact_id[:-1][in_label_contact], labels[in_label_contact])
-            contact_error = compute_contact_error(contact_pts[in_contact], moved_points, env_cls, level, obj_poses,
-                                                  visualize=False)
+            contact_error = compute_contact_error(contact_pts[in_contact], moved_points, env_cls=env_cls, level=level,
+                                                  obj_poses=obj_poses, visualize=False)
             cme = np.mean(np.abs(contact_error))
             # normalize weights
             pt_weights = pt_weights / np.sum(pt_weights)
