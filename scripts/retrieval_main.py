@@ -1,4 +1,5 @@
 import abc
+import argparse
 import copy
 import typing
 import time
@@ -17,7 +18,6 @@ from cottun.defines import NO_CONTACT_ID
 from cottun.evaluation import compute_contact_error, clustering_metrics
 from cottun.retrieval_controller import RetrievalPredeterminedController, rot_2d_mat_to_angle, \
     sample_model_points, pose_error, OursRetrievalPredeterminedController
-from tampc.controller import controller
 from tampc.env.env import InfoKeys
 
 from arm_pytorch_utilities import rand, tensor_utils, math_utils
@@ -27,7 +27,7 @@ from cottun import tracking, detection
 from tampc.env import arm
 from tampc.env.arm import Levels
 from tampc.env_getters.arm import RetrievalGetter
-from tampc.env.pybullet_env import ContactInfo, state_action_color_pairs
+from tampc.env.pybullet_env import state_action_color_pairs
 from cottun import icp
 
 ch = logging.StreamHandler()
@@ -391,21 +391,28 @@ def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.005):
     contact_error = compute_contact_error(None, moved_points, env=env, visualize=False)
     cme = np.mean(np.abs(contact_error))
 
-    # attempt grasp
+    grasp_at_pose(env, guess_pose)
+
+    return m, cme
+
+
+def grasp_at_pose(env, pose):
     predetermined_grasp_offset = {
         Levels.TIGHT_CLUTTER: [0., -0.25]
     }
     grasp_offset = predetermined_grasp_offset[env.level]
     # object is symmetric so pose can be off by 180
-    yaw = guess_pose[2]
+    yaw = pose[2]
     if yaw > np.pi / 2:
         yaw -= np.pi
     elif yaw < -np.pi / 2:
         yaw += np.pi
     grasp_offset = math_utils.rotate_wrt_origin(grasp_offset, yaw)
-    target_pos = [guess_pose[0] + grasp_offset[0], guess_pose[1] + grasp_offset[1]]
+    target_pos = [pose[0] + grasp_offset[0], pose[1] + grasp_offset[1]]
+    z = env._observe_ee(return_z=True)[-1]
     env.vis.draw_point("pre_grasp", [target_pos[0], target_pos[1], z], color=(1, 0, 0))
     # get to target pos
+    obs = env._obs()
     diff = np.subtract(target_pos, obs)
     start = time.time()
     while np.linalg.norm(diff) > 0.01 and time.time() - start < 5:
@@ -434,7 +441,6 @@ def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.005):
     env.sim_step_wait = None
 
     env.endEffectorOrientation = prev_ee_orientation
-    return m, cme
 
 
 def main(env, method_name, seed=0):
@@ -442,7 +448,7 @@ def main(env, method_name, seed=0):
         'ours': OurSoftTrackingMethod(env),
         'online-birch': SklearnTrackingMethod(env, OnlineAgglomorativeClustering, Birch, n_clusters=None,
                                               inertia_ratio=0.2,
-                                              threshold=0.07),
+                                              threshold=0.08),
         'online-dbscan': SklearnTrackingMethod(env, OnlineAgglomorativeClustering, DBSCAN, eps=0.05, min_samples=1),
         'online-kmeans': SklearnTrackingMethod(env, OnlineSklearnFixedClusters, KMeans, inertia_ratio=0.2, n_clusters=1,
                                                random_state=0)
@@ -451,13 +457,27 @@ def main(env, method_name, seed=0):
     return run_retrieval(env, methods_to_run[method_name], seed=seed)
 
 
-if __name__ == "__main__":
-    env = RetrievalGetter.env(level=Levels.TIGHT_CLUTTER, mode=p.GUI)
+parser = argparse.ArgumentParser(description='Downstream task of blind object retrieval')
+parser.add_argument('method',
+                    choices=['ours', 'online-birch', 'online-dbscan', 'online-kmeans'],
+                    help='which method to run')
+parser.add_argument('--seed', metavar='N', type=int, nargs='+',
+                    default=[0],
+                    help='random seed(s) to run')
+parser.add_argument('--no_gui', action='store_true', help='force no GUI')
+# run parameters
+parser.add_argument('--task', default=Levels.TIGHT_CLUTTER, choices=Levels,
+                    help='what task to run')
 
-    method_name = "online-birch"
+args = parser.parse_args()
+
+if __name__ == "__main__":
+    method_name = args.method
+
+    env = RetrievalGetter.env(level=args.task, mode=p.DIRECT if args.no_gui else p.GUI)
     fmis = []
     cmes = []
-    for seed in range(10):
+    for seed in args.seed:
         m, cme = main(env, method_name, seed=seed)
         fmi = m[0]
         fmis.append(fmi)
@@ -465,5 +485,7 @@ if __name__ == "__main__":
         logger.info(f"{method_name} fmi {fmi} cme {cme}")
         env.vis.clear_visualizations()
         env.reset()
-    logger.info(f"{method_name} mean fmi {np.mean(fmis)} median fmi {np.median(fmis)} std fmi {np.std(fmis)} {fmis}\n"
-                f"mean cme {np.mean(cmes)} median cme {np.median(cmes)} std cme {np.std(cmes)} {cmes}")
+    logger.info(
+        f"{method_name} mean fmi {np.mean(fmis)} median fmi {np.median(fmis)} std fmi {np.std(fmis)} {fmis}\n"
+        f"mean cme {np.mean(cmes)} median cme {np.median(cmes)} std cme {np.std(cmes)} {cmes}")
+    env.close()
