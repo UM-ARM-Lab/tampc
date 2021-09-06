@@ -67,40 +67,38 @@ def pose_msg_to_pos_quaternion(pm: Pose):
 
 class CombinedVisualizer(Visualizer):
     def __init__(self):
-        self._ros_vis: typing.Optional[DebugRvizDrawer] = None
-        self._sim_vis: typing.Optional[DebugDrawer] = None
-
-    @property
-    def ros(self):
-        return self._ros_vis
-
-    @property
-    def sim(self):
-        return self._sim_vis
+        self.ros: typing.Optional[DebugRvizDrawer] = None
+        self.sim: typing.Optional[DebugDrawer] = None
 
     def init_sim(self, *args, **kwargs):
-        self._sim_vis = DebugDrawer(*args, **kwargs)
+        self.sim = DebugDrawer(*args, **kwargs)
 
     def init_ros(self, *args, **kwargs):
-        self._ros_vis = DebugRvizDrawer(*args, **kwargs)
+        self.ros = DebugRvizDrawer(*args, **kwargs)
 
     def draw_point(self, *args, **kwargs):
-        if self._sim_vis is not None:
-            self._sim_vis.draw_point(*args, **kwargs)
-        if self._ros_vis is not None:
-            self._ros_vis.draw_point(*args, **kwargs)
+        if self.sim is not None:
+            self.sim.draw_point(*args, **kwargs)
+        if self.ros is not None:
+            self.ros.draw_point(*args, **kwargs)
 
     def draw_2d_line(self, *args, **kwargs):
-        if self._sim_vis is not None:
-            self._sim_vis.draw_2d_line(*args, **kwargs)
-        if self._ros_vis is not None:
-            self._ros_vis.draw_2d_line(*args, **kwargs)
+        if self.sim is not None:
+            self.sim.draw_2d_line(*args, **kwargs)
+        if self.ros is not None:
+            self.ros.draw_2d_line(*args, **kwargs)
 
     def draw_2d_pose(self, *args, **kwargs):
-        if self._sim_vis is not None:
-            self._sim_vis.draw_2d_pose(*args, **kwargs)
-        if self._ros_vis is not None:
-            self._ros_vis.draw_2d_pose(*args, **kwargs)
+        if self.sim is not None:
+            self.sim.draw_2d_pose(*args, **kwargs)
+        if self.ros is not None:
+            self.ros.draw_2d_pose(*args, **kwargs)
+
+    def clear_visualizations(self, names=None):
+        if self.sim is not None:
+            self.sim.clear_visualizations(names)
+        if self.ros is not None:
+            self.ros.clear_visualizations(names)
 
 
 class RealArmEnv(Env):
@@ -114,8 +112,8 @@ class RealArmEnv(Env):
 
     # REST_POS = [0.7841804139585614, -0.34821761121288775, 0.9786928519851419]
     REST_POS = [0.7841804139585614, -0.34821761121288775, 0.973]
-    REST_ORIENTATION = [-np.pi / 2, -np.pi / 4, 0]
-    REST_ORIENTATION_QUAT = [-0.7068252, 0, 0, 0.7073883]
+    REST_ORIENTATION = [-np.pi / 2, np.pi - np.pi / 4, 0]
+    # REST_ORIENTATION_QUAT = [-0.7068252, 0, 0, 0.7073883]
     BASE_POSE = ([-0.02, -0.1384885, 1.248],
                  [0.6532814824398555, 0.27059805007378895, 0.270598050072408, 0.6532814824365213])
     # REST_JOINTS = [1.4741407366569612, -0.37367112858393897, 1.420287584732473, 1.3502012009206756, -0.104535997082166,
@@ -406,7 +404,7 @@ class RealArmEnv(Env):
         # set target orientation as rest orientation
         # orientation = Quaternion(*self.REST_ORIENTATION_QUAT)
         orientation = None
-        self.victor.move_delta_cartesian_impedance(ArmSide.RIGHT, dx, dy, target_z=self.REST_POS[2], blocking=True,
+        self.victor.move_delta_cartesian_impedance(ArmSide.RIGHT, dx, dy, target_z=self.REST_POS[2] + dz, blocking=True,
                                                    step_size=0.01, target_orientation=orientation)
         self.state, _ = self._obs()
         info = self.aggregate_info()
