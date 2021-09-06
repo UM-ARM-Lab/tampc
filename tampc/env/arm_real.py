@@ -232,7 +232,7 @@ class RealArmEnv(Env):
                                                                   default_joint_config=canonical_joints,
                                                                   canonical_pos=self.REST_POS,
                                                                   canonical_orientation=self.REST_ORIENTATION,
-                                                                  device=get_device(), visualizer=self.vis)
+                                                                  visualizer=self.vis)
 
             # listen for static wrench for use in offset
             # rospy.sleep(1)

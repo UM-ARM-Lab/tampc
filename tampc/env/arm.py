@@ -1111,7 +1111,7 @@ class FloatingGripperEnv(PlanarArmEnv):
         return ContactDetectorPlanarPybulletGripper("floating_gripper", residual_precision, residual_threshold,
                                                     robot_id=self.robot_id,
                                                     canonical_orientation=self.endEffectorOrientation,
-                                                    default_joint_config=[0, 0], device=get_device())
+                                                    default_joint_config=[0, 0])
 
     def _observe_ee(self, return_z=False, return_orientation=False):
         gripperPose = p.getBasePositionAndOrientation(self.gripperId)
