@@ -7,7 +7,7 @@ import logging
 import torch
 
 # from window_recorder.recorder import WindowRecorder
-from cottun.retrieval_controller import RetrievalPredeterminedController, sample_model_points
+from cottun.retrieval_controller import RetrievalPredeterminedController, sample_model_points, rot_2d_mat_to_angle
 from tampc.env.real_env import VideoLogger
 from tampc.env.arm import Levels
 from tampc.util import EnvGetter
@@ -17,6 +17,8 @@ from datetime import datetime
 from tampc import cfg
 from tampc.env import arm_real
 from cottun import tracking, icp
+from victor_hardware_interface_msgs.msg import ControlMode
+from arm_pytorch_utilities.math_utils import rotate_wrt_origin
 
 try:
     import rospy
@@ -91,13 +93,11 @@ def object_robot_penetration_score(pt_to_config, config, object_transform, model
     # transform model points by object transform
     transformed_model_points = model_pts @ object_transform.transpose(-1, -2)
     d = pt_to_config(
-        torch.tensor(config, dtype=transformed_model_points.dtype, device=transformed_model_points.device).view(1, -1),
+        torch.tensor(config, dtype=transformed_model_points.dtype, device=transformed_model_points.device).view(-1, 2),
         transformed_model_points[:, :2])
     d = d.min().item()
     return -d
 
-
-# TODO sample model points of cheezit box
 
 from pynput import keyboard
 
@@ -284,22 +284,62 @@ def predetermined_controls(env, controls, pt_to_config, contact_set):
             obs, _, done, info = env.step(u[:2])
             print(f"pushed {u} state {obs}")
 
-        # TODO after estimating pose, plan a grasp to it and attempt a grasp
+        # after estimating pose, plan a grasp to it and attempt a grasp
+        if best_tsf_guess is not None:
+            guess_pose = [best_T[0, 2].item(), best_T[1, 2].item(), rot_2d_mat_to_angle(best_T.view(1, 3, 3)).item()]
+            grasp_at_pose(env, guess_pose)
+
         rospy.sleep(1)
 
 
-def clear_all_markers(env):
-    env.vis.ros.clear_markers("residualmag")
-    env.vis.ros.clear_markers("t")
-    env.vis.ros.clear_markers("n")
-    env.vis.ros.clear_markers("c")
-    env.vis.ros.clear_markers("likely")
-    env.vis.ros.clear_markers("most likely contact")
-    env.vis.ros.clear_markers("reaction")
-    env.vis.ros.clear_markers("tmptbest")
-    for i in range(2):
-        env.vis.ros.clear_markers(f"{i}")
-        env.vis.ros.clear_markers(f"{i}a")
+def grasp_at_pose(self: arm_real.RealArmEnv, pose, last_move_use_cartesian=True):
+    # should be safe to return to original pose
+    z_extra = 0.05
+    z = self.REST_POS[2] + z_extra
+    self.vis.ros.draw_point("grasptarget", [pose[0], pose[1], z], color=(0.7, 0, 0.7), scale=3)
+
+    self.victor.set_control_mode(control_mode=ControlMode.JOINT_POSITION, vel=self.vel)
+    self.victor.plan_to_joint_config(self.victor.right_arm_group, self.REST_JOINTS)
+
+    grasp_offset = np.array([0.4, 0])
+    yaw = pose[2]
+    # bring between [-np.pi, 0]
+    if yaw > 0 and yaw < np.pi:
+        yaw -= np.pi
+    elif yaw < -np.pi:
+        yaw += np.pi
+
+    grasp_offset = rotate_wrt_origin(grasp_offset, yaw)
+
+    offset_pos = [pose[0] + grasp_offset[0], pose[1] + grasp_offset[1], z]
+    orientation = [self.REST_ORIENTATION[0], self.REST_ORIENTATION[1], yaw + np.pi / 2 + self.REST_ORIENTATION[2]]
+    self.vis.ros.draw_point("pregrasp", offset_pos, color=(1, 0, 0), scale=3)
+    res = self.victor.plan_to_pose(self.victor.right_arm_group, self.EE_LINK_NAME, offset_pos + orientation)
+    if not res.success:
+        return
+
+    self.victor.open_right_gripper(0)
+    rospy.sleep(1)
+
+    goal_pos = [pose[0] + grasp_offset[0] * 0.6, pose[1] + grasp_offset[1] * 0.6, z]
+    self.vis.ros.draw_point("graspgoal", goal_pos, color=(0.5, 0.5, 0), scale=3)
+
+    if last_move_use_cartesian:
+        self.victor.set_control_mode(control_mode=ControlMode.CARTESIAN_IMPEDANCE, vel=self.vel)
+        move_times = 4
+        move_dir = -np.array(grasp_offset)
+        while move_times > 0:
+            act_mag = move_times if move_times <= 1 else 1
+            move_times -= 1
+            u = move_dir / np.linalg.norm(move_dir) * act_mag
+            obs, _, _, _ = self.step(u, dz=z_extra)
+    else:
+        res = self.victor.plan_to_pose(self.victor.right_arm_group, self.EE_LINK_NAME, goal_pos + orientation)
+        if not res.success:
+            return
+
+    self.victor.close_right_gripper()
+    rospy.sleep(1)
 
 
 class Levels(enum.IntEnum):
@@ -319,9 +359,9 @@ def main():
     # ignore fz since it's usually large and noisy
     residual_precision[2] = 0
 
-    env = arm_real.RealArmEnv(residual_precision=np.diag(residual_precision), residual_threshold=3.5)
+    env = arm_real.RealArmEnv(residual_precision=np.diag(residual_precision), residual_threshold=3.)
     contact_params = RealRetrievalGetter.contact_parameters(env)
-    clear_all_markers(env)
+    env.vis.clear_visualizations()
 
     pt_to_config = arm_real.RealArmPointToConfig(env)
     contact_set = tracking.ContactSetSoft(pt_to_config, contact_params)
@@ -329,16 +369,19 @@ def main():
     # confirm_pt_to_config(env, pt_to_config)
     # estimate_wrench_per_dir(env)
     # keyboard_control(env)
-    # test basic environment control
+
+    # test grasp at pose
+    grasp_at_pose(env, [env.REST_POS[0], env.REST_POS[1] + 0.3, np.pi / 2], last_move_use_cartesian=False)
 
     ctrl_per_level = {}
+
     # get 4 points on the front face
     ctrl = [[0, 0.65], None]
     ctrl += [[0, 1.0]]
     ctrl += [[0.4, -1., None], [1.0, -0.5, None]]
     ctrl += [[0, 0.6], None]
     ctrl += [[0, 0.9]]
-    ctrl += [[0.4, -1., None], [1.0, -0.5, None]]
+    ctrl += [[0.4, -0.9, None], [1.0, -0.5, None]]
     ctrl += [[0, 0.9], None]
     ctrl += [[0, 1.0]]
     ctrl += [[0.4, -0.7, None], [1.0, -0.5, None]]
@@ -357,10 +400,10 @@ def main():
 
     # move to the left side of the cheezit box
     ctrl += [[-1.0, -0.5], None]
-    ctrl += [[-1.0, 0]] * 3
-    ctrl += [[-0.5, 0]] * 1
+    ctrl += [[-1.0, 0]] * 2
+    ctrl += [[-0.9, 0]] * 1
     ctrl += [None]
-    ctrl += [[-1.0, 0]] * 3
+    ctrl += [[-1.0, 0]] * 2
     ctrl += [[0.0, 0.6], None]
     ctrl += [[0.0, 1.0]] * 3
     ctrl += [None]
@@ -368,16 +411,16 @@ def main():
 
     # poke to the right with the side
     ctrl += [[0.4, 0.], None]
-    ctrl += [[0.6, 0.]]
+    ctrl += [[0.7, 0.]]
     ctrl += [[-0.1, 0.7], None]
-    ctrl += [[0.6, 0.]]
+    ctrl += [[0.7, 0.]]
 
     # last one to force redraw of everything
     ctrl += [[0.0, 0.]]
     ctrl_per_level[Levels.NO_CLUTTER] = ctrl
 
     # move to the actual left side
-    predetermined_controls(env, ctrl_per_level[level], pt_to_config, contact_set)
+    # predetermined_controls(env, ctrl_per_level[level], pt_to_config, contact_set)
 
 
 if __name__ == "__main__":
