@@ -1,3 +1,4 @@
+import abc
 import os
 
 import numpy as np
@@ -66,10 +67,8 @@ class RetrievalController(controller.Controller):
 
 class RetrievalPredeterminedController(controller.Controller):
 
-    def __init__(self, contact_detector: detection.ContactDetector, contact_set: tracking.ContactSet, controls,
-                 nu=None):
+    def __init__(self, controls, nu=None):
         super().__init__()
-        self.contact_detector = contact_detector
         self.controls = controls
         self.i = 0
         self.nu = nu or len(self.controls[0])
@@ -77,18 +76,18 @@ class RetrievalPredeterminedController(controller.Controller):
         self.x_history = []
         self.u_history = []
 
-        self.contact_set = contact_set
-
     def done(self):
         return self.i >= len(self.controls)
+
+    @abc.abstractmethod
+    def update(self, obs, info):
+        pass
 
     def command(self, obs, info=None):
         self.x_history.append(obs)
 
         if len(self.x_history) > 1:
-            self.contact_set.update(self.x_history[-2], torch.tensor(self.u_history[-1]),
-                                    self.x_history[-1] - self.x_history[-2],
-                                    self.contact_detector, torch.tensor(info['reaction']), info=info)
+            self.update(obs, info)
 
         if self.done():
             u = [0 for _ in range(self.nu)]
@@ -98,6 +97,20 @@ class RetrievalPredeterminedController(controller.Controller):
 
         self.u_history.append(u)
         return u
+
+
+class OursRetrievalPredeterminedController(RetrievalPredeterminedController):
+
+    def __init__(self, contact_detector: detection.ContactDetector, contact_set: tracking.ContactSet, controls,
+                 nu=None):
+        super().__init__(controls, nu=nu)
+        self.contact_detector = contact_detector
+        self.contact_set = contact_set
+
+    def update(self, obs, info):
+        self.contact_set.update(self.x_history[-2], torch.tensor(self.u_history[-1]),
+                                self.x_history[-1] - self.x_history[-2],
+                                self.contact_detector, torch.tensor(info['reaction']), info=info)
 
 
 def rot_2d_mat_to_angle(T):

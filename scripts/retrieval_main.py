@@ -1,4 +1,5 @@
 import abc
+import copy
 import typing
 import time
 import math
@@ -14,11 +15,11 @@ from sklearn.cluster import Birch, DBSCAN, KMeans
 from cottun.cluster_baseline import process_labels_with_noise, OnlineAgglomorativeClustering, OnlineSklearnFixedClusters
 from cottun.defines import NO_CONTACT_ID
 from cottun.retrieval_controller import RetrievalPredeterminedController, rot_2d_mat_to_angle, \
-    sample_model_points, pose_error
+    sample_model_points, pose_error, OursRetrievalPredeterminedController
 from tampc.controller import controller
 from tampc.env.env import InfoKeys
 
-from arm_pytorch_utilities import rand, tensor_utils
+from arm_pytorch_utilities import rand, tensor_utils, math_utils
 
 from tampc import cfg
 from cottun import tracking, detection
@@ -76,7 +77,7 @@ def test_icp(env):
 
     model_points = sample_model_points(env.target_object_id, num_points=50, force_z=z, seed=0, name="cheezit")
     for i, pt in enumerate(model_points):
-        env._dd.draw_point(f"mpt{i}", pt, color=(0, 0, 1), length=0.003)
+        env.vis.draw_point(f"mpt.{i}", pt, color=(0, 0, 1), length=0.003)
 
     # perform ICP and visualize the transformed points
     # history, transformed_contact_points = icp.icp(model_points[:, :2], contact_points,
@@ -90,7 +91,7 @@ def test_icp(env):
                                       np.linalg.inv(T).T)
     for i, pt in enumerate(transformed_model_points):
         pt = [pt[0], pt[1], z]
-        env._dd.draw_point(f"tmpt{i}", pt, color=(0, 1, 0), length=0.003)
+        env.vis.draw_point(f"tmpt.{i}", pt, color=(0, 1, 0), length=0.003)
 
     while True:
         env.step([0, 0])
@@ -145,7 +146,7 @@ class OurTrackingMethod(TrackingMethod):
         env.visualize_contact_set(self.contact_set)
 
     def create_predetermined_controller(self, controls):
-        return RetrievalPredeterminedController(self.env.contact_detector, self.contact_set, controls)
+        return OursRetrievalPredeterminedController(self.env.contact_detector, self.contact_set, controls)
 
 
 class OurSoftTrackingMethod(OurTrackingMethod):
@@ -191,42 +192,23 @@ class OurHardTrackingMethod(OurTrackingMethod):
         return tracking.ContactUKF(None, self.contact_params)
 
 
-class SklearnPredeterminedController(controller.Controller):
+class SklearnPredeterminedController(RetrievalPredeterminedController):
 
     def __init__(self, online_method, contact_detector: detection.ContactDetector, controls, nu=None):
-        super().__init__()
+        super().__init__(controls, nu=nu)
         self.online_method = online_method
         self.contact_detector = contact_detector
-        self.controls = controls
-        self.i = 0
-        self.nu = nu or len(self.controls[0])
-
-        self.x_history = []
-        self.u_history = []
-
         self.in_contact = []
 
-    def command(self, obs, info=None):
-        self.x_history.append(obs)
-
-        if len(self.x_history) > 1:
-            contact_point = self.contact_detector.get_last_contact_location()
-            if contact_point is not None:
-                self.in_contact.append(True)
-                contact_point = contact_point.cpu().numpy()
-                dobj = info[InfoKeys.DEE_IN_CONTACT]
-                self.online_method.update(contact_point - dobj, self.u_history[-1], dobj)
-            else:
-                self.in_contact.append(False)
-
-        if self.i < len(self.controls):
-            u = self.controls[self.i]
-            self.i += 1
+    def update(self, obs, info):
+        contact_point = self.contact_detector.get_last_contact_location()
+        if contact_point is not None:
+            self.in_contact.append(True)
+            contact_point = contact_point.cpu().numpy()
+            dobj = info[InfoKeys.DEE_IN_CONTACT]
+            self.online_method.update(contact_point - dobj, self.u_history[-1], dobj)
         else:
-            u = [0 for _ in range(len(self.controls[0]))]
-
-        self.u_history.append(u)
-        return u
+            self.in_contact.append(False)
 
 
 class SklearnTrackingMethod(TrackingMethod):
@@ -259,7 +241,7 @@ class SklearnTrackingMethod(TrackingMethod):
             self.env.visualize_state_actions(base_name, moved_pts[indices], None, color, u_color, 0)
 
 
-def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.01):
+def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.005):
     dtype = torch.float32
 
     predetermined_control = {}
@@ -312,6 +294,7 @@ def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.01):
     info = None
     simTime = 0
     best_tsf_guess = None
+    guess_pose = None
     pose_error_per_step = {}
 
     pt_to_config = arm.ArmPointToConfig(env)
@@ -362,7 +345,7 @@ def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.01):
                 if i % 2 == 0:
                     continue
                 pt = [pt[0], pt[1], z]
-                env._dd.draw_point(f"tmptbest.{i}", pt, color=(0, 0, 1), length=0.008)
+                env.vis.draw_point(f"tmptbest.{i}", pt, color=(0, 0, 1), length=0.008)
 
         if torch.is_tensor(action):
             action = action.cpu()
@@ -370,7 +353,49 @@ def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.01):
         action = np.array(action).flatten()
         obs, rew, done, info = env.step(action)
 
-    # TODO attempt grasp
+    # attempt grasp
+    predetermined_grasp_offset = {
+        Levels.TIGHT_CLUTTER: [0., -0.25]
+    }
+    grasp_offset = predetermined_grasp_offset[env.level]
+    # object is symmetric so pose can be off by 180
+    yaw = guess_pose[2]
+    if yaw > np.pi / 2:
+        yaw -= np.pi
+    elif yaw < -np.pi / 2:
+        yaw += np.pi
+    grasp_offset = math_utils.rotate_wrt_origin(grasp_offset, yaw)
+    target_pos = [guess_pose[0] + grasp_offset[0], guess_pose[1] + grasp_offset[1]]
+    env.vis.draw_point("pre_grasp", [target_pos[0], target_pos[1], z], color=(1, 0, 0))
+    # get to target pos
+    diff = np.subtract(target_pos, obs)
+    start = time.time()
+    while np.linalg.norm(diff) > 0.01 and time.time() - start < 5:
+        obs, _, _, _ = env.step(diff / env.MAX_PUSH_DIST)
+        diff = np.subtract(target_pos, obs)
+    # rotate in place
+    prev_ee_orientation = copy.deepcopy(env.endEffectorOrientation)
+    env.endEffectorOrientation = p.getQuaternionFromEuler([0, np.pi / 2, yaw + np.pi / 2])
+    env.sim_step_wait = 0.01
+    env.step([0, 0])
+    env.open_gripper()
+    env.step([0, 0])
+    env.sim_step_wait = None
+    # go for the grasp
+
+    move_times = 4
+    move_dir = -np.array(grasp_offset)
+    while move_times > 0:
+        act_mag = move_times if move_times <= 1 else 1
+        move_times -= 1
+        u = move_dir / np.linalg.norm(move_dir) * act_mag
+        obs, _, _, _ = env.step(u)
+    env.sim_step_wait = 0.01
+    env.close_gripper()
+    env.step([0, 0])
+    env.sim_step_wait = None
+
+    env.endEffectorOrientation = prev_ee_orientation
 
 
 def main(env, method_name, seed=0):
@@ -382,6 +407,7 @@ def main(env, method_name, seed=0):
         'online-birch': SklearnTrackingMethod(env, OnlineSklearnFixedClusters, KMeans, inertia_ratio=0.2, n_clusters=1,
                                               random_state=0)
     }
+    env.draw_user_text(f"{method_name} seed {seed}", xy=[-0.1, 0.28, -0.5])
     run_retrieval(env, methods_to_run[method_name], seed=seed)
 
 
