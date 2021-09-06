@@ -280,11 +280,11 @@ class ArmEnv(PybulletEnv):
         if action is not None:
             self._draw_action(action, old_state=state)
 
-    # def _open_gripper(self):
+    # def open_gripper(self):
     #     p.resetJointState(self.armId, PandaGripperID.FINGER_A, self.FINGER_OPEN)
     #     p.resetJointState(self.armId, PandaGripperID.FINGER_B, self.FINGER_OPEN)
     #
-    # def _close_gripper(self):
+    # def close_gripper(self):
     #     p.setJointMotorControlArray(self.armId,
     #                                 [PandaGripperID.FINGER_A, PandaGripperID.FINGER_B],
     #                                 p.POSITION_CONTROL,
@@ -363,8 +363,8 @@ class ArmEnv(PybulletEnv):
         self._calculate_init_joints()
         for i in self.armInds:
             p.resetJointState(self.armId, i, self.initJoints[i])
-        # self._open_gripper()
-        # self._close_gripper()
+        # self.open_gripper()
+        # self.close_gripper()
 
         self._make_robot_translucent(self.armId)
 
@@ -681,7 +681,8 @@ class ArmEnv(PybulletEnv):
         self._draw_state()
 
         cost, done = self.evaluate_cost(self.state, action)
-        self._dd.draw_text('cost', '{0:.3f}'.format(cost), 0)
+        if cost is not None:
+            self._dd.draw_text('cost', '{0:.3f}'.format(cost), 0)
 
         # summarize information per sim step into information for entire control step
         info = self._aggregate_info()
@@ -698,7 +699,7 @@ class ArmEnv(PybulletEnv):
                                                   end,
                                                   self.endEffectorOrientation)
         self._send_move_command(jointPoses)
-        # self._close_gripper()
+        # self.close_gripper()
 
     def _send_move_command(self, jointPoses):
         num_arm_indices = len(self.armInds)
@@ -757,8 +758,8 @@ class ArmEnv(PybulletEnv):
 
         for i in self.armInds:
             p.resetJointState(self.armId, i, self.initJoints[i])
-        # self._open_gripper()
-        # self._close_gripper()
+        # self.open_gripper()
+        # self.close_gripper()
 
         # set robot init config
         self._clear_state_between_control_steps()
@@ -1058,8 +1059,9 @@ class PlanarArmEnv(ArmEnv):
             self._move_and_wait(intermediate_ee_pos, steps_to_wait=self.wait_sim_step_per_mini_step)
 
         cost, done, info = self._finish_action(old_state, action)
+        rew = -cost if cost is not None else None
 
-        return np.copy(self.state), -cost, done, info
+        return np.copy(self.state), rew, done, info
 
     def _draw_state(self):
         pos = self.get_ee_pos(self.state)
@@ -1084,7 +1086,7 @@ class FloatingGripperEnv(PlanarArmEnv):
     MAX_FORCE = 30
     MAX_GRIPPER_FORCE = 30
     MAX_PUSH_DIST = 0.03
-    OPEN_ANGLE = 0.04
+    OPEN_ANGLE = 0.05
     CLOSE_ANGLE = 0.0
 
     @property
@@ -1120,16 +1122,14 @@ class FloatingGripperEnv(PlanarArmEnv):
             pos = pos, gripperPose[1]
         return pos
 
-    def _open_gripper(self):
-        # p.resetJointState(self.gripperId, PandaJustGripperID.FINGER_A, self.OPEN_ANGLE)
-        # p.resetJointState(self.gripperId, PandaJustGripperID.FINGER_B, self.OPEN_ANGLE)
+    def open_gripper(self):
         p.setJointMotorControlArray(self.gripperId,
                                     [PandaJustGripperID.FINGER_A, PandaJustGripperID.FINGER_B],
                                     p.POSITION_CONTROL,
                                     targetPositions=[self.OPEN_ANGLE, self.OPEN_ANGLE],
                                     forces=[self.MAX_GRIPPER_FORCE, self.MAX_GRIPPER_FORCE])
 
-    def _close_gripper(self):
+    def close_gripper(self):
         p.setJointMotorControlArray(self.gripperId,
                                     [PandaJustGripperID.FINGER_A, PandaJustGripperID.FINGER_B],
                                     p.POSITION_CONTROL,
@@ -1137,8 +1137,7 @@ class FloatingGripperEnv(PlanarArmEnv):
                                     forces=[self.MAX_GRIPPER_FORCE, self.MAX_GRIPPER_FORCE])
 
     def _move_pusher(self, end):
-        p.changeConstraint(self.gripperConstraint, end, maxForce=self.MAX_FORCE)
-        self._close_gripper()
+        p.changeConstraint(self.gripperConstraint, end, self.endEffectorOrientation, maxForce=self.MAX_FORCE)
 
     def _setup_objects(self):
         self.immovable = []
@@ -1284,7 +1283,7 @@ class FloatingGripperEnv(PlanarArmEnv):
             p.resetBasePositionAndOrientation(self.gripperId, self.init, self.endEffectorOrientation)
             self.gripperConstraint = p.createConstraint(self.gripperId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
                                                         self.init, childFrameOrientation=self.endEffectorOrientation)
-            self._close_gripper()
+            self.close_gripper()
         elif self.level in selected_levels:
             z = 0.1
             s = 0.25
@@ -1368,7 +1367,7 @@ class FloatingGripperEnv(PlanarArmEnv):
         self.gripperConstraint = p.createConstraint(self.gripperId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
                                                     self.init, childFrameOrientation=self.endEffectorOrientation)
 
-        self._close_gripper()
+        self.close_gripper()
         self._make_robot_translucent(self.gripperId)
 
     def get_ee_contact_info(self, bodyId):
@@ -1395,7 +1394,7 @@ class FloatingGripperEnv(PlanarArmEnv):
         for _ in range(1000):
             p.stepSimulation()
 
-        self._open_gripper()
+        self.open_gripper()
         if self.gripperConstraint:
             p.removeConstraint(self.gripperConstraint)
 
@@ -1406,7 +1405,7 @@ class FloatingGripperEnv(PlanarArmEnv):
         p.resetBasePositionAndOrientation(self.gripperId, self.init, self.endEffectorOrientation)
         self.gripperConstraint = p.createConstraint(self.gripperId, -1, -1, -1, p.JOINT_FIXED, [0, 0, 1], [0, 0, 0],
                                                     self.init, childFrameOrientation=self.endEffectorOrientation)
-        self._close_gripper()
+        self.close_gripper()
 
         # set robot init config
         self._clear_state_between_control_steps()
@@ -1486,10 +1485,7 @@ class ObjectRetrievalEnv(FloatingGripperEnv):
         self.objects = self.immovable + self.movable
 
     def evaluate_cost(self, state, action=None):
-        # actually don't have information needed inside state, need to query object location
-        object_pos = p.getBasePositionAndOrientation(self.target_object_id)[0]
-        done = object_pos[0] < 0
-        return 0 if done else 1, done
+        return None, False
 
 
 def interpolate_pos(start, end, t):
