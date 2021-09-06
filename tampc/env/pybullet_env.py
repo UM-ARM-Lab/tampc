@@ -299,7 +299,10 @@ class DebugDrawer(Visualizer):
 
     def clear_visualizations(self, names=None):
         if names is None:
-            names = list(self._debug_ids.keys())
+            p.removeAllUserDebugItems()
+            self._debug_ids = {}
+            return
+
         for name in names:
             if name not in self._debug_ids:
                 continue
