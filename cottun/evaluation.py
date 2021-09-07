@@ -164,3 +164,12 @@ def compute_contact_error(before_moving_pts, moved_pts,
         if contact_points_instead_of_contact_config:
             p.removeBody(test_obj_id)
     return contact_error
+
+
+def object_robot_penetration_score(pt_to_config, config, object_transform, model_pts):
+    """Compute the penetration between object and robot for a given transform of the object"""
+    # transform model points by object transform
+    transformed_model_points = model_pts @ object_transform.transpose(-1, -2)
+    d = pt_to_config(config[:, :2], transformed_model_points[:, :2])
+    d = d.min().item()
+    return -d

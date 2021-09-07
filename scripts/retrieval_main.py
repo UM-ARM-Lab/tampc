@@ -15,7 +15,7 @@ from sklearn.cluster import Birch, DBSCAN, KMeans
 
 from cottun.cluster_baseline import process_labels_with_noise, OnlineAgglomorativeClustering, OnlineSklearnFixedClusters
 from cottun.defines import NO_CONTACT_ID
-from cottun.evaluation import compute_contact_error, clustering_metrics
+from cottun.evaluation import compute_contact_error, clustering_metrics, object_robot_penetration_score
 from cottun.retrieval_controller import RetrievalPredeterminedController, rot_2d_mat_to_angle, \
     sample_model_points, pose_error, OursRetrievalPredeterminedController
 from tampc.env.env import InfoKeys
@@ -97,15 +97,6 @@ def test_icp(env):
     while True:
         env.step([0, 0])
         time.sleep(0.2)
-
-
-def object_robot_penetration_score(pt_to_config, config, object_transform, model_pts):
-    """Compute the penetration between object and robot for a given transform of the object"""
-    # transform model points by object transform
-    transformed_model_points = model_pts @ object_transform.transpose(-1, -2)
-    d = pt_to_config(config[:, :2], transformed_model_points[:, :2])
-    d = d.min().item()
-    return -d
 
 
 class TrackingMethod:
