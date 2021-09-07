@@ -1,4 +1,5 @@
 #! /usr/bin/env python
+import argparse
 import enum
 import time
 
@@ -8,11 +9,13 @@ import logging
 import torch
 import copy
 
-# from window_recorder.recorder import WindowRecorder
-from tf.transformations import quaternion_from_euler
+from arm_pytorch_utilities import tensor_utils
+from sklearn.cluster import Birch, DBSCAN, KMeans
 
+from cottun.cluster_baseline import OnlineAgglomorativeClustering, OnlineSklearnFixedClusters
 from cottun.evaluation import object_robot_penetration_score
-from cottun.retrieval_controller import RetrievalPredeterminedController, sample_model_points, rot_2d_mat_to_angle
+from cottun.retrieval_controller import RetrievalPredeterminedController, sample_model_points, rot_2d_mat_to_angle, \
+    SklearnTrackingMethod, TrackingMethod, OurSoftTrackingMethod, SklearnPredeterminedController
 from tampc.env.real_env import VideoLogger
 from tampc.env.arm import Levels
 from tampc.util import EnvGetter
@@ -22,7 +25,6 @@ from datetime import datetime
 from tampc import cfg
 from tampc.env import arm_real
 from cottun import tracking, icp
-from victor_hardware_interface_msgs.msg import ControlMode
 from arm_pytorch_utilities.math_utils import rotate_wrt_origin
 
 try:
@@ -196,9 +198,6 @@ class RealRetrievalPredeterminedController(RetrievalPredeterminedController):
         self.contact_set = contact_set
         super().__init__(controls, nu=nu)
 
-    def done(self):
-        return self.i >= len(self.controls)
-
     def command(self, obs, info=None, visualizer=None):
         self.x_history.append(obs)
 
@@ -224,10 +223,42 @@ class RealRetrievalPredeterminedController(RetrievalPredeterminedController):
         return u, skip_update
 
 
-def predetermined_controls(env, level, pt_to_config, contact_set):
+class RealSklearnPredeterminedController(SklearnPredeterminedController):
+
+    def command(self, obs, info=None, visualizer=None):
+        self.x_history.append(obs)
+
+        if self.done():
+            u = [0 for _ in range(self.nu)]
+        else:
+            u = self.controls[self.i]
+            self.i += 1
+
+        skip_update = (u is None) or (len(self.x_history) < 2) or (
+                (self.u_history[-1] is None) or (len(self.u_history[-1]) > 2))
+        if not skip_update:
+            self.update(obs, info, visualizer=visualizer)
+
+        self.u_history.append(u)
+        return u, skip_update
+
+
+class RealOurSoftTrackingMethod(OurSoftTrackingMethod):
+    def create_predetermined_controller(self, controls):
+        self.ctrl = RealRetrievalPredeterminedController(self.env.contact_detector, self.contact_set, controls, nu=2)
+        return self.ctrl
+
+
+class RealSklearnTrackingMethod(SklearnTrackingMethod):
+    def create_predetermined_controller(self, controls):
+        self.ctrl = RealSklearnPredeterminedController(self.online_method, self.env.contact_detector, controls, nu=2)
+        return self.ctrl
+
+
+def run_retrieval(env, level, pt_to_config, method: TrackingMethod):
     input("enter to start execution")
     controls, ret_ctrl = create_predetermined_controls(level)
-    ctrl = RealRetrievalPredeterminedController(env.contact_detector, contact_set, controls, nu=2)
+    ctrl = method.create_predetermined_controller(controls)
     obs = env._obs()
     info = None
     dtype = torch.float32
@@ -247,16 +278,15 @@ def predetermined_controls(env, level, pt_to_config, contact_set):
 
             with env.motion_status_input_lock:
                 u, skip_update = ctrl.command(obs, info, env.vis.ros)
-            env.visualize_contact_set(contact_set)
+            method.visualize_contact_points(env)
 
             if env.contact_detector.in_contact() and not skip_update:
-                pts = contact_set.get_posterior_points()
-                to_iter = contact_set.get_hard_assignment(contact_set.p.hard_assignment_threshold)
                 all_configs = torch.tensor(ctrl.x_history, dtype=dtype, device=mph.device).view(-1, env.nx)
                 dist_per_est_obj = []
-                for c in to_iter:
-                    this_pts = pts[c]
-                    T, distances, _ = icp.icp_3(this_pts, model_points[:, :2], given_init_pose=best_tsf_guess, batch=50)
+                for this_pts in method:
+                    this_pts = tensor_utils.ensure_tensor(model_points.device, dtype, this_pts)
+                    T, distances, _ = icp.icp_3(this_pts.view(-1, 2), model_points[:, :2],
+                                                given_init_pose=best_tsf_guess, batch=50)
                     T = T.inverse()
                     penetration = [object_robot_penetration_score(pt_to_config, all_configs, T[b], mph) for b in
                                    range(T.shape[0])]
@@ -266,6 +296,7 @@ def predetermined_controls(env, level, pt_to_config, contact_set):
                     # pick object with lowest variance in its translation estimate
                     translations = T[:, :2, 2]
                     best_tsf_distances = (translations.var(dim=0).sum()).item()
+                    yaws = rot_2d_mat_to_angle(T)
 
                     dist_per_est_obj.append(best_tsf_distances)
                     if best_distance is None or best_tsf_distances < best_distance:
@@ -440,6 +471,13 @@ def create_predetermined_controls(level: Levels):
     return ctrl, ret_ctrl
 
 
+parser = argparse.ArgumentParser(description='Downstream task of blind object retrieval')
+parser.add_argument('method',
+                    choices=['ours', 'online-birch', 'online-dbscan', 'online-kmeans'],
+                    help='which method to run')
+args = parser.parse_args()
+
+
 def main():
     level = Levels.TIGHT_CLUTTER
 
@@ -457,7 +495,15 @@ def main():
     contact_params = RealRetrievalGetter.contact_parameters(env)
 
     pt_to_config = arm_real.RealArmPointToConfig(env)
-    contact_set = tracking.ContactSetSoft(pt_to_config, contact_params)
+
+    methods_to_run = {
+        'ours': RealOurSoftTrackingMethod(env, contact_params, pt_to_config),
+        'online-birch': RealSklearnTrackingMethod(env, OnlineAgglomorativeClustering, Birch, n_clusters=None,
+                                                  inertia_ratio=0.2, threshold=0.05),
+        'online-dbscan': RealSklearnTrackingMethod(env, OnlineAgglomorativeClustering, DBSCAN, eps=0.1, min_samples=1),
+        'online-kmeans': RealSklearnTrackingMethod(env, OnlineSklearnFixedClusters, KMeans, inertia_ratio=0.2,
+                                                   n_clusters=1, random_state=0)
+    }
 
     # confirm_pt_to_config(env, pt_to_config)
     # estimate_wrench_per_dir(env)
@@ -468,7 +514,8 @@ def main():
 
     # move to the actual left side
     env.vis.clear_visualizations(["0", "0a", "1", "1a", "c", "reaction", "tmptbest", "residualmag"])
-    predetermined_controls(env, level, pt_to_config, contact_set)
+
+    run_retrieval(env, level, pt_to_config, methods_to_run[args.method])
     env.vis.clear_visualizations()
 
 

@@ -1,5 +1,6 @@
 import abc
 import os
+import typing
 
 import numpy as np
 import pybullet as p
@@ -8,9 +9,12 @@ from arm_pytorch_utilities import rand
 from arm_pytorch_utilities.math_utils import angular_diff
 
 from cottun import detection, tracking
+from cottun.cluster_baseline import process_labels_with_noise
+from cottun.defines import NO_CONTACT_ID
 from tampc import cfg
 from tampc.controller import controller
-from tampc.env.pybullet_env import closest_point_on_surface, ContactInfo
+from tampc.env.env import InfoKeys
+from tampc.env.pybullet_env import closest_point_on_surface, ContactInfo, state_action_color_pairs
 
 
 class RetrievalController(controller.Controller):
@@ -173,3 +177,169 @@ def pose_error(target_pose, guess_pose):
                     abs(angular_diff(target_pose[-1] + np.pi, guess_pose[-1])))
     pos_error = np.linalg.norm(np.subtract(target_pose[:2], guess_pose[:2]))
     return pos_error, yaw_error
+
+
+class TrackingMethod:
+    """Common interface for each tracking method including ours and baselines"""
+
+    @abc.abstractmethod
+    def __iter__(self):
+        """Iterating over this provides a set of contact points corresponding to an object"""
+
+    @abc.abstractmethod
+    def create_predetermined_controller(self, controls):
+        """Return a predetermined controller that updates the method when querying for a command"""
+
+    @abc.abstractmethod
+    def visualize_contact_points(self, env):
+        """Render the tracked contact points in the given environment"""
+
+    @abc.abstractmethod
+    def get_labelled_moved_points(self, labels):
+        """Return the final position of the tracked points as well as their object label"""
+
+
+class SoftTrackingIterator:
+    def __init__(self, pts, to_iter):
+        self.pts = pts
+        self.to_iter = to_iter
+
+    def __next__(self):
+        indices = next(self.to_iter)
+        return self.pts[indices]
+
+
+class OurTrackingMethod(TrackingMethod):
+    def __init__(self, env):
+        self.env = env
+        self.ctrl = None
+
+    @property
+    @abc.abstractmethod
+    def contact_set(self) -> tracking.ContactSet:
+        """Return some contact set"""
+
+    def visualize_contact_points(self, env):
+        env.visualize_contact_set(self.contact_set)
+
+    def create_predetermined_controller(self, controls):
+        self.ctrl = OursRetrievalPredeterminedController(self.env.contact_detector, self.contact_set, controls)
+        return self.ctrl
+
+
+class OurSoftTrackingMethod(OurTrackingMethod):
+    def __init__(self, env, contact_params, pt_to_config):
+        self.contact_params = contact_params
+        self._contact_set = tracking.ContactSetSoft(pt_to_config, self.contact_params)
+        super(OurSoftTrackingMethod, self).__init__(env)
+
+    @property
+    def contact_set(self) -> tracking.ContactSetSoft:
+        return self._contact_set
+
+    def __iter__(self):
+        pts = self.contact_set.get_posterior_points()
+        to_iter = self.contact_set.get_hard_assignment(self.contact_set.p.hard_assignment_threshold)
+        return SoftTrackingIterator(pts, iter(to_iter))
+
+    def get_labelled_moved_points(self, labels):
+        groups = self.contact_set.get_hard_assignment(self.contact_params.hard_assignment_threshold)
+        contact_indices = torch.tensor(self.ctrl.contact_indices, device=groups[0].device)
+        # self.ctrl.contact_indices = []
+
+        for group_id, group in enumerate(groups):
+            labels[contact_indices[group].cpu().numpy()] = group_id + 1
+
+        contact_pts = self.contact_set.get_posterior_points()
+        return labels, contact_pts
+
+
+class HardTrackingIterator:
+    def __init__(self, contact_objs):
+        self.contact_objs = contact_objs
+
+    def __next__(self):
+        object: tracking.ContactObject = next(self.contact_objs)
+        return object.points
+
+
+class OurHardTrackingMethod(OurTrackingMethod):
+    def __init__(self, env, contact_params):
+        self.contact_params = contact_params
+        self._contact_set = tracking.ContactSetHard(self.contact_params,
+                                                    contact_object_factory=self.create_contact_object)
+        super(OurHardTrackingMethod, self).__init__(env)
+
+    @property
+    def contact_set(self) -> tracking.ContactSetHard:
+        return self._contact_set
+
+    def __iter__(self):
+        return HardTrackingIterator(iter(self.contact_set))
+
+    def create_contact_object(self):
+        return tracking.ContactUKF(None, self.contact_params)
+
+
+class SklearnPredeterminedController(RetrievalPredeterminedController):
+
+    def __init__(self, online_method, contact_detector: detection.ContactDetector, controls, nu=None):
+        super().__init__(controls, nu=nu)
+        self.online_method = online_method
+        self.contact_detector = contact_detector
+        self.in_contact = []
+
+    def update(self, obs, info, visualizer=None):
+        contact_point = self.contact_detector.get_last_contact_location(visualizer=visualizer)
+        if contact_point is not None:
+            self.in_contact.append(True)
+            contact_point = contact_point.cpu().numpy()
+            dobj = info[InfoKeys.DEE_IN_CONTACT]
+            self.online_method.update(contact_point - dobj, self.u_history[-1], dobj)
+        else:
+            self.in_contact.append(False)
+
+
+class SklearnTrackingMethod(TrackingMethod):
+    def __init__(self, env, online_class, method, inertia_ratio=0.5, **kwargs):
+        self.env = env
+        self.online_method = online_class(method(**kwargs), inertia_ratio=inertia_ratio)
+        self.ctrl: typing.Optional[SklearnPredeterminedController] = None
+
+    def __iter__(self):
+        moved_pt_labels = process_labels_with_noise(self.online_method.final_labels())
+        moved_pts = self.online_method.moved_data()
+        # labels[valid] = moved_pt_labels
+        groups = []
+        for i, obj_id in enumerate(np.unique(moved_pt_labels)):
+            if obj_id == NO_CONTACT_ID:
+                continue
+
+            indices = moved_pt_labels == obj_id
+            groups.append(moved_pts[indices])
+
+        return iter(groups)
+
+    def create_predetermined_controller(self, controls):
+        self.ctrl = SklearnPredeterminedController(self.online_method, self.env.contact_detector, controls, nu=2)
+        return self.ctrl
+
+    def visualize_contact_points(self, env):
+        # valid = self.ctrl.in_contact
+        # labels = np.ones(len(valid)) * NO_CONTACT_ID
+        moved_pt_labels = process_labels_with_noise(self.online_method.final_labels())
+        moved_pts = self.online_method.moved_data()
+        # labels[valid] = moved_pt_labels
+        for i, obj_id in enumerate(np.unique(moved_pt_labels)):
+            if obj_id == NO_CONTACT_ID:
+                continue
+
+            indices = moved_pt_labels == obj_id
+            color, u_color = state_action_color_pairs[i % len(state_action_color_pairs)]
+            base_name = str(i)
+            self.env.visualize_state_actions(base_name, moved_pts[indices], None, color, u_color, 0)
+
+    def get_labelled_moved_points(self, labels):
+        labels[1:][self.ctrl.in_contact] = process_labels_with_noise(self.online_method.final_labels())
+        moved_pts = self.online_method.moved_data()
+        return labels, moved_pts
