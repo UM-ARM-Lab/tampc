@@ -10,6 +10,7 @@ import os
 from datetime import datetime
 
 from sklearn.cluster import Birch, DBSCAN, KMeans
+from window_recorder.recorder import WindowRecorder
 
 from cottun.cluster_baseline import OnlineAgglomorativeClustering, OnlineSklearnFixedClusters
 from cottun.defines import NO_CONTACT_ID
@@ -310,14 +311,17 @@ if __name__ == "__main__":
     env = RetrievalGetter.env(level=args.task, mode=p.DIRECT if args.no_gui else p.GUI)
     fmis = []
     cmes = []
-    for seed in args.seed:
-        m, cme = main(env, method_name, seed=seed)
-        fmi = m[0]
-        fmis.append(fmi)
-        cmes.append(cme)
-        logger.info(f"{method_name} fmi {fmi} cme {cme}")
-        env.vis.clear_visualizations()
-        env.reset()
+    # backup video logging in case ffmpeg and nvidia driver are not compatible
+    with WindowRecorder(window_names=("Bullet Physics ExampleBrowser using OpenGL3+ [btgl] Release build",),
+                        name_suffix="sim", frame_rate=30.0, save_dir=cfg.VIDEO_DIR):
+        for seed in args.seed:
+            m, cme = main(env, method_name, seed=seed)
+            fmi = m[0]
+            fmis.append(fmi)
+            cmes.append(cme)
+            logger.info(f"{method_name} fmi {fmi} cme {cme}")
+            env.vis.clear_visualizations()
+            env.reset()
     logger.info(
         f"{method_name} mean fmi {np.mean(fmis)} median fmi {np.median(fmis)} std fmi {np.std(fmis)} {fmis}\n"
         f"mean cme {np.mean(cmes)} median cme {np.median(cmes)} std cme {np.std(cmes)} {cmes}")

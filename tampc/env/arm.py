@@ -1480,6 +1480,16 @@ class ObjectRetrievalEnv(FloatingGripperEnv):
             self.movable.append(p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbTomatoSoupCan', "model.urdf"),
                                            [0.2, -0.1, z],
                                            p.getQuaternionFromEuler([0, 0, 0]), flags=flags, globalScaling=2))
+            self.movable.append(p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbMustardBottle', "model.urdf"),
+                                           [0.25, -0.2, z],
+                                           p.getQuaternionFromEuler([0, 0, -1]), flags=flags, globalScaling=1))
+            self.movable.append(p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbMasterChefCan', "model.urdf"),
+                                           [0.3, 0.2, z],
+                                           p.getQuaternionFromEuler([0, 0, 0]), flags=flags, globalScaling=2))
+            self.movable.append(p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbPottedMeatCan', "model.urdf"),
+                                           [0.34, 0.05, z],
+                                           p.getQuaternionFromEuler([0, 0, 0]), flags=flags, globalScaling=1.5))
+
         for objId in self.immovable:
             p.changeVisualShape(objId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])
         self.objects = self.immovable + self.movable
