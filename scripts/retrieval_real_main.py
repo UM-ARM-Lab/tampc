@@ -1,12 +1,17 @@
 #! /usr/bin/env python
 import enum
+import time
 
 import colorama
 import numpy as np
 import logging
 import torch
+import copy
 
 # from window_recorder.recorder import WindowRecorder
+from tf.transformations import quaternion_from_euler
+
+from cottun.evaluation import object_robot_penetration_score
 from cottun.retrieval_controller import RetrievalPredeterminedController, sample_model_points, rot_2d_mat_to_angle
 from tampc.env.real_env import VideoLogger
 from tampc.env.arm import Levels
@@ -77,7 +82,7 @@ class RealRetrievalGetter(EnvGetter):
                                             control_similarity=no_function,
                                             state_to_reaction=no_function,
                                             max_pos_move_per_action=env.MAX_PUSH_DIST,
-                                            length=0.02,
+                                            length=0.01,
                                             hard_assignment_threshold=0.4,
                                             intersection_tolerance=0.002,
                                             weight_multiplier=0.1,
@@ -86,17 +91,6 @@ class RealRetrievalGetter(EnvGetter):
             for k, v in kwargs.items():
                 setattr(params, k, v)
         return params
-
-
-def object_robot_penetration_score(pt_to_config, config, object_transform, model_pts):
-    """Compute the penetration between object and robot for a given transform of the object"""
-    # transform model points by object transform
-    transformed_model_points = model_pts @ object_transform.transpose(-1, -2)
-    d = pt_to_config(
-        torch.tensor(config, dtype=transformed_model_points.dtype, device=transformed_model_points.device).view(-1, 2),
-        transformed_model_points[:, :2])
-    d = d.min().item()
-    return -d
 
 
 from pynput import keyboard
@@ -170,7 +164,7 @@ def confirm_pt_to_config(env, pt_to_config):
     from arm_pytorch_utilities import rand
     import torch
     rand.seed(1)
-    pts = (torch.rand((10, 2)) - 0.5) * 0.3
+    pts = (torch.rand((20, 2)) - 0.5) * 0.3
     pts += config
     pts[:, 1] += 0.1
     d = pt_to_config(torch.from_numpy(config).view(1, -1), pts)
@@ -197,17 +191,22 @@ def keyboard_control(env):
 
 
 class RealRetrievalPredeterminedController(RetrievalPredeterminedController):
+    def __init__(self, contact_detector, contact_set, controls, nu=None):
+        self.contact_detector = contact_detector
+        self.contact_set = contact_set
+        super().__init__(controls, nu=nu)
+
     def done(self):
         return self.i >= len(self.controls)
 
     def command(self, obs, info=None, visualizer=None):
         self.x_history.append(obs)
 
-        if self.i < len(self.controls):
+        if self.done():
+            u = [0 for _ in range(self.nu)]
+        else:
             u = self.controls[self.i]
             self.i += 1
-        else:
-            u = [0 for _ in range(self.nu)]
 
         # 3 elements in a control means to perform it but not calibrate (and ignore whether we think we're in contact or not)
         # skip if we were calibrating with the last control, or if we are currently calibrating
@@ -217,17 +216,20 @@ class RealRetrievalPredeterminedController(RetrievalPredeterminedController):
             prev_u = torch.tensor(self.u_history[-1][:2])
             self.contact_set.update(self.x_history[-2], prev_u,
                                     self.x_history[-1] - self.x_history[-2],
-                                    self.contact_detector, torch.tensor(info['reaction']), info=info,
+                                    self.contact_detector, torch.tensor(info['reaction']),
+                                    info=info,
                                     visualizer=visualizer)
 
         self.u_history.append(u)
         return u, skip_update
 
 
-def predetermined_controls(env, controls, pt_to_config, contact_set):
+def predetermined_controls(env, level, pt_to_config, contact_set):
     input("enter to start execution")
+    controls, ret_ctrl = create_predetermined_controls(level)
     ctrl = RealRetrievalPredeterminedController(env.contact_detector, contact_set, controls, nu=2)
-    obs, info = env._obs()
+    obs = env._obs()
+    info = None
     dtype = torch.float32
 
     z = env._observe_ee(return_z=True)[-1]
@@ -240,7 +242,7 @@ def predetermined_controls(env, controls, pt_to_config, contact_set):
     best_tsf_guess = None
 
     with VideoLogger():
-        while not ctrl.done():
+        while not rospy.is_shutdown() and not ctrl.done():
             best_distance = None
 
             with env.motion_status_input_lock:
@@ -250,12 +252,13 @@ def predetermined_controls(env, controls, pt_to_config, contact_set):
             if env.contact_detector.in_contact() and not skip_update:
                 pts = contact_set.get_posterior_points()
                 to_iter = contact_set.get_hard_assignment(contact_set.p.hard_assignment_threshold)
+                all_configs = torch.tensor(ctrl.x_history, dtype=dtype, device=mph.device).view(-1, env.nx)
                 dist_per_est_obj = []
                 for c in to_iter:
                     this_pts = pts[c]
-                    T, distances, _ = icp.icp_3(this_pts, model_points[:, :2], given_init_pose=best_tsf_guess, batch=30)
+                    T, distances, _ = icp.icp_3(this_pts, model_points[:, :2], given_init_pose=best_tsf_guess, batch=50)
                     T = T.inverse()
-                    penetration = [object_robot_penetration_score(pt_to_config, obs, T[b], mph) for b in
+                    penetration = [object_robot_penetration_score(pt_to_config, all_configs, T[b], mph) for b in
                                    range(T.shape[0])]
                     score = np.abs(penetration)
                     best_tsf_index = np.argmin(score)
@@ -279,7 +282,8 @@ def predetermined_controls(env, controls, pt_to_config, contact_set):
 
             if u is None:
                 env.recalibrate_static_wrench()
-                obs, info = env._obs()
+                obs = env._obs()
+                info = None
                 continue
             obs, _, done, info = env.step(u[:2])
             print(f"pushed {u} state {obs}")
@@ -287,22 +291,20 @@ def predetermined_controls(env, controls, pt_to_config, contact_set):
         # after estimating pose, plan a grasp to it and attempt a grasp
         if best_tsf_guess is not None:
             guess_pose = [best_T[0, 2].item(), best_T[1, 2].item(), rot_2d_mat_to_angle(best_T.view(1, 3, 3)).item()]
-            grasp_at_pose(env, guess_pose)
+            grasp_at_pose(env, guess_pose, ret_ctrl=ret_ctrl)
 
         rospy.sleep(1)
 
 
-def grasp_at_pose(self: arm_real.RealArmEnv, pose, last_move_use_cartesian=True):
+def grasp_at_pose(self: arm_real.RealArmEnv, pose, ret_ctrl=(), timeout=40):
     # should be safe to return to original pose
     z_extra = 0.05
     z = self.REST_POS[2] + z_extra
     self.vis.ros.draw_point("grasptarget", [pose[0], pose[1], z], color=(0.7, 0, 0.7), scale=3)
 
-    self.victor.set_control_mode(control_mode=ControlMode.JOINT_POSITION, vel=self.vel)
-    self.victor.plan_to_joint_config(self.victor.right_arm_group, self.REST_JOINTS)
-
-    grasp_offset = np.array([0.4, 0])
-    yaw = pose[2]
+    grasp_offset = np.array([0.35, 0])
+    yaw = copy.copy(pose[2])
+    yaw += np.pi / 2
     # bring between [-np.pi, 0]
     if yaw > 0 and yaw < np.pi:
         yaw -= np.pi
@@ -312,10 +314,26 @@ def grasp_at_pose(self: arm_real.RealArmEnv, pose, last_move_use_cartesian=True)
     grasp_offset = rotate_wrt_origin(grasp_offset, yaw)
 
     offset_pos = [pose[0] + grasp_offset[0], pose[1] + grasp_offset[1], z]
-    orientation = [self.REST_ORIENTATION[0], self.REST_ORIENTATION[1], yaw + np.pi / 2 + self.REST_ORIENTATION[2]]
+    orientation = [self.REST_ORIENTATION[0], self.REST_ORIENTATION[1] + np.pi / 4,
+                   yaw + np.pi / 2 + self.REST_ORIENTATION[2]]
     self.vis.ros.draw_point("pregrasp", offset_pos, color=(1, 0, 0), scale=3)
-    res = self.victor.plan_to_pose(self.victor.right_arm_group, self.EE_LINK_NAME, offset_pos + orientation)
-    if not res.success:
+
+    resp = input("is the planned grasp good?")
+    if resp == "n":
+        return
+
+    # first get to a location where planning to the previous joint config is ok
+    for u in ret_ctrl:
+        self.step(u)
+
+    # cartesian to target
+    obs = self._obs()
+    diff = np.subtract(offset_pos[:2], obs)
+    start = time.time()
+    while np.linalg.norm(diff) > 0.01 and time.time() - start < timeout:
+        obs, _, _, _ = self.step(diff / self.MAX_PUSH_DIST, dz=z_extra, orientation=orientation)
+        diff = np.subtract(offset_pos[:2], obs)
+    if time.time() - start > timeout:
         return
 
     self.victor.open_right_gripper(0)
@@ -324,30 +342,106 @@ def grasp_at_pose(self: arm_real.RealArmEnv, pose, last_move_use_cartesian=True)
     goal_pos = [pose[0] + grasp_offset[0] * 0.6, pose[1] + grasp_offset[1] * 0.6, z]
     self.vis.ros.draw_point("graspgoal", goal_pos, color=(0.5, 0.5, 0), scale=3)
 
-    if last_move_use_cartesian:
-        self.victor.set_control_mode(control_mode=ControlMode.CARTESIAN_IMPEDANCE, vel=self.vel)
-        move_times = 4
-        move_dir = -np.array(grasp_offset)
-        while move_times > 0:
-            act_mag = move_times if move_times <= 1 else 1
-            move_times -= 1
-            u = move_dir / np.linalg.norm(move_dir) * act_mag
-            obs, _, _, _ = self.step(u, dz=z_extra)
-    else:
-        res = self.victor.plan_to_pose(self.victor.right_arm_group, self.EE_LINK_NAME, goal_pos + orientation)
-        if not res.success:
-            return
+    diff = np.subtract(goal_pos[:2], obs)
+    start = time.time()
+    while np.linalg.norm(diff) > 0.01 and time.time() - start < timeout:
+        obs, _, _, _ = self.step(diff / self.MAX_PUSH_DIST, dz=z_extra, orientation=orientation)
+        diff = np.subtract(goal_pos[:2], obs)
+    if time.time() - start > timeout:
+        return
 
     self.victor.close_right_gripper()
+    rospy.sleep(5)
+    self.victor.open_right_gripper(0)
     rospy.sleep(1)
 
 
 class Levels(enum.IntEnum):
     NO_CLUTTER = 0
+    TIGHT_CLUTTER = 1
+
+
+def create_predetermined_controls(level: Levels):
+    ctrl = None
+    ret_ctrl = None
+    if level is Levels.NO_CLUTTER:
+        # get 4 points on the front face
+        ctrl = [[0, 0.65], None]
+        ctrl += [[0, 1.0]]
+        ctrl += [[0.4, -1., None], [1.0, -0.5, None]]
+        ctrl += [[0, 0.6], None]
+        ctrl += [[0, 0.9]]
+        ctrl += [[0.4, -0.9, None], [1.0, -0.5, None]]
+        ctrl += [[0, 0.9], None]
+        ctrl += [[0, 1.0]]
+        ctrl += [[0.4, -0.7, None], [1.0, -0.5, None]]
+        ctrl += [[0, 0.7], None]
+        ctrl += [[0, 1.0]]
+
+        # # move to the left side of front the cheezit box and poke again
+        ctrl += [[-0.4, -0.9, None]]
+        ctrl += [[-1.0, 0], None]
+        ctrl += [[-1.0, 0]] * 2
+        ctrl += [None]
+        ctrl += [[-1.0, 0]] * 2
+        ctrl += [[0., -0.7, None]]
+        ctrl += [[0.0, 0.4], None]
+        ctrl += [[0.0, 1.0]]
+
+        # move to the left side of the cheezit box
+        ctrl += [[-1.0, -0.5], None]
+        ctrl += [[-1.0, 0]] * 2
+        ctrl += [[-0.9, 0]] * 1
+        ctrl += [None]
+        ctrl += [[-1.0, 0]] * 2
+        ctrl += [[0.0, 0.6], None]
+        ctrl += [[0.0, 1.0]] * 3
+        ctrl += [None]
+        ctrl += [[0.0, 1.0]] * 3
+
+        # poke to the right with the side
+        ctrl += [[0.4, 0.], None]
+        ctrl += [[0.7, 0.]]
+        ctrl += [[-0.1, 0.7], None]
+        ctrl += [[0.7, 0.]]
+
+    elif level is Levels.TIGHT_CLUTTER:
+        # move to face cheezit
+        ctrl = [[1.0, 0, None]] * 4
+        ctrl += [[0, 1.0], None]
+        # poke again
+        ctrl += [[0, 1.0], [-0.9, -0.8, None]]
+        ctrl += [[0, 0.5], None]
+        ctrl += [[0, 1.0], [-0.4, -0.8, None]]
+
+        # poke cup close to where we poked cheezit
+        ctrl += [[-0.8, 0], None]
+        ctrl += [[-1, 0]] * 2
+        ctrl += [[-0.7, 0.7], None]
+        ctrl += [[-1, 1]]
+        ctrl += [[1, 0, None]]
+        ctrl += [[0, 0.3], None]
+        ctrl += [[0, 1]]
+        # poke along its side
+        ctrl += [[0.4, 0.2, None], [-0.1, 0.07], None, [-1, 0.7]] * 4
+        ctrl += [[-0.7, 0.9]]
+        # back to poking cheezit
+        ctrl += [[1.0, 0.7, None], [0.2, 0], None]
+        ctrl += [[0.5, 0], [-0.2, 1.0, None]] * 4
+        ctrl += [[0.9, 0]]
+
+        ret_ctrl = [[-0.9, 0]]
+        ret_ctrl += [[-1., -0.3]] * 4
+        ret_ctrl += [[0, -1.0]] * 4
+        ret_ctrl += [[0.7, -1.0]] * 4
+
+    # last one to force redraw of everything
+    ctrl += [[0.0, 0.]]
+    return ctrl, ret_ctrl
 
 
 def main():
-    level = Levels.NO_CLUTTER
+    level = Levels.TIGHT_CLUTTER
 
     np.set_printoptions(suppress=True, precision=2, linewidth=200)
     colorama.init(autoreset=True)
@@ -361,7 +455,6 @@ def main():
 
     env = arm_real.RealArmEnv(residual_precision=np.diag(residual_precision), residual_threshold=3.)
     contact_params = RealRetrievalGetter.contact_parameters(env)
-    env.vis.clear_visualizations()
 
     pt_to_config = arm_real.RealArmPointToConfig(env)
     contact_set = tracking.ContactSetSoft(pt_to_config, contact_params)
@@ -371,56 +464,12 @@ def main():
     # keyboard_control(env)
 
     # test grasp at pose
-    grasp_at_pose(env, [env.REST_POS[0], env.REST_POS[1] + 0.3, np.pi / 2], last_move_use_cartesian=False)
-
-    ctrl_per_level = {}
-
-    # get 4 points on the front face
-    ctrl = [[0, 0.65], None]
-    ctrl += [[0, 1.0]]
-    ctrl += [[0.4, -1., None], [1.0, -0.5, None]]
-    ctrl += [[0, 0.6], None]
-    ctrl += [[0, 0.9]]
-    ctrl += [[0.4, -0.9, None], [1.0, -0.5, None]]
-    ctrl += [[0, 0.9], None]
-    ctrl += [[0, 1.0]]
-    ctrl += [[0.4, -0.7, None], [1.0, -0.5, None]]
-    ctrl += [[0, 0.7], None]
-    ctrl += [[0, 1.0]]
-
-    # # move to the left side of front the cheezit box and poke again
-    ctrl += [[-0.4, -0.9, None]]
-    ctrl += [[-1.0, 0], None]
-    ctrl += [[-1.0, 0]] * 2
-    ctrl += [None]
-    ctrl += [[-1.0, 0]] * 2
-    ctrl += [[0., -0.7, None]]
-    ctrl += [[0.0, 0.4], None]
-    ctrl += [[0.0, 1.0]]
-
-    # move to the left side of the cheezit box
-    ctrl += [[-1.0, -0.5], None]
-    ctrl += [[-1.0, 0]] * 2
-    ctrl += [[-0.9, 0]] * 1
-    ctrl += [None]
-    ctrl += [[-1.0, 0]] * 2
-    ctrl += [[0.0, 0.6], None]
-    ctrl += [[0.0, 1.0]] * 3
-    ctrl += [None]
-    ctrl += [[0.0, 1.0]] * 3
-
-    # poke to the right with the side
-    ctrl += [[0.4, 0.], None]
-    ctrl += [[0.7, 0.]]
-    ctrl += [[-0.1, 0.7], None]
-    ctrl += [[0.7, 0.]]
-
-    # last one to force redraw of everything
-    ctrl += [[0.0, 0.]]
-    ctrl_per_level[Levels.NO_CLUTTER] = ctrl
+    # grasp_at_pose(env, [0.85, 0.03, 0.3], last_move_use_cartesian=False)
 
     # move to the actual left side
-    # predetermined_controls(env, ctrl_per_level[level], pt_to_config, contact_set)
+    env.vis.clear_visualizations(["0", "0a", "1", "1a", "c", "reaction", "tmptbest", "residualmag"])
+    predetermined_controls(env, level, pt_to_config, contact_set)
+    env.vis.clear_visualizations()
 
 
 if __name__ == "__main__":

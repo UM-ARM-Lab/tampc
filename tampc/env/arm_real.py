@@ -13,6 +13,7 @@ from threading import Lock
 
 import numpy as np
 from pytorch_kinematics import transforms as tf
+from tf.transformations import quaternion_from_euler
 
 from cottun import tracking
 from cottun.detection_impl import ContactDetectorPlanarPybulletGripper
@@ -222,7 +223,7 @@ class RealArmEnv(Env):
                                 status.measured_joint_position.joint_7]
 
             self.last_ee_pos = self._observe_ee(return_z=True)
-            self.state, _ = self._obs()
+            self.state = self._obs()
 
             if residual_precision is None:
                 residual_precision = np.diag([1, 1, 0, 1, 1, 1])
@@ -232,11 +233,9 @@ class RealArmEnv(Env):
                                                                   default_joint_config=canonical_joints,
                                                                   canonical_pos=self.REST_POS,
                                                                   canonical_orientation=self.REST_ORIENTATION,
+                                                                  window_size=50,
                                                                   visualizer=self.vis)
-
-            # listen for static wrench for use in offset
-            # rospy.sleep(1)
-            # self.recalibrate_static_wrench()
+            self.vis.sim = None
 
     @property
     def vis(self) -> CombinedVisualizer:
@@ -368,10 +367,8 @@ class RealArmEnv(Env):
     # --- observing state
     def _obs(self):
         """Observe current state from ros"""
-        # TODO accumulate other things to put into info during this observation period
         state = self._observe_ee(return_z=False)
-        info = state
-        return state, info
+        return state
 
     def _observe_ee(self, return_z=False):
         pose = self.victor.get_link_pose(self.EE_LINK_NAME)
@@ -391,7 +388,7 @@ class RealArmEnv(Env):
         dy = action[1] * self.MAX_PUSH_DIST
         return dx, dy
 
-    def step(self, action, dz=0.):
+    def step(self, action, dz=0., orientation=None):
         action = np.clip(action, *self.get_control_bounds())
         # self.static_wrench = self.DIR_TO_WRENCH_OFFSET[tuple(action)]
 
@@ -402,11 +399,16 @@ class RealArmEnv(Env):
         self._single_step_contact_info = {}
 
         # set target orientation as rest orientation
-        # orientation = Quaternion(*self.REST_ORIENTATION_QUAT)
-        orientation = None
+        if orientation is None:
+            orientation = copy.deepcopy(self.REST_ORIENTATION)
+            orientation[1] += np.pi / 4
+        if len(orientation) == 3:
+            orientation = quaternion_from_euler(*orientation)
+        if len(orientation) == 4:
+            orientation = Quaternion(*orientation)
         self.victor.move_delta_cartesian_impedance(ArmSide.RIGHT, dx, dy, target_z=self.REST_POS[2] + dz, blocking=True,
                                                    step_size=0.01, target_orientation=orientation)
-        self.state, _ = self._obs()
+        self.state = self._obs()
         info = self.aggregate_info()
 
         cost, done = self.evaluate_cost(self.state, action)
@@ -439,9 +441,9 @@ class RealArmEnv(Env):
         # reset to rest position
         self.victor.plan_to_pose(self.victor.right_arm_group, self.EE_LINK_NAME, self.REST_POS + self.REST_ORIENTATION)
         self.victor.set_control_mode(control_mode=ControlMode.CARTESIAN_IMPEDANCE, vel=self.vel)
-        self.state, info = self._obs()
+        self.state = self._obs()
         self.contact_detector.clear()
-        return np.copy(self.state), info
+        return np.copy(self.state), None
 
     def close(self):
         pass
