@@ -883,6 +883,8 @@ class ContactSetSoft(ContactSet):
 
     def get_hard_assignment(self, threshold=None):
         pts = self.get_posterior_points()
+        if pts is None:
+            return []
         connection_prob = self._compute_full_adjacency(pts)
 
         if threshold is None:
