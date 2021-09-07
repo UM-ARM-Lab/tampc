@@ -73,19 +73,27 @@ class ContactDetector:
         """Get last contact point given the current end effector pose"""
         if len(self.observation_history) == 0:
             return None
-        in_contact, ee_force_torque, prev_pose = self.observation_history[-1]
-        if not in_contact:
+
+        # allow for being in contact anytime within the latest window
+        start_i = -1
+        for i in range(0, min(len(self.observation_history), self._window_size)):
+            in_contact, ee_force_torque, prev_pose = self.observation_history[-1 - i]
+            if in_contact:
+                if pose is None:
+                    pose = prev_pose
+                break
+            start_i -= 1
+        else:
             return None
-        if pose is None:
-            pose = prev_pose
 
         # use history of points to handle jitter
         ee_ft = [ee_force_torque]
         pp = [prev_pose]
         for i in range(2, self._window_size):
-            if i > len(self.observation_history):
+            from_end_i = start_i - i + 1
+            if -from_end_i > len(self.observation_history):
                 break
-            in_contact, ee_force_torque, prev_pose = self.observation_history[-i]
+            in_contact, ee_force_torque, prev_pose = self.observation_history[from_end_i]
             # look back until we leave contact
             if not in_contact:
                 break
