@@ -66,8 +66,11 @@ class ContactDetector:
         """Whether our last observed residual indicates that we are currently in contact"""
         if len(self.observation_history) == 0:
             return False
-        in_contact, ee_force_torque, prev_pose = self.observation_history[-1]
-        return in_contact
+        for i in range(self._window_size):
+            in_contact, ee_force_torque, prev_pose = self.observation_history[-1 - i]
+            if in_contact:
+                return True
+        return False
 
     def get_last_contact_location(self, pose=None, **kwargs):
         """Get last contact point given the current end effector pose"""
