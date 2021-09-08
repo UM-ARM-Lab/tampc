@@ -15,7 +15,7 @@ import re
 import matplotlib.pyplot as plt
 import typing
 
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, DBSCAN, Birch
 
 from cottun.defines import NO_CONTACT_ID, RunKey, CONTACT_RES_FILE, RUN_AMBIGUITY, CONTACT_ID, CONTACT_POINT_CACHE
 from cottun.evaluation import dict_to_namespace_str, plot_cluster_res, load_runs_results, get_file_metainfo, \
@@ -30,7 +30,7 @@ from tampc.env import pybullet_env as env_base, arm
 from tampc.env.env import InfoKeys
 from tampc.env_getters.arm import ArmGetter
 
-from cottun.cluster_baseline import process_labels_with_noise, OnlineSklearnFixedClusters
+from cottun.cluster_baseline import process_labels_with_noise, OnlineSklearnFixedClusters, OnlineAgglomorativeClustering
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
@@ -412,9 +412,9 @@ if __name__ == "__main__":
         # 'birch': sklearn_method_factory(Birch, n_clusters=None, threshold=1.5),
         'online-kmeans': online_sklearn_method_factory(OnlineSklearnFixedClusters, KMeans, inertia_ratio=0.2,
                                                        n_clusters=1, random_state=0),
-        # 'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=0.1, min_samples=1),
-        # 'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
-        #                                               threshold=0.07)
+        'online-dbscan': online_sklearn_method_factory(OnlineAgglomorativeClustering, DBSCAN, eps=0.05, min_samples=1),
+        'online-birch': online_sklearn_method_factory(OnlineAgglomorativeClustering, Birch, n_clusters=None,
+                                                      threshold=0.08)
     }
 
     # full_filename = os.path.join(cfg.DATA_DIR, 'arm/gripper13/25.mat')

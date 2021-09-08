@@ -159,10 +159,10 @@ def compute_contact_error(before_moving_pts, moved_pts,
                 distances.append(min(cc[ContactInfo.DISTANCE] for cc in c))
             contact_error.append(min(distances))
         logger.info(f"largest penetration: {round(min(contact_error), 4)}")
-        if env_cls is not None:
-            env.close()
         if contact_points_instead_of_contact_config:
             p.removeBody(test_obj_id)
+        if env_cls is not None:
+            env.close()
     return contact_error
 
 
