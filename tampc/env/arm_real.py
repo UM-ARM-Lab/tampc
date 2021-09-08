@@ -352,13 +352,13 @@ class RealArmEnv(Env):
         if np.abs(wr_np[-1]) < 0.1:
             wr_np[1] = 0
 
-        # torque_mag = np.linalg.norm(wr_np[3:])
+        torque_mag = np.linalg.norm(wr_np[3:])
         # since we are planar pushing, shouldn't experience torque along world x and y
-        # if wr_np[-1] > fix_threshold or wr_np[-1] < -fix_threshold:
-        #     wr_np[3:5] = 0
-        #     wr_np[-1] = torque_mag if wr_np[-1] > fix_threshold else -torque_mag
+        if wr_np[-1] > fix_threshold or wr_np[-1] < -fix_threshold:
+            wr_np[3:5] = 0
+            wr_np[-1] = torque_mag if wr_np[0] < 0 else -torque_mag
         # magnitude also seems to be off
-        # wr_np[-1] *= 0.5
+        wr_np[-1] *= 2.5
         return wr_np
 
     def setup_experiment(self):

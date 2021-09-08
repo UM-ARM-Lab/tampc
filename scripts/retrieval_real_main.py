@@ -84,7 +84,7 @@ class RealRetrievalGetter(EnvGetter):
                                             control_similarity=no_function,
                                             state_to_reaction=no_function,
                                             max_pos_move_per_action=env.MAX_PUSH_DIST,
-                                            length=0.01,
+                                            length=0.006,
                                             hard_assignment_threshold=0.4,
                                             intersection_tolerance=0.002,
                                             weight_multiplier=0.1,
@@ -367,7 +367,7 @@ def grasp_at_pose(self: arm_real.RealArmEnv, pose, ret_ctrl=(), timeout=40):
     if time.time() - start > timeout:
         return
 
-    self.victor.open_right_gripper(0)
+    self.victor.open_right_gripper(0.15)
     rospy.sleep(1)
 
     goal_pos = [pose[0] + grasp_offset[0] * 0.6, pose[1] + grasp_offset[1] * 0.6, z]
@@ -390,6 +390,7 @@ def grasp_at_pose(self: arm_real.RealArmEnv, pose, ret_ctrl=(), timeout=40):
 class Levels(enum.IntEnum):
     NO_CLUTTER = 0
     TIGHT_CLUTTER = 1
+    CAN_IN_FRONT = 2
 
 
 def create_predetermined_controls(level: Levels):
@@ -465,6 +466,39 @@ def create_predetermined_controls(level: Levels):
         ret_ctrl += [[-1., -0.3]] * 4
         ret_ctrl += [[0, -1.0]] * 4
         ret_ctrl += [[0.7, -1.0]] * 4
+    elif level is Levels.CAN_IN_FRONT:
+        ctrl = [[0.0, 1.0, None]]
+        # poke master chef can to the right
+        # ctrl += [[0.8, 0, None], [0.5, 0.], None]
+        ctrl += [[0.1, 0, ], None, [1.0, 0.], [0.2, 0]]
+        ctrl += [[1.0, 0], [-0.1, 0.4, None]] * 3
+        ctrl += [[1.0, 0]]
+        ctrl += [[0.0, -1.0, None], [0.1, 0.1], None]
+        ctrl += [[1.0, 1.0], [0.3, -0.7, None]] * 3
+        # move in front of cheezit box
+        ctrl += [[-1.0, 0], None] * 4
+        ctrl += [[0, 0.5], None] * 2
+        # poke cheezit box
+        ctrl += [[0, 1.0], [-0.85, -0.3, None]] * 3
+        # poke kettle
+        ctrl += [[-0.1, -1, None]] * 2
+        ctrl += [[-0.2, 0.12], None]
+        ctrl += [[-1., 0.6], [-1, 0.6], [-0.2, -0.3, None]] * 3
+
+        # move in between to poke both
+        ctrl += [[0, 1.0]] * 5
+        ctrl += [[-1, 1]]
+        ctrl += [[0.2, 0], None]
+        ctrl += [[1, 0], None, [1.0, 0], [0.5, 0]]
+        ctrl += [[0.6, 0], [-0.2, 1.0, None]] * 4
+
+        # ctrl += [None]
+        # ctrl += [[0, 1], None]
+
+        ret_ctrl = [[-0.9, 0]]
+        ret_ctrl += [[-1., -0.3]] * 4
+        ret_ctrl += [[0, -1.0]] * 4
+        ret_ctrl += [[0.7, -1.0]] * 4
 
     # last one to force redraw of everything
     ctrl += [[0.0, 0.]]
@@ -479,7 +513,7 @@ args = parser.parse_args()
 
 
 def main():
-    level = Levels.TIGHT_CLUTTER
+    level = Levels.CAN_IN_FRONT
 
     np.set_printoptions(suppress=True, precision=2, linewidth=200)
     colorama.init(autoreset=True)
@@ -491,7 +525,7 @@ def main():
     # ignore fz since it's usually large and noisy
     residual_precision[2] = 0
 
-    env = arm_real.RealArmEnv(residual_precision=np.diag(residual_precision), residual_threshold=3.)
+    env = arm_real.RealArmEnv(residual_precision=np.diag(residual_precision), residual_threshold=5.)
     contact_params = RealRetrievalGetter.contact_parameters(env)
 
     pt_to_config = arm_real.RealArmPointToConfig(env)
