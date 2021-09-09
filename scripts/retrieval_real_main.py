@@ -15,7 +15,7 @@ from sklearn.cluster import Birch, DBSCAN, KMeans
 from cottun.cluster_baseline import OnlineAgglomorativeClustering, OnlineSklearnFixedClusters
 from cottun.evaluation import object_robot_penetration_score
 from cottun.retrieval_controller import RetrievalPredeterminedController, sample_model_points, rot_2d_mat_to_angle, \
-    SklearnTrackingMethod, TrackingMethod, OurSoftTrackingMethod, SklearnPredeterminedController
+    SklearnTrackingMethod, TrackingMethod, OurSoftTrackingMethod, SklearnPredeterminedController, KeyboardDirPressed
 from tampc.env.real_env import VideoLogger
 from tampc.env.arm import Levels
 from tampc.util import EnvGetter
@@ -93,41 +93,6 @@ class RealRetrievalGetter(EnvGetter):
             for k, v in kwargs.items():
                 setattr(params, k, v)
         return params
-
-
-from pynput import keyboard
-
-
-class KeyboardDirPressed():
-    def __init__(self):
-        self._dir = [0, 0]
-        self.listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
-        self.listener.start()
-        self.calibrate = False
-
-    @property
-    def dir(self):
-        return self._dir
-
-    def on_press(self, key):
-        if key == keyboard.Key.down:
-            self.dir[1] = -1
-        elif key == keyboard.Key.left:
-            self.dir[0] = -1
-        elif key == keyboard.Key.up:
-            self.dir[1] = 1
-        elif key == keyboard.Key.right:
-            self.dir[0] = 1
-        elif key == keyboard.Key.shift:
-            self.calibrate = True
-
-    def on_release(self, key):
-        if key in [keyboard.Key.down, keyboard.Key.up]:
-            self.dir[1] = 0
-        elif key in [keyboard.Key.left, keyboard.Key.right]:
-            self.dir[0] = 0
-        elif key == keyboard.Key.shift:
-            self.calibrate = False
 
 
 def estimate_wrench_per_dir(env):
@@ -437,7 +402,7 @@ def create_predetermined_controls(level: Levels):
         ctrl += [[-0.1, 0.7], None]
         ctrl += [[0.7, 0.]]
 
-    elif level is Levels.TIGHT_CLUTTER:
+    elif level is Levels.FLAT_BOX:
         # move to face cheezit
         ctrl = [[1.0, 0, None]] * 4
         ctrl += [[0, 1.0], None]

@@ -17,7 +17,7 @@ from cottun.defines import NO_CONTACT_ID
 from cottun.evaluation import compute_contact_error, clustering_metrics, object_robot_penetration_score
 from cottun.retrieval_controller import rot_2d_mat_to_angle, \
     sample_model_points, pose_error, TrackingMethod, OurSoftTrackingMethod, \
-    SklearnTrackingMethod
+    SklearnTrackingMethod, KeyboardDirPressed, KeyboardController
 from tampc.env.env import InfoKeys
 
 from arm_pytorch_utilities import rand, tensor_utils, math_utils
@@ -27,7 +27,7 @@ from tampc.env import arm
 from tampc.env.arm import Levels
 from tampc.env_getters.arm import RetrievalGetter
 from tampc.env.pybullet_env import state_action_color_pairs
-from cottun import icp
+from cottun import icp, tracking
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
@@ -131,7 +131,38 @@ def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.005):
     ctrl += [[0.4, 0.4], [0.4, -0.4]] * 3
     ctrl += [[-0.5, 1.0]] * 3
     ctrl += [[0.5, 0.], [0, 0.4]] * 3
-    predetermined_control[Levels.TIGHT_CLUTTER] = ctrl
+    predetermined_control[Levels.FLAT_BOX] = ctrl
+
+    # created from keyboard controller
+    predetermined_control[Levels.BEHIND_CAN] = [(0, 1), (0, -1), (0, -1), (1, -1), (0, -1), (-1, 0), (1, -1), (-1, 0),
+                                                (1, -1), (0, 1), (0, 1), (0, 1), (0, 1), (0, 1), (0, 1), (0, 1),
+                                                (0, -1), (0, -1), (1, -1), (1, 0), (0, 1), (1, -1), (0, 1), (0, 1),
+                                                (-1, 0), (0, 1), (-1, 0), (1, 1), (-1, 0), (1, 1), (0, -1), (1, 1),
+                                                (0, -1), (1, 0), (1, 1), (-1, -1), (0, 1), (0, 1), (-1, 0), (1, 1),
+                                                (-1, -1), (0, -1), (-1, 0), (0, -1), (0, -1), (0, -1), (0, -1), (0, -1),
+                                                (0, -1), (1, -1), (0, -1), (0, -1), (-1, 0), (1, -1), (-1, 0), (1, -1),
+                                                (-1, 0), (1, -1), (0, 1), (0, 1), (1, -1), (1, -1), (0, -1), (0, 1),
+                                                (0, 1), (1, 0), (1, 0), (1, -1), (0, 1), (1, 1), (1, -1), (0, 1),
+                                                (1, -1), (-1, 0), (0, -1), (0, 1), (1, 1), (0, 1), (-1, -1), (0, 1),
+                                                (-1, -1), (0, 1), (-1, -1), (-1, -1), (1, 0), (0, 1), (0, 1), (-1, -1),
+                                                (0, 1), (-1, -1), (-1, 0), (-1, 0), (0, 1), (-1, 1), (-1, 1), (0, 1),
+                                                (0, 1), (1, 0), (1, 0), (-1, 0), (0, 1), (1, 0)]
+    # ctrl = [(0, 1), (1, -1), (-1, 0), (0, 1), (-1, 0), (1, 1), (0, -1), (1, -1), (0, 1), (1, 0), (0, 1), (0, -1),
+    #         (0, -1), (-1, 0), (0, 1), (1, 1), (0, 1), (-1, 0), (1, 1), (-1, 0), (1, 1), (0, 1), (-1, 0), (0, -1),
+    #         (0, -1), (0, -1), (1, 0), (0, -1), (1, 0), (0, -1), (0, 1), (1, 0), (0, 1), (0, -1), (1, 0), (0, 1),
+    #         (0, -1), (1, 1), (0, -1), (1, -1)]
+    # ctrl += [(-1, 0)] * 5
+    # ctrl += [(-1, -0.6)] * 3
+    # ctrl += [(0, -1)] * 4
+    # ctrl += [(0, -0.5)]
+    # ctrl += [(0.7, 0.3), (-0.1, -0.8)] * 3
+    ctrl = [(0, 1), (1, -1), (0, 1), (0, -1), (0, 1), (0, 1), (1, 1), (0, -1), (0, -1), (0, 1), (1, -1), (1, 1),
+            (1, -1), (-1, 0), (0, -1), (0, 1), (1, 1), (0, -1), (1, 0), (1, 1), (1, -1), (0, 1), (-1, 0), (1, 0),
+            (0, -1), (0, -1), (-1, 0), (-1, 0), (-1, 0), (-1, 0), (-1, 0), (-1, 0), (-1, -1), (0, -1), (0, -1), (0, -1),
+            (0, -1), (1, 0), (0, -1), (1, 1)]
+    ctrl += [(-1, 0), (0, 1), (1, 1), (0, -1)]
+
+    predetermined_control[Levels.IN_BETWEEN] = ctrl
 
     rand.seed(seed)
     for k, v in predetermined_control.items():
@@ -231,16 +262,23 @@ def run_retrieval(env, method: TrackingMethod, seed=0, ctrl_noise_max=0.005):
 
 
 def grasp_at_pose(env, pose):
-    predetermined_grasp_offset = {
-        Levels.TIGHT_CLUTTER: [0., -0.25]
-    }
-    grasp_offset = predetermined_grasp_offset[env.level]
     # object is symmetric so pose can be off by 180
     yaw = pose[2]
-    if yaw > np.pi / 2:
-        yaw -= np.pi
-    elif yaw < -np.pi / 2:
-        yaw += np.pi
+    if env.level == Levels.FLAT_BOX:
+        grasp_offset = [0., -0.25]
+        if yaw > np.pi / 2:
+            yaw -= np.pi
+        elif yaw < -np.pi / 2:
+            yaw += np.pi
+    elif env.level == Levels.BEHIND_CAN or env.level == Levels.IN_BETWEEN:
+        grasp_offset = [0., -0.25]
+        if yaw > 0:
+            yaw -= np.pi
+        elif yaw < -np.pi:
+            yaw += np.pi
+    else:
+        raise RuntimeError(f"No data for level {env.level}")
+
     grasp_offset = math_utils.rotate_wrt_origin(grasp_offset, yaw)
     target_pos = [pose[0] + grasp_offset[0], pose[1] + grasp_offset[1]]
     z = env._observe_ee(return_z=True)[-1]
@@ -291,6 +329,28 @@ def main(env, method_name, seed=0):
     return run_retrieval(env, methods_to_run[method_name], seed=seed)
 
 
+def keyboard_control(env):
+    print("waiting for arrow keys to be pressed to command a movement")
+    contact_params = RetrievalGetter.contact_parameters(env)
+    pt_to_config = arm.ArmPointToConfig(env)
+    contact_set = tracking.ContactSetSoft(pt_to_config, contact_params)
+    ctrl = KeyboardController(env.contact_detector, contact_set, nu=2)
+
+    obs = env._obs()
+    info = None
+    while not ctrl.done():
+        try:
+            env.visualize_contact_set(contact_set)
+            u = ctrl.command(obs, info)
+            obs, _, done, info = env.step(u)
+        except:
+            pass
+        time.sleep(0.05)
+    print(ctrl.u_history)
+    cleaned_u = [u for u in ctrl.u_history if u != (0, 0)]
+    print(cleaned_u)
+
+
 parser = argparse.ArgumentParser(description='Downstream task of blind object retrieval')
 parser.add_argument('method',
                     choices=['ours', 'online-birch', 'online-dbscan', 'online-kmeans'],
@@ -300,15 +360,20 @@ parser.add_argument('--seed', metavar='N', type=int, nargs='+',
                     help='random seed(s) to run')
 parser.add_argument('--no_gui', action='store_true', help='force no GUI')
 # run parameters
-parser.add_argument('--task', default=Levels.TIGHT_CLUTTER, choices=Levels,
-                    help='what task to run')
+task_map = {"FB": Levels.FLAT_BOX, "BC": Levels.BEHIND_CAN, "IB": Levels.IN_BETWEEN, "SC": Levels.SIMPLE_CLUTTER}
+parser.add_argument('--task', default="IB", choices=task_map.keys(), help='what task to run')
 
 args = parser.parse_args()
 
 if __name__ == "__main__":
+    level = task_map[args.task]
     method_name = args.method
 
-    env = RetrievalGetter.env(level=args.task, mode=p.DIRECT if args.no_gui else p.GUI)
+    env = RetrievalGetter.env(level=level, mode=p.DIRECT if args.no_gui else p.GUI)
+
+    # keyboard_control(env)
+    # exit(0)
+
     fmis = []
     cmes = []
     # backup video logging in case ffmpeg and nvidia driver are not compatible

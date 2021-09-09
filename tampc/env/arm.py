@@ -55,7 +55,9 @@ class Levels(enum.IntEnum):
     # levels for object retrieval
     NO_CLUTTER = 20
     SIMPLE_CLUTTER = 21
-    TIGHT_CLUTTER = 22
+    FLAT_BOX = 22
+    BEHIND_CAN = 23
+    IN_BETWEEN = 24
 
 
 selected_levels = [Levels.SELECT1, Levels.SELECT2, Levels.SELECT3, Levels.SELECT4]
@@ -1086,7 +1088,7 @@ class FloatingGripperEnv(PlanarArmEnv):
     MAX_FORCE = 30
     MAX_GRIPPER_FORCE = 30
     MAX_PUSH_DIST = 0.03
-    OPEN_ANGLE = 0.05
+    OPEN_ANGLE = 0.055
     CLOSE_ANGLE = 0.0
 
     @property
@@ -1441,6 +1443,13 @@ class ObjectRetrievalEnv(FloatingGripperEnv):
         # here goal is the initial pose of the target object
         super(FloatingGripperEnv, self).__init__(goal=goal, init=init, camera_dist=0.8, **kwargs)
 
+    def _set_goal(self, goal):
+        if len(goal) != 3:
+            goal = [goal[0], goal[1], 0]
+        # ignore the pusher position
+        self.goal = np.array(goal)
+        self._dd.draw_point('goal', [goal[0], goal[1], FIXED_Z])
+
     def _obs(self):
         return super(ObjectRetrievalEnv, self)._obs()[:2]
 
@@ -1475,7 +1484,7 @@ class ObjectRetrievalEnv(FloatingGripperEnv):
             self.movable.append(p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbTomatoSoupCan', "model.urdf"),
                                            [0.2, -0.3, z],
                                            p.getQuaternionFromEuler([0, 0, 0]), flags=flags, globalScaling=2))
-        elif self.level == Levels.TIGHT_CLUTTER:
+        elif self.level == Levels.FLAT_BOX:
             p.changeDynamics(self.planeId, -1, lateralFriction=0.6, spinningFriction=0.01)
             self.movable.append(p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbTomatoSoupCan', "model.urdf"),
                                            [0.2, -0.1, z],
@@ -1489,6 +1498,25 @@ class ObjectRetrievalEnv(FloatingGripperEnv):
             self.movable.append(p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbPottedMeatCan', "model.urdf"),
                                            [0.34, 0.05, z],
                                            p.getQuaternionFromEuler([0, 0, 0]), flags=flags, globalScaling=1.5))
+        elif self.level == Levels.BEHIND_CAN:
+            p.changeDynamics(self.planeId, -1, lateralFriction=0.6, spinningFriction=0.01)
+            self.movable.append(p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbTomatoSoupCan', "model.urdf"),
+                                           [0.15, 0.15, z],
+                                           p.getQuaternionFromEuler([0, 0, 0]), flags=flags, globalScaling=2))
+            self.movable.append(p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbMasterChefCan', "model.urdf"),
+                                           [0.15, -0.05, z],
+                                           p.getQuaternionFromEuler([0, 0, 0]), flags=flags, globalScaling=2))
+        elif self.level == Levels.IN_BETWEEN:
+            p.changeDynamics(self.planeId, -1, lateralFriction=0.6, spinningFriction=0.01)
+            self.movable.append(p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbTomatoSoupCan', "model.urdf"),
+                                           [0.15, 0.12, z],
+                                           p.getQuaternionFromEuler([0, 0, 0]), flags=flags, globalScaling=2))
+            self.movable.append(p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbMustardBottle', "model.urdf"),
+                                           [0.21, 0.21, z],
+                                           p.getQuaternionFromEuler([0, 0, 0.6]), flags=flags, globalScaling=1))
+            self.movable.append(p.loadURDF(os.path.join(ycb_objects.getDataPath(), 'YcbPottedMeatCan', "model.urdf"),
+                                           [0.3, -0.05, z],
+                                           p.getQuaternionFromEuler([0, 0, 0.6]), flags=flags, globalScaling=1.5))
 
         for objId in self.immovable:
             p.changeVisualShape(objId, -1, rgbaColor=[0.2, 0.2, 0.2, 0.8])

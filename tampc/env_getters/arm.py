@@ -119,10 +119,21 @@ class RetrievalGetter(ArmGetter):
     @classmethod
     def env(cls, level=Levels.NO_CLUTTER, log_video=True, **kwargs):
         level = Levels(level)
-        env = arm.ObjectRetrievalEnv(environment_level=level, log_video=log_video, **kwargs)
-        cls.env_dir = '{}/gripper'.format(cls.dynamics_prefix())
+        init = None
+        goal = None
         if level is Levels.SIMPLE_CLUTTER:
-            env.set_task_config(goal=[0.5, -0.1, 0])
-        elif level is Levels.TIGHT_CLUTTER:
-            env.set_task_config(init=[0, 0.1], goal=[0.15, 0.05, 0])
+            init = [0, 0]
+            goal = [0.5, -0.1, 0]
+        elif level is Levels.FLAT_BOX:
+            init = [0, 0.1]
+            goal = [0.15, 0.05, 0]
+        elif level is Levels.BEHIND_CAN:
+            init = [0, 0.1]
+            goal = [0.25, 0.05, 1.2]
+        elif level is Levels.IN_BETWEEN:
+            init = [0, 0.05]
+            goal = [0.18, 0, 1.7]
+
+        env = arm.ObjectRetrievalEnv(environment_level=level, log_video=log_video, init=init, goal=goal, **kwargs)
+        cls.env_dir = '{}/gripper'.format(cls.dynamics_prefix())
         return env

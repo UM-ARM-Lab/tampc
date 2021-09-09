@@ -7,6 +7,7 @@ import pybullet as p
 import torch
 from arm_pytorch_utilities import rand
 from arm_pytorch_utilities.math_utils import angular_diff
+from pynput import keyboard
 
 from cottun import detection, tracking
 from cottun.cluster_baseline import process_labels_with_noise
@@ -343,3 +344,75 @@ class SklearnTrackingMethod(TrackingMethod):
         labels[1:][self.ctrl.in_contact] = process_labels_with_noise(self.online_method.final_labels())
         moved_pts = self.online_method.moved_data()
         return labels, moved_pts
+
+
+class KeyboardDirPressed():
+    def __init__(self):
+        self._dir = [0, 0]
+        self.listener = keyboard.Listener(on_press=self.on_press, on_release=self.on_release)
+        self.listener.start()
+        self.calibrate = False
+        self.esc = False
+
+    @property
+    def dir(self):
+        return self._dir
+
+    def on_press(self, key):
+        if key == keyboard.Key.down:
+            self.dir[1] = -1
+        elif key == keyboard.Key.left:
+            self.dir[0] = -1
+        elif key == keyboard.Key.up:
+            self.dir[1] = 1
+        elif key == keyboard.Key.right:
+            self.dir[0] = 1
+        elif key == keyboard.Key.shift:
+            self.calibrate = True
+        elif key == keyboard.Key.esc:
+            self.esc = True
+
+    def on_release(self, key):
+        if key in [keyboard.Key.down, keyboard.Key.up]:
+            self.dir[1] = 0
+        elif key in [keyboard.Key.left, keyboard.Key.right]:
+            self.dir[0] = 0
+        elif key == keyboard.Key.shift:
+            self.calibrate = False
+
+
+class KeyboardController(controller.Controller):
+
+    def __init__(self, contact_detector: detection.ContactDetector, contact_set: tracking.ContactSet, nu=2):
+        super().__init__()
+        self.pushed = KeyboardDirPressed()
+        self.contact_detector = contact_detector
+        self.contact_set = contact_set
+        self.nu = nu
+
+        self.x_history = []
+        self.u_history = []
+
+    def done(self):
+        return self.pushed.esc
+
+    @abc.abstractmethod
+    def update(self, obs, info):
+        # obs == self.x_history[-1]
+        self.contact_set.update(self.x_history[-2], torch.tensor(self.u_history[-1]),
+                                self.x_history[-1] - self.x_history[-2],
+                                self.contact_detector, torch.tensor(info['reaction']), info=info)
+
+    def command(self, obs, info=None):
+        self.x_history.append(obs)
+
+        if self.done():
+            u = [0 for _ in range(self.nu)]
+        else:
+            u = tuple(self.pushed.dir)
+
+        if len(self.x_history) > 1 and self.u_history[-1] != (0, 0):
+            self.update(obs, info)
+
+        self.u_history.append(u)
+        return u
