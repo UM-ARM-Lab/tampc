@@ -25,7 +25,8 @@ class ContactTrackingResultsPlot:
         :param runs:
         :param methods_to_run:
         :param aggregate_method:
-        :param filter_on_ambiguity:
+        :param filter_on_ambiguity: optional callable taking in ambiguity that only selects runs where the callable
+        returns true
         :param plot_aggregate:
         :param aggregate_perturbation: may want to be non-0 when duplicate values are often encountered to visually
         distinguish different series, only relevant when plot_aggregate is true
@@ -43,7 +44,7 @@ class ContactTrackingResultsPlot:
         self.represent_cme_as_ratio = represent_cme_as_ratio
         self.plot_only_best_params_on_metric = plot_only_best_params_on_metric
 
-        self.f = plt.figure()
+        self.f = plt.figure(figsize=(5,4))
         self.ax = plt.gca()
 
         self._set_title_and_lims(self.f, self.ax)
@@ -119,6 +120,7 @@ class ContactTrackingResultsPlot:
                 self._log_metric(method_label, "weighted contact error", data['wcme'], 3)
 
         self.ax.legend()
+        self.f.tight_layout(rect=[0, 0.03, 1, 0.95])
 
     def _log_metric(self, method_label, metric_name, metric, precision=2):
         logger.info(
@@ -153,18 +155,18 @@ class PlotContactErrorVsFMI(ContactTrackingResultsPlot):
         xlabel = []
         if self.weight_cme:
             xlabel.append('weighted')
-        xlabel.append('contact error')
+        xlabel.append('contact error (cm)')
         if self.represent_cme_as_ratio:
             xlabel.append('(relative to max penetration dist)')
             ax.set_xlim(0, 1)
         else:
-            ax.set_xlim(0, 0.05)
+            ax.set_xlim(0, 5)
         ax.set_xlabel(' '.join(xlabel))
         ax.set_ylabel('FMI')
-        ax.set_ylim(0, 1.1)
+        ax.set_ylim(0.5, 1.1)
 
     def _select_x_y(self, data) -> typing.Tuple[np.array, np.array]:
-        x = data['wcme'] if self.weight_cme else data['cme']
+        x = data['wcme'] if self.weight_cme else np.array(data['cme']) * 100
         return x, data['fmi']
 
 
@@ -199,9 +201,13 @@ if __name__ == "__main__":
         "online-birch"
     ]
 
+    def only_high_ambiguity(a):
+        return a > 0.3
+
     contact_error_vs_fmi = PlotContactErrorVsFMI(all_runs, methods, plot_aggregate=True, weight_cme=False,
                                                  represent_cme_as_ratio=False, aggregate_perturbation=0.00,
-                                                 plot_only_best_params_on_metric='<cme'
+                                                 plot_only_best_params_on_metric='<cme',
+                                                 filter_on_ambiguity=only_high_ambiguity
                                                  )
 
     plt.show()
