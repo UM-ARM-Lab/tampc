@@ -2,12 +2,10 @@ import time
 import torch
 
 import numpy as np
-from arm_pytorch_utilities import simulation, rand
+from arm_pytorch_utilities import controller
+from arm_pytorch_utilities import simulation
 from matplotlib import pyplot as plt
 from stucco import cfg
-from stucco.env import cost as control_cost
-# TODO make sim defined here agnostic to the controllers; inside TAMPC specialize the sim to these controllers
-from tampc.controller import controller, online_controller
 from stucco.env.pybullet_env import PybulletEnv, logger
 
 
@@ -72,14 +70,13 @@ class PybulletSim(simulation.Simulation):
              self.model_error,
              self.time, self.pred_cls))
 
-    def _predicts_state(self):
-        return isinstance(self.ctrl, controller.ControllerWithModelPrediction)
+    def visualize_before_action(self, simTime, obs):
+        contact_set = getattr(self.ctrl, 'contact_set', None)
+        if contact_set is not None:
+            self.env.visualize_contact_set(contact_set)
 
-    def _predicts_dynamics_cls(self):
-        return isinstance(self.ctrl, online_controller.OnlineMPC)
-
-    def _has_recovery_policy(self):
-        return isinstance(self.ctrl, online_controller.TAMPC)
+    def visualize_after_action(self, simTime, obs):
+        pass
 
     def _run_experiment(self):
         self.last_run_cost = []
@@ -94,90 +91,7 @@ class PybulletSim(simulation.Simulation):
 
             action = self.ctrl.command(obs, info)
 
-            contact_set = getattr(self.ctrl, 'contact_set', None)
-            if contact_set is not None:
-                self.env.visualize_contact_set(contact_set)
-
-            # visualizations before taking action
-            if self._predicts_dynamics_cls():
-                if self.ctrl.projected_x is not None:
-                    self.env.draw_user_text(
-                        "x {} projected to {}".format(obs.round(decimals=2),
-                                                      self.ctrl.projected_x.cpu().numpy().round(decimals=2)),
-                        xy=(-1., -0., -1))
-
-                self.pred_cls[simTime] = self.ctrl.dynamics_class
-                self.env.draw_user_text("dyn cls {}".format(self.ctrl.dynamics_class), location_index=2,
-                                        xy=(0.5, 0.6, -1))
-
-                # if self.ctrl.dynamics_class != 0:
-                #     self.ctrl.dynamics.nominal_model.plot_dynamics_at_state(
-                #         torch.tensor(obs, dtype=self.ctrl.dtype, device=self.ctrl.d),
-                #         'update at t={} ({})'.format(simTime, obs))
-
-                if self.ctrl.trap_set and self.ctrl.trap_cost is not None:
-                    self.env.visualize_trap_set(self.ctrl.trap_set)
-
-                if self._has_recovery_policy() and self.ctrl.autonomous_recovery is online_controller.AutonomousRecovery.MAB:
-                    mode_text = "recovery" if self.ctrl.autonomous_recovery_mode else (
-                        "local" if self.ctrl.using_local_model_for_nonnominal_dynamics else "")
-                    self.env.draw_user_text(mode_text, location_index=3, xy=(0.5, 0.5, -1))
-                    if self.ctrl.recovery_cost and isinstance(self.ctrl.recovery_cost,
-                                                              (control_cost.GoalSetCost, control_cost.CostQRSet)):
-                        # plot goal set
-                        self.env.visualize_goal_set(self.ctrl.recovery_cost.goal_set)
-
-                    # for i in range(self.ctrl.num_costs):
-                    #     self.env.draw_user_text(
-                    #         "a{} {:.2f} ({:.2f})".format(i, self.ctrl.mab._mean[i], self.ctrl.mab._cov[i, i]),
-                    #         4 + i)
-                    # if self.ctrl.last_arm_pulled is not None:
-                    #     text = ["a"]
-                    #     for value in self.ctrl.recovery_cost_weight():
-                    #         text.append("{:.2f}".format(value))
-                    #     self.env.draw_user_text(" ".join(text), 4 + self.ctrl.num_costs,
-                    #                             left_offset=1 - (self.ctrl.num_costs - 3) * 0.1)
-
-            with rand.SavedRNG():
-                if self.visualize_action_sample and isinstance(self.ctrl, controller.MPPI_MPC):
-                    self._plot_action_sample(self.ctrl.mpc.perturbed_action)
-                if self.visualize_rollouts:
-                    rollouts = self.ctrl.get_rollouts(obs)
-                    self.env.visualize_rollouts(rollouts)
-
-            # with rand.SavedRNG():
-            #     nom_actions = self.ctrl.mpc.U
-            #     can_actions = torch.zeros_like(nom_actions)
-            #     cur_state = torch.tensor(obs, dtype=nom_actions.dtype, device=nom_actions.device)
-            #     scale = self.env.MAX_PUSH_DIST
-            #     for t in range(nom_actions.shape[0]):
-            #         d = self.ctrl.goal - cur_state
-            #         straight_action = d[:2] / scale
-            #         straight_action = math_utils.clip(straight_action, self.ctrl.u_min, self.ctrl.u_max)
-            #         cur_state[:2] += straight_action * scale
-            #         can_actions[t] = straight_action
-            #     actions = torch.stack((nom_actions, can_actions))
-            #     cost_total, states, _, center_points = self.ctrl.mpc._compute_rollout_costs(actions)
-            #     colors = ['copper', 'cool', 'spring']
-            #     visualized = 0
-            #     # if self.visualize_rollouts:
-            #     #     self.env.visualize_rollouts(states[0, 1].cpu().numpy(), state_cmap='summer')
-            #     if center_points[0] is not None:
-            #         # only consider the first sample (m = 0)
-            #         center_points = [pt[:, 0] for pt in center_points]
-            #         center_points = torch.stack(center_points)
-            #         num_objs = center_points.shape[1]
-            #         for j in range(num_objs):
-            #             visualized += 1
-            #             rollout = center_points[:, j]
-            #             c = colors[j % len(colors)]
-            #             self.env.visualize_rollouts(rollout.cpu().numpy(), state_cmap=c)
-            #     if self.visualize_rollouts:
-            #         for j in range(visualized, len(colors)):
-            #             self.env.visualize_rollouts([], state_cmap=colors[j % len(colors)])
-            #     self.env.draw_user_text(
-            #         "straight cost {:.2f} sampled cost {:.2f}".format(cost_total[1], cost_total[0]),
-            #         location_index=5, xy=(-0.5, 0.3, -1))
+            self.visualize_before_action(simTime, obs)
 
             # sanitize action
             if torch.is_tensor(action):
@@ -198,12 +112,7 @@ class PybulletSim(simulation.Simulation):
                     self.info[name] = []
                 self.info[name].append(value)
 
-            if self._predicts_state():
-                self.pred_traj[simTime + 1, :] = self.ctrl.predicted_next_state
-                # model error from the previous prediction step (can only evaluate it at the current step)
-                self.model_error[simTime, :] = self.ctrl.prediction_error(obs)
-                if self.visualize_prediction_error:
-                    self.env.visualize_prediction_error(self.ctrl.predicted_next_state.reshape(-1))
+            self.visualize_after_action(simTime, obs)
 
             if done and self.stop_when_done:
                 logger.debug("done and stopping at step %d", simTime)
@@ -278,45 +187,37 @@ class PybulletSim(simulation.Simulation):
 
         self.fig, self.axes = plt.subplots(state_dim, 1, sharex='all')
         self.fu, self.au = plt.subplots(ctrl_dim, 1, sharex='all')
-        if self._predicts_state():
-            self.fd, self.ad = plt.subplots(state_dim, 1, sharex='all')
+
         # plot of other info
-        self.fo, self.ao = plt.subplots(3, 1, sharex='all')
-        self.ao[0].set_ylabel('reaction magnitude')
-        self.ao[1].set_ylabel('wall contacts')
-        self.ao[2].set_ylabel('predicted dynamics_class')
+        self._start_plot_other_info()
 
         for i in range(state_dim):
             self.axes[i].set_ylabel(axis_name[i])
-            if self._predicts_state():
-                self.ad[i].set_ylabel('d' + axis_name[i])
         for i in range(ctrl_dim):
             self.au[i].set_ylabel('$u_{}$'.format(i))
 
         self.fig.tight_layout()
         self.fu.tight_layout()
-        self.fo.tight_layout()
 
         plt.ion()
         plt.show()
+
+    def _start_plot_other_info(self):
+        pass
+
+    def _do_plot_other_info(self):
+        pass
 
     def _plot_data(self):
         if self.fig is None:
             self.start_plot_runs()
             plt.pause(0.0001)
 
-        t = np.arange(1, self.pred_traj.shape[0])
         for i in range(self.traj.shape[1]):
             self.axes[i].plot(self.traj[:, i], label='true')
-            if self._predicts_state():
-                self.axes[i].scatter(t, self.pred_traj[1:, i], marker='*', color='k', label='predicted')
-                self.ad[i].plot(self.model_error[:, i])
         self.axes[0].legend()
 
-        mag = np.linalg.norm(self.reaction_force, axis=1)
-        self.ao[0].plot(mag)
-        self.ao[1].plot(self.wall_contact)
-        self.ao[2].plot(self.pred_cls)
+        self._do_plot_other_info()
 
         self.fig.canvas.draw()
         for i in range(self.u.shape[1]):

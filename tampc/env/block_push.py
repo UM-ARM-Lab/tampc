@@ -12,7 +12,7 @@ from arm_pytorch_utilities import simulation
 from tampc import cfg
 from stucco.env.pybullet_env import PybulletEnv, ContactInfo, get_total_contact_force, get_lateral_friction_forces
 from stucco.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource
-from stucco.env.pybullet_sim import PybulletSim
+from tampc.env.pybullet_sim import TAMPCPybulletSim
 
 logger = logging.getLogger(__name__)
 
@@ -1079,11 +1079,12 @@ def interpolate_pos(start, end, t):
     return t * end + (1 - t) * start
 
 
-class InteractivePush(PybulletSim):
+class InteractivePush(TAMPCPybulletSim):
     def __init__(self, env: PushAgainstWallEnv, ctrl, save_dir='pushing', **kwargs):
         super(InteractivePush, self).__init__(env, ctrl, save_dir=save_dir, **kwargs)
 
     def _setup_experiment(self):
+        assert isinstance(self.env, PushAgainstWallEnv)
         self.ctrl.set_goal(self.env.goal)
         return simulation.ReturnMeaning.SUCCESS
 

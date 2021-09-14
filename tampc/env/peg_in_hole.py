@@ -12,7 +12,7 @@ from stucco.env.panda import pandaEndEffectorIndex, pandaNumDofs, PandaGripperID
 from tampc import cfg
 from stucco.env.pybullet_env import PybulletEnv, get_total_contact_force, ContactInfo
 from stucco.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource
-from stucco.env.pybullet_sim import PybulletSim
+from tampc.env.pybullet_sim import TAMPCPybulletSim
 
 logger = logging.getLogger(__name__)
 
@@ -846,7 +846,7 @@ def interpolate_pos(start, end, t):
     return t * end + (1 - t) * start
 
 
-class PegInHole(PybulletSim):
+class PegInHole(TAMPCPybulletSim):
     def __init__(self, env: PegInHoleEnv, ctrl, save_dir=_DIR, **kwargs):
         super(PegInHole, self).__init__(env, ctrl, save_dir=save_dir, **kwargs)
 
