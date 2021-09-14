@@ -7,8 +7,6 @@ try:
 except:
     pass
 
-import time
-import random
 import torch
 import pybullet as p
 import numpy as np
@@ -80,84 +78,6 @@ class OfflineDataCollection:
             load_data.merge_data_in_dir(cfg, save_dir, save_dir)
         plt.ioff()
         plt.show()
-
-    @staticmethod
-    def tracking(level, seed_offset=0, trials=50, trial_length=300, force_gui=True):
-        env = ArmGetter.env(level=level, mode=p.GUI if force_gui else p.DIRECT)
-        contact_params = ArmGetter.contact_parameters(env)
-
-        def cost_to_go(state, goal):
-            return env.state_distance_two_arg(state, goal)
-
-        def create_contact_object():
-            return tracking.ContactUKF(None, contact_params)
-
-        ds, pm = ArmGetter.prior(env, use_tsf=UseTsf.NO_TRANSFORM)
-
-        ctrl = controller.Controller()
-        save_dir = '{}{}'.format(ArmGetter.env_dir, level)
-        sim = arm.ExperimentRunner(env, ctrl, num_frames=trial_length, plot=False, save=True,
-                                   stop_when_done=True, save_dir=save_dir)
-
-        # randomly distribute data
-        for offset in range(trials):
-            u_min, u_max = env.get_control_bounds()
-
-            # use mode p.GUI to see what the trials look like
-            seed = rand.seed(seed_offset + offset)
-
-            contact_set = tracking.ContactSetHard(contact_params, contact_object_factory=create_contact_object)
-            ctrl = controller.GreedyControllerWithRandomWalkOnContact(env.nu, pm.dyn_net, cost_to_go, contact_set,
-                                                                      u_min,
-                                                                      u_max,
-                                                                      force_threshold=0.5,
-                                                                      walk_length=6)
-            # random position
-            intersects_existing_objects = True
-            while intersects_existing_objects:
-                init = [random.uniform(-0.7, 0.7), random.uniform(-0.7, 0.7)]
-                init_state = np.array(init + [0, 0])
-                goal = [random.uniform(-0.7, 0.7), random.uniform(-0.7, 0.7)]
-
-                # reject if init and goal is too close
-                if np.linalg.norm(np.subtract(init, goal)) < 0.7:
-                    continue
-
-                env.set_task_config(init=init, goal=goal)
-                env.set_state(env.goal)
-
-                # want both goal and start to be free from collision
-                p.performCollisionDetection()
-                goal_intersection = False
-                for obj in env.movable + env.immovable:
-                    c = env.get_ee_contact_info(obj)
-                    if len(c):
-                        goal_intersection = True
-                        break
-                if goal_intersection:
-                    continue
-
-                env.set_state(init_state)
-                ctrl.set_goal(env.goal)
-
-                p.performCollisionDetection()
-                for obj in env.movable + env.immovable:
-                    c = env.get_ee_contact_info(obj)
-                    if len(c):
-                        break
-                else:
-                    intersects_existing_objects = False
-
-            sim.ctrl = ctrl
-            env.draw_user_text(f"seed {seed}", xy=(0.5, 0.8, -1))
-            sim.run(seed)
-            env.clear_debug_trajectories()
-            # reset so collision checks are on a valid scene for the next trial
-            env.reset()
-
-        env.close()
-        # wait for it to fully close; otherwise could skip next run due to also closing that when it's created
-        time.sleep(5.)
 
 
 from pytorch_rrt import UniformActionSpace, ActionDescription, \
@@ -915,12 +835,6 @@ if __name__ == "__main__":
 
     if args.command == 'collect':
         OfflineDataCollection.freespace(seed_offset=0, trials=100, trial_length=30, force_gui=args.gui)
-    elif args.command == 'collect_tracking':
-        accepted_levels = [Levels.SELECT1, Levels.SELECT2, Levels.SELECT3, Levels.SELECT4]
-        if level not in accepted_levels:
-            raise RuntimeError(f"Task must be one of {accepted_levels}")
-        for offset in [7]:
-            OfflineDataCollection.tracking(level, seed_offset=offset, trials=40, force_gui=args.gui)
     elif args.command == 'learn_representation':
         for seed in args.seed:
             ArmGetter.learn_invariant(ut, seed=seed, name=arm.DIR, MAX_EPOCH=1000, BATCH_SIZE=args.batch)
