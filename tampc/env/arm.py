@@ -85,9 +85,12 @@ class ArmLoader(TrajectoryLoader):
 
 
 class DebugVisualization(enum.IntEnum):
+    STATE = 2
     ACTION = 3
     REACTION_MINI_STEP = 4
     REACTION_IN_STATE = 5
+    GOAL = 6
+    INIT = 7
 
 
 class ReactionForceStrategy(enum.IntEnum):
@@ -215,9 +218,12 @@ class ArmEnv(PybulletEnv):
         self.armId = None
 
         self._debug_visualizations = {
-            DebugVisualization.ACTION: True,
-            DebugVisualization.REACTION_MINI_STEP: True,
-            DebugVisualization.REACTION_IN_STATE: True,
+            DebugVisualization.STATE: False,
+            DebugVisualization.ACTION: False,
+            DebugVisualization.REACTION_MINI_STEP: False,
+            DebugVisualization.REACTION_IN_STATE: False,
+            DebugVisualization.GOAL: False,
+            DebugVisualization.INIT: False,
         }
         if debug_visualizations is not None:
             self._debug_visualizations.update(debug_visualizations)
@@ -259,12 +265,14 @@ class ArmEnv(PybulletEnv):
     def _set_goal(self, goal):
         # ignore the pusher position
         self.goal = np.array(tuple(goal) + (0, 0, 0))
-        self._dd.draw_point('goal', self.goal)
+        if self._debug_visualizations[DebugVisualization.GOAL]:
+            self._dd.draw_point('goal', self.goal)
 
     def _set_init(self, init):
         # initial position of end effector
         self.init = init
-        self._dd.draw_point('init', self.init, color=(0, 1, 0.2))
+        if self._debug_visualizations[DebugVisualization.INIT]:
+            self._dd.draw_point('init', self.init, color=(0, 1, 0.2))
         if self.armId is not None:
             self._calculate_init_joints()
 
@@ -513,14 +521,16 @@ class ArmEnv(PybulletEnv):
         """In GUI mode, show the difference between the predicted state and the current actual state"""
         pred = self.get_ee_pos(predicted_state)
         c = (0.5, 0, 0.5)
-        self._dd.draw_point('ep', pred, c)
+        if self._debug_visualizations[DebugVisualization.STATE]:
+            self._dd.draw_point('ep', pred, c)
 
     def clear_debug_trajectories(self):
         self._dd.clear_transitions()
 
     def _draw_state(self):
-        pos = self.get_ee_pos(self.state)
-        self._dd.draw_point('state', pos)
+        if self._debug_visualizations[DebugVisualization.STATE]:
+            pos = self.get_ee_pos(self.state)
+            self._dd.draw_point('state', pos)
         if self._debug_visualizations[DebugVisualization.REACTION_IN_STATE]:
             self._draw_reaction_force(self.state[3:6], 'sr', (0, 0, 0))
 
@@ -737,13 +747,12 @@ class ArmEnv(PybulletEnv):
         old_state = np.copy(self.state)
         dx, dy, dz = self._unpack_action(action)
 
-        if self._debug_visualizations[DebugVisualization.ACTION]:
-            self._draw_action(action)
-
         ee_pos = self.get_ee_pos(old_state)
         final_ee_pos = np.array((ee_pos[0] + dx, ee_pos[1] + dy, ee_pos[2] + dz))
-        self._dd.draw_point('final eepos', final_ee_pos, color=(1, 0.5, 0.5))
-        # print("current {} desired {}".format(ee_pos, final_ee_pos))
+
+        if self._debug_visualizations[DebugVisualization.ACTION]:
+            self._draw_action(action)
+            self._dd.draw_point('final eepos', final_ee_pos, color=(1, 0.5, 0.5))
 
         # execute push with mini-steps
         for step in range(self.mini_steps):
@@ -771,7 +780,8 @@ class ArmEnv(PybulletEnv):
             p.stepSimulation()
         self.state = self._obs()
         pos = self.get_ee_pos(self.state)
-        self._dd.draw_point('x0', pos, color=(0, 1, 0))
+        if self._debug_visualizations[DebugVisualization.STATE]:
+            self._dd.draw_point('x0', pos, color=(0, 1, 0))
         return np.copy(self.state)
 
 
@@ -985,7 +995,8 @@ class PlanarArmEnv(ArmEnv):
             goal = goal[:2]
         # ignore the pusher position
         self.goal = np.array(tuple(goal) + (0, 0))
-        self._dd.draw_point('goal', tuple(goal) + (FIXED_Z,))
+        if self._debug_visualizations[DebugVisualization.GOAL]:
+            self._dd.draw_point('goal', tuple(goal) + (FIXED_Z,))
 
     def _set_init(self, init):
         if len(init) > 2:
@@ -1048,12 +1059,11 @@ class PlanarArmEnv(ArmEnv):
         old_state = np.copy(self.state)
         dx, dy = self._unpack_action(action)
 
-        if self._debug_visualizations[DebugVisualization.ACTION]:
-            self._draw_action(action)
-
         ee_pos = self.get_ee_pos(old_state)
         final_ee_pos = np.array((ee_pos[0] + dx, ee_pos[1] + dy, FIXED_Z))
-        self._dd.draw_point('final eepos', final_ee_pos, color=(1, 0.5, 0.5))
+        if self._debug_visualizations[DebugVisualization.ACTION]:
+            self._draw_action(action)
+            self._dd.draw_point('final eepos', final_ee_pos, color=(1, 0.5, 0.5))
 
         # execute push with mini-steps
         for step in range(self.mini_steps):
@@ -1067,7 +1077,8 @@ class PlanarArmEnv(ArmEnv):
 
     def _draw_state(self):
         pos = self.get_ee_pos(self.state)
-        self._dd.draw_point('state', pos)
+        if self._debug_visualizations[DebugVisualization.STATE]:
+            self._dd.draw_point('state', pos)
         if self._debug_visualizations[DebugVisualization.REACTION_IN_STATE]:
             self._draw_reaction_force(np.r_[self.state[2:], FIXED_Z], 'sr', (0, 0, 0))
 
@@ -1415,7 +1426,8 @@ class FloatingGripperEnv(PlanarArmEnv):
         for _ in range(1000):
             p.stepSimulation()
         self.state = self._obs()
-        self._dd.draw_point('x0', self.get_ee_pos(self.state), color=(0, 1, 0))
+        if self._debug_visualizations[DebugVisualization.STATE]:
+            self._dd.draw_point('x0', self.get_ee_pos(self.state), color=(0, 1, 0))
         self.contact_detector.clear()
         return np.copy(self.state)
 
@@ -1448,7 +1460,8 @@ class ObjectRetrievalEnv(FloatingGripperEnv):
             goal = [goal[0], goal[1], 0]
         # ignore the pusher position
         self.goal = np.array(goal)
-        self._dd.draw_point('goal', [goal[0], goal[1], FIXED_Z])
+        if self._debug_visualizations[DebugVisualization.GOAL]:
+            self._dd.draw_point('goal', [goal[0], goal[1], FIXED_Z])
 
     def _obs(self):
         return super(ObjectRetrievalEnv, self)._obs()[:2]
