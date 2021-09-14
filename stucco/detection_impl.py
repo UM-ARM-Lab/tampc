@@ -1,14 +1,13 @@
 import os
 import logging
-import pickle
 
 import numpy as np
 import pybullet as p
 import torch
 from stucco.detection import ContactDetectorPlanar
 from pytorch_kinematics import transforms as tf
-from tampc import cfg
-from tampc.env.pybullet_env import ContactInfo, closest_point_on_surface
+from stucco import cfg
+from stucco.env.pybullet_env import ContactInfo, closest_point_on_surface
 
 logger = logging.getLogger(__name__)
 

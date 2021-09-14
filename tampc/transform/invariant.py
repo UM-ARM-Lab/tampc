@@ -4,19 +4,17 @@ import logging
 import os
 import math
 import pickle
-from abc import ABC
 from typing import Union
 
 import numpy as np
 import torch
 import torch.nn
-from arm_pytorch_utilities import array_utils, load_data, tensor_utils, linalg, math_utils
+from arm_pytorch_utilities import array_utils
 from arm_pytorch_utilities import tensor_utils
 from arm_pytorch_utilities import linalg
 from arm_pytorch_utilities import load_data
 from arm_pytorch_utilities import math_utils
 from arm_pytorch_utilities import preprocess
-from arm_pytorch_utilities import softknn
 from arm_pytorch_utilities.make_data import datasource
 from arm_pytorch_utilities.model import make
 from arm_pytorch_utilities.model.common import LearnableParameterizedModel
@@ -288,7 +286,7 @@ class RexTraining(InvariantTransform):
         max_step = max_epoch * math.ceil(len(ds_train) / batch_N)
         rex_anneal_step = self.rex_anneal_ratio * max_step
 
-        from tampc.env.env import EnvDataSource
+        from stucco.env.env import EnvDataSource
         assert isinstance(self.ds, EnvDataSource)
 
         for epoch in range(max_epoch):

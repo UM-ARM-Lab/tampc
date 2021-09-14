@@ -7,10 +7,12 @@ import enum
 import torch
 
 import numpy as np
+
+from stucco.env.panda import pandaEndEffectorIndex, pandaNumDofs, PandaGripperID, PandaJustGripperID
 from tampc import cfg
-from tampc.env.pybullet_env import PybulletEnv, get_total_contact_force, ContactInfo
-from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource
-from tampc.env.pybullet_sim import PybulletSim
+from stucco.env.pybullet_env import PybulletEnv, get_total_contact_force, ContactInfo
+from stucco.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource
+from stucco.env.pybullet_sim import PybulletSim
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +21,6 @@ _BOARD_TOP = 0.05
 _EE_PEG_Z_DIFF = 0.12
 
 _DIR = "peg"
-
-pandaEndEffectorIndex = 11
-pandaNumDofs = 7
 
 
 class PegLoader(TrajectoryLoader):
@@ -59,16 +58,6 @@ class ReactionForceStrategy(enum.IntEnum):
     MAX_OVER_MINI_STEPS = 1
     AVG_OVER_MINI_STEPS = 2
     MEDIAN_OVER_MINI_STEPS = 3
-
-
-class PandaGripperID(enum.IntEnum):
-    FINGER_A = 9
-    FINGER_B = 10
-
-
-class PandaJustGripperID(enum.IntEnum):
-    FINGER_A = 0
-    FINGER_B = 1
 
 
 class PegInHoleEnv(PybulletEnv):

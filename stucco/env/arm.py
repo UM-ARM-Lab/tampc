@@ -14,15 +14,14 @@ import matplotlib.cm as cmx
 
 from pybullet_object_models import ycb_objects
 
-from arm_pytorch_utilities.optim import get_device
 from arm_pytorch_utilities import tensor_utils
-from tampc.env.pybullet_env import PybulletEnv, get_total_contact_force, make_box, state_action_color_pairs, \
+from stucco.env.pybullet_env import PybulletEnv, get_total_contact_force, make_box, state_action_color_pairs, \
     ContactInfo, make_cylinder, closest_point_on_surface
-from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource, InfoKeys, \
+from stucco.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource, InfoKeys, \
     PlanarPointToConfig
-from tampc.env.peg_in_hole import PandaJustGripperID
-from tampc.env.pybullet_sim import PybulletSim
-from tampc import cfg
+from stucco.env.panda import PandaJustGripperID
+from stucco.env.pybullet_sim import PybulletSim
+from stucco import cfg
 from stucco import tracking
 from stucco.defines import NO_CONTACT_ID
 from stucco.detection import ContactDetector

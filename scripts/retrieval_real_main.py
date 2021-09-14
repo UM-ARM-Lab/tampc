@@ -16,14 +16,14 @@ from stucco.cluster_baseline import OnlineAgglomorativeClustering, OnlineSklearn
 from stucco.evaluation import object_robot_penetration_score
 from stucco.retrieval_controller import RetrievalPredeterminedController, sample_model_points, rot_2d_mat_to_angle, \
     SklearnTrackingMethod, TrackingMethod, OurSoftTrackingMethod, SklearnPredeterminedController, KeyboardDirPressed
-from tampc.env.real_env import VideoLogger
-from tampc.env.arm import Levels
+from stucco.env.real_env import VideoLogger
+from stucco.env.arm import Levels
 from tampc.util import EnvGetter
 import os
 from datetime import datetime
 
 from tampc import cfg
-from tampc.env import arm_real
+from stucco.env import arm_real
 from stucco import tracking, icp
 from arm_pytorch_utilities.math_utils import rotate_wrt_origin
 

@@ -18,7 +18,6 @@ import os
 import argparse
 from datetime import datetime
 import pprint
-from functools import partial
 
 from arm_pytorch_utilities import rand, load_data
 from arm_pytorch_utilities.optim import get_device
@@ -29,9 +28,9 @@ from stucco import tracking
 from tampc.controller import controller
 from tampc.transform import invariant
 from tampc.dynamics import hybrid_model
-from tampc.env import arm
-from tampc.env.arm import task_map, Levels
-from tampc.env.env import InfoKeys
+from stucco.env import arm
+from stucco.env.arm import task_map, Levels
+from stucco.env.env import InfoKeys
 
 from tampc.dynamics.hybrid_model import OnlineAdapt
 from tampc.controller import online_controller
@@ -469,7 +468,6 @@ def visualize_clustering_sets(*args, num_frames=100, **kwargs):
 
         # previous contacts made
         from torch import tensor
-        from stucco.tracking import ContactObject
         from tampc.dynamics import online_model
         d = 'cuda:0'
         dt = torch.float64

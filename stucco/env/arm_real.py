@@ -17,15 +17,15 @@ from tf.transformations import quaternion_from_euler
 
 from stucco import tracking
 from stucco.detection_impl import ContactDetectorPlanarPybulletGripper
-from tampc import cfg
-from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource, Env, Visualizer, \
+from stucco import cfg
+from stucco.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource, Env, Visualizer, \
     PlanarPointToConfig, InfoKeys
 
 from stucco.detection import ContactDetector
 from geometry_msgs.msg import Pose, Quaternion
 
-from tampc.env.pybullet_env import closest_point_on_surface, ContactInfo, DebugDrawer, state_action_color_pairs
-from tampc.env.real_env import DebugRvizDrawer
+from stucco.env.pybullet_env import closest_point_on_surface, ContactInfo, DebugDrawer, state_action_color_pairs
+from stucco.env.real_env import DebugRvizDrawer
 
 from arm_robots.cartesian import ArmSide
 from victor_hardware_interface_msgs.msg import ControlMode, MotionStatus
@@ -33,7 +33,6 @@ from tf2_geometry_msgs import WrenchStamped
 from arm_robots.victor import Victor
 
 # runner imports
-from arm_pytorch_utilities.optim import get_device
 from arm_pytorch_utilities import tensor_utils
 
 logger = logging.getLogger(__name__)
@@ -532,6 +531,7 @@ class RealArmEnv(Env):
         if visualizer is not None:
             if visualizer.sim is None:
                 visualizer.init_sim(0, 1.8)
+                assert isinstance(visualizer.sim, DebugDrawer)
                 visualizer.sim.set_camera_position(canonical_pos, yaw=90)
                 visualizer.sim.toggle_3d(True)
 

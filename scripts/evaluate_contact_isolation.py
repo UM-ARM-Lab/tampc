@@ -10,7 +10,7 @@ from stucco.defines import NO_CONTACT_ID
 from stucco.evaluation import get_file_metainfo
 
 from tampc import cfg
-from tampc.env.env import InfoKeys
+from stucco.env.env import InfoKeys
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))

@@ -26,8 +26,8 @@ from arm_pytorch_utilities.optim import get_device
 
 from tampc import cfg
 from stucco import tracking
-from tampc.env import pybullet_env as env_base, arm
-from tampc.env.env import InfoKeys
+from stucco.env import arm, pybullet_env as env_base
+from stucco.env.env import InfoKeys
 from tampc.env_getters.arm import ArmGetter
 
 from stucco.cluster_baseline import process_labels_with_noise, OnlineSklearnFixedClusters, OnlineAgglomorativeClustering

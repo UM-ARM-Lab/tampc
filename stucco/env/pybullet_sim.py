@@ -2,11 +2,13 @@ import time
 import torch
 
 import numpy as np
-from arm_pytorch_utilities import simulation, math_utils, rand
+from arm_pytorch_utilities import simulation, rand
 from matplotlib import pyplot as plt
-from tampc import cfg, cost as control_cost
+from stucco import cfg
+from stucco.env import cost as control_cost
+# TODO make sim defined here agnostic to the controllers; inside TAMPC specialize the sim to these controllers
 from tampc.controller import controller, online_controller
-from tampc.env.pybullet_env import PybulletEnv, logger
+from stucco.env.pybullet_env import PybulletEnv, logger
 
 
 class PybulletSim(simulation.Simulation):

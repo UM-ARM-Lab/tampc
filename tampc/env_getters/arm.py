@@ -4,8 +4,8 @@ import torch
 from arm_pytorch_utilities import load_data, preprocess
 from arm_pytorch_utilities.optim import get_device
 from stucco import tracking
-from tampc.env import arm
-from tampc.env.arm import Levels
+from stucco.env import arm
+from stucco.env.arm import Levels
 from tampc.util import EnvGetter, UseTsf
 
 

@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from arm_pytorch_utilities import load_data as load_utils, array_utils, tensor_utils
 from arm_pytorch_utilities.make_data import datasource
-from tampc import cfg
+from stucco import cfg
 from stucco.detection import ContactDetector
 
 

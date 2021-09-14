@@ -10,9 +10,9 @@ import pybullet as p
 from matplotlib import pyplot as plt
 from sklearn import metrics
 
-from tampc import cfg
-from tampc.env import pybullet_env as env_base, arm
-from tampc.env.pybullet_env import ContactInfo
+from stucco import cfg
+from stucco.env import arm, pybullet_env as env_base
+from stucco.env.pybullet_env import ContactInfo
 
 logger = logging.getLogger(__name__)
 

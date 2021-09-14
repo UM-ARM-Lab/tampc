@@ -4,8 +4,8 @@ import rospy
 
 import numpy as np
 from tampc import cfg
-from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource, Env
-from tampc.env.real_env import DebugRvizDrawer
+from stucco.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource, Env
+from stucco.env.real_env import DebugRvizDrawer
 
 from tampc_or import cfg as robot_cfg
 from tampc_or_msgs.srv import Action, Observe, CalibStaticWrench

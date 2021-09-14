@@ -8,7 +8,7 @@ from tampc.controller.multi_arm_bandit import KFMANDB
 from arm_pytorch_utilities import tensor_utils, preprocess
 from tampc.dynamics import hybrid_model
 from tampc.controller import controller, gating_function
-from tampc import cost
+from stucco.env import cost
 from stucco import tracking, detection
 
 logger = logging.getLogger(__name__)

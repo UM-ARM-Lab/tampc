@@ -4,7 +4,7 @@ import rospy
 
 import numpy as np
 from tampc import cfg
-from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource, Env
+from stucco.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource, Env
 
 # drawer imports
 from visualization_msgs.msg import Marker

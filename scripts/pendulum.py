@@ -17,7 +17,7 @@ from arm_pytorch_utilities.model import make
 from arm_pytorch_utilities.make_data import datasource
 from tampc.controller import gating_function
 from tampc.dynamics import hybrid_model
-from tampc.env.env import handle_data_format_for_state_diff
+from stucco.env.env import handle_data_format_for_state_diff
 import time
 
 gym_log.set_level(gym_log.INFO)

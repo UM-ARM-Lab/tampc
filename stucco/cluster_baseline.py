@@ -1,6 +1,4 @@
 from sklearn.cluster import KMeans
-from sklearn.cluster import MiniBatchKMeans
-# from tampc.contact import ContactSet
 import copy
 import numpy as np
 

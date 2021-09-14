@@ -12,7 +12,7 @@ from datetime import datetime
 from arm_pytorch_utilities import math_utils
 
 import pybullet_data
-from tampc.env.env import Mode, Env, Visualizer
+from stucco.env.env import Mode, Env, Visualizer
 
 logger = logging.getLogger(__name__)
 

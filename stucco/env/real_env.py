@@ -10,8 +10,8 @@ from visualization_msgs.msg import Marker
 from window_recorder.recorder import WindowRecorder
 
 from arm_video_recorder.srv import TriggerVideoRecording, TriggerVideoRecordingRequest
-from tampc import cfg
-from tampc.env.env import Visualizer
+from stucco import cfg
+from stucco.env.env import Visualizer
 import logging
 
 logger = logging.getLogger(__name__)

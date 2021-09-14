@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from arm_pytorch_utilities import trajectory, math_utils, tensor_utils
 from arm_pytorch_utilities.policy.lin_gauss import LinearGaussianPolicy
-from tampc import cost
+from stucco.env import cost
 from tampc.dynamics import online_model
 from tampc.controller.controller import Controller
 

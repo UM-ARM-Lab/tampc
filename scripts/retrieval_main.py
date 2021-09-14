@@ -17,16 +17,16 @@ from stucco.defines import NO_CONTACT_ID
 from stucco.evaluation import compute_contact_error, clustering_metrics, object_robot_penetration_score
 from stucco.retrieval_controller import rot_2d_mat_to_angle, \
     sample_model_points, pose_error, TrackingMethod, OurSoftTrackingMethod, \
-    SklearnTrackingMethod, KeyboardDirPressed, KeyboardController
-from tampc.env.env import InfoKeys
+    SklearnTrackingMethod, KeyboardController
+from stucco.env.env import InfoKeys
 
 from arm_pytorch_utilities import rand, tensor_utils, math_utils
 
 from tampc import cfg
-from tampc.env import arm
-from tampc.env.arm import Levels
+from stucco.env import arm
+from stucco.env.arm import Levels
 from tampc.env_getters.arm import RetrievalGetter
-from tampc.env.pybullet_env import state_action_color_pairs
+from stucco.env.pybullet_env import state_action_color_pairs
 from stucco import icp, tracking
 
 ch = logging.StreamHandler()

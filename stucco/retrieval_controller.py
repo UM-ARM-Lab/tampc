@@ -7,18 +7,18 @@ import pybullet as p
 import torch
 from arm_pytorch_utilities import rand
 from arm_pytorch_utilities.math_utils import angular_diff
+from arm_pytorch_utilities.controller import Controller
 from pynput import keyboard
 
 from stucco import detection, tracking
 from stucco.cluster_baseline import process_labels_with_noise
 from stucco.defines import NO_CONTACT_ID
-from tampc import cfg
-from tampc.controller import controller
-from tampc.env.env import InfoKeys
-from tampc.env.pybullet_env import closest_point_on_surface, ContactInfo, state_action_color_pairs
+from stucco import cfg
+from stucco.env.env import InfoKeys
+from stucco.env.pybullet_env import closest_point_on_surface, ContactInfo, state_action_color_pairs
 
 
-class RetrievalController(controller.Controller):
+class RetrievalController(Controller):
 
     def __init__(self, contact_detector: detection.ContactDetector, nu, dynamics, cost_to_go,
                  contact_set: tracking.ContactSetHard, u_min, u_max, num_samples=100,
@@ -70,7 +70,7 @@ class RetrievalController(controller.Controller):
         return u
 
 
-class RetrievalPredeterminedController(controller.Controller):
+class RetrievalPredeterminedController(Controller):
 
     def __init__(self, controls, nu=None):
         super().__init__()
@@ -381,7 +381,7 @@ class KeyboardDirPressed():
             self.calibrate = False
 
 
-class KeyboardController(controller.Controller):
+class KeyboardController(Controller):
 
     def __init__(self, contact_detector: detection.ContactDetector, contact_set: tracking.ContactSet, nu=2):
         super().__init__()

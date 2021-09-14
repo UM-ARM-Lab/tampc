@@ -10,9 +10,9 @@ import numpy as np
 from arm_pytorch_utilities import math_utils
 from arm_pytorch_utilities import simulation
 from tampc import cfg
-from tampc.env.pybullet_env import PybulletEnv, ContactInfo, get_total_contact_force, get_lateral_friction_forces
-from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource
-from tampc.env.pybullet_sim import PybulletSim
+from stucco.env.pybullet_env import PybulletEnv, ContactInfo, get_total_contact_force, get_lateral_friction_forces
+from stucco.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource
+from stucco.env.pybullet_sim import PybulletSim
 
 logger = logging.getLogger(__name__)
 

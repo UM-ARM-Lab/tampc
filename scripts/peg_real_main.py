@@ -10,7 +10,7 @@ import argparse
 from datetime import datetime
 import pprint
 
-import tampc.env.real_env
+import stucco.env.real_env
 
 try:
     import rospy
@@ -37,8 +37,7 @@ from tampc.dynamics.hybrid_model import OnlineAdapt
 from tampc.controller import online_controller
 from tampc.controller.gating_function import AlwaysSelectNominal
 from tampc import util
-from tampc.util import update_ds_with_transform, no_tsf_preprocessor, UseTsf, get_transform, TranslationNetworkWrapper, \
-    EnvGetter
+from tampc.util import no_tsf_preprocessor, UseTsf, EnvGetter
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
@@ -161,7 +160,7 @@ class OfflineDataCollection:
             # start at fixed location
             ctrl = controller.FullRandomController(env.nu, u_min, u_max)
             sim.ctrl = ctrl
-            with tampc.env.real_env.VideoLogger():
+            with stucco.env.real_env.VideoLogger():
                 sim.run(seed, run_name=run_name)
 
         env.close()
@@ -305,7 +304,7 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
     if reuse_escape_as_demonstration:
         sim.dd.draw_text("resuse", "reuse escape", 3, left_offset=-1.4)
     sim.dd.draw_text("run_name", run_name, 18, left_offset=-0.8, scale=3)
-    with tampc.env.real_env.VideoLogger():
+    with stucco.env.real_env.VideoLogger():
         pre_run_setup(env, ctrl, ds)
 
         sim.run(seed, run_name)
@@ -360,7 +359,7 @@ class EvaluateTask:
             node = tuple(int(round(v)) for v in pair)
             return node
 
-        dd = tampc.env.real_env.DebugRvizDrawer()
+        dd = stucco.env.real_env.DebugRvizDrawer()
         z = X[0, 2].item()
         # draw search boundaries
         marker = dd.make_marker(marker_type=Marker.LINE_STRIP)
