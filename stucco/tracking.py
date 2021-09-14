@@ -7,9 +7,9 @@ import abc
 import enum
 import math
 from arm_pytorch_utilities import tensor_utils, optim, serialization, linalg, math_utils, draw
-from cottun.detection import ContactDetector
+from stucco.detection import ContactDetector
 from torch.distributions.multivariate_normal import MultivariateNormal
-from cottun.filters.ukf import EnvConditionedUKF
+from stucco.filters.ukf import EnvConditionedUKF
 from tampc.env.env import InfoKeys
 
 logger = logging.getLogger(__name__)

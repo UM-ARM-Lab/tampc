@@ -1,4 +1,4 @@
-from cottun.defines import NO_CONTACT_ID
+from stucco.defines import NO_CONTACT_ID
 
 try:
     import sys
@@ -25,7 +25,7 @@ from arm_pytorch_utilities.optim import get_device
 from arm_pytorch_utilities import draw
 
 from tampc import cfg
-from cottun import tracking
+from stucco import tracking
 from tampc.controller import controller
 from tampc.transform import invariant
 from tampc.dynamics import hybrid_model
@@ -469,7 +469,7 @@ def visualize_clustering_sets(*args, num_frames=100, **kwargs):
 
         # previous contacts made
         from torch import tensor
-        from cottun.tracking import ContactObject
+        from stucco.tracking import ContactObject
         from tampc.dynamics import online_model
         d = 'cuda:0'
         dt = torch.float64

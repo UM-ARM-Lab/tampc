@@ -11,7 +11,7 @@ from arm_pytorch_utilities import serialization
 from pytorch_mppi import mppi
 
 from tampc import cost
-from cottun import tracking
+from stucco import tracking
 
 logger = logging.getLogger(__name__)
 

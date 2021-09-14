@@ -7,7 +7,7 @@ import torch
 from arm_pytorch_utilities import load_data as load_utils, array_utils, tensor_utils
 from arm_pytorch_utilities.make_data import datasource
 from tampc import cfg
-from cottun.detection import ContactDetector
+from stucco.detection import ContactDetector
 
 
 class InfoKeys:

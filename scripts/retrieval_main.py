@@ -12,10 +12,10 @@ from datetime import datetime
 from sklearn.cluster import Birch, DBSCAN, KMeans
 from window_recorder.recorder import WindowRecorder
 
-from cottun.cluster_baseline import OnlineAgglomorativeClustering, OnlineSklearnFixedClusters
-from cottun.defines import NO_CONTACT_ID
-from cottun.evaluation import compute_contact_error, clustering_metrics, object_robot_penetration_score
-from cottun.retrieval_controller import rot_2d_mat_to_angle, \
+from stucco.cluster_baseline import OnlineAgglomorativeClustering, OnlineSklearnFixedClusters
+from stucco.defines import NO_CONTACT_ID
+from stucco.evaluation import compute_contact_error, clustering_metrics, object_robot_penetration_score
+from stucco.retrieval_controller import rot_2d_mat_to_angle, \
     sample_model_points, pose_error, TrackingMethod, OurSoftTrackingMethod, \
     SklearnTrackingMethod, KeyboardDirPressed, KeyboardController
 from tampc.env.env import InfoKeys
@@ -27,7 +27,7 @@ from tampc.env import arm
 from tampc.env.arm import Levels
 from tampc.env_getters.arm import RetrievalGetter
 from tampc.env.pybullet_env import state_action_color_pairs
-from cottun import icp, tracking
+from stucco import icp, tracking
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))

@@ -17,20 +17,20 @@ import typing
 
 from sklearn.cluster import KMeans, DBSCAN, Birch
 
-from cottun.defines import NO_CONTACT_ID, RunKey, CONTACT_RES_FILE, RUN_AMBIGUITY, CONTACT_ID, CONTACT_POINT_CACHE
-from cottun.evaluation import dict_to_namespace_str, plot_cluster_res, load_runs_results, get_file_metainfo, \
+from stucco.defines import NO_CONTACT_ID, RunKey, CONTACT_RES_FILE, RUN_AMBIGUITY, CONTACT_ID, CONTACT_POINT_CACHE
+from stucco.evaluation import dict_to_namespace_str, plot_cluster_res, load_runs_results, get_file_metainfo, \
     clustering_metrics, compute_contact_error
-from cottun.detection_impl import ContactDetectorPlanarPybulletGripper
+from stucco.detection_impl import ContactDetectorPlanarPybulletGripper
 
 from arm_pytorch_utilities.optim import get_device
 
 from tampc import cfg
-from cottun import tracking
+from stucco import tracking
 from tampc.env import pybullet_env as env_base, arm
 from tampc.env.env import InfoKeys
 from tampc.env_getters.arm import ArmGetter
 
-from cottun.cluster_baseline import process_labels_with_noise, OnlineSklearnFixedClusters, OnlineAgglomorativeClustering
+from stucco.cluster_baseline import process_labels_with_noise, OnlineSklearnFixedClusters, OnlineAgglomorativeClustering
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))

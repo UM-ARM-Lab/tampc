@@ -9,9 +9,9 @@ from arm_pytorch_utilities import rand
 from arm_pytorch_utilities.math_utils import angular_diff
 from pynput import keyboard
 
-from cottun import detection, tracking
-from cottun.cluster_baseline import process_labels_with_noise
-from cottun.defines import NO_CONTACT_ID
+from stucco import detection, tracking
+from stucco.cluster_baseline import process_labels_with_noise
+from stucco.defines import NO_CONTACT_ID
 from tampc import cfg
 from tampc.controller import controller
 from tampc.env.env import InfoKeys

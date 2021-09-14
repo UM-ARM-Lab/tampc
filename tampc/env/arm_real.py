@@ -15,13 +15,13 @@ import numpy as np
 from pytorch_kinematics import transforms as tf
 from tf.transformations import quaternion_from_euler
 
-from cottun import tracking
-from cottun.detection_impl import ContactDetectorPlanarPybulletGripper
+from stucco import tracking
+from stucco.detection_impl import ContactDetectorPlanarPybulletGripper
 from tampc import cfg
 from tampc.env.env import TrajectoryLoader, handle_data_format_for_state_diff, EnvDataSource, Env, Visualizer, \
     PlanarPointToConfig, InfoKeys
 
-from cottun.detection import ContactDetector
+from stucco.detection import ContactDetector
 from geometry_msgs.msg import Pose, Quaternion
 
 from tampc.env.pybullet_env import closest_point_on_surface, ContactInfo, DebugDrawer, state_action_color_pairs

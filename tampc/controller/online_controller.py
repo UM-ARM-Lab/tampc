@@ -9,7 +9,7 @@ from arm_pytorch_utilities import tensor_utils, preprocess
 from tampc.dynamics import hybrid_model
 from tampc.controller import controller, gating_function
 from tampc import cost
-from cottun import tracking, detection
+from stucco import tracking, detection
 
 logger = logging.getLogger(__name__)
 
