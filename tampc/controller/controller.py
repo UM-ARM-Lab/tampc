@@ -1,6 +1,5 @@
 import abc
 import logging
-from typing import Dict
 
 import numpy as np
 import torch
@@ -11,7 +10,6 @@ from arm_pytorch_utilities.controller import Controller
 from pytorch_mppi import mppi
 
 from stucco.env import cost
-from stucco import tracking
 
 logger = logging.getLogger(__name__)
 
