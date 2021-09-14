@@ -18,11 +18,11 @@ from stucco.retrieval_controller import RetrievalPredeterminedController, sample
     SklearnTrackingMethod, TrackingMethod, OurSoftTrackingMethod, SklearnPredeterminedController, KeyboardDirPressed
 from stucco.env.real_env import VideoLogger
 from stucco.env.arm import Levels
-from tampc.util import EnvGetter
+from stucco.env_getters.getter import EnvGetter
 import os
 from datetime import datetime
 
-from tampc import cfg
+from stucco import cfg
 from stucco.env import arm_real
 from stucco import tracking, icp
 from arm_pytorch_utilities.math_utils import rotate_wrt_origin
@@ -67,10 +67,6 @@ class RealRetrievalGetter(EnvGetter):
 
     @staticmethod
     def ds(env, data_dir, **kwargs):
-        return None
-
-    @staticmethod
-    def pre_invariant_preprocessor(use_tsf):
         return None
 
     @staticmethod

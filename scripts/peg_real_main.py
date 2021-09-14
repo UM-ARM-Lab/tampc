@@ -37,7 +37,7 @@ from tampc.dynamics.hybrid_model import OnlineAdapt
 from tampc.controller import online_controller
 from tampc.controller.gating_function import AlwaysSelectNominal
 from tampc import util
-from tampc.util import no_tsf_preprocessor, UseTsf, EnvGetter
+from tampc.util import no_tsf_preprocessor, UseTsf, TAMPCEnvGetter
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 
 
 # --- SHARED GETTERS
-class PegRealGetter(EnvGetter):
+class PegRealGetter(TAMPCEnvGetter):
     @staticmethod
     def dynamics_prefix() -> str:
         return "pegr"

@@ -22,10 +22,10 @@ from stucco.env.env import InfoKeys
 
 from arm_pytorch_utilities import rand, tensor_utils, math_utils
 
-from tampc import cfg
+from stucco import cfg
 from stucco.env import arm
 from stucco.env.arm import Levels
-from tampc.env_getters.arm import RetrievalGetter
+from stucco.env_getters.arm import RetrievalGetter
 from stucco.env.pybullet_env import state_action_color_pairs
 from stucco import icp, tracking
 

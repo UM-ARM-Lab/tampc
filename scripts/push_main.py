@@ -21,7 +21,7 @@ from arm_pytorch_utilities.model import make
 from arm_pytorch_utilities.optim import get_device
 from tampc.transform.block_push import CoordTransform
 from tampc.util import update_ds_with_transform, no_tsf_preprocessor, UseTsf, get_transform, TranslationNetworkWrapper, \
-    EnvGetter
+    TAMPCEnvGetter
 from tensorboardX import SummaryWriter
 
 from tampc import cfg
@@ -50,7 +50,7 @@ REACTION_IN_STATE = True
 
 
 # --- SHARED GETTERS
-class BlockPushGetter(EnvGetter):
+class BlockPushGetter(TAMPCEnvGetter):
     @staticmethod
     def dynamics_prefix() -> str:
         return "dynamics"

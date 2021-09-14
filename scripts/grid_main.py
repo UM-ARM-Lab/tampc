@@ -38,7 +38,7 @@ from tampc.dynamics.hybrid_model import OnlineAdapt
 from tampc.controller import online_controller
 from tampc.controller.gating_function import AlwaysSelectNominal
 from tampc import util
-from tampc.util import no_tsf_preprocessor, UseTsf, EnvGetter
+from tampc.util import no_tsf_preprocessor, UseTsf, TAMPCEnvGetter
 from window_recorder import recorder
 
 ch = logging.StreamHandler()
@@ -56,7 +56,7 @@ logger = logging.getLogger(__name__)
 task_map = {'freespace': 0, 'I': 1, 'I-non-nominal': 4, 'U': 2, 'Non-nominal': 3}
 
 
-class GridGetter(EnvGetter):
+class GridGetter(TAMPCEnvGetter):
     @staticmethod
     def dynamics_prefix() -> str:
         return "grid"

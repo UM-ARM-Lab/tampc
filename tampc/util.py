@@ -1,13 +1,11 @@
 import enum
 import abc
-import typing
 from typing import Tuple, Iterable
 
 import torch
-from arm_pytorch_utilities import draw, preprocess, rand
+from arm_pytorch_utilities import draw, preprocess
 from arm_pytorch_utilities.model import make
 from arm_pytorch_utilities.optim import get_device
-from arm_pytorch_utilities.make_data import datasource
 from tampc.dynamics import model, prior
 from tampc import cfg
 
@@ -21,6 +19,8 @@ import pickle
 import re
 import time
 import argparse
+
+from stucco.env_getters.getter import EnvGetter
 
 from tampc.transform import invariant
 from tampc.transform.block_push import CoordTransform
@@ -566,42 +566,11 @@ class TranslationNetworkWrapper(model.NetworkModelWrapper):
                                        self.step)
 
 
-class EnvGetter(abc.ABC):
-    env_dir = None
-
-    @classmethod
-    def data_dir(cls, level=0) -> str:
-        """Return data directory corresponding to an environment level"""
-        return '{}{}.mat'.format(cls.env_dir, level)
-
-    @staticmethod
-    @abc.abstractmethod
-    def ds(env, data_dir, **kwargs) -> datasource.FileDataSource:
-        """Return a datasource corresponding to this environment and data directory"""
-
+class TAMPCEnvGetter(EnvGetter):
     @staticmethod
     @abc.abstractmethod
     def pre_invariant_preprocessor(use_tsf: UseTsf) -> preprocess.Transformer:
         """Return preprocessor applied before the invariant transform"""
-
-    @staticmethod
-    @abc.abstractmethod
-    def controller_options(env) -> typing.Tuple[dict, dict]:
-        """Return controller option default values suitable for this environment"""
-
-    @classmethod
-    @abc.abstractmethod
-    def env(cls, mode, level=0, log_video=False):
-        """Create and return an environment; internally should set cls.env_dir"""
-
-    @classmethod
-    def free_space_env_init(cls, seed=1, **kwargs):
-        d = get_device()
-        env = cls.env(kwargs.pop('mode', 0), **kwargs)
-        ds = cls.ds(env, cls.data_dir(0), validation_ratio=0.1)
-
-        logger.info("initial random seed %d", rand.seed(seed))
-        return d, env, ds.current_config(), ds
 
     @classmethod
     def prior(cls, env, use_tsf=UseTsf.COORD, prior_class=prior.NNPrior, rep_name=None, **kwargs):
@@ -616,11 +585,6 @@ class EnvGetter(abc.ABC):
         pm = cls.loaded_prior(prior_class, ds, tsf_name, False, **kwargs)
 
         return ds, pm
-
-    @staticmethod
-    @abc.abstractmethod
-    def dynamics_prefix() -> str:
-        """Return the prefix of dynamics functions corresponding to this environment"""
 
     @classmethod
     def loaded_prior(cls, prior_class, ds, tsf_name, relearn_dynamics, name="", seed=0):

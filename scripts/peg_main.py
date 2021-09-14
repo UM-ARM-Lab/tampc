@@ -29,7 +29,7 @@ from tampc.controller import online_controller
 from tampc.controller.gating_function import AlwaysSelectNominal
 from tampc import util
 from tampc.util import update_ds_with_transform, no_tsf_preprocessor, UseTsf, get_transform, TranslationNetworkWrapper, \
-    EnvGetter
+    TAMPCEnvGetter
 
 ch = logging.StreamHandler()
 fh = logging.FileHandler(os.path.join(cfg.ROOT_DIR, "logs", "{}.log".format(datetime.now())))
@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 
 # --- SHARED GETTERS
-class PegGetter(EnvGetter):
+class PegGetter(TAMPCEnvGetter):
     @staticmethod
     def dynamics_prefix() -> str:
         return "peg"
