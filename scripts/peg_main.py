@@ -106,7 +106,7 @@ class PegGetter(EnvGetter):
         return common_wrapper_opts, mpc_opts
 
     @classmethod
-    def env(cls, mode=p.GUI, level=0, log_video=False):
+    def env(cls, mode=p.DIRECT, level=0, log_video=False):
         init_peg = [-0.2, 0]
         hole_pos = [0.3, 0.3]
 
@@ -166,7 +166,7 @@ class OfflineDataCollection:
 
     @staticmethod
     def freespace(seed=4, trials=200, trial_length=50, force_gui=False):
-        env = PegGetter.env(p.GUI if force_gui else p.DIRECT, 0)
+        env = PegGetter.env(p.DIRECT if force_gui else p.DIRECT, 0)
         u_min, u_max = env.get_control_bounds()
         ctrl = controller.FullRandomController(env.nu, u_min, u_max)
         # use mode p.GUI to see what the trials look like
@@ -192,7 +192,7 @@ class OfflineDataCollection:
     @staticmethod
     def test_set():
         # get data in and around the bug trap we want to avoid in the future
-        env = PegGetter.env(p.GUI, task_map['Peg-T'])
+        env = PegGetter.env(p.DIRECT, task_map['Peg-T'])
         env.set_task_config(init_peg=[0.1, 0.12])
 
         def rn(scale):
@@ -234,8 +234,15 @@ def run_controller(default_run_prefix, pre_run_setup, seed=1, level=1, gating=No
                    apfvo_baseline=False,
                    apfsp_baseline=False,
                    **kwargs):
-    env = PegGetter.env(p.GUI, level=level, log_video=True)
+    env = PegGetter.env(p.DIRECT, level=level, log_video=True)
     logger.info("initial random seed %d", rand.seed(seed))
+    if level == 3:
+        level_name = 'Peg-U'
+    elif level == 5:
+        level_name = 'Peg-I'
+    elif level == 6:
+        level_name = 'Peg-T'
+    logger.info(f'Running level {level_name}')
 
     ds, pm = PegGetter.prior(env, use_tsf, rep_name=rep_name)
 
@@ -507,7 +514,7 @@ class EvaluateTask:
     @staticmethod
     def closest_distance_to_goal(file, level, visualize=True, nodes_per_side=150):
         from sklearn.preprocessing import MinMaxScaler
-        env = PegGetter.env(p.GUI if visualize else p.DIRECT, level=level)
+        env = PegGetter.env(p.DIRECT if visualize else p.DIRECT, level=level)
         ds = PegGetter.ds(env, file, validation_ratio=0.)
         XU, _, _ = ds.training_set(original=True)
         X, U = torch.split(XU, ds.original_config().nx, dim=1)

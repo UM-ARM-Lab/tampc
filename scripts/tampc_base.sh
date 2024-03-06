@@ -1,0 +1,3 @@
+python peg_main.py run --task "Peg-U" --seed 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 --num_frames 750 --representation learned_rex --rep_name saved_peg --tampc_param dynamics_minimum_window=15 --mpc_param horizon=15 --run_prefix h15_larger_min_window
+python peg_main.py run --task "Peg-I" --seed 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 --num_frames 750 --representation learned_rex --rep_name saved_peg --tampc_param trap_cost_annealing_rate=0.95 --mpc_param horizon=20 --run_prefix h20_less_anneal
+python peg_main.py run --task "Peg-T" --seed 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 --num_frames 750 --representation learned_rex --rep_name saved_peg

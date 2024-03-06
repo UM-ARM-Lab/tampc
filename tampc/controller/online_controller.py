@@ -292,8 +292,8 @@ class OnlineMPPI(OnlineMPC, controller.MPPI_MPC):
             moved_suffiently_far = moved_from_trap > 1 * self.nominal_max_velocity  # number of steps at full speed away
 
             # left_trap = moved_suffiently_far
-            left_trap = (moved_suffiently_far and converged) or cur_index - self.autonomous_recovery_start_index > 20
-
+            left_trap = (moved_suffiently_far and converged) or cur_index - self.autonomous_recovery_start_index > 10
+            print(left_trap)
             logger.debug("moved from trap %f left trap? %d", moved_from_trap, left_trap)
             # logger.debug("before velocity %f current velocity %f left trap? %d", before, current, left_trap)
             return left_trap

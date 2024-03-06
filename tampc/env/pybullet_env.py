@@ -5,6 +5,7 @@ import random
 import time
 import numpy as np
 import enum
+import torch
 
 from datetime import datetime
 
@@ -153,7 +154,8 @@ class DebugDrawer:
         if name not in self._debug_ids:
             self._debug_ids[name] = [-1, -1]
         uids = self._debug_ids[name]
-
+        if torch.is_tensor(point):
+            point = point.detach().cpu().numpy()
         # ignore 3rd dimension if it exists to plot everything at the same height
         height = self._process_point_height(point, height)
 
@@ -168,7 +170,8 @@ class DebugDrawer:
         if name not in self._debug_ids:
             self._debug_ids[name] = [-1, -1]
         uids = self._debug_ids[name]
-
+        if torch.is_tensor(pose):
+            pose = pose.detach().cpu().numpy()
         location = (pose[0], pose[1], height)
         side_lines = math_utils.rotate_wrt_origin((0, length * 0.2), pose[2])
         pointer = math_utils.rotate_wrt_origin((length, 0), pose[2])

@@ -194,7 +194,7 @@ class HybridDynamicsModel(abc.ABC):
             self.nominal_model.reset()
         else:
             self.nominal_model = HybridDynamicsModel.get_local_model(self.state_diff, self.pm,
-                                                                     self.nominal_model.device(), self.ds_nominal,
+                                                                     self.nominal_model.device, self.ds_nominal,
                                                                      preprocessor=self.preprocessor,
                                                                      allow_update=True, train_slice=slice(0, 0))
 

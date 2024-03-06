@@ -415,9 +415,9 @@ class MPPI_MPC(MPC):
             else:
                 noise_mult = self.u_max if self.u_max is not None else 1
                 noise_sigma = torch.eye(self.nu, dtype=self.dtype) * noise_mult
-        self.mpc = ExperimentalMPPI(self._apply_dynamics, self._running_cost, self.nx, u_min=self.u_min,
+        self.mpc = ExperimentalMPPI(self._apply_dynamics, self._running_cost, self.nx, noise_sigma, u_min=self.u_min,
                                     u_max=self.u_max,
-                                    noise_sigma=noise_sigma, device=self.d, terminal_state_cost=self._terminal_cost,
+                                    device=self.d, terminal_state_cost=self._terminal_cost,
                                     **mpc_opts, **self._mpc_opts())
 
     def reset(self):

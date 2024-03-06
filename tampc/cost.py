@@ -14,7 +14,7 @@ def qr_cost(diff_function, X, X_goal, Q, R, U=None, U_goal=None, terminal=False)
     if U is not None and not terminal:
         if U_goal is not None:
             U = U - U_goal
-        c += linalg.batch_quadratic_product(U, R)
+        c += linalg.batch_quadratic_product(U.double(), R)
     return c
 
 
