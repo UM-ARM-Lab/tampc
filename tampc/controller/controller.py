@@ -7,6 +7,7 @@ import torch
 from arm_pytorch_utilities import math_utils
 from arm_pytorch_utilities import tensor_utils
 from pytorch_mppi import mppi
+from mjregrasping.regrasping_mppi import RegraspMPPI, parallel_rollout
 
 from tampc import cost
 
@@ -203,15 +204,16 @@ class MPC(ControllerWithModelPrediction):
         self.state_dist = state_dist
 
         # get error per dimension to scale our expectations of accuracy
-        XU, Y, _ = ds.training_set(original=True)
-        X, U = torch.split(XU, config.nx, dim=1)
-        Yhat = self._apply_dynamics(X, U)
-        if config.predict_difference:
-            Yhat = Yhat - X
-        E = Yhat - Y
-        E_per_dim = E.abs().mean(dim=0)
-        self.model_error_per_dim = E_per_dim
-        logger.info("Expected per dim dynamics error: %s", E_per_dim)
+        # XU, Y, _ = ds.training_set(original=True)
+        # X, U = torch.split(XU, config.nx, dim=1)
+        # Yhat = self._apply_dynamics(X, U)
+        # if config.predict_difference:
+        #     Yhat = Yhat - X
+        # E = Yhat - Y
+        # E_per_dim = E.abs().mean(dim=0)
+        # self.model_error_per_dim = E_per_dim
+        self.model_error_per_dim = torch.ones(self.nx, device=self.d, dtype=self.dtype)
+        # logger.info("Expected per dim dynamics error: %s", E_per_dim)
 
         # cost
         self.trap_set = []
@@ -236,6 +238,7 @@ class MPC(ControllerWithModelPrediction):
         self.u_history = []
         self.orig_cost_history = []
         self.context = None
+        self.dim_red = 24
 
     def set_goal(self, goal):
         goal = torch.tensor(goal, dtype=self.dtype, device=self.d)
@@ -286,22 +289,27 @@ class MPC(ControllerWithModelPrediction):
     def command(self, obs, info=None):
         original_obs = obs
         obs = tensor_utils.ensure_tensor(self.d, self.dtype, obs)
-        self.x_history.append(obs)
+        try:
+            self.x_history.append(obs[0, :self.nx].clone())
+        except:
+            self.x_history.append(obs.clone())
         # here so that in command we have access to the latest
         self.orig_cost_history.append(self.goal_cost(obs.view(1, -1)))
+        # print('predicted_next_state', self.predicted_next_state)
         if self.predicted_next_state is not None:
             # scale with model error for each dimension
-            self.diff_predicted = torch.tensor(self.prediction_error(original_obs),
-                                               device=self.d) / self.model_error_per_dim
+            self.diff_predicted = self.prediction_error(original_obs) / self.model_error_per_dim
+
+            # self.diff_predicted = self.diff_predicted[:, self.dim_red * 3:3 * (self.dim_red + 1)]
+
             self.pred_error_log.append(self.diff_predicted.abs())
             logger.debug("diff normalized error %.2f", self.diff_predicted.norm())
 
         self.context = [info, self.diff_predicted]
-
         u = self._mpc_command(obs)
         if self.u_max is not None:
             u = math_utils.clip(u, self.u_min, self.u_max)
-
+        # print('set predicted_next_state', self.predict_next_state(obs, u))
         self.u_history.append(u if len(u.shape) is 1 else u[0])
         self.predicted_next_state = self.predict_next_state(obs, u)
         return u.cpu().numpy()
@@ -377,7 +385,8 @@ class ExperimentalMPPI(mppi.MPPI):
             c = self.terminal_state_cost(states, actions)
             cost_samples += c
         cost_total += cost_samples.mean(dim=0)
-        cost_total += cost_var * self.rollout_var_cost
+        # cost_total += cost_var * self.rollout_var_cost
+
         return cost_total, states, actions
 
     def _compute_total_cost_batch(self):
@@ -401,6 +410,27 @@ class ExperimentalMPPI(mppi.MPPI):
         self.cost_total += perturbation_cost
         return self.cost_total
 
+class MJMPPI(mppi.MPPI):
+    def __init__(self, goal, pool=None, seed=0, *args, **kwargs):
+        super(MJPPI, self).__init__(*args, **kwargs)
+        self.c = RegraspMPPI(pool=pool, seed=seed)
+        self.phy = kwargs['phy']
+        self.pool = kwargs['pool']
+        self.goal = kwargs['goal']
+
+    def _compute_total_cost_batch(self):
+        self.noise = self.noise_dist.sample((self.K, self.T))
+        # broadcast own control to noise over samples; now it's K x T x nu
+        self.perturbed_action = self.U + self.noise
+        if self.sample_null_action:
+            self.perturbed_action[self.K - 1] = 0
+        # naively bound control
+        self.perturbed_action = self._bound_action(self.perturbed_action)
+        self.perturbed_action = self.perturbed_action.cpu().numpy()
+        self.perturbed_action = self.perturbed_action.reshape(self.K, -1)
+        self.results, costs, self.costs_by_term = parallel_rollout(self.pool, self.T, self.nu, self.phy, self.goal, self.perturbed_action, [.08] * self.K, self.K)
+        self.cost_total = torch.tensor(costs, device=self.d, dtype=self.dtype)
+        return self.cost_total
 
 class MPPI_MPC(MPC):
     def __init__(self, *args, mpc_opts=None, **kwargs):
@@ -415,10 +445,17 @@ class MPPI_MPC(MPC):
             else:
                 noise_mult = self.u_max if self.u_max is not None else 1
                 noise_sigma = torch.eye(self.nu, dtype=self.dtype) * noise_mult
-        self.mpc = ExperimentalMPPI(self._apply_dynamics, self._running_cost, self.nx, noise_sigma, u_min=self.u_min,
-                                    u_max=self.u_max,
-                                    device=self.d, terminal_state_cost=self._terminal_cost,
-                                    **mpc_opts, **self._mpc_opts())
+        if 'phy' in mpc_opts:
+            #Fix arguments
+            self.mpc = MJMPPI(self._apply_dynamics, self._running_cost, self.nx, noise_sigma, u_min=self.u_min,
+                            u_max=self.u_max,
+                            device=self.d, terminal_state_cost=self._terminal_cost,
+                            **mpc_opts, **self._mpc_opts())
+        else:
+            self.mpc = ExperimentalMPPI(self._apply_dynamics, self._running_cost, self.nx, noise_sigma, u_min=self.u_min,
+                                        u_max=self.u_max,
+                                        device=self.d, terminal_state_cost=self._terminal_cost,
+                                        **mpc_opts, **self._mpc_opts())
 
     def reset(self):
         super().reset()
